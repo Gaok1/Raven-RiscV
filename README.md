@@ -91,7 +91,7 @@ JGE    R1, R2, LABEL    ; Jump if R1 ≥ R2
 JLE    R1, R2, LABEL    ; Jump if R1 ≤ R2
 BEGIN                   ; Start of loop block
 END                     ; End of loop block
-HALT                    ; End of promgram
+HALT                    ; End of program
 ```
 
 ---
