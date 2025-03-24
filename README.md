@@ -91,6 +91,7 @@ JGE    R1, R2, LABEL    ; Jump if R1 ≥ R2
 JLE    R1, R2, LABEL    ; Jump if R1 ≤ R2
 BEGIN                   ; Start of loop block
 END                     ; End of loop block
+HALT                    ; End of promgram
 ```
 
 ---
@@ -173,9 +174,9 @@ PEEK.D R1              ; Read 8 bytes from stack top
 
 ## 🧠 Registers – Falcon ASM
 
-- **Temporaries:** `T0`, `T1`, `T2`
-- **Saved:** `S0`, `S1`, `S2`, `S3`, `S4`
-- **Arguments:** `A0`, `A1`, `A2`, `A3`, `A4`
+- **Temporaries:** `T0`, – `T4`
+- **Saved:** `S0`, – `S4`
+- **Arguments:** `A0`, – `A4`
 - **Float:** `F0` – `F7`
 - **Control:** `SP`, `PC`, `RA`, `R0` (zero constant)
 
@@ -190,9 +191,8 @@ array:  .word 1, 2, 3, 4
 texto:  .ascii "Olá, Falcon"
 
 .text
-LA     T0, value
-LPT.W  T1, T0
-ADD.W  T1, T1, T1
-SPT.W  T0, T1
+LA  T0, value         ; T0 = &value
+LW  T1, 0(T0)         ; T1 = mem[T0]
+PTADD  0(T0), T1, T1  ; value = value + value
 HALT
 ```
