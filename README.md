@@ -68,6 +68,17 @@ MOV  R1, R2         ; R1 = R2
 
 ---
 
+## 🔢 Arithmetic Instructions – Float
+
+```asm
+ADDF  F1,  F2, F3       ; F1 = F2 + F3
+SUBF  F1,  F2, F3
+MULF  F1,  F2, F3
+DIVF  F1,  F2, F3
+```
+
+---
+
 ## 🔁 Control Flow
 
 ```asm
@@ -94,11 +105,11 @@ LW     R1, offset(R2)   ; Load WORD   → R1
 LDW    R1, offset(R2)   ; Load DWORD  → R1
 LA     R1, LABEL        ; Load address of LABEL → R1
 
-; Store
-SQW    R1, offset(R2)   ; Store QWORD  ← R1
-SHW    R1, offset(R2)   ; STORE HWORD  → R1
-SW     R1, offset(R2)   ; Store WORD   ← R1
-SDW    R1, offset(R2)   ; Store DWORD  ← R1
+; Store 
+SQW    offset(R1), R2   ; Store QWORD  → mem[R1 + offset] = R2
+SHW    offset(R1), R2   ; Store HWORD  → mem[R1 + offset] = R2
+SW     offset(R1), R2   ; Store WORD   → mem[R1 + offset] = R2
+SDW    offset(R1), R2   ; Store DWORD  → mem[R1 + offset] = R2
 ```
 
 ---
@@ -106,29 +117,20 @@ SDW    R1, offset(R2)   ; Store DWORD  ← R1
 ## 🧮 Pointer Arithmetic
 
 ```asm
-; Store via Pointer
-SPT.Q  R1, R2        ; mem[R1] = R2 (QWORD = 1 byte)
-SPT.W  R1, R2        ; mem[R1] = R2 (WORD  = 4 bytes)
-SPT.D  R1, R2        ; mem[R1] = R2 (DWORD = 8 bytes)
+; Aritmética via Pointer
 
-; Load via Pointer
-LPT.Q  R1, R2        ; R1 = mem[R2] (QWORD = 1 byte)
-LPT.W  R1, R2        ; R1 = mem[R2] (WORD  = 4 bytes)
-LPT.D  R1, R2        ; R1 = mem[R2] (DWORD = 8 bytes)
+PTADD offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 + R3
+
+PTSUB offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 - R3
+
+PTMUL offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 * R3
+
+PTDIV offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 / R3
 ```
 
 ---
 
-## 🔢 Arithmetic Instructions – Float
 
-```asm
-FADD   F1, F2, F3       ; F1 = F2 + F3
-FSUB   F1, F2, F3
-FMUL   F1, F2, F3
-FDIV   F1, F2, F3
-```
-
----
 
 ## 💾 Load/Store for Float
 
