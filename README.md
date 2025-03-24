@@ -35,7 +35,7 @@ POP:  SP = SP - size; value = mem[SP]
 ## 📏 Word Size
 
 ```asm
-#WORD = 32 BYTES
+#WORD = 64 BYTES
 ```
 
 ---
@@ -45,6 +45,7 @@ POP:  SP = SP - size; value = mem[SP]
 ```asm
 DATA_SET : 
  - QWORD   ; 1 BYTE
+ - HWORD   ; 2 BYTES
  - WORD    ; 4 BYTES
  - DWORD   ; 8 BYTES
 ```
@@ -54,23 +55,15 @@ DATA_SET :
 ## ➕ Arithmetic Instructions (Integers)
 
 ```asm
-ADD.Q  R1, R2, R3     ; R1 = R2 + R3 (QWORD)
-ADD.W  R1, R2, R3     ; R1 = R2 + R3 (WORD)
-ADD.D  R1, R2, R3     ; R1 = R2 + R3 (DWORD)
+ADD  R1, R2, R3     ; R1 = R2 + R3
 
-SUB.Q  R1, R2, R3     ; Subtraction
-SUB.W  R1, R2, R3
-SUB.D  R1, R2, R3
+SUB  R1, R2, R3     ; Subtraction
 
-MUL.Q  R1, R2, R3     ; Multiplication
-MUL.W  R1, R2, R3
-MUL.D  R1, R2, R3
+MUL  R1, R2, R3     ; Multiplication
 
-DIV.Q  R1, R2, R3     ; Division
-DIV.W  R1, R2, R3
-DIV.D  R1, R2, R3
+DIV  R1, R2, R3     ; Division
 
-MOV    R1, R2         ; R1 = R2
+MOV  R1, R2         ; R1 = R2
 ```
 
 ---
@@ -96,12 +89,14 @@ END                     ; End of loop block
 ```asm
 ; Load
 LQW    R1, offset(R2)   ; Load QWORD  → R1
+LHW    R1, offset(R2)   ; Load HWORD  → R1
 LW     R1, offset(R2)   ; Load WORD   → R1
 LDW    R1, offset(R2)   ; Load DWORD  → R1
 LA     R1, LABEL        ; Load address of LABEL → R1
 
 ; Store
 SQW    R1, offset(R2)   ; Store QWORD  ← R1
+SHW    R1, offset(R2)   ; STORE HWORD  → R1
 SW     R1, offset(R2)   ; Store WORD   ← R1
 SDW    R1, offset(R2)   ; Store DWORD  ← R1
 ```
