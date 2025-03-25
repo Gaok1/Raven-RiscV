@@ -43,8 +43,8 @@ POP:  SP = SP - size; value = mem[SP]
 ## 📦 Data Types
 
 ```asm
-DATA_SET : 
- - QWORD   ; 1 BYTE
+DATA_SIZE : 
+ - BYTE   ; 1 BYTE
  - HWORD   ; 2 BYTES
  - WORD    ; 4 BYTES
  - DWORD   ; 8 BYTES
@@ -68,13 +68,18 @@ MOV  R1, R2         ; R1 = R2
 
 ---
 
-## 🔢 Arithmetic Instructions – Float
+## 🔢 Arithmetic Instructions – Float, Double
 
 ```asm
-ADDF  F1,  F2, F3       ; F1 = F2 + F3
-SUBF  F1,  F2, F3
-MULF  F1,  F2, F3
-DIVF  F1,  F2, F3
+ADDF  F1,  F2,  F3       ; F1 = F2 + F3
+SUBF  F1,  F2,  F3
+MULF  F1,  F2,  F3
+DIVF  F1,  F2,  F3
+
+ADDFD F1,  F2,  F3
+SUBFD F1,  F2,  F3
+MULFD F1,  F2,  F3
+DIVFD F1,  F2,  F3
 ```
 
 ---
@@ -100,17 +105,17 @@ HALT                    ; End of program
 
 ```asm
 ; Load
-LQW    R1, offset(R2)   ; Load QWORD  → R1
-LHW    R1, offset(R2)   ; Load HWORD  → R1
+LB     R1, offset(R2)   ; Load BYTE  → R1
+LH     R1, offset(R2)   ; Load HWORD  → R1
 LW     R1, offset(R2)   ; Load WORD   → R1
-LDW    R1, offset(R2)   ; Load DWORD  → R1
+LD     R1, offset(R2)   ; Load DWORD  → R1
 LA     R1, LABEL        ; Load address of LABEL → R1
 
 ; Store 
-SQW    offset(R1), R2   ; Store QWORD  → mem[R1 + offset] = R2
-SHW    offset(R1), R2   ; Store HWORD  → mem[R1 + offset] = R2
-SW     offset(R1), R2   ; Store WORD   → mem[R1 + offset] = R2
-SDW    offset(R1), R2   ; Store DWORD  → mem[R1 + offset] = R2
+SB    offset(R1), R2    ; Store BYTE  → mem[R1 + offset] = R2
+SH    offset(R1), R2    ; Store HWORD  → mem[R1 + offset] = R2
+SW    offset(R1), R2    ; Store WORD   → mem[R1 + offset] = R2
+SD    offset(R1), R2    ; Store DWORD  → mem[R1 + offset] = R2
 ```
 
 ---
@@ -120,13 +125,13 @@ SDW    offset(R1), R2   ; Store DWORD  → mem[R1 + offset] = R2
 ```asm
 ; Aritmética via Pointer
 
-PTADD offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 + R3
+PTADD offset(R1), R2, R3   ; Store   → mem[R1 + offset] = R2 + R3
 
-PTSUB offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 - R3
+PTSUB offset(R1), R2, R3   ; Store   → mem[R1 + offset] = R2 - R3
 
-PTMUL offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 * R3
+PTMUL offset(R1), R2, R3   ; Store   → mem[R1 + offset] = R2 * R3
 
-PTDIV offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 / R3
+PTDIV offset(R1), R2, R3   ; Store   → mem[R1 + offset] = R2 / R3
 ```
 
 ---
@@ -136,8 +141,12 @@ PTDIV offset(R1), R2, R3   ; Store QWORD  → mem[R1 + offset] = R2 / R3
 ## 💾 Load/Store for Float
 
 ```asm
-FLW    F1, offset(R2)   ; Load float  → F1
-FSD    F1, offset(R2)   ; Store float ← F1
+FL    F1, offset(R2)   ; Load float  → F1
+FS    offset(R1), R2   ; Store float ← F1
+
+FDL   F1, offset(R2)   ; Load float  → F1
+FDS   offset(R1), R2   ; Store float ← F1
+
 ```
 
 ---
@@ -155,17 +164,20 @@ FTOI   R1, F1           ; R1 = (int) F1
 
 ```asm
 ; PUSH
-PUSH.Q R1              ; Push 1 byte
+PUSH.B R1              ; Push 1 byte
+PUSH.H R1              ; Push 2 bytes
 PUSH.W R1              ; Push 4 bytes
 PUSH.D R1              ; Push 8 bytes
 
 ; POP
-POP.Q  R1              ; Pop 1 byte
+POP.B  R1              ; Pop 1 byte
+POP.H  R1              ; Pop 2 bytes
 POP.W  R1              ; Pop 4 bytes
 POP.D  R1              ; Pop 8 bytes
 
 ; PEEK
-PEEK.Q R1              ; Read 1 byte from stack top
+PEEK.B R1              ; Read 1 byte from stack top
+PEEK.H R1              ; Read 2 bytes from the stack top
 PEEK.W R1              ; Read 4 bytes from stack top
 PEEK.D R1              ; Read 8 bytes from stack top
 ```
@@ -174,15 +186,24 @@ PEEK.D R1              ; Read 8 bytes from stack top
 
 ## 🧠 Registers – Falcon ASM
 
-- **Temporaries:** `T0`, – `T4`
-- **Saved:** `S0`, – `S4`
-- **Arguments:** `A0`, – `A4`
+- **Temporaries:** `T0`, – `T5`
+- **Saved:** `S0`, – `S6`
+- **Arguments:** `A0`, – `A6`
 - **Float:** `F0` – `F7`
 - **Control:** `SP`, `PC`, `RA`, `R0` (zero constant)
 
 ---
 
 ## 🗂️ Section Directives
+### DATA TYPES
+;BYTES
+ .byte
+ .hword
+ .word
+ .dword
+;text interpretation
+.asciia
+
 
 ```asm
 .data

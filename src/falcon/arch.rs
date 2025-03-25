@@ -1,35 +1,20 @@
-use super::{memory::Memory, registers::Register};
+use super::{memory::Memory, program::program::Program, registers::Register};
+const REGISTERS_LEN: usize = 31;
 
-#[derive(Debug, Default, Clone)]
-struct MemorySegmentsPointer {
-    pub data_section_start_pointer : u64,
-    pub data_section_end_pointer : u64,
-    pub text_section_start_pointer : u64,
-    pub text_section_end_pointer : u64,
-    pub stack_pointer : u64,
-}
 
-#[derive( Clone)]
+#[derive(Clone)]
 pub struct FalconArch {
-    pub registers : [Register; 20],
-    pub pc : Register,
-    pub sp : Register,
-    pub zero : Register,
-    pub memory : Memory,
-    segments_pointer : MemorySegmentsPointer,
-    //parser : Parser,
+    pub registers: Vec<Register>,
+    pub memory: Memory,
+    pub programs: Vec<Program>,
 }
 
 impl FalconArch {
-    
     fn new() -> Self {
         FalconArch {
-            registers: [Register::new(); 20],
-            pc : Register::valued(0),
-            sp : Register::valued(0),
-            zero : Register::valued(0),
-            memory : Memory::new(),
-            segments_pointer : MemorySegmentsPointer::default(),
+            registers: vec![Register::new(); REGISTERS_LEN],
+            memory: Memory::new(),
+            programs: Vec::new(),
         }
     }
 }
