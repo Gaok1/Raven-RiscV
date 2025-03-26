@@ -56,7 +56,9 @@ DATA_SIZE :
 
 ## 🗜️ Instruction Codification
 ```
-| 6 bits Opcode | 1 bit imediate? | 5 bits R1 | 5 bits R2 | imediate ? (32 bytes) : 5 bits R3 |
+| Opcode (6 bits) | Immediate Flag (1 bit) | R1 (5 bits) | R2 (5 bits) | Immediate (32 bits) OR R3 (5 bits)
+|-----------------|------------------------|-------------|-------------|                                              |
+
 ```
 ---
 
