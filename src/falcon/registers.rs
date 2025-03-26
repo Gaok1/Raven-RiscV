@@ -1,7 +1,8 @@
+pub type RegisterAddress = u64;
 #[derive(Debug, Clone,Copy,Default)]
 pub struct Register {
     pub value: [u8; 8],
-    address: u64,
+    address: RegisterAddress,
 }
 
 //constructor
@@ -40,7 +41,7 @@ impl Register {
         self.value.copy_from_slice(&value.to_be_bytes());
     }
 
-    fn write_q_word(&mut self, value: u8) {
+    fn write_b(&mut self, value: u8) {
         self.value[0] = value;
     }
 

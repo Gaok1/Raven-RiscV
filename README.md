@@ -52,6 +52,14 @@ DATA_SIZE :
 
 ---
 
+
+
+## 🗜️ Instruction Codification
+```
+| 6 bits Opcode | 1 bit imediate? | 5 bits R1 | 5 bits R2 | imediate ? (32 bytes) : 5 bits R3 |
+
+---
+
 ## ➕ Arithmetic Instructions (Integers)
 
 ```asm

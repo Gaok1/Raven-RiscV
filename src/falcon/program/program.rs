@@ -1,8 +1,7 @@
 use crate::falcon::registers::Register;
 
 #[derive(Debug, Default, Clone)]
-struct MemorySegmentsPointer {
-    pub data_section_start_pointer: u64,
+struct MemorySegmentsPointer {    pub data_section_start_pointer: u64,
     pub data_section_end_pointer: u64,
     pub text_section_start_pointer: u64,
     pub text_section_end_pointer: u64,
