@@ -1,3 +1,4 @@
+<img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="500"/>
 
 # Falcon ASM 🦅 – RISC-V Educational Emulator
 
