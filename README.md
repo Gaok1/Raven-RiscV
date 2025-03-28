@@ -64,10 +64,9 @@ Word Len = 32 bits
 ## 📦 Data Sizes
 
 ```asm
-BYTE   ; 8 bits
-HALF   ; 16 bits
-WORD   ; 32 bits
-DWORD  ; 64 bits
+BYTE        ; 8 bits
+HALF WORD   ; 16 bits
+WORD        ; 32 bits
 ```
 
 ---
