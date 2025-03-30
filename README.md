@@ -78,10 +78,10 @@ Memory grows upwards, consistent with typical RISC-V convention.
 **Example of stack operations:**
 
 ```asm
-addi sp, sp, -8      ; Allocate 8 bytes on stack
-sd ra, 0(sp)         ; Save return address
-ld ra, 0(sp)         ; Load return address
-addi sp, sp, 8       ; Deallocate stack space
+addi sp, sp, +8      ; Allocate 8 bytes on stack
+sw ra, 0(sp)         ; Save return address
+lw ra, 0(sp)         ; Load return address
+addi sp, sp, -8       ; Deallocate stack space
 ```
 
 ---
