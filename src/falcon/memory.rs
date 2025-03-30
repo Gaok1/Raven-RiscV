@@ -1,4 +1,5 @@
 const MEMORY_SIZE: usize = 4096;
+
 #[derive(Clone)]
 pub struct Memory {
     mem: Vec<u8>,
@@ -6,43 +7,64 @@ pub struct Memory {
 
 impl Memory {
     pub fn new() -> Self {
-        Memory {
+        Self {
             mem: vec![0; MEMORY_SIZE],
         }
     }
-    pub fn read_word(&self, pointer: usize) -> u32 {
-        u32::from_be_bytes(self.mem[pointer..pointer + 4].try_into().unwrap())
-    }
-    pub fn write_word(&mut self, pointer: usize, value: u32) {
-        self.mem[pointer..pointer + 4].copy_from_slice(&value.to_be_bytes());
+
+    // Leitura e escrita de 8 bits (Byte)
+    pub fn read_byte(&self, addr: usize) -> u8 {
+        self.mem.get(addr).copied().unwrap_or(0)
     }
 
-    pub fn read_d_word(&self, pointer: usize) -> u64 {
-        u64::from_be_bytes(self.mem[pointer..pointer + 8].try_into().unwrap())
-    }
-    pub fn write_d_word(&mut self, pointer: usize, value: u64) {
-        self.mem[pointer..pointer + 8].copy_from_slice(&value.to_be_bytes());
-    }
-
-    pub fn read_q_word(&self, pointer: usize) -> u8 {
-        self.mem[pointer]
-    }
-    pub fn write_q_word(&mut self, pointer: usize, value: u8) {
-        self.mem[pointer] = value;
+    pub fn write_byte(&mut self, addr: usize, value: u8) {
+        if let Some(byte) = self.mem.get_mut(addr) {
+            *byte = value;
+        }
     }
 
-    pub fn read_float(&self, pointer: usize) -> f32 {
-        f32::from_be_bytes(self.mem[pointer..pointer + 4].try_into().unwrap())
-    }
-    pub fn write_float(&mut self, pointer: usize, value: f32) {
-        self.mem[pointer..pointer + 4].copy_from_slice(&value.to_be_bytes());
-    }
-
-    pub fn read_double(&self, pointer: usize) -> f64 {
-        f64::from_be_bytes(self.mem[pointer..pointer + 8].try_into().unwrap())
+    // Leitura e escrita de 16 bits (Halfword - RISC-V padrão)
+    pub fn read_halfword(&self, addr: usize) -> u16 {
+        if addr + 2 <= self.mem.len() {
+            u16::from_le_bytes(self.mem[addr..addr + 2].try_into().unwrap())
+        } else {
+            0
+        }
     }
 
-    pub fn write_double(&mut self, pointer: usize, value: f64) {
-        self.mem[pointer..pointer + 8].copy_from_slice(&value.to_be_bytes());
+    pub fn write_halfword(&mut self, addr: usize, value: u16) {
+        if addr + 2 <= self.mem.len() {
+            self.mem[addr..addr + 2].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    // Leitura e escrita de 32 bits (Word - RISC-V padrão)
+    pub fn read_word(&self, addr: usize) -> u32 {
+        if addr + 4 <= self.mem.len() {
+            u32::from_le_bytes(self.mem[addr..addr + 4].try_into().unwrap())
+        } else {
+            0
+        }
+    }
+
+    pub fn write_word(&mut self, addr: usize, value: u32) {
+        if addr + 4 <= self.mem.len() {
+            self.mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    // Leitura e escrita de 32 bits ponto flutuante (f32)
+    pub fn read_float(&self, addr: usize) -> f32 {
+        if addr + 4 <= self.mem.len() {
+            f32::from_le_bytes(self.mem[addr..addr + 4].try_into().unwrap())
+        } else {
+            0.0
+        }
+    }
+
+    pub fn write_float(&mut self, addr: usize, value: f32) {
+        if addr + 4 <= self.mem.len() {
+            self.mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
+        }
     }
 }

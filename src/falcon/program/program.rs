@@ -1,16 +1,17 @@
 use crate::falcon::registers::Register;
 
 #[derive(Debug, Default, Clone)]
-struct MemorySegmentsPointer {    pub data_section_start_pointer: u64,
-    pub data_section_end_pointer: u64,
-    pub text_section_start_pointer: u64,
-    pub text_section_end_pointer: u64,
+pub struct MemoryMap {
+    pub data_section_start: u64,
+    pub data_section_end: u64,
+    pub text_section_start: u64,
+    pub text_section_end: u64,
+    pub end_of_memory: u64,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Program {
-    //struct to manage programs context
-    segmentation: MemorySegmentsPointer,
-    pub registers: Vec<Register>,
-    pub opcodes: Vec<u64>,
+    pub memory: MemoryMap,
+    pub registers: [Register; 32], // Fixado para RISC-V
+    pub opcodes: Vec<u32>,         // Opcodes de 32 bits
 }

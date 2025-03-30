@@ -1,10 +1,10 @@
 use super::{memory::Memory, program::program::Program, registers::Register};
-const REGISTERS_LEN: usize = 31;
+const REGISTERS_LEN: usize = 32;
 
 
 #[derive(Clone)]
 pub struct FalconArch {
-    pub registers: Vec<Register>,
+    pub registers: [Register; REGISTERS_LEN],
     pub memory: Memory,
     pub programs: Vec<Program>,
 }
@@ -12,7 +12,7 @@ pub struct FalconArch {
 impl FalconArch {
     fn new() -> Self {
         FalconArch {
-            registers: vec![Register::new(); REGISTERS_LEN],
+            registers: Register::risc_v_set(),
             memory: Memory::new(),
             programs: Vec::new(),
         }

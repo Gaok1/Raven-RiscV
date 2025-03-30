@@ -1,104 +1,97 @@
-/// Primeiros 8 bits de Op Code
+// ==========================
+// ⚙️ OPCODES (7 bits)
+// ==========================
+
+// R-type (Arithmetic/Logic Register-Register operations)
+pub const OP: u8 = 0x33;       // add, sub, mul, and, or, xor, etc.
+
+// I-type (Arithmetic Immediate, Logical Immediate)
+pub const OP_IMM: u8 = 0x13;   // addi, andi, ori, xori, etc.
+
+// I-type (Loads)
+pub const LOAD: u8 = 0x03;     // lb, lh, lw, lbu, lhu
+
+// I-type (Jump and Link Register)
+pub const JALR: u8 = 0x67;     // jalr
+
+// S-type (Stores)
+pub const STORE: u8 = 0x23;    // sb, sh, sw
+
+// B-type (Branches)
+pub const BRANCH: u8 = 0x63;   // beq, bne, blt, bge, etc.
+
+// U-type
+pub const LUI: u8 = 0x37;      // lui (Load Upper Immediate)
+pub const AUIPC: u8 = 0x17;    // auipc (Add Upper Immediate to PC)
+
+// J-type (Jump and Link)
+pub const JAL: u8 = 0x6F;      // jal (Jump and Link)
+
+// System instructions
+pub const SYSTEM: u8 = 0x73;   // ecall, ebreak, csr instructions
 
 
-// =====================================
-// 🧮 Arithmetic Instructions (Integers)
-// =====================================
-pub const ADD:  u8 = 0x01;
-pub const SUB:  u8 = 0x02;
-pub const MUL:  u8 = 0x03;
-pub const DIV:  u8 = 0x04;
-pub const MOV:  u8 = 0x05;
+// ==========================
+// 📐 FUNCT3 (3 bits)
+// ==========================
 
-// =====================================
-// 🔢 Floating-Point Arithmetic (Float)
-// =====================================
-pub const ADDF: u8 = 0x06;
-pub const SUBF: u8 = 0x07;
-pub const MULF: u8 = 0x08;
-pub const DIVF: u8 = 0x09;
+// Arithmetic instructions (R-type)
+pub const ADD_SUB: u8 = 0x0;   // ADD, SUB
+pub const SLL: u8     = 0x1;   // Shift Left Logical
+pub const SLT: u8     = 0x2;   // Set Less Than
+pub const SLTU: u8    = 0x3;   // Set Less Than Unsigned
+pub const XOR: u8     = 0x4;   // XOR Logical
+pub const SRL_SRA: u8 = 0x5;   // Shift Right Logical/Arithmetic
+pub const OR: u8      = 0x6;   // OR Logical
+pub const AND: u8     = 0x7;   // AND Logical
 
-// =====================================
-// 🔢 Floating-Point Arithmetic (Double)
-// =====================================
-pub const ADDFD: u8 = 0x0A;
-pub const SUBFD: u8 = 0x0B;
-pub const MULFD: u8 = 0x0C;
-pub const DIVFD: u8 = 0x0D;
+// Immediate arithmetic instructions (I-type OP_IMM)
+pub const ADDI: u8  = 0x0;     // ADD Immediate
+pub const SLLI: u8  = 0x1;     // Shift Left Logical Immediate
+pub const SLTI: u8  = 0x2;     // Set Less Than Immediate
+pub const SLTIU: u8 = 0x3;     // Set Less Than Immediate Unsigned
+pub const XORI: u8  = 0x4;     // XOR Immediate
+pub const SRLI_SRAI: u8 = 0x5; // Shift Right Logical/Arithmetic Immediate
+pub const ORI: u8   = 0x6;     // OR Immediate
+pub const ANDI: u8  = 0x7;     // AND Immediate
 
-// =====================================
-// 🔁 Control Flow Instructions
-// =====================================
-pub const JMP:   u8 = 0x0E;
-pub const JNZ:   u8 = 0x0F;
-pub const JZ:    u8 = 0x10;
-pub const JGT:   u8 = 0x11;
-pub const JLT:   u8 = 0x12;
-pub const JGE:   u8 = 0x13;
-pub const JLE:   u8 = 0x14;
-pub const BEGIN: u8 = 0x15;
-pub const END:   u8 = 0x16;
-pub const HALT:  u8 = 0x17;
+// Loads (I-type LOAD)
+pub const LB:  u8 = 0x0;       // Load Byte
+pub const LH:  u8 = 0x1;       // Load Halfword
+pub const LW:  u8 = 0x2;       // Load Word
+pub const LBU: u8 = 0x4;       // Load Byte Unsigned
+pub const LHU: u8 = 0x5;       // Load Halfword Unsigned
 
-// =====================================
-// 💾 Memory Access - Load Instructions
-// =====================================
-pub const LB: u8 = 0x18;
-pub const LH: u8 = 0x19;
-pub const LW: u8 = 0x1A;
-pub const LD: u8 = 0x1B;
-pub const LA: u8 = 0x1C;
+// Stores (S-type STORE)
+pub const SB: u8 = 0x0;        // Store Byte
+pub const SH: u8 = 0x1;        // Store Halfword
+pub const SW: u8 = 0x2;        // Store Word
 
-// =====================================
-// 💾 Memory Access - Store Instructions
-// =====================================
-pub const SB: u8 = 0x1D;
-pub const SH: u8 = 0x1E;
-pub const SW: u8 = 0x1F;
-pub const SD: u8 = 0x20;
+// Branches (B-type BRANCH)
+pub const BEQ:  u8 = 0x0;      // Branch if Equal
+pub const BNE:  u8 = 0x1;      // Branch if Not Equal
+pub const BLT:  u8 = 0x4;      // Branch if Less Than
+pub const BGE:  u8 = 0x5;      // Branch if Greater or Equal
+pub const BLTU: u8 = 0x6;      // Branch if Less Than Unsigned
+pub const BGEU: u8 = 0x7;      // Branch if Greater or Equal Unsigned
 
-// =====================================
-// 📌 Pointer Arithmetic Instructions
-// =====================================
-pub const PTADD: u8 = 0x21;
-pub const PTSUB: u8 = 0x22;
-pub const PTMUL: u8 = 0x23;
-pub const PTDIV: u8 = 0x24;
+// JALR (I-type)
+pub const JALR_FUNCT3: u8 = 0x0;  // funct3 always 0 for JALR
 
-// =====================================
-// 💾 Float Load/Store Instructions
-// =====================================
-pub const FL:  u8 = 0x25;
-pub const FS:  u8 = 0x26;
-pub const FDL: u8 = 0x27;
-pub const FDS: u8 = 0x28;
+// SYSTEM instructions (ecall/ebreak)
+pub const PRIV: u8 = 0x0; // ECALL and EBREAK (funct3 always 0)
 
-// =====================================
-// 🔄 Integer/Float Conversion Instructions
-// =====================================
-pub const ITOF: u8 = 0x29;
-pub const FTOI: u8 = 0x2A;
 
-// =====================================
-// 📥 Stack Instructions (PUSH)
-// =====================================
-pub const PUSH_B: u8 = 0x2B;
-pub const PUSH_H: u8 = 0x2C;
-pub const PUSH_W: u8 = 0x2D;
-pub const PUSH_D: u8 = 0x2E;
+// ==========================
+// 📏 FUNCT7 (7 bits)
+// ==========================
 
-// =====================================
-// 📤 Stack Instructions (POP)
-// =====================================
-pub const POP_B: u8 = 0x2F;
-pub const POP_H: u8 = 0x30;
-pub const POP_W: u8 = 0x31;
-pub const POP_D: u8 = 0x32;
+// Arithmetic instructions differentiating ADD/SUB and shifts
+pub const FUNCT7_ADD: u8 = 0x00;  // ADD, SLL, SRL
+pub const FUNCT7_SUB: u8 = 0x20;  // SUB, SRA
+pub const FUNCT7_MUL: u8 = 0x01;  // MUL, MULH, MULHSU, MULHU (RV32M extension)
 
-// =====================================
-// 🔎 Stack Instructions (PEEK)
-// =====================================
-pub const PEEK_B: u8 = 0x33;
-pub const PEEK_H: u8 = 0x34;
-pub const PEEK_W: u8 = 0x35;
-pub const PEEK_D: u8 = 0x36;
+// Shifts Immediate (I-type)
+pub const FUNCT7_SLLI: u8 = 0x00; // Shift Left Logical Immediate
+pub const FUNCT7_SRLI: u8 = 0x00; // Shift Right Logical Immediate
+pub const FUNCT7_SRAI: u8 = 0x20; // Shift Right Arithmetic Immediate

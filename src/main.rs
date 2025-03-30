@@ -1,24 +1,31 @@
+use falcon::memory::Memory;
 
+
+mod falcon;
 
 fn main() {
     
+    let mut mem = Memory::new();
+    let address = 0x2;
+    let val : i32 = 23;
+    printBinary(val as u32);
+    mem.write_word(address, val as u32);
+    let read_val = mem.read_word(address);
+    printBinary(read_val);
+    println!("Valor lido: {}", read_val as i32);
+    let val2 = mem.read_byte(address);
+    printBinary(val2 as u32);
+    println!("Valor lido: {}", val2 as i32);
+
 }
 
-// let pointer = 5;
-// let mut memory: [u8; 1024] = [0; 1024];
 
-// // Simula leitura de um inteiro da memória
-// let slice = &memory[pointer..pointer + 4];
-// let mut int = u32::from_be_bytes(slice.try_into().unwrap());
-
-// // Modifica o valor
-// int = 200;
-
-// // Escreve de volta na memória
-// let bytes = int.to_be_bytes();
-// memory[pointer..pointer + 4].copy_from_slice(&bytes);
-
-// // Verifica se o valor foi alterado
-// let slice = &memory[pointer..pointer + 4];
-// let int = u32::from_be_bytes(slice.try_into().unwrap());
-// println!("{}", int);  // Deve imprimir 200
+fn printBinary(value: u32) {
+    for i in (0..32).rev() {
+        if (i %8)==0 && i!=0{
+            print!(" ");
+        }
+        print!("{}", (value >> i) & 1);
+    }
+    println!();
+}
