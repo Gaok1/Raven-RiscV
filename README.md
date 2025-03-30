@@ -1,3 +1,4 @@
+<img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="500"/>
 
 # Falcon ASM 🦅 – RISC-V Educational Emulator
 
@@ -63,10 +64,9 @@ Word Len = 32 bits
 ## 📦 Data Sizes
 
 ```asm
-BYTE   ; 8 bits
-HALF   ; 16 bits
-WORD   ; 32 bits
-DWORD  ; 64 bits
+BYTE        ; 8 bits
+HALF WORD   ; 16 bits
+WORD        ; 32 bits
 ```
 
 ---
@@ -78,10 +78,10 @@ Memory grows upwards, consistent with typical RISC-V convention.
 **Example of stack operations:**
 
 ```asm
-addi sp, sp, -8      ; Allocate 8 bytes on stack
-sd ra, 0(sp)         ; Save return address
-ld ra, 0(sp)         ; Load return address
-addi sp, sp, 8       ; Deallocate stack space
+addi sp, sp, +8      ; Allocate 8 bytes on stack
+sw ra, 0(sp)         ; Save return address
+lw ra, 0(sp)         ; Load return address
+addi sp, sp, -8       ; Deallocate stack space
 ```
 
 ---
