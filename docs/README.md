@@ -1,111 +1,144 @@
-<img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="500"/>
+# Falcon ASM 🦅 – RISC-V Educational Emulator (RV32I)
 
-# Falcon ASM 🦅 – RISC-V Educational Emulator
+Falcon ASM is an educational RISC-V emulator focused on clarity and on visualizing the **fetch–decode–execute** cycle.
+The project includes a **decoder**, **encoder**, **two-pass text assembler** (with labels), **registers/memory**, and an **execution engine** — ready to plug into a **Ratatui** UI.
 
-Falcon ASM is an educational RISC-V emulator designed to simplify and visualize RISC-V instruction set architecture (ISA) concepts clearly and interactively. It provides students and enthusiasts with an accessible tool for learning fundamental computer architecture principles such as registers, memory management, and the fetch-decode-execute cycle.
+> **Current state (MVP): RV32I essentials**
+>
+> * **R-type:** `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA`
+> * **I-type (OP-IMM):** `ADDI, ANDI, ORI, XORI, SLLI, SRLI, SRAI`
+> * **Loads:** `LB, LH, LW, LBU, LHU`
+> * **Stores:** `SB, SH, SW`
+> * **Branches:** `BEQ, BNE, BLT, BGE, BLTU, BGEU`
+> * **U/J:** `LUI, AUIPC, JAL`
+> * **JALR**
+> * **SYSTEM:** `ECALL`, `EBREAK` (treated as HALT)
 
-## 🚩 Purpose
-
-- Provide clarity and simplicity in understanding RISC-V instructions.
-- Offer interactive visualizations for registers, memory, and instruction flow.
-- Serve as an intuitive entry-point to assembly language and processor architecture.
+*Not yet implemented:* `SLT/SLTU`, M extension (`MUL*`), FENCE/CSR, floating point.
 
 ---
 
-## 📏 Word Size
+## Project layout
 
 ```
-Word Len = 32 bits
-```
+src/
+  main.rs
+  falcon/
+    mod.rs
+    arch.rs           # opcodes/consts
+    errors.rs
+    registers.rs      # Cpu (x0..x31, pc)
+    memory.rs         # Bus + Ram
+    instruction.rs    # enum Instruction { ... }
+    exec.rs           # step()/run()
 
----
+    decoder/          # decode(u32) -> Instruction
+      mod.rs
+      rtype.rs
+      itype.rs
+      stype.rs
+      btype.rs
+      jtype.rs
 
-## 🧮 Arithmetic Instructions (RISC-V Standard)
+    encoder/          # encode(Instruction) -> u32
+      mod.rs
 
-| Instruction    | Operation          | Description                 |
-|----------------|--------------------|-----------------------------|
-| ADD rd, rs1, rs2  | rd = rs1 + rs2      | Integer Addition            |
-| SUB rd, rs1, rs2  | rd = rs1 - rs2      | Integer Subtraction         |
-| MUL rd, rs1, rs2  | rd = rs1 * rs2      | Integer Multiplication      |
-| DIV rd, rs1, rs2  | rd = rs1 / rs2      | Integer Division            |
-| ADDI rd, rs1, imm | rd = rs1 + imm      | Integer Add Immediate       |
+    asm/              # assemble(&str, base_pc) -> Vec<u32> (two-pass)
+      mod.rs
 
----
+    program/
+      mod.rs
+      loader.rs       # load_words/load_bytes
 
-## 🔢 Floating-Point Arithmetic (RISC-V Standard)
-
-| Instruction      | Operation           | Description                 |
-|------------------|---------------------|-----------------------------|
-| FADD.S fd, fs1, fs2 | fd = fs1 + fs2      | Float Addition (Single)     |
-| FSUB.S fd, fs1, fs2 | fd = fs1 - fs2      | Float Subtraction (Single)  |
-| FMUL.S fd, fs1, fs2 | fd = fs1 * fs2      | Float Multiplication (Single)|
-| FDIV.S fd, fs1, fs2 | fd = fs1 / fs2      | Float Division (Single)     |
-| FCVT.S.W fd, rs     | fd = (float) rs     | Integer to Float Conversion |
-| FCVT.W.S rd, fs     | rd = (int) fs       | Float to Integer Conversion |
-
----
-
-## 🧠 RISC-V Registers
-
-- **Temporary Registers:** `t0 – t6` (x5–x7, x28–x31)
-- **Saved Registers:** `s0 – s11` (x8–x9, x18–x27)
-- **Argument Registers:** `a0 – a7` (x10–x17)
-- **Float Registers:** `f0 – f31`
-- **Special Registers:** 
-  - `zero` (x0, constant 0)
-  - `ra` (x1, return address)
-  - `sp` (x2, stack pointer)
-  - `gp` (x3, global pointer)
-  - `tp` (x4, thread pointer)
-  - `pc` (program counter)
-
----
-
-## 📦 Data Sizes
-
-```asm
-BYTE        ; 8 bits
-HALF WORD   ; 16 bits
-WORD        ; 32 bits
+docs/
+  format.md           # Encoding/ISA reference (kept in sync with code)
 ```
 
 ---
 
-## 📈 Memory Model
+## Getting started
 
-Memory grows upwards, consistent with typical RISC-V convention.
+Requirements: stable Rust (via [https://rustup.rs](https://rustup.rs)).
 
-**Example of stack operations:**
+```bash
+cargo run
+```
 
-```asm
-addi sp, sp, +8      ; Allocate 8 bytes on stack
-sw ra, 0(sp)         ; Save return address
-lw ra, 0(sp)         ; Load return address
-addi sp, sp, -8       ; Deallocate stack space
+The sample `main.rs` assembles a small program and runs until `ecall`:
+
+```rust
+mod falcon;
+
+use falcon::asm::assemble;
+use falcon::program::load_words;
+
+fn main() {
+    let asm = r#"
+        addi x1, x0, 5
+        addi x2, x0, 7
+    loop:
+        add  x3, x1, x2
+        beq  x3, x0, loop
+        ecall
+    "#;
+
+    let mut mem = falcon::Ram::new(64*1024);
+    let mut cpu = falcon::Cpu::default();
+    cpu.pc = 0;
+
+    let words = assemble(asm, cpu.pc).expect("assemble");
+    load_words(&mut mem, cpu.pc, &words);
+
+    while falcon::exec::step(&mut cpu, &mut mem) {}
+    println!("x3 = {}", cpu.x[3]); // expected: 12
+}
 ```
 
 ---
 
-## 🚀 Future Capabilities
+## Registers & Memory
 
-- Integrated Code Editor and Assembler
-- Visualized Register and Memory State
-- Animated Fetch-Decode-Execute Cycle
+* **Registers:** `x0..x31` (x0 is immutable/always 0). Assembler also accepts aliases:
+  `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`.
+* **Memory:** little-endian; simple `Ram` implementing `load8/16/32` and `store8/16/32`.
 
 ---
 
-## 📑 Example Program
+## Text Assembler (source → bytes)
 
-```asm
-.data
-value:  .word 10
-array:  .word 1, 2, 3, 4
-message: .ascii "Hello, Falcon RISC-V!"
+* **Two passes:** pass 1 collects `label:` symbols; pass 2 resolves and encodes.
+* **Comments:** anything after `;` or `#` is ignored.
+* **Operands:** `instr op1, op2, op3`.
+* **Loads/Stores:** `imm(rs1)`, e.g. `lw x1, 0(x2)`, `sw x3, 4(x5)`.
+* **Branches/Jumps:** operand can be an **immediate** or a **label**.
+  The assembler computes `imm = target_pc - instruction_pc` (in **bytes**).
+  For **B/J** formats the offset must be even (multiple of 2) — the encoder validates this.
 
-.text
-la t0, value           # t0 = &value
-lw t1, 0(t0)           # t1 = mem[t0]
-add t2, t1, t1         # t2 = t1 + t1
-ecall                  # System call (halt in emulator)
-```
+**Pseudoinstructions (MVP):**
+
+* `nop` → `addi x0, x0, 0`
+* `mv rd, rs` → `addi rd, rs, 0`
+* `li rd, imm12` → `addi rd, x0, imm` (only if it fits 12-bit signed; otherwise use `lui+addi`)
+* `j label` → `jal x0, label`
+* `jr rs1` → `jalr x0, rs1, 0`
+* `ret` → `jalr x0, ra, 0` (ra = x1)
+
+---
+
+## Encoding summary (used opcodes)
+
+* `RTYPE = 0x33`
+* `OPIMM  = 0x13`
+* `LOAD   = 0x03`
+* `STORE  = 0x23`
+* `BRANCH = 0x63`
+* `LUI    = 0x37`
+* `AUIPC  = 0x17`
+* `JAL    = 0x6F`
+* `JALR   = 0x67`
+* `SYSTEM = 0x73`
+
+See `docs/format.md` for full bit layouts and funct3/funct7 tables exactly as implemented.
+
+---
 
