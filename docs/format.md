@@ -1,175 +1,238 @@
-# Falcon ASM – Instruction Encoding & Opcode Reference (RISC‑V Based)
 
-Falcon ASM is an educational RISC‑V emulator designed for learning computer architecture and assembly language. This document lists the opcodes used in Falcon ASM, the instructions they represent, and the bit allocations for each instruction format.
+# Falcon ASM – Encoding & ISA Reference (based on RISC-V RV32I)
 
-> **Note:** All Falcon ASM instructions are encoded in a fixed 32-bit format (4 bytes). For each instruction type, the fields are allocated as follows:
+Falcon ASM is an educational RISC-V emulator. This document describes **what is currently implemented in the project**, including:
+- instruction formats,
+- opcodes/funct3/funct7 used,
+- immediate ranges and alignments,
+- and the rules for the text assembler → bytes (with labels and MVP pseudoinstructions).
 
----
-
-## General 32-bit Instruction Format (R‑type Example)
-
-| Field    | Bit Positions   | Description                                                    |
-|----------|-----------------|----------------------------------------------------------------|
-| opcode   | [6:0]           | Primary opcode (7 bits) identifying the instruction family.    |
-| rd       | [11:7]          | Destination register (5 bits).                                 |
-| funct3   | [14:12]         | Secondary opcode field (3 bits) – specifies the operation.       |
-| rs1      | [19:15]         | First source register (5 bits).                                |
-| rs2      | [24:20]         | Second source register (5 bits) (for R‑type instructions).        |
-| funct7   | [31:25]         | Additional opcode field (7 bits) (used to differentiate similar instructions, e.g., ADD vs. SUB). |
-
-*Note:* Other instruction formats (I, S, B, U, J) rearrange or reinterpret these fields, but the primary opcode always occupies bits [6:0].
-
----
-
-## 1. Opcodes & Associated Instruction Types
-
-### **R‑type (Arithmetic / Logic Register‑Register)**
-- **Opcode:** `0x33`
-- **Bit Allocation:** opcode in bits [6:0]
-- **Instructions:** 
-  - `ADD`, `SUB`, `SLL`, `SLT`, `SLTU`, `XOR`, `SRL`, `SRA`, `OR`, `AND`
-  - *Extensions (RV32M):* `MUL`, `MULH`, `MULHSU`, `MULHU`
-  
-*Example of bit positions (R‑type):*
-- `funct7`: bits [31:25]
-- `rs2`: bits [24:20]
-- `rs1`: bits [19:15]
-- `funct3`: bits [14:12]
-- `rd`: bits [11:7]
-- `opcode`: bits [6:0] = 0x33
+> **Current state (MVP):** implements **essential RV32I**:
+> - R-type: `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA`
+> - I-type (OP-IMM): `ADDI, ANDI, ORI, XORI, SLLI, SRLI, SRAI`
+> - Loads: `LB, LH, LW, LBU, LHU`
+> - Stores: `SB, SH, SW`
+> - Branches: `BEQ, BNE, BLT, BGE, BLTU, BGEU`
+> - U/J: `LUI, AUIPC, JAL`
+> - JALR
+> - SYSTEM: `ECALL`, `EBREAK` (treated as HALT in MVP)
+>
+> **Not yet implemented:** `SLT/SLTU`, M-extension (`MUL*`), FENCE/CSR, FP.
 
 ---
 
-### **I‑type (Immediate Arithmetic / Logical Immediate)**
-- **Opcode:** `0x13`
-- **Instructions:**
-  - `ADDI`, `SLLI`, `SLTI`, `SLTIU`, `XORI`, `SRLI`, `SRAI`, `ORI`, `ANDI`
-- **Format:**  
-  | immediate (12 bits) | rs1 (5 bits) | funct3 (3 bits) | rd (5 bits) | opcode (7 bits) |
-  
----
+## 🧱 Word size, endianness, and PC
 
-### **I‑type (Load Instructions)**
-- **Opcode:** `0x03`
-- **Instructions:** 
-  - `LB` (Load Byte), `LH` (Load Halfword), `LW` (Load Word),
-  - `LBU` (Load Byte Unsigned), `LHU` (Load Halfword Unsigned)
-- **Format:**  
-  | immediate (12 bits) | rs1 (5 bits) | funct3 (3 bits) | rd (5 bits) | opcode (7 bits) |
+- **Word size:** 32 bits.
+- **Endianness:** **little-endian** (load/store use `{to,from}_le_bytes`).
+- **PC:** advances **+4** per instruction (32-bit aligned). Branches/Jumps use **offset relative to the instruction address** (see below).
 
 ---
 
-### **I‑type (JALR)**
-- **Opcode:** `0x67`
-- **Instruction:** `JALR` (Jump and Link Register)
-- **Format:**  
-  | immediate (12 bits) | rs1 (5 bits) | funct3 (3 bits) | rd (5 bits) | opcode (7 bits) |
-- **Note:** The funct3 field is always 0 for JALR.
+## 🧠 Registers (aliases accepted by the assembler)
+
+- **x0..x31** (x0 is always zero; writes to x0 are ignored).
+- Accepted aliases:  
+  `zero=x0, ra=x1, sp=x2, gp=x3, tp=x4, t0=x5..t6=x7/x28..x31, s0/fp=x8, s1=x9, a0=x10..a7=x17, s2=x18..s11=x27`.
 
 ---
 
-### **S‑type (Store Instructions)**
-- **Opcode:** `0x23`
-- **Instructions:** 
-  - `SB` (Store Byte), `SH` (Store Halfword), `SW` (Store Word)
-- **Format:**  
-  | immediate[11:5] (7 bits) | rs2 (5 bits) | rs1 (5 bits) | funct3 (3 bits) | immediate[4:0] (5 bits) | opcode (7 bits) |
-  
----
+## 🧾 Instruction formats (32 bits)
 
-### **B‑type (Branch Instructions)**
-- **Opcode:** `0x63`
-- **Instructions:** 
-  - `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`
-- **Format:**  
-  | immediate[12|10:5] (7 bits) | rs2 (5 bits) | rs1 (5 bits) | funct3 (3 bits) | immediate[4:1|11] (5 bits) | opcode (7 bits) |
+### General example (R-type)
 
----
+| Field    | Bits   | Description                                   |
+|----------|--------|-----------------------------------------------|
+| opcode   | [6:0]  | primary opcode (7 bits)                       |
+| rd       | [11:7] | destination register (5 bits)                 |
+| funct3   | [14:12]| subtype (3 bits)                              |
+| rs1      | [19:15]| source register 1 (5 bits)                    |
+| rs2      | [24:20]| source register 2 (5 bits)                    |
+| funct7   | [31:25]| additional subtype (7 bits)                   |
 
-### **U‑type (Upper Immediate Instructions)**
-- **Opcodes:**
-  - `LUI`: `0x37`
-  - `AUIPC`: `0x17`
-- **Instructions:**  
-  - `LUI` (Load Upper Immediate)
-  - `AUIPC` (Add Upper Immediate to PC)
-- **Format:**  
-  | immediate (20 bits) | rd (5 bits) | opcode (7 bits) |
+> Other formats (I, S, B, U, J) rearrange fields and/or immediates.
 
----
+### I-type (OP-IMM and LOADs/JALR)
 
-### **J‑type (Jump and Link)**
-- **Opcode:** `0x6F`
-- **Instruction:** `JAL`
-- **Format:**  
-  | immediate (20 bits) | rd (5 bits) | opcode (7 bits) |
+| Field       | Bits   |
+|-------------|--------|
+| opcode      | [6:0]  |
+| rd          | [11:7] |
+| funct3      | [14:12]|
+| rs1         | [19:15]|
+| imm[11:0]   | [31:20]|
 
----
+- `ADDI/ANDI/ORI/XORI/Loads/JALR` use **signed imm12** (-2048..2047).
+- **Shift immediates (`SLLI/SRLI/SRAI`)**: use I-type bit layout extended with:
+  - `shamt` in **[24:20]**,  
+  - `funct7` in **[31:25] = 0x00** for `SLLI/SRLI`, **0x20** for `SRAI`,  
+  - `funct3` = `0x1` (SLLI) / `0x5` (SRLI/SRAI).  
+  > In the encoder, we reuse the “R-like” packing for these I-type shifts because the bit layout in the middle is identical.
 
-### **MISC_MEM (Fence)**
-- **Opcode:** `0x0F`
-- **Instructions:** 
-  - `FENCE`, `FENCE.I`
+### S-type (Stores)
 
----
+| Field       | Bits   |
+|-------------|--------|
+| opcode      | [6:0]  |
+| imm[4:0]    | [11:7] |
+| funct3      | [14:12]|
+| rs1         | [19:15]|
+| rs2         | [24:20]|
+| imm[11:5]   | [31:25]|
 
-### **SYSTEM**
-- **Opcode:** `0x73`
-- **Instructions:** 
-  - `ECALL`, `EBREAK`, and CSR instructions
-- **Format:** Variável, mas o campo `funct3` para `ECALL`/`EBREAK` é 0.
+- Signed **imm12** (-2048..2047) is split into **[11:5]** and **[4:0]**.
 
----
+### B-type (Branches)
 
-## 2. FUNCT3 and FUNCT7 Fields (For R‑type and I‑type Instructions)
+| Field        | Bits   |
+|--------------|--------|
+| opcode       | [6:0]  |
+| imm[11]      | [7]    |
+| imm[4:1]     | [11:8] |
+| funct3       | [14:12]|
+| rs1          | [19:15]|
+| rs2          | [24:20]|
+| imm[10:5]    | [30:25]|
+| imm[12]      | [31]   |
 
-### **FUNCT3 (3 bits, bits [14:12]):**
+- **B immediates** are **signed 13 bits** representing **bytes** with **bit 0 = 0** (multiple of 2).  
+  Recombine: `imm = sign( imm[12]|imm[10:5]|imm[4:1]|imm[11] ) << 1`.
+- The assembler computes `imm = target_pc - instruction_pc`.
 
-- For R‑type Arithmetic:
-  - `0x0`: Used for ADD and SUB.
-  - `0x1`: SLL (Shift Left Logical)
-  - `0x2`: SLT (Set Less Than)
-  - `0x3`: SLTU (Set Less Than Unsigned)
-  - `0x4`: XOR
-  - `0x5`: SRL/SRA (Shift Right Logical/Arithmetic)
-  - `0x6`: OR
-  - `0x7`: AND
+### U-type (LUI/AUIPC)
 
-- For Immediate Arithmetic (I‑type OP_IMM):
-  - Same encoding as above applies.
+| Field      | Bits   |
+|------------|--------|
+| opcode     | [6:0]  |
+| rd         | [11:7] |
+| imm[31:12] | [31:12]|
 
-- For Loads:
-  - `0x0`: LB
-  - `0x1`: LH
-  - `0x2`: LW
-  - `0x4`: LBU
-  - `0x5`: LHU
+- Uses the **upper 20 bits** already aligned (bits [31:12] of the desired result).
 
-- For Stores:
-  - `0x0`: SB
-  - `0x1`: SH
-  - `0x2`: SW
+### J-type (JAL)
 
-- For Branches:
-  - `0x0`: BEQ
-  - `0x1`: BNE
-  - `0x4`: BLT
-  - `0x5`: BGE
-  - `0x6`: BLTU
-  - `0x7`: BGEU
+| Field      | Bits   |
+|------------|--------|
+| opcode     | [6:0]  |
+| rd         | [11:7] |
+| imm[19:12] | [19:12]|
+| imm[11]    | [20]   |
+| imm[10:1]  | [30:21]|
+| imm[20]    | [31]   |
 
-- For JALR:
-  - Always `0x0`.
-
-### **FUNCT7 (7 bits, bits [31:25]):**
-
-- For R‑type Arithmetic:
-  - `0x00`: For ADD, SLL, SRL.
-  - `0x20`: For SUB, SRA.
-  - `0x01`: Used for MUL and other RV32M extensions.
+- **J immediates** are **signed 21 bits** in **bytes** with **bit 0 = 0** (multiple of 2).  
+  Recombine: `imm = sign( imm[20]|imm[10:1]|imm[11]|imm[19:12] ) << 1`.
+- The assembler computes `imm = target_pc - instruction_pc`.
 
 ---
 
-## 3. Example: Encoding an R‑type Instruction (ADD)
+## 🔢 Opcodes by type (Falcon values)
 
-Consider the instruction:
+- `OPC_RTYPE = 0x33`
+- `OPC_OPIMM = 0x13`
+- `OPC_LOAD  = 0x03`
+- `OPC_STORE = 0x23`
+- `OPC_BRANCH= 0x63`
+- `OPC_LUI   = 0x37`
+- `OPC_AUIPC = 0x17`
+- `OPC_JAL   = 0x6F`
+- `OPC_JALR  = 0x67`
+- `OPC_SYSTEM= 0x73`
+
+---
+
+## 🧩 FUNCT3 / FUNCT7 (as implemented)
+
+### R-type (opcode 0x33)
+- `funct3`:
+  - `0x0`: `ADD` (`funct7=0x00`), `SUB` (`funct7=0x20`)
+  - `0x1`: `SLL`  (`funct7=0x00`)
+  - `0x4`: `XOR`  (`funct7=0x00`)
+  - `0x5`: `SRL`  (`funct7=0x00`), `SRA` (`funct7=0x20`)
+  - `0x6`: `OR`   (`funct7=0x00`)
+  - `0x7`: `AND`  (`funct7=0x00`)
+
+### I-type OP-IMM (opcode 0x13)
+- `funct3`:
+  - `0x0`: `ADDI`
+  - `0x4`: `XORI`
+  - `0x6`: `ORI`
+  - `0x7`: `ANDI`
+  - `0x1`: `SLLI`  (uses `funct7=0x00`, `shamt` in [24:20])
+  - `0x5`: `SRLI`  (`funct7=0x00`) / `SRAI` (`funct7=0x20`), `shamt` in [24:20]
+
+### LOADs (opcode 0x03)
+- `funct3`:
+  - `0x0`: `LB`
+  - `0x1`: `LH`
+  - `0x2`: `LW`
+  - `0x4`: `LBU`
+  - `0x5`: `LHU`
+
+### STOREs (opcode 0x23)
+- `funct3`:
+  - `0x0`: `SB`
+  - `0x1`: `SH`
+  - `0x2`: `SW`
+
+### BRANCH (opcode 0x63)
+- `funct3`:
+  - `0x0`: `BEQ`
+  - `0x1`: `BNE`
+  - `0x4`: `BLT`
+  - `0x5`: `BGE`
+  - `0x6`: `BLTU`
+  - `0x7`: `BGEU`
+
+### JALR (opcode 0x67)
+- `funct3 = 0x0` (always)
+
+### SYSTEM (opcode 0x73)
+- MVP treats `ECALL` (`0x00000073`) and `EBREAK` (`0x00100073`) as HALT.
+- CSR/FENCE not implemented yet.
+
+---
+
+## 🛠️ Assembler Text Rules (what the project currently accepts)
+
+- **Two passes**: 1st collects labels `label:`, 2nd resolves labels and assembles.
+- **Comments**: anything after `;` or `#` is ignored.
+- **Separator**: `instruction op1, op2, op3`.
+- **Registers**: `xN` or aliases listed above.
+- **Loads/Stores**: syntax `imm(rs1)`, e.g. `lw x1, 0(x2)`; `sw x3, 4(x5)`.
+- **Branches/Jumps**: operand can be **immediate** or **label**.  
+  The assembler computes `imm = target_pc - instruction_pc` (in **bytes**).  
+  **B/J require `imm % 2 == 0`** (encoder validates).
+- **Pseudoinstructions implemented**:
+  - `nop` → `addi x0, x0, 0`
+  - `mv rd, rs` → `addi rd, rs, 0`
+  - `li rd, imm12` → `addi rd, x0, imm` (**only** if `imm` ∈ [-2048, 2047]; for larger values, use `lui+addi`)
+  - `j label` → `jal x0, label`
+  - `jr rs1` → `jalr x0, rs1, 0`
+  - `ret` → `jalr x0, ra, 0` (ra=x1)
+
+---
+
+## ✅ Quick examples
+
+### 1) Simple program
+```asm
+addi x1, x0, 5
+addi x2, x0, 7
+loop:
+  add  x3, x1, x2
+  beq  x3, x0, loop
+  ecall
+
+Expected encoding (little-endian per word):
+
+addi x1,x0,5 → 0x0050_0093
+
+addi x2,x0,7 → 0x0070_0113
+
+add x3,x1,x2 → 0x0020_81b3
+
+ecall → 0x0000_0073
+
+In the emulator: x3 = 12 at the end.
+```
