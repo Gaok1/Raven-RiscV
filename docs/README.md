@@ -1,7 +1,7 @@
 # Falcon ASM 🦅 – RISC-V Educational Emulator (RV32I)
 
 Falcon ASM is an educational RISC-V emulator focused on clarity and on visualizing the **fetch–decode–execute** cycle.
-The project includes a **decoder**, **encoder**, **two-pass text assembler** (with labels), **registers/memory**, and an **execution engine** — ready to plug into a **Ratatui** UI.
+The project includes a **decoder**, **encoder**, **two-pass text assembler** (with labels), **registers/memory**, and an **execution engine**
 
 > **Current state (MVP): RV32I essentials**
 >
@@ -17,45 +17,6 @@ The project includes a **decoder**, **encoder**, **two-pass text assembler** (wi
 *Not yet implemented:* `SLT/SLTU`, M extension (`MUL*`), FENCE/CSR, floating point.
 
 ---
-
-## Project layout
-
-```
-src/
-  main.rs
-  falcon/
-    mod.rs
-    arch.rs           # opcodes/consts
-    errors.rs
-    registers.rs      # Cpu (x0..x31, pc)
-    memory.rs         # Bus + Ram
-    instruction.rs    # enum Instruction { ... }
-    exec.rs           # step()/run()
-
-    decoder/          # decode(u32) -> Instruction
-      mod.rs
-      rtype.rs
-      itype.rs
-      stype.rs
-      btype.rs
-      jtype.rs
-
-    encoder/          # encode(Instruction) -> u32
-      mod.rs
-
-    asm/              # assemble(&str, base_pc) -> Vec<u32> (two-pass)
-      mod.rs
-
-    program/
-      mod.rs
-      loader.rs       # load_words/load_bytes
-
-docs/
-  format.md           # Encoding/ISA reference (kept in sync with code)
-```
-
----
-
 ## Getting started
 
 Requirements: stable Rust (via [https://rustup.rs](https://rustup.rs)).
@@ -63,38 +24,6 @@ Requirements: stable Rust (via [https://rustup.rs](https://rustup.rs)).
 ```bash
 cargo run
 ```
-
-The sample `main.rs` assembles a small program and runs until `ecall`:
-
-```rust
-mod falcon;
-
-use falcon::asm::assemble;
-use falcon::program::load_words;
-
-fn main() {
-    let asm = r#"
-        addi x1, x0, 5
-        addi x2, x0, 7
-    loop:
-        add  x3, x1, x2
-        beq  x3, x0, loop
-        ecall
-    "#;
-
-    let mut mem = falcon::Ram::new(64*1024);
-    let mut cpu = falcon::Cpu::default();
-    cpu.pc = 0;
-
-    let words = assemble(asm, cpu.pc).expect("assemble");
-    load_words(&mut mem, cpu.pc, &words);
-
-    while falcon::exec::step(&mut cpu, &mut mem) {}
-    println!("x3 = {}", cpu.x[3]); // expected: 12
-}
-```
-
----
 
 ## Registers & Memory
 
