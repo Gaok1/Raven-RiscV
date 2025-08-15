@@ -43,7 +43,7 @@ src/
     encoder/          # encode(Instruction) -> u32
       mod.rs
 
-    asm/              # assemble(&str, base_pc) -> Vec<u32> (two-pass)
+    asm/              # assemble(&str, base_pc) -> Program {text,data}
       mod.rs
 
     program/
@@ -70,7 +70,7 @@ The sample `main.rs` assembles a small program and runs until `ecall`:
 mod falcon;
 
 use falcon::asm::assemble;
-use falcon::program::load_words;
+use falcon::program::{load_bytes, load_words};
 
 fn main() {
     let asm = r#"
@@ -86,8 +86,9 @@ fn main() {
     let mut cpu = falcon::Cpu::default();
     cpu.pc = 0;
 
-    let words = assemble(asm, cpu.pc).expect("assemble");
-    load_words(&mut mem, cpu.pc, &words);
+    let prog = assemble(asm, cpu.pc).expect("assemble");
+    load_words(&mut mem, cpu.pc, &prog.text);
+    load_bytes(&mut mem, prog.data_base, &prog.data);
 
     while falcon::exec::step(&mut cpu, &mut mem) {}
     println!("x3 = {}", cpu.x[3]); // expected: 12

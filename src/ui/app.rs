@@ -45,6 +45,8 @@ pub struct App {
     mem: Ram,
     mem_size: usize,
     base_pc: u32,
+    show_registers: bool,
+    show_hex: bool,
     is_running: bool,
     last_step_time: Instant,
     step_interval: Duration,
@@ -75,6 +77,8 @@ impl App {
             mem_size: 128 * 1024,
             mem: Ram::new(128 * 1024),
             base_pc,
+            show_registers: true,
+            show_hex: true,
             is_running: false,
             last_step_time: Instant::now(),
             step_interval: Duration::from_millis(80),
@@ -84,7 +88,7 @@ impl App {
 
     fn assemble_and_load(&mut self) {
         use falcon::asm::assemble;
-        use falcon::program::load_words;
+        use falcon::program::{load_bytes, load_words};
 
         self.prev_x = self.cpu.x; // keep snapshot before reset
         self.cpu = Cpu::default();
@@ -93,9 +97,14 @@ impl App {
         self.mem = Ram::new(self.mem_size);
 
         match assemble(&self.editor.text(), self.base_pc) {
-            Ok(words) => {
-                load_words(&mut self.mem, self.base_pc, &words);
-                self.last_assemble_msg = Some(format!("Assembled {} instructions.", words.len()));
+            Ok(prog) => {
+                load_words(&mut self.mem, self.base_pc, &prog.text);
+                load_bytes(&mut self.mem, prog.data_base, &prog.data);
+                self.last_assemble_msg = Some(format!(
+                    "Assembled {} instructions, {} data bytes.",
+                    prog.text.len(),
+                    prog.data.len()
+                ));
                 self.last_compile_ok = Some(true);
                 self.diag_line = None;
                 self.diag_msg = None;
@@ -120,8 +129,12 @@ impl App {
     fn check_assemble(&mut self) {
         use falcon::asm::assemble;
         match assemble(&self.editor.text(), self.base_pc) {
-            Ok(words) => {
-                self.last_assemble_msg = Some(format!("OK: {} instructions", words.len()));
+            Ok(prog) => {
+                self.last_assemble_msg = Some(format!(
+                    "OK: {} instructions, {} data bytes",
+                    prog.text.len(),
+                    prog.data.len()
+                ));
                 self.last_compile_ok = Some(true);
                 self.diag_line = None;
                 self.diag_msg = None;
@@ -266,6 +279,12 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('p'), Tab::Run) => {
                     app.is_running = false;
                 }
+                (KeyCode::Char('t'), Tab::Run) => {
+                    app.show_registers = !app.show_registers;
+                }
+                (KeyCode::Char('f'), Tab::Run) => {
+                    app.show_hex = !app.show_hex;
+                }
 
                 // Docs scroll
                 (KeyCode::Up, Tab::Docs) => {
@@ -374,12 +393,13 @@ fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
     };
     let build = Line::from(vec![Span::raw("Build: "), compile_span]);
 
-    let commands = Line::from(
-        "Commands: Esc=Command  |  i=Insert  |  Ctrl+R=Assemble",
-    );
+    let commands = Line::from("Commands: Esc=Command  |  i=Insert  |  Ctrl+R=Assemble");
 
-    let para = Paragraph::new(vec![mode, build, commands])
-        .block(Block::default().borders(Borders::ALL).title("Editor Status"));
+    let para = Paragraph::new(vec![mode, build, commands]).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Editor Status"),
+    );
     f.render_widget(para, area);
 }
 
@@ -466,45 +486,73 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(status, chunks[0]);
 
     let area = chunks[1];
-    // layout: left (registers), middle (disasm + format-aware bit view), right (memory)
+    // layout: sidebar (regs ou memória) + meio (disasm)
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(38),
-            Constraint::Min(46),
-            Constraint::Length(38),
-        ])
+        .constraints([Constraint::Length(38), Constraint::Min(46)])
         .split(area);
 
-    // --- Left: registers (highlight changed) ---
-    let mut rows = Vec::new();
-    for i in 0..32u8 {
-        let name = reg_name(i);
-        let val = app.cpu.x[i as usize];
-        let changed = val != app.prev_x[i as usize];
-        let style = if changed {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
-        rows.push(Row::new(vec![
-            Cell::from(format!("x{i:02} ({name})")).style(style),
-            Cell::from(format!("0x{val:08x}")).style(style),
-            Cell::from(format!("{val:>10}")).style(style),
-        ]));
-    }
-    let reg_table = Table::new(
-        rows,
-        [
-            Constraint::Length(14),
-            Constraint::Length(14),
-            Constraint::Min(8),
-        ],
-    )
-    .block(Block::default().borders(Borders::ALL).title("Registers"));
-    f.render_widget(reg_table, cols[0]);
+    if app.show_registers {
+        // --- Sidebar: registers (highlight changed) ---
+        let mut rows = Vec::new();
+        for i in 0..32u8 {
+            let name = reg_name(i);
+            let val = app.cpu.x[i as usize];
+            let changed = val != app.prev_x[i as usize];
+            let style = if changed {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            let val_str = if app.show_hex {
+                format!("0x{val:08x}")
+            } else {
+                format!("{val}")
+            };
+            rows.push(Row::new(vec![
+                Cell::from(format!("x{i:02} ({name})")).style(style),
+                Cell::from(val_str).style(style),
+            ]));
+        }
+        let reg_table = Table::new(rows, [Constraint::Length(14), Constraint::Length(20)]).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Registers — t:mem f:fmt s:step r:run p:pause"),
+        );
+        f.render_widget(reg_table, cols[0]);
+    } else {
+        // --- Sidebar: memory window ---
+        let mem_block = Block::default()
+            .borders(Borders::ALL)
+            .title("Memory (around PC) — t:regs f:fmt s:step r:run p:pause");
+        f.render_widget(mem_block.clone(), cols[0]);
 
-    // --- Middle: disassembly + current instruction fields ---
+        let inner = mem_block.inner(cols[0]);
+        let mut items = Vec::new();
+        let base = app.cpu.pc.saturating_sub(32);
+        let lines = inner.height.saturating_sub(2) as u32;
+        for off in (0..lines).map(|i| i * 4) {
+            let addr = base.wrapping_add(off);
+            if in_mem_range(app, addr) {
+                let w = app.mem.load32(addr);
+                let marker = if addr == app.cpu.pc { "▶" } else { " " };
+                let val_str = if app.show_hex {
+                    format!("0x{w:08x}")
+                } else {
+                    format!("{w}")
+                };
+                let mut item = ListItem::new(format!("{marker} 0x{addr:08x}: {val_str}"));
+                if addr == app.cpu.pc {
+                    item = item.style(Style::default().bg(Color::Yellow).fg(Color::Black));
+                }
+                items.push(item);
+            }
+        }
+        let list = List::new(items);
+        f.render_widget(list, inner);
+    }
+
+    // --- Meio: disassembly + current instruction fields ---
     let mid_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -537,33 +585,6 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let fmt = detect_format(cur_word);
     render_bit_fields(f, mid_chunks[1], cur_word, fmt);
     render_field_values(f, mid_chunks[2], cur_word, fmt);
-
-    // --- Right: memory window (hexdump around PC) ---
-    let right = cols[2];
-    let mem_block = Block::default()
-        .borders(Borders::ALL)
-        .title("Memory (around PC) — s:step r:run p:pause");
-    f.render_widget(mem_block.clone(), right);
-
-    let inner = mem_block.inner(right);
-    let mut items = Vec::new();
-    let base = app.cpu.pc.saturating_sub(32);
-    let lines = inner.height.saturating_sub(2) as u32;
-    for off in (0..lines).map(|i| i * 4) {
-        // 1 word per row
-        let addr = base.wrapping_add(off);
-        if in_mem_range(app, addr) {
-            let w = app.mem.load32(addr);
-            let marker = if addr == app.cpu.pc { "▶" } else { " " };
-            let mut item = ListItem::new(format!("{marker} 0x{addr:08x}: 0x{w:08x}"));
-            if addr == app.cpu.pc {
-                item = item.style(Style::default().bg(Color::Yellow).fg(Color::Black));
-            }
-            items.push(item);
-        }
-    }
-    let list = List::new(items);
-    f.render_widget(list, inner);
 }
 
 fn render_docs(f: &mut Frame, area: Rect, app: &App) {
