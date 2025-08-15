@@ -416,6 +416,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     KeyCode::Delete => app.editor.delete_char(),
                     KeyCode::Enter => app.editor.enter(),
                     KeyCode::Tab => app.editor.insert_spaces(4), // use spaces to avoid cursor width issues
+                    KeyCode::End => { app.editor.cursor_col = Editor::char_count(app.editor.current_line())}
                     KeyCode::Char(c) => app.editor.insert_char(c), // includes '1'/'2'
                     _ => {}
                 },
@@ -437,7 +438,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             // Mode toggle back to insert
-            if matches!(key.code, KeyCode::Char('i') | KeyCode::Char('a')) {
+            if matches!(key.code, KeyCode::Char('i') | KeyCode::Enter) {
                 app.mode = EditorMode::Insert;
                 return Ok(false);
             }
