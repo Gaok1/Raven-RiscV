@@ -76,6 +76,18 @@ impl Editor {
         }
     }
 
+    fn delete_char(&mut self) {
+        if self.lines.is_empty() { return; }
+        let len = self.current_line().len();
+        let col = self.cursor_col;
+        if col < len {
+            self.current_line_mut().remove(col);
+        } else if self.cursor_row + 1 < self.lines.len() {
+            let next = self.lines.remove(self.cursor_row + 1);
+            self.current_line_mut().push_str(&next);
+        }
+    }
+
     fn enter(&mut self) {
         self.ensure_line();
         let idx = self.cursor_col.min(self.current_line().len());
@@ -280,6 +292,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     KeyCode::Up => app.editor.move_up(),
                     KeyCode::Down => app.editor.move_down(),
                     KeyCode::Backspace => app.editor.backspace(),
+                    KeyCode::Delete => app.editor.delete_char(),
                     KeyCode::Enter => app.editor.enter(),
                     KeyCode::Tab => app.editor.insert_spaces(4), // use spaces to avoid cursor width issues
                     KeyCode::Char(c) => app.editor.insert_char(c), // includes '1'/'2'
