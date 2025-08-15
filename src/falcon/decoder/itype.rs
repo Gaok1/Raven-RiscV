@@ -12,6 +12,8 @@ pub(super) fn decode_opimm(word:u32)->Result<Instruction,&'static str>{
         0x7 => Instruction::Andi{ rd, rs1, imm },
         0x6 => Instruction::Ori { rd, rs1, imm },
         0x4 => Instruction::Xori{ rd, rs1, imm },
+        0x2 => Instruction::Slti{ rd, rs1, imm },
+        0x3 => Instruction::Sltiu{ rd, rs1, imm },
         0x1 => {
             let shamt = bits(word,24,20) as u8;
             Instruction::Slli { rd, rs1, shamt }

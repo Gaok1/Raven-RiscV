@@ -971,11 +971,23 @@ fn pretty_instr(i: &falcon::instruction::Instruction) -> String {
         Sll { rd, rs1, rs2 } => format!("sll  x{rd}, x{rs1}, x{rs2}"),
         Srl { rd, rs1, rs2 } => format!("srl  x{rd}, x{rs1}, x{rs2}"),
         Sra { rd, rs1, rs2 } => format!("sra  x{rd}, x{rs1}, x{rs2}"),
+        Slt { rd, rs1, rs2 } => format!("slt  x{rd}, x{rs1}, x{rs2}"),
+        Sltu { rd, rs1, rs2 } => format!("sltu x{rd}, x{rs1}, x{rs2}"),
+        Mul { rd, rs1, rs2 } => format!("mul  x{rd}, x{rs1}, x{rs2}"),
+        Mulh { rd, rs1, rs2 } => format!("mulh x{rd}, x{rs1}, x{rs2}"),
+        Mulhsu { rd, rs1, rs2 } => format!("mulhsu x{rd}, x{rs1}, x{rs2}"),
+        Mulhu { rd, rs1, rs2 } => format!("mulhu x{rd}, x{rs1}, x{rs2}"),
+        Div { rd, rs1, rs2 } => format!("div  x{rd}, x{rs1}, x{rs2}"),
+        Divu { rd, rs1, rs2 } => format!("divu x{rd}, x{rs1}, x{rs2}"),
+        Rem { rd, rs1, rs2 } => format!("rem  x{rd}, x{rs1}, x{rs2}"),
+        Remu { rd, rs1, rs2 } => format!("remu x{rd}, x{rs1}, x{rs2}"),
         // I-type
         Addi { rd, rs1, imm } => format!("addi x{rd}, x{rs1}, {imm}"),
         Andi { rd, rs1, imm } => format!("andi x{rd}, x{rs1}, {imm}"),
         Ori { rd, rs1, imm } => format!("ori  x{rd}, x{rs1}, {imm}"),
         Xori { rd, rs1, imm } => format!("xori x{rd}, x{rs1}, {imm}"),
+        Slti { rd, rs1, imm } => format!("slti x{rd}, x{rs1}, {imm}"),
+        Sltiu { rd, rs1, imm } => format!("sltiu x{rd}, x{rs1}, {imm}"),
         Slli { rd, rs1, shamt } => format!("slli x{rd}, x{rs1}, {shamt}"),
         Srli { rd, rs1, shamt } => format!("srli x{rd}, x{rs1}, {shamt}"),
         Srai { rd, rs1, shamt } => format!("srai x{rd}, x{rs1}, {shamt}"),
@@ -1037,10 +1049,11 @@ fn extract_line_info(err: &str) -> (Option<usize>, String) {
 const DOC_TEXT: &str = r#"Falcon ASM — Supported Instructions (RV32I MVP)
 
 R-type (opcode 0x33):
-  ADD, SUB, AND, OR, XOR, SLL, SRL, SRA
+  ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH,
+  MULHSU, MULHU, DIV, DIVU, REM, REMU
 
 I-type (opcode 0x13):
-  ADDI, ANDI, ORI, XORI, SLLI, SRLI, SRAI
+  ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI
 
 Loads (opcode 0x03):
   LB, LH, LW, LBU, LHU
@@ -1063,5 +1076,5 @@ System:
 Notes:
 • PC advances +4 each instruction. Branch/JAL immediates are byte offsets (must be even).
 • Loads/Stores syntax: imm(rs1). Labels supported by 2-pass assembler.
-• Pseudoinstructions: nop, mv, li(12-bit), j, jr, ret.
+• Pseudoinstructions: nop, mv, li(12-bit), j, jr, ret, subi.
 "#;

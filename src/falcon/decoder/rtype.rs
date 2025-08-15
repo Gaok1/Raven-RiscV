@@ -17,6 +17,16 @@ pub(super) fn decode(word:u32)->Result<Instruction,&'static str>{
         (0x00, 0x1) => Instruction::Sll{rd,rs1,rs2},
         (0x00, 0x5) => Instruction::Srl{rd,rs1,rs2},
         (0x20, 0x5) => Instruction::Sra{rd,rs1,rs2},
+        (0x00, 0x2) => Instruction::Slt{rd,rs1,rs2},
+        (0x00, 0x3) => Instruction::Sltu{rd,rs1,rs2},
+        (0x01, 0x0) => Instruction::Mul{rd,rs1,rs2},
+        (0x01, 0x1) => Instruction::Mulh{rd,rs1,rs2},
+        (0x01, 0x2) => Instruction::Mulhsu{rd,rs1,rs2},
+        (0x01, 0x3) => Instruction::Mulhu{rd,rs1,rs2},
+        (0x01, 0x4) => Instruction::Div{rd,rs1,rs2},
+        (0x01, 0x5) => Instruction::Divu{rd,rs1,rs2},
+        (0x01, 0x6) => Instruction::Rem{rd,rs1,rs2},
+        (0x01, 0x7) => Instruction::Remu{rd,rs1,rs2},
         _ => return Err("R-type inválido"),
     })
 }

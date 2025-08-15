@@ -23,12 +23,67 @@ pub fn step<B: Bus>(cpu: &mut Cpu, mem: &mut B) -> bool {
             let s = (cpu.read(rs2) & 0x1F) as u32;
             cpu.write(rd, ((cpu.read(rs1) as i32) >> s) as u32);
         }
+        Instruction::Slt{rd,rs1,rs2} => {
+            let v = (cpu.read(rs1) as i32) < (cpu.read(rs2) as i32);
+            cpu.write(rd, v as u32);
+        }
+        Instruction::Sltu{rd,rs1,rs2} => cpu.write(rd, (cpu.read(rs1) < cpu.read(rs2)) as u32),
+        Instruction::Mul{rd,rs1,rs2} => {
+            let res = (cpu.read(rs1) as i32 as i64).wrapping_mul(cpu.read(rs2) as i32 as i64);
+            cpu.write(rd, res as u32);
+        }
+        Instruction::Mulh{rd,rs1,rs2} => {
+            let res = (cpu.read(rs1) as i32 as i64).wrapping_mul(cpu.read(rs2) as i32 as i64);
+            cpu.write(rd, (res >> 32) as u32);
+        }
+        Instruction::Mulhsu{rd,rs1,rs2} => {
+            let res = (cpu.read(rs1) as i32 as i64).wrapping_mul(cpu.read(rs2) as u64 as i64);
+            cpu.write(rd, (res >> 32) as u32);
+        }
+        Instruction::Mulhu{rd,rs1,rs2} => {
+            let res = (cpu.read(rs1) as u64).wrapping_mul(cpu.read(rs2) as u64);
+            cpu.write(rd, (res >> 32) as u32);
+        }
+        Instruction::Div{rd,rs1,rs2} => {
+            let num = cpu.read(rs1) as i32;
+            let den = cpu.read(rs2) as i32;
+            let val = if den == 0 { -1 }
+                      else if num == i32::MIN && den == -1 { i32::MIN }
+                      else { num.wrapping_div(den) };
+            cpu.write(rd, val as u32);
+        }
+        Instruction::Divu{rd,rs1,rs2} => {
+            let den = cpu.read(rs2);
+            let val = if den == 0 { u32::MAX } else { cpu.read(rs1).wrapping_div(den) };
+            cpu.write(rd, val);
+        }
+        Instruction::Rem{rd,rs1,rs2} => {
+            let num = cpu.read(rs1) as i32;
+            let den = cpu.read(rs2) as i32;
+            let val = if den == 0 { num }
+                      else if num == i32::MIN && den == -1 { 0 }
+                      else { num.wrapping_rem(den) };
+            cpu.write(rd, val as u32);
+        }
+        Instruction::Remu{rd,rs1,rs2} => {
+            let den = cpu.read(rs2);
+            let val = if den == 0 { cpu.read(rs1) }
+                      else { cpu.read(rs1).wrapping_rem(den) };
+            cpu.write(rd, val);
+        }
 
         // I
         Instruction::Addi{rd,rs1,imm} => cpu.write(rd, cpu.read(rs1).wrapping_add(imm as u32)),
         Instruction::Andi{rd,rs1,imm} => cpu.write(rd, cpu.read(rs1) & (imm as u32)),
         Instruction::Ori {rd,rs1,imm} => cpu.write(rd, cpu.read(rs1) | (imm as u32)),
         Instruction::Xori{rd,rs1,imm} => cpu.write(rd, cpu.read(rs1) ^ (imm as u32)),
+        Instruction::Slti{rd,rs1,imm} => {
+            let v = (cpu.read(rs1) as i32) < imm;
+            cpu.write(rd, v as u32);
+        }
+        Instruction::Sltiu{rd,rs1,imm} => {
+            cpu.write(rd, (cpu.read(rs1) < imm as u32) as u32);
+        }
         Instruction::Slli{rd,rs1,shamt} => cpu.write(rd, cpu.read(rs1) << (shamt & 0x1F)),
         Instruction::Srli{rd,rs1,shamt} => cpu.write(rd, cpu.read(rs1) >> (shamt & 0x1F)),
         Instruction::Srai{rd,rs1,shamt} => cpu.write(rd, ((cpu.read(rs1) as i32) >> (shamt & 0x1F)) as u32),

@@ -67,8 +67,56 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
     let get_imm = |t: &str| parse_imm(t).ok_or_else(|| format!("imediato inválido: {t}"));
 
     match mnemonic.as_str() {
+        // ---------- Pseudoinstruções ----------
+        "nop" => {
+            if !ops.is_empty() {
+                return Err("nop não leva operandos".into());
+            }
+            Ok(Addi { rd: 0, rs1: 0, imm: 0 })
+        }
+        "mv" => {
+            if ops.len() != 2 { return Err("esperado 'rd, rs'".into()); }
+            let rd = get_reg(&ops[0])?;
+            let rs = get_reg(&ops[1])?;
+            Ok(Addi { rd, rs1: rs, imm: 0 })
+        }
+        "li" => {
+            if ops.len() != 2 { return Err("esperado 'rd, imm'".into()); }
+            let rd = get_reg(&ops[0])?;
+            let imm = get_imm(&ops[1])?;
+            if !(-2048..=2047).contains(&imm) {
+                return Err("li: imediato fora de 12 bits".into());
+            }
+            Ok(Addi { rd, rs1: 0, imm })
+        }
+        "j" => {
+            if ops.len() != 1 { return Err("j: esperado rótulo/imediato".into()); }
+            Ok(Jal { rd: 0, imm: branch_imm(&ops[0], pc, labels)? })
+        }
+        "jr" => {
+            if ops.len() != 1 { return Err("jr: esperado registrador".into()); }
+            let rs1 = get_reg(&ops[0])?;
+            Ok(Jalr { rd: 0, rs1, imm: 0 })
+        }
+        "ret" => {
+            if !ops.is_empty() { return Err("ret não leva operandos".into()); }
+            Ok(Jalr { rd: 0, rs1: 1, imm: 0 })
+        }
+        "subi" => {
+            if ops.len() != 3 { return Err("esperado 'rd, rs1, imm'".into()); }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[1])?;
+            let imm = get_imm(&ops[2])?;
+            let neg = -imm;
+            if !(-2048..=2047).contains(&neg) {
+                return Err("subi: imediato fora de 12 bits".into());
+            }
+            Ok(Addi { rd, rs1, imm: neg })
+        }
+
         // ---------- R-type ----------
-        "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" => {
+        "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" |
+        "slt" | "sltu" | "mul" | "mulh" | "mulhsu" | "mulhu" | "div" | "divu" | "rem" | "remu" => {
             if ops.len() != 3 {
                 return Err("esperado 'rd, rs1, rs2'".into());
             }
@@ -84,12 +132,22 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
                 "sll" => Sll { rd, rs1, rs2 },
                 "srl" => Srl { rd, rs1, rs2 },
                 "sra" => Sra { rd, rs1, rs2 },
+                "slt" => Slt { rd, rs1, rs2 },
+                "sltu" => Sltu { rd, rs1, rs2 },
+                "mul" => Mul { rd, rs1, rs2 },
+                "mulh" => Mulh { rd, rs1, rs2 },
+                "mulhsu" => Mulhsu { rd, rs1, rs2 },
+                "mulhu" => Mulhu { rd, rs1, rs2 },
+                "div" => Div { rd, rs1, rs2 },
+                "divu" => Divu { rd, rs1, rs2 },
+                "rem" => Rem { rd, rs1, rs2 },
+                "remu" => Remu { rd, rs1, rs2 },
                 _ => unreachable!(),
             })
         }
 
         // ---------- I-type ----------
-        "addi" | "andi" | "ori" | "xori" => {
+        "addi" | "andi" | "ori" | "xori" | "slti" | "sltiu" => {
             if ops.len() != 3 {
                 return Err("esperado 'rd, rs1, imm'".into());
             }
@@ -101,6 +159,8 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
                 "andi" => Andi { rd, rs1, imm },
                 "ori" => Ori { rd, rs1, imm },
                 "xori" => Xori { rd, rs1, imm },
+                "slti" => Slti { rd, rs1, imm },
+                "sltiu" => Sltiu { rd, rs1, imm },
                 _ => unreachable!(),
             })
         }
