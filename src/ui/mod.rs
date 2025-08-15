@@ -1,4 +1,6 @@
 mod app;
 pub mod editor;
+mod input;
+mod view;
 
-pub use app::{App, run};
+pub use app::{run, App};
