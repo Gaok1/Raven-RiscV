@@ -103,7 +103,9 @@ impl App {
             Ok(prog) => {
                 load_words(&mut self.mem, self.base_pc, &prog.text);
                 load_bytes(&mut self.mem, prog.data_base, &prog.data);
+
                 self.data_base = prog.data_base;
+
                 self.last_assemble_msg = Some(format!(
                     "Assembled {} instructions, {} data bytes.",
                     prog.text.len(),
@@ -461,7 +463,6 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         f.set_cursor_position((cursor_x, cursor_y));
     }
 }
-
 fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -629,6 +630,7 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     render_field_values(f, mid_chunks[2], cur_word, fmt);
 }
 
+
 fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     let view = if app.show_registers { "REGS" } else { "RAM" };
     let fmt = if app.show_hex { "HEX" } else { "DEC" };
@@ -638,6 +640,7 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     let para = Paragraph::new(vec![line1, line2])
         .block(Block::default().borders(Borders::ALL).title("Run Controls"));
     f.render_widget(para, area);
+
 }
 
 fn render_docs(f: &mut Frame, area: Rect, app: &App) {
