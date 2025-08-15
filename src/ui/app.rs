@@ -45,6 +45,7 @@ pub struct App {
     mem: Ram,
     mem_size: usize,
     base_pc: u32,
+    data_base: u32,
     show_registers: bool,
     show_hex: bool,
     is_running: bool,
@@ -60,6 +61,7 @@ impl App {
         let mut cpu = Cpu::default();
         let base_pc = 0x0000_0000;
         cpu.pc = base_pc;
+        let data_base = base_pc + 0x1000;
         Self {
             tab: Tab::Editor,
             mode: EditorMode::Insert,
@@ -77,6 +79,7 @@ impl App {
             mem_size: 128 * 1024,
             mem: Ram::new(128 * 1024),
             base_pc,
+            data_base,
             show_registers: true,
             show_hex: true,
             is_running: false,
@@ -100,6 +103,9 @@ impl App {
             Ok(prog) => {
                 load_words(&mut self.mem, self.base_pc, &prog.text);
                 load_bytes(&mut self.mem, prog.data_base, &prog.data);
+
+                self.data_base = prog.data_base;
+
                 self.last_assemble_msg = Some(format!(
                     "Assembled {} instructions, {} data bytes.",
                     prog.text.len(),
@@ -457,13 +463,17 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         f.set_cursor_position((cursor_x, cursor_y));
     }
 }
-
 fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(3), // build status
+            Constraint::Length(4), // toggle status
+            Constraint::Min(0),
+        ])
         .split(area);
 
+    // Build/assemble status
     let (msg, style) = if app.last_compile_ok == Some(false) {
         let line = app.diag_line.map(|n| n + 1).unwrap_or(0);
         let text = app.diag_line_text.as_deref().unwrap_or("");
@@ -485,15 +495,23 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Build"));
     f.render_widget(status, chunks[0]);
 
-    let area = chunks[1];
-    // layout: sidebar (regs ou memória) + meio (disasm)
+    // Run control status
+    render_run_status(f, chunks[1], app);
+
+    // Main area
+    let area = chunks[2];
+    // layout: left=regs/RAM, middle=instruction memory, right=details
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(38), Constraint::Min(46)])
+        .constraints([
+            Constraint::Length(38), // regs or RAM
+            Constraint::Length(38), // instruction memory
+            Constraint::Min(46),    // current instruction info
+        ])
         .split(area);
 
+    // --- Left sidebar: registers or RAM memory ---
     if app.show_registers {
-        // --- Sidebar: registers (highlight changed) ---
         let mut rows = Vec::new();
         for i in 0..32u8 {
             let name = reg_name(i);
@@ -517,34 +535,29 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
         let reg_table = Table::new(rows, [Constraint::Length(14), Constraint::Length(20)]).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Registers — t:mem f:fmt s:step r:run p:pause"),
+                .title("Registers — t:ram f:fmt s:step r:run p:pause"),
         );
         f.render_widget(reg_table, cols[0]);
     } else {
-        // --- Sidebar: memory window ---
         let mem_block = Block::default()
             .borders(Borders::ALL)
-            .title("Memory (around PC) — t:regs f:fmt s:step r:run p:pause");
+            .title("RAM Memory — t:regs f:fmt s:step r:run p:pause");
         f.render_widget(mem_block.clone(), cols[0]);
 
         let inner = mem_block.inner(cols[0]);
         let mut items = Vec::new();
-        let base = app.cpu.pc.saturating_sub(32);
+        let base = app.data_base;
         let lines = inner.height.saturating_sub(2) as u32;
         for off in (0..lines).map(|i| i * 4) {
             let addr = base.wrapping_add(off);
             if in_mem_range(app, addr) {
                 let w = app.mem.load32(addr);
-                let marker = if addr == app.cpu.pc { "▶" } else { " " };
                 let val_str = if app.show_hex {
                     format!("0x{w:08x}")
                 } else {
                     format!("{w}")
                 };
-                let mut item = ListItem::new(format!("{marker} 0x{addr:08x}: {val_str}"));
-                if addr == app.cpu.pc {
-                    item = item.style(Style::default().bg(Color::Yellow).fg(Color::Black));
-                }
+                let item = ListItem::new(format!("0x{addr:08x}: {val_str}"));
                 items.push(item);
             }
         }
@@ -552,7 +565,37 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(list, inner);
     }
 
-    // --- Meio: disassembly + current instruction fields ---
+    // --- Middle column: instruction memory around PC ---
+    let imem_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Instruction Memory");
+    f.render_widget(imem_block.clone(), cols[1]);
+    let inner = imem_block.inner(cols[1]);
+    let mut items = Vec::new();
+    let base = app.cpu.pc.saturating_sub(32);
+    let lines = inner.height.saturating_sub(2) as u32;
+    for off in (0..lines).map(|i| i * 4) {
+        let addr = base.wrapping_add(off);
+        if in_mem_range(app, addr) {
+            let w = app.mem.load32(addr);
+            let marker = if addr == app.cpu.pc { "▶" } else { " " };
+            let val_str = if app.show_hex {
+                format!("0x{w:08x}")
+            } else {
+                format!("{w}")
+            };
+            let dis = disasm_word(w);
+            let mut item = ListItem::new(format!("{marker} 0x{addr:08x}: {val_str}  {dis}"));
+            if addr == app.cpu.pc {
+                item = item.style(Style::default().bg(Color::Yellow).fg(Color::Black));
+            }
+            items.push(item);
+        }
+    }
+    let list = List::new(items);
+    f.render_widget(list, inner);
+
+    // --- Right column: current instruction details ---
     let mid_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -560,7 +603,7 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(6),
             Constraint::Min(4),
         ])
-        .split(cols[1]);
+        .split(cols[2]);
 
     let (cur_word, disasm_str) = if in_mem_range(app, app.cpu.pc) {
         let w = app.mem.load32(app.cpu.pc);
@@ -585,6 +628,19 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let fmt = detect_format(cur_word);
     render_bit_fields(f, mid_chunks[1], cur_word, fmt);
     render_field_values(f, mid_chunks[2], cur_word, fmt);
+}
+
+
+fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
+    let view = if app.show_registers { "REGS" } else { "RAM" };
+    let fmt = if app.show_hex { "HEX" } else { "DEC" };
+    let run = if app.is_running { "RUN" } else { "PAUSE" };
+    let line1 = Line::from(format!("View: {view}  Format: {fmt}  State: {run}"));
+    let line2 = Line::from("Commands: t=toggle view  f=toggle format  s=step  r=run  p=pause");
+    let para = Paragraph::new(vec![line1, line2])
+        .block(Block::default().borders(Borders::ALL).title("Run Controls"));
+    f.render_widget(para, area);
+
 }
 
 fn render_docs(f: &mut Frame, area: Rect, app: &App) {
