@@ -578,7 +578,6 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         }
         rows.push(line);
     }
-
     let mut block = Block::default()
         .borders(Borders::ALL)
         .title("Editor (RISC-V ASM) — Esc: Command, i: Insert, Ctrl+R: Assemble");
@@ -592,6 +591,7 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         block = block.title(flag);
     }
     let para = Paragraph::new(rows).block(block);
+
     f.render_widget(para, area);
 
     // Draw cursor (single cell, no wrapping)
