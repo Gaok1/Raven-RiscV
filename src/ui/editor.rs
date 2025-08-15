@@ -10,11 +10,11 @@ pub struct Editor {
 impl Editor {
     pub fn with_sample() -> Self {
         let sample = vec![
-            "addi x1, x0, 5".to_string(),
-            "addi x2, x0, 7".to_string(),
-            "loop:".to_string(),
-            "  add  x3, x1, x2".to_string(),
-            "  beq  x3, x0, loop".to_string(),
+            ".data".to_string(),
+            "arr: .byte 1,2,3,4".to_string(),
+            ".text".to_string(),
+            "  la t0, arr".to_string(),
+            "  lb t1, 0(t0)".to_string(),
             "  ecall".to_string(),
         ];
         Self {
