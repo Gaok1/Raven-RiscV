@@ -6,10 +6,16 @@ pub enum Instruction {
     And{ rd:u8, rs1:u8, rs2:u8 }, Or{ rd:u8, rs1:u8, rs2:u8 },
     Xor{ rd:u8, rs1:u8, rs2:u8 }, Sll{ rd:u8, rs1:u8, rs2:u8 },
     Srl{ rd:u8, rs1:u8, rs2:u8 }, Sra{ rd:u8, rs1:u8, rs2:u8 },
+    Slt{ rd:u8, rs1:u8, rs2:u8 }, Sltu{ rd:u8, rs1:u8, rs2:u8 },
+    Mul{ rd:u8, rs1:u8, rs2:u8 }, Mulh{ rd:u8, rs1:u8, rs2:u8 },
+    Mulhsu{ rd:u8, rs1:u8, rs2:u8 }, Mulhu{ rd:u8, rs1:u8, rs2:u8 },
+    Div{ rd:u8, rs1:u8, rs2:u8 }, Divu{ rd:u8, rs1:u8, rs2:u8 },
+    Rem{ rd:u8, rs1:u8, rs2:u8 }, Remu{ rd:u8, rs1:u8, rs2:u8 },
 
     // I-type
     Addi{ rd:u8, rs1:u8, imm:i32 }, Andi{ rd:u8, rs1:u8, imm:i32 },
     Ori{ rd:u8, rs1:u8, imm:i32 }, Xori{ rd:u8, rs1:u8, imm:i32 },
+    Slti{ rd:u8, rs1:u8, imm:i32 }, Sltiu{ rd:u8, rs1:u8, imm:i32 },
     Slli{ rd:u8, rs1:u8, shamt:u8 }, Srli{ rd:u8, rs1:u8, shamt:u8 }, Srai{ rd:u8, rs1:u8, shamt:u8 },
     Lb{ rd:u8, rs1:u8, imm:i32 }, Lh{ rd:u8, rs1:u8, imm:i32 }, Lw{ rd:u8, rs1:u8, imm:i32 },
     Lbu{ rd:u8, rs1:u8, imm:i32 }, Lhu{ rd:u8, rs1:u8, imm:i32 },

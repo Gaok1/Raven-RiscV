@@ -8,8 +8,8 @@ Falcon ASM is an educational RISC-V emulator. This document describes **what is 
 - and the rules for the text assembler → bytes (with labels and MVP pseudoinstructions).
 
 > **Current state (MVP):** implements **essential RV32I**:
-> - R-type: `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA`
-> - I-type (OP-IMM): `ADDI, ANDI, ORI, XORI, SLLI, SRLI, SRAI`
+> - R-type: `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
+> - I-type (OP-IMM): `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
 > - Loads: `LB, LH, LW, LBU, LHU`
 > - Stores: `SB, SH, SW`
 > - Branches: `BEQ, BNE, BLT, BGE, BLTU, BGEU`
@@ -17,7 +17,7 @@ Falcon ASM is an educational RISC-V emulator. This document describes **what is 
 > - JALR
 > - SYSTEM: `ECALL`, `EBREAK` (treated as HALT in MVP)
 >
-> **Not yet implemented:** `SLT/SLTU`, M-extension (`MUL*`), FENCE/CSR, FP.
+> **Not yet implemented:** FENCE/CSR, FP.
 
 ---
 
@@ -210,6 +210,7 @@ Falcon ASM is an educational RISC-V emulator. This document describes **what is 
   - `j label` → `jal x0, label`
   - `jr rs1` → `jalr x0, rs1, 0`
   - `ret` → `jalr x0, ra, 0` (ra=x1)
+  - `subi rd, rs1, imm` → `addi rd, rs1, -imm`
 
 ---
 
