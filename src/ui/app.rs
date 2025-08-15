@@ -257,11 +257,6 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(true);
             }
 
-            // Mode toggle back to insert
-            if matches!(key.code, KeyCode::Char('i') | KeyCode::Enter) {
-                app.mode = EditorMode::Insert;
-                return Ok(false);
-            }
 
             // Global assemble
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
@@ -270,6 +265,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             match (key.code, app.tab) {
+                (KeyCode::Char('i') | KeyCode::Enter, Tab::Editor) => {
+                    app.mode = EditorMode::Insert;
+                    return Ok(false);
+                }
                 // Tab switching only in command mode
                 (KeyCode::Char('1'), _) => app.tab = Tab::Editor,
                 (KeyCode::Char('2'), _) => app.tab = Tab::Run,
@@ -318,7 +317,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 }
 
 fn ui(f: &mut Frame, app: &App) {
-    let size = f.size();
+    let size = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

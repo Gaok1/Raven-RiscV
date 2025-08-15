@@ -12,5 +12,6 @@ fn main() -> io::Result<()> {
     if let Err(e) = res {
         eprintln!("error: {e}");
     }
+    
     Ok(())
 }
