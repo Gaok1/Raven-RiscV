@@ -578,16 +578,20 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         }
         rows.push(line);
     }
-
-    let mut title = "Editor (RISC-V ASM) — Esc: Command, i: Insert, Ctrl+R: Assemble".to_string();
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .title("Editor (RISC-V ASM) — Esc: Command, i: Insert, Ctrl+R: Assemble");
     if let Some(ok) = app.last_compile_ok {
-        if ok {
-            title.push_str(" [OK]");
+        let (txt, color) = if ok {
+            ("[OK]", Color::Green)
         } else {
-            title.push_str(" [ERROR]");
-        }
+            ("[ERROR]", Color::Red)
+        };
+        let flag = Line::styled(txt, Style::default().fg(color)).right_aligned();
+        block = block.title(flag);
     }
-    let para = Paragraph::new(rows).block(Block::default().borders(Borders::ALL).title(title));
+    let para = Paragraph::new(rows).block(block);
+
     f.render_widget(para, area);
 
     // Draw cursor (single cell, no wrapping)
