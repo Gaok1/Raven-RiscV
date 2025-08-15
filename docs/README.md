@@ -72,4 +72,10 @@ cargo run
 See `docs/format.md` for full bit layouts and funct3/funct7 tables exactly as implemented.
 
 ---
+# Screen demo
+<img width="1914" height="991" alt="image" src="https://github.com/user-attachments/assets/e1cab8b1-2a1c-4413-ae04-bacf26d48e4f" />
+
+<img width="1915" height="999" alt="image" src="https://github.com/user-attachments/assets/c1f77831-4a61-4a1b-ac8d-48ea1772f32b" />
+
+<img width="1917" height="997" alt="image" src="https://github.com/user-attachments/assets/2f163a34-a22b-4306-bc06-07ceedb86b7f" />
 
