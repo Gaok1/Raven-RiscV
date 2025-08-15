@@ -222,10 +222,12 @@ struct App {
     last_edit_at: Option<Instant>,
     auto_check_delay: Duration,
     last_assemble_msg: Option<String>,
+    last_compile_ok: Option<bool>,
 
     // Compile diagnostics
     diag_line: Option<usize>, // 0-based line index
     diag_msg: Option<String>,
+    diag_line_text: Option<String>,
 
     // Execution state
     cpu: Cpu,
@@ -254,8 +256,10 @@ impl App {
             last_edit_at: Some(Instant::now()),
             auto_check_delay: Duration::from_millis(400),
             last_assemble_msg: None,
+            last_compile_ok: None,
             diag_line: None,
             diag_msg: None,
+            diag_line_text: None,
             cpu,
             prev_x: [0; 32],
             mem_size: 128 * 1024,
@@ -282,13 +286,17 @@ impl App {
             Ok(words) => {
                 load_words(&mut self.mem, self.base_pc, &words);
                 self.last_assemble_msg = Some(format!("Assembled {} instructions.", words.len()));
+                self.last_compile_ok = Some(true);
                 self.diag_line = None;
                 self.diag_msg = None;
+                self.diag_line_text = None;
             }
             Err(e) => {
                 let (line, msg) = extract_line_info(&e);
                 self.diag_line = line;
                 self.diag_msg = Some(msg.clone());
+                self.diag_line_text = line.and_then(|l| self.editor.lines.get(l).cloned());
+                self.last_compile_ok = Some(false);
                 self.last_assemble_msg = Some(format!(
                     "Assemble error at line {}: {}",
                     line.map(|n| n + 1).unwrap_or(0),
@@ -304,13 +312,17 @@ impl App {
         match assemble(&self.editor.text(), self.base_pc) {
             Ok(words) => {
                 self.last_assemble_msg = Some(format!("OK: {} instructions", words.len()));
+                self.last_compile_ok = Some(true);
                 self.diag_line = None;
                 self.diag_msg = None;
+                self.diag_line_text = None;
             }
             Err(e) => {
                 let (line, msg) = extract_line_info(&e);
                 self.diag_line = line;
-                self.diag_msg = Some(msg);
+                self.diag_msg = Some(msg.clone());
+                self.diag_line_text = line.and_then(|l| self.editor.lines.get(l).cloned());
+                self.last_compile_ok = Some(false);
             }
         }
         self.editor_dirty = false;
@@ -386,7 +398,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 app.mode = EditorMode::Command;
                 return Ok(false);
             }
-            
+
             // Assemble (Ctrl+R) também no modo Insert
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
                 app.assemble_and_load();
@@ -412,6 +424,11 @@ fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
             app.editor_dirty = true;
             app.last_edit_at = Some(Instant::now());
+            app.diag_line = None;
+            app.diag_msg = None;
+            app.diag_line_text = None;
+            app.last_compile_ok = None;
+            app.last_assemble_msg = None;
         }
         EditorMode::Command => {
             // Quit in command mode only
@@ -553,16 +570,28 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     for i in start..end {
         let mut line = Line::from(highlight_line(&app.editor.lines[i]));
         if Some(i) == app.diag_line {
-            line = line.style(Style::default().bg(Color::DarkGray).fg(Color::Red));
+            line = line.style(
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::UNDERLINED),
+            );
         }
         rows.push(line);
     }
 
-    let para = Paragraph::new(rows).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Editor (RISC-V ASM) — Esc: Command, i: Insert, Ctrl+R: Assemble"),
-    );
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .title("Editor (RISC-V ASM) — Esc: Command, i: Insert, Ctrl+R: Assemble");
+    if let Some(ok) = app.last_compile_ok {
+        let (txt, color) = if ok {
+            ("[OK]", Color::Green)
+        } else {
+            ("[ERROR]", Color::Red)
+        };
+        let flag = Line::styled(txt, Style::default().fg(color)).right_aligned();
+        block = block.title(flag);
+    }
+    let para = Paragraph::new(rows).block(block);
     f.render_widget(para, area);
 
     // Draw cursor (single cell, no wrapping)
@@ -576,6 +605,33 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_run(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    let (msg, style) = if app.last_compile_ok == Some(false) {
+        let line = app.diag_line.map(|n| n + 1).unwrap_or(0);
+        let text = app.diag_line_text.as_deref().unwrap_or("");
+        let err = app.diag_msg.as_deref().unwrap_or("");
+        (
+            format!("Error line {}: {} ({})", line, text, err),
+            Style::default().bg(Color::Red).fg(Color::Black),
+        )
+    } else if app.last_compile_ok == Some(true) {
+        (
+            app.last_assemble_msg.clone().unwrap_or_default(),
+            Style::default().bg(Color::Green).fg(Color::Black),
+        )
+    } else {
+        ("Not compiled".to_string(), Style::default())
+    };
+    let status = Paragraph::new(msg)
+        .style(style)
+        .block(Block::default().borders(Borders::ALL).title("Build"));
+    f.render_widget(status, chunks[0]);
+
+    let area = chunks[1];
     // layout: left (registers), middle (disasm + format-aware bit view), right (memory)
     let cols = Layout::default()
         .direction(Direction::Horizontal)
