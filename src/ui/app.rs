@@ -326,29 +326,61 @@ fn ui(f: &mut Frame, app: &App) {
     f.render_widget(tabs, chunks[0]);
 
     match app.tab {
-        Tab::Editor => render_editor(f, chunks[1], app),
+        Tab::Editor => {
+            let editor_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(5), Constraint::Min(3)])
+                .split(chunks[1]);
+            render_editor_status(f, editor_chunks[0], app);
+            render_editor(f, editor_chunks[1], app);
+        }
         Tab::Run => render_run(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
     }
 
-    // Status line (mode + diagnostics)
+    // Bottom status line with mode and tab hints
     let mode = match app.mode {
         EditorMode::Insert => "INSERT",
         EditorMode::Command => "COMMAND",
     };
-    let mut status = format!(
+    let status = format!(
         "Mode: {}  |  Ctrl+R=Assemble  |  1/2/3 switch tabs (Command mode)",
         mode
     );
-    if let Some(ref d) = app.diag_msg {
-        let line = app.diag_line.map(|n| n + 1).unwrap_or(0);
-        status.push_str(&format!("  |  Error line {}: {}", line, d));
-    } else if let Some(ref ok) = app.last_assemble_msg {
-        status.push_str(&format!("  |  {}", ok));
-    }
 
     let status = Paragraph::new(status).block(Block::default().borders(Borders::ALL));
     f.render_widget(status, chunks[2]);
+}
+
+fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
+    let (mode_text, mode_color) = match app.mode {
+        EditorMode::Insert => ("INSERT", Color::Green),
+        EditorMode::Command => ("COMMAND", Color::Blue),
+    };
+    let mode = Line::from(vec![
+        Span::raw("Mode: "),
+        Span::styled(mode_text, Style::default().fg(mode_color)),
+    ]);
+
+    let compile_span = if let Some(msg) = &app.last_assemble_msg {
+        let color = if app.last_compile_ok == Some(true) {
+            Color::Green
+        } else {
+            Color::Red
+        };
+        Span::styled(msg.clone(), Style::default().fg(color))
+    } else {
+        Span::raw("Not compiled")
+    };
+    let build = Line::from(vec![Span::raw("Build: "), compile_span]);
+
+    let commands = Line::from(
+        "Commands: Esc=Command  |  i=Insert  |  Ctrl+R=Assemble",
+    );
+
+    let para = Paragraph::new(vec![mode, build, commands])
+        .block(Block::default().borders(Borders::ALL).title("Editor Status"));
+    f.render_widget(para, area);
 }
 
 fn render_editor(f: &mut Frame, area: Rect, app: &App) {
@@ -523,7 +555,11 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
         if in_mem_range(app, addr) {
             let w = app.mem.load32(addr);
             let marker = if addr == app.cpu.pc { "▶" } else { " " };
-            items.push(ListItem::new(format!("{marker} 0x{addr:08x}: 0x{w:08x}")));
+            let mut item = ListItem::new(format!("{marker} 0x{addr:08x}: 0x{w:08x}"));
+            if addr == app.cpu.pc {
+                item = item.style(Style::default().bg(Color::Yellow).fg(Color::Black));
+            }
+            items.push(item);
         }
     }
     let list = List::new(items);
