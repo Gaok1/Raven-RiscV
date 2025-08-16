@@ -1,4 +1,5 @@
 # Falcon ASM 🦅 – Emulador Educacional RISC-V (RV32I)
+<img width="500" height="400" alt="image" src="https://github.com/user-attachments/assets/ed5354ba-93bc-4717-ab77-8993f1c3abc5" />
 
 Falcon ASM é um emulador escrito em Rust com foco em clareza e aprendizado. O objetivo é expor o ciclo **fetch → decode → execute** e oferecer uma visão completa de como um processador RISC-V básico funciona.
 
