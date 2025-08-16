@@ -179,12 +179,12 @@ fn handle_file_dialog_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 app.file_dialog = None;
             }
             KeyCode::Enter => {
-                let mut path = fd.path.clone();
-                if !path.ends_with(".fas") {
-                    path.push_str(".fas");
+                let mut filename = fd.filename.clone();
+                if !filename.ends_with(".fas") {
+                    filename.push_str(".fas");
                 }
                 match fd.mode {
-                    FileDialogMode::Import => match std::fs::read_to_string(&path) {
+                    FileDialogMode::Import => match std::fs::read_to_string(&filename) {
                         Ok(content) => {
                             app.editor.lines = content.lines().map(|s| s.to_string()).collect();
                             app.editor.cursor_row = 0;
@@ -195,7 +195,7 @@ fn handle_file_dialog_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                             fd.error = Some(e.to_string());
                         }
                     },
-                    FileDialogMode::Export => match std::fs::write(&path, app.editor.text()) {
+                    FileDialogMode::Export => match std::fs::write(&filename, app.editor.text()) {
                         Ok(_) => {
                             app.file_dialog = None;
                         }
@@ -206,11 +206,11 @@ fn handle_file_dialog_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 }
             }
             KeyCode::Backspace => {
-                fd.path.pop();
+                fd.filename.pop();
             }
             KeyCode::Char(c) => {
                 if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    fd.path.push(c);
+                    fd.filename.push(c);
                 }
             }
             _ => {}
