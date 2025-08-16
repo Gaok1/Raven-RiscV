@@ -400,13 +400,18 @@ fn parse_la(s: &str, labels: &HashMap<String, u32>) -> Result<(Instruction, Inst
     let addr = *labels
         .get(&ops[1])
         .ok_or_else(|| format!("rótulo não encontrado: {}", ops[1]))? as i32;
-    let hi = ((addr + 0x800) >> 12) as i32;
-    let lo = addr & 0xfff;
+
+    // Dividimos o endereço em parte alta (alinhada a 12 bits) e parte baixa.
+    // A instrução `lui` carrega os 20 bits superiores já deslocados, portanto
+    // precisamos deslocar a parte alta antes de gerar o opcode.
+    let hi = ((addr + 0x800) >> 12) << 12; // parte alta alinhada
+    let lo = addr - hi; // parte baixa de 12 bits
     let lo_signed = if lo & 0x800 != 0 {
-        lo as i32 - 0x1000
+        lo - 0x1000
     } else {
-        lo as i32
+        lo
     };
+
     Ok((
         Instruction::Lui { rd, imm: hi },
         Instruction::Addi {
@@ -527,4 +532,28 @@ fn store_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
     let rs2 = parse_reg(&ops[0]).ok_or("rs2 inválido")?;
     let (imm, rs1) = parse_memop(&ops[1])?;
     Ok((rs2, imm, rs1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::falcon::encoder::encode;
+
+    #[test]
+    fn la_generates_lui_addi_pair() {
+        // Assembla um programa simples usando 'la' para um símbolo em .data
+        let asm = ".data\nvar: .word 0\n.text\nla t0, var";
+        let prog = assemble(asm, 0).expect("assemble");
+
+        // Devem ser emitidas duas instruções: LUI e ADDI
+        assert_eq!(prog.text.len(), 2);
+
+        let expected_lui =
+            encode(Instruction::Lui { rd: 5, imm: 0x1000 }).expect("encode lui");
+        let expected_addi =
+            encode(Instruction::Addi { rd: 5, rs1: 5, imm: 0 }).expect("encode addi");
+
+        assert_eq!(prog.text[0], expected_lui);
+        assert_eq!(prog.text[1], expected_addi);
+    }
 }
