@@ -23,13 +23,13 @@ Suporte ao subconjunto essencial do **RV32I**:
 
 *Não implementados:* instruções FENCE/CSR e ponto flutuante.
 
-## 🧱 Tamanho de palavra, endianness e PC
+## Tamanho de palavra, endianness e PC
 
 - **Palavra:** 32 bits
 - **Endianness:** little-endian (`{to,from}_le_bytes`)
 - **PC:** avança **+4** por instrução. Branches e jumps usam deslocamento relativo ao endereço da instrução.
 
-## 🧠 Registradores
+## Registradores
 
 - Registradores `x0..x31`; gravações em `x0` são ignoradas.
 - Aliases aceitos pelo montador: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`.
@@ -122,7 +122,7 @@ Outros formatos (I, S, B, U, J) reorganizam campos e imediatos.
 - `OPC_JALR  = 0x67`
 - `OPC_SYSTEM= 0x73`
 
-## 🧩 FUNCT3/FUNCT7
+## FUNCT3/FUNCT7
 
 ### R-type (opcode 0x33)
 
@@ -173,7 +173,7 @@ Outros formatos (I, S, B, U, J) reorganizam campos e imediatos.
 
 - `ECALL` (`0x00000073`) e `EBREAK` (`0x00100073`) terminam a execução.
 
-## 🛠️ Regras do Montador
+## Regras do Montador
 
 - **Duas passagens**: a primeira coleta rótulos (`label:`); a segunda resolve e codifica.
 - **Comentários**: qualquer coisa após `;` ou `#` é ignorada.
@@ -196,7 +196,7 @@ Outros formatos (I, S, B, U, J) reorganizam campos e imediatos.
   - `ret` → `jalr x0, ra, 0`
   - `la rd, label` → gera `lui`/`addi` para carregar o endereço de dados
 
-## ✅ Exemplo rápido
+## Exemplo de código
 
 ```asm
 .data
