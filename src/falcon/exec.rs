@@ -157,3 +157,43 @@ pub fn run<B: crate::falcon::memory::Bus>(cpu: &mut crate::falcon::registers::Cp
     }
     steps
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::falcon::{Ram, instruction::Instruction};
+    use crate::falcon::encoder;
+
+    #[test]
+    fn ecall_halts() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(4);
+        let inst = encoder::encode(Instruction::Ecall).unwrap();
+        mem.store32(0, inst);
+        assert!(!step(&mut cpu, &mut mem));
+    }
+
+    #[test]
+    fn ebreak_halts() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(4);
+        let inst = encoder::encode(Instruction::Ebreak).unwrap();
+        mem.store32(0, inst);
+        assert!(!step(&mut cpu, &mut mem));
+    }
+
+    #[test]
+    fn sw_stores_word() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        cpu.write(1, 0xDEADBEEF); // valor a ser armazenado
+        cpu.write(2, 0x20);       // endereço base
+        let sw = encoder::encode(Instruction::Sw { rs2: 1, rs1: 2, imm: 0 }).unwrap();
+        let ecall = encoder::encode(Instruction::Ecall).unwrap();
+        mem.store32(0, sw);
+        mem.store32(4, ecall);
+        assert!(step(&mut cpu, &mut mem));
+        assert_eq!(mem.load32(0x20), 0xDEADBEEF);
+        assert!(!step(&mut cpu, &mut mem));
+    }
+}

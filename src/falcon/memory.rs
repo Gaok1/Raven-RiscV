@@ -26,3 +26,15 @@ impl Bus for Ram {
         let b=v.to_le_bytes(); for i in 0..4 { self.store8(a+i as u32, b[i]); }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_and_load_word() {
+        let mut ram = Ram::new(64);
+        ram.store32(0x10, 0xDEADBEEF);
+        assert_eq!(ram.load32(0x10), 0xDEADBEEF);
+    }
+}
