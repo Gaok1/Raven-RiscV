@@ -20,6 +20,13 @@ pub(super) enum EditorMode {
     Command,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub(super) enum MemRegion {
+    Data,
+    Stack,
+    Custom,
+}
+
 pub struct App {
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
@@ -43,6 +50,8 @@ pub struct App {
     pub(super) mem_size: usize,
     pub(super) base_pc: u32,
     pub(super) data_base: u32,
+    pub(super) mem_view_addr: u32,
+    pub(super) mem_region: MemRegion,
     pub(super) show_registers: bool,
     pub(super) show_hex: bool,
     pub(super) is_running: bool,
@@ -77,6 +86,8 @@ impl App {
             mem: Ram::new(128 * 1024),
             base_pc,
             data_base,
+            mem_view_addr: data_base,
+            mem_region: MemRegion::Data,
             show_registers: true,
             show_hex: true,
             is_running: false,
@@ -102,6 +113,8 @@ impl App {
                 load_bytes(&mut self.mem, prog.data_base, &prog.data);
 
                 self.data_base = prog.data_base;
+                self.mem_view_addr = prog.data_base;
+                self.mem_region = MemRegion::Data;
 
                 self.last_assemble_msg = Some(format!(
                     "Assembled {} instructions, {} data bytes.",
