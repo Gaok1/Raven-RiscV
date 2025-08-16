@@ -15,7 +15,7 @@ pub(super) enum FileDialogMode {
 
 pub(super) struct FileDialog {
     pub mode: FileDialogMode,
-    pub path: String,
+    pub filename: String,
     pub error: Option<String>,
 }
 
@@ -23,7 +23,7 @@ impl FileDialog {
     pub fn new(mode: FileDialogMode) -> Self {
         Self {
             mode,
-            path: String::new(),
+            filename: String::new(),
             error: None,
         }
     }

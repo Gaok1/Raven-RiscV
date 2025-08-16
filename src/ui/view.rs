@@ -1,10 +1,10 @@
 use super::app::{App, EditorMode, FileDialogMode, MemRegion, Tab};
 use crate::falcon::{self, memory::Bus};
-use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap,
 };
+use ratatui::Frame;
 use std::cmp::min;
 
 pub fn ui(f: &mut Frame, app: &App) {
@@ -59,7 +59,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         EditorMode::Command => "COMMAND",
     };
     let status = format!(
-        "Mode: {}  |  Ctrl+R=Assemble  |  1/2/3 switch tabs (Command mode)",
+        "Mode: {}  |  Ctrl+R=Assemble  |  Ctrl+O=Import  |  Ctrl+S=Export  |  1/2/3 switch tabs (Command mode)",
         mode
     );
 
@@ -93,7 +93,9 @@ fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
     };
     let build = Line::from(vec![Span::raw("Build: "), compile_span]);
 
-    let commands = Line::from("Commands: Esc=Command  |  i=Insert  |  Ctrl+R=Assemble");
+    let commands = Line::from(
+        "Commands: Esc=Command  |  i=Insert  |  Ctrl+R=Assemble  |  Ctrl+O=Import  |  Ctrl+S=Export",
+    );
 
     let para = Paragraph::new(vec![mode, build, commands]).block(
         Block::default()
@@ -166,19 +168,19 @@ fn render_file_dialog(f: &mut Frame, app: &App) {
             FileDialogMode::Import => "Import .fas file",
             FileDialogMode::Export => "Export .fas file",
         };
-        let mut lines = vec![Line::from(fd.path.clone())];
+        let mut lines = vec![Line::from(fd.filename.clone())];
         if let Some(err) = &fd.error {
             lines.push(Line::from(Span::styled(
                 err.clone(),
                 Style::default().fg(Color::Red),
             )));
         } else {
-            lines.push(Line::from("Enter path and press Enter"));
+            lines.push(Line::from("Enter file name and press Enter"));
         }
         let block = Block::default().borders(Borders::ALL).title(title);
         let para = Paragraph::new(lines).block(block);
         f.render_widget(para, area);
-        let x = area.x + 1 + fd.path.len() as u16;
+        let x = area.x + 1 + fd.filename.len() as u16;
         let y = area.y + 1;
         f.set_cursor_position((x, y));
     }
