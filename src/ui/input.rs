@@ -1,5 +1,5 @@
 use super::{
-    app::{App, EditorMode, Tab},
+    app::{App, EditorMode, MemRegion, Tab},
     editor::Editor,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -90,6 +90,39 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 }
                 (KeyCode::Char('f'), Tab::Run) => {
                     app.show_hex = !app.show_hex;
+                }
+                (KeyCode::Up, Tab::Run) if !app.show_registers => {
+                    app.mem_view_addr = app.mem_view_addr.saturating_sub(4);
+                    app.mem_region = MemRegion::Custom;
+                }
+                (KeyCode::Down, Tab::Run) if !app.show_registers => {
+                    let max = app.mem_size.saturating_sub(4) as u32;
+                    if app.mem_view_addr < max {
+                        app.mem_view_addr = app.mem_view_addr.saturating_add(4).min(max);
+                    }
+                    app.mem_region = MemRegion::Custom;
+                }
+                (KeyCode::PageUp, Tab::Run) if !app.show_registers => {
+                    let delta: u32 = 4 * 16;
+                    app.mem_view_addr = app.mem_view_addr.saturating_sub(delta);
+                    app.mem_region = MemRegion::Custom;
+                }
+                (KeyCode::PageDown, Tab::Run) if !app.show_registers => {
+                    let delta: u32 = 4 * 16;
+                    let max = app.mem_size.saturating_sub(4) as u32;
+                    let new = app.mem_view_addr.saturating_add(delta);
+                    app.mem_view_addr = new.min(max);
+                    app.mem_region = MemRegion::Custom;
+                }
+                (KeyCode::Char('d'), Tab::Run) => {
+                    app.mem_view_addr = app.data_base;
+                    app.mem_region = MemRegion::Data;
+                    app.show_registers = false;
+                }
+                (KeyCode::Char('k'), Tab::Run) => {
+                    app.mem_view_addr = app.cpu.x[2];
+                    app.mem_region = MemRegion::Stack;
+                    app.show_registers = false;
                 }
 
                 // Docs scroll

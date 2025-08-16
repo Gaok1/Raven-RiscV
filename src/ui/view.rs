@@ -1,8 +1,8 @@
-use super::app::{App, EditorMode, Tab};
+use super::app::{App, EditorMode, MemRegion, Tab};
 use crate::falcon::{self, memory::Bus};
+use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Tabs, Wrap};
-use ratatui::Frame;
 use std::cmp::min;
 
 pub fn ui(f: &mut Frame, app: &App) {
@@ -234,7 +234,7 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
 
         let inner = mem_block.inner(cols[0]);
         let mut items = Vec::new();
-        let base = app.data_base;
+        let base = app.mem_view_addr;
         let lines = inner.height.saturating_sub(2) as u32;
         for off in (0..lines).map(|i| i * 4) {
             let addr = base.wrapping_add(off);
@@ -319,11 +319,39 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
-    let view = if app.show_registers { "REGS" } else { "RAM" };
-    let fmt = if app.show_hex { "HEX" } else { "DEC" };
-    let run = if app.is_running { "RUN" } else { "PAUSE" };
-    let line1 = Line::from(format!("View: {view}  Format: {fmt}  State: {run}"));
-    let line2 = Line::from("Commands: t=toggle view  f=toggle format  s=step  r=run  p=pause");
+    let (view_text, view_color) = if app.show_registers {
+        ("REGS", Color::Blue)
+    } else {
+        ("RAM", Color::Green)
+    };
+    let (fmt_text, fmt_color) = if app.show_hex {
+        ("HEX", Color::Magenta)
+    } else {
+        ("DEC", Color::Cyan)
+    };
+    let (region_text, region_color) = match app.mem_region {
+        MemRegion::Data => ("DATA", Color::Yellow),
+        MemRegion::Stack => ("STACK", Color::LightBlue),
+        MemRegion::Custom => ("ADDR", Color::Gray),
+    };
+    let (run_text, run_color) = if app.is_running {
+        ("RUN", Color::Green)
+    } else {
+        ("PAUSE", Color::Red)
+    };
+    let line1 = Line::from(vec![
+        Span::raw("View: "),
+        Span::styled(view_text, Style::default().fg(view_color)),
+        Span::raw("  Format: "),
+        Span::styled(fmt_text, Style::default().fg(fmt_color)),
+        Span::raw("  Region: "),
+        Span::styled(region_text, Style::default().fg(region_color)),
+        Span::raw("  State: "),
+        Span::styled(run_text, Style::default().fg(run_color)),
+    ]);
+    let line2 = Line::from(
+        "Commands: t=toggle view  f=toggle format  s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll",
+    );
     let para = Paragraph::new(vec![line1, line2])
         .block(Block::default().borders(Borders::ALL).title("Run Controls"));
     f.render_widget(para, area);
