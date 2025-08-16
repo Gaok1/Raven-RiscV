@@ -1,5 +1,5 @@
 use super::{
-    app::{App, EditorMode, MemRegion, Tab},
+    app::{App, EditorMode, FileDialog, FileDialogMode, MemRegion, Tab},
     editor::Editor,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -8,6 +8,10 @@ use std::{io, time::Instant};
 pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     if key.kind != KeyEventKind::Press {
         return Ok(false);
+    }
+    // If a file dialog is open, handle it first
+    if app.file_dialog.is_some() {
+        return handle_file_dialog_key(app, key);
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -22,6 +26,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             // Assemble (Ctrl+R) também no modo Insert
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
                 app.assemble_and_load();
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('o')) {
+                app.file_dialog = Some(FileDialog::new(FileDialogMode::Import));
+                return Ok(false);
+            }
+            if ctrl && matches!(key.code, KeyCode::Char('s')) {
+                app.file_dialog = Some(FileDialog::new(FileDialogMode::Export));
                 return Ok(false);
             }
 
@@ -62,6 +75,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             // Global assemble
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
                 app.assemble_and_load();
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('o')) {
+                app.file_dialog = Some(FileDialog::new(FileDialogMode::Import));
+                return Ok(false);
+            }
+            if ctrl && matches!(key.code, KeyCode::Char('s')) {
+                app.file_dialog = Some(FileDialog::new(FileDialogMode::Export));
                 return Ok(false);
             }
 
@@ -147,5 +169,52 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         }
     }
 
+    Ok(false)
+}
+
+fn handle_file_dialog_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
+    if let Some(fd) = &mut app.file_dialog {
+        match key.code {
+            KeyCode::Esc => {
+                app.file_dialog = None;
+            }
+            KeyCode::Enter => {
+                let mut path = fd.path.clone();
+                if !path.ends_with(".fas") {
+                    path.push_str(".fas");
+                }
+                match fd.mode {
+                    FileDialogMode::Import => match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            app.editor.lines = content.lines().map(|s| s.to_string()).collect();
+                            app.editor.cursor_row = 0;
+                            app.editor.cursor_col = 0;
+                            app.file_dialog = None;
+                        }
+                        Err(e) => {
+                            fd.error = Some(e.to_string());
+                        }
+                    },
+                    FileDialogMode::Export => match std::fs::write(&path, app.editor.text()) {
+                        Ok(_) => {
+                            app.file_dialog = None;
+                        }
+                        Err(e) => {
+                            fd.error = Some(e.to_string());
+                        }
+                    },
+                }
+            }
+            KeyCode::Backspace => {
+                fd.path.pop();
+            }
+            KeyCode::Char(c) => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    fd.path.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
     Ok(false)
 }

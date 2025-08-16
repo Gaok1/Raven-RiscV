@@ -8,6 +8,28 @@ use std::{
 };
 
 #[derive(PartialEq, Eq, Copy, Clone)]
+pub(super) enum FileDialogMode {
+    Import,
+    Export,
+}
+
+pub(super) struct FileDialog {
+    pub mode: FileDialogMode,
+    pub path: String,
+    pub error: Option<String>,
+}
+
+impl FileDialog {
+    pub fn new(mode: FileDialogMode) -> Self {
+        Self {
+            mode,
+            path: String::new(),
+            error: None,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub(super) enum Tab {
     Editor,
     Run,
@@ -60,6 +82,9 @@ pub struct App {
 
     // Docs state
     pub(super) docs_scroll: usize,
+
+    // Import/export dialog
+    pub(super) file_dialog: Option<FileDialog>,
 }
 
 impl App {
@@ -94,6 +119,7 @@ impl App {
             last_step_time: Instant::now(),
             step_interval: Duration::from_millis(80),
             docs_scroll: 0,
+            file_dialog: None,
         }
     }
 
