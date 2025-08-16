@@ -72,6 +72,13 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
                         data_bytes.push(v as u8);
                         pc_data += 1;
                     }
+                } else if let Some(rest) = line.strip_prefix(".word") {
+                    for w in rest.split(',') {
+                        let v = parse_imm(w).ok_or_else(|| format!(".word inválido: {w}"))?;
+                        let bytes = (v as u32).to_le_bytes();
+                        data_bytes.extend_from_slice(&bytes);
+                        pc_data += 4;
+                    }
                 } else {
                     return Err(format!("diretiva de dados desconhecida: {line}"));
                 }
