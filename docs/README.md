@@ -107,3 +107,16 @@ load_bytes(&mut mem, prog.data_base, &prog.data);
 
 O emulador executa instruções enquanto `step` retornar `true`.
 
+# Examples
+## code editor
+<img width="1918" height="1009" alt="image" src="https://github.com/user-attachments/assets/4ade62a4-e3e0-4c69-b42b-ae52d5bd8397" />
+
+## Running code (emulator)
+
+### Registers view
+<img width="1917" height="997" alt="image" src="https://github.com/user-attachments/assets/6be9a0ec-b64f-4cab-b9b5-ff581a27f692" />
+
+### RAM view
+<img width="1920" height="999" alt="image" src="https://github.com/user-attachments/assets/63386101-393f-47d1-a559-9a3b74da95ac" />
+
+
