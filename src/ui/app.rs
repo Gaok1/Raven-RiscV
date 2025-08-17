@@ -68,6 +68,7 @@ pub struct App {
     // Execution state
     pub(super) cpu: Cpu,
     pub(super) prev_x: [u32; 32],
+    pub(super) prev_pc: u32,
     pub(super) mem: Ram,
     pub(super) mem_size: usize,
     pub(super) base_pc: u32,
@@ -76,6 +77,7 @@ pub struct App {
     pub(super) mem_region: MemRegion,
     pub(super) show_registers: bool,
     pub(super) show_hex: bool,
+    pub(super) regs_scroll: usize,
     pub(super) is_running: bool,
     pub(super) last_step_time: Instant,
     pub(super) step_interval: Duration,
@@ -110,6 +112,7 @@ impl App {
             diag_line_text: None,
             cpu,
             prev_x: [0; 32],
+            prev_pc: base_pc,
             mem_size,
             mem: Ram::new(mem_size),
             base_pc,
@@ -118,6 +121,7 @@ impl App {
             mem_region: MemRegion::Data,
             show_registers: true,
             show_hex: true,
+            regs_scroll: 0,
             is_running: false,
             last_step_time: Instant::now(),
             step_interval: Duration::from_millis(80),
@@ -135,6 +139,7 @@ impl App {
         self.mem_size = 128 * 1024;
         self.cpu = Cpu::default();
         self.cpu.pc = self.base_pc;
+        self.prev_pc = self.cpu.pc;
         self.cpu.write(2, self.mem_size as u32 - 4); // reset stack pointer
         self.mem = Ram::new(self.mem_size);
         self.faulted = false;
@@ -216,6 +221,7 @@ impl App {
 
     pub(super) fn single_step(&mut self) {
         self.prev_x = self.cpu.x; // snapshot before step
+        self.prev_pc = self.cpu.pc;
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             falcon::exec::step(&mut self.cpu, &mut self.mem)
         }));
