@@ -1,7 +1,4 @@
-use super::{
-    app::{App, EditorMode, FileDialog as AppFileDialog, FileDialogMode, MemRegion, Tab},
-    editor::Editor,
-};
+use super::app::{App, EditorMode, FileDialog as AppFileDialog, FileDialogMode, MemRegion, Tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use rfd::FileDialog as OSFileDialog;
 use std::{io, time::Instant};
@@ -15,6 +12,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return handle_file_dialog_key(app, key);
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     match app.mode {
         EditorMode::Insert => {
@@ -58,21 +56,86 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
+            if ctrl && matches!(key.code, KeyCode::Char('a')) && matches!(app.tab, Tab::Editor) {
+                app.editor.select_all();
+                return Ok(false);
+            }
+
             match (key.code, app.tab) {
                 // Insert mode: everything types into editor if on Editor tab
                 (code, Tab::Editor) => match code {
-                    KeyCode::Left => app.editor.move_left(),
-                    KeyCode::Right => app.editor.move_right(),
-                    KeyCode::Up => app.editor.move_up(),
-                    KeyCode::Down => app.editor.move_down(),
+                    KeyCode::Left => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.move_left();
+                    }
+                    KeyCode::Right => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.move_right();
+                    }
+                    KeyCode::Up => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.move_up();
+                    }
+                    KeyCode::Down => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.move_down();
+                    }
+                    KeyCode::Home => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.move_home();
+                    }
+                    KeyCode::End => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.move_end();
+                    }
+                    KeyCode::PageUp => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.page_up();
+                    }
+                    KeyCode::PageDown => {
+                        if shift {
+                            app.editor.start_selection();
+                        } else {
+                            app.editor.clear_selection();
+                        }
+                        app.editor.page_down();
+                    }
                     KeyCode::Backspace => app.editor.backspace(),
                     KeyCode::Delete => app.editor.delete_char(),
                     KeyCode::Enter => app.editor.enter(),
                     KeyCode::Tab => app.editor.insert_spaces(4), // use spaces to avoid cursor width issues
-                    KeyCode::End => {
-                        app.editor.cursor_col = Editor::char_count(app.editor.current_line())
-                    }
-                    KeyCode::Char(c) => app.editor.insert_char(c), // includes '1'/'2'
+                    KeyCode::Char(c) => {
+                        app.editor.clear_selection();
+                        app.editor.insert_char(c)
+                    } // includes '1'/'2'
                     _ => {}
                 },
                 // In Insert mode, other tabs ignore typing

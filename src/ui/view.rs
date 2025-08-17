@@ -1,4 +1,7 @@
-use super::app::{App, EditorMode, FileDialogMode, MemRegion, Tab};
+use super::{
+    app::{App, EditorMode, FileDialogMode, MemRegion, Tab},
+    editor::Editor,
+};
 use crate::falcon::{self, memory::Bus};
 use ratatui::Frame;
 use ratatui::prelude::*;
@@ -106,25 +109,78 @@ fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_editor(f: &mut Frame, area: Rect, app: &App) {
-    // Compute visible window and keep cursor visible
+    fn apply_selection(line: &mut Line, start: usize, end: usize) {
+        if start >= end {
+            return;
+        }
+        let mut char_pos = 0;
+        let mut new_spans = Vec::new();
+        for span in line.spans.drain(..) {
+            let content = span.content.to_string();
+            let len = Editor::char_count(&content);
+            let span_start = char_pos;
+            let span_end = char_pos + len;
+            if span_end <= start || span_start >= end {
+                new_spans.push(Span::styled(content, span.style));
+            } else {
+                if span_start < start {
+                    let byte = Editor::byte_at(&content, start - span_start);
+                    new_spans.push(Span::styled(content[..byte].to_string(), span.style));
+                }
+                let sel_from = start.max(span_start);
+                let sel_to = end.min(span_end);
+                let byte_start = Editor::byte_at(&content, sel_from - span_start);
+                let byte_end = Editor::byte_at(&content, sel_to - span_start);
+                let mut sel_style = span.style;
+                sel_style = sel_style.bg(Color::Blue);
+                new_spans.push(Span::styled(
+                    content[byte_start..byte_end].to_string(),
+                    sel_style,
+                ));
+                if span_end > end {
+                    let byte = Editor::byte_at(&content, end - span_start);
+                    new_spans.push(Span::styled(content[byte..].to_string(), span.style));
+                }
+            }
+            char_pos += len;
+        }
+        line.spans = new_spans;
+    }
+    // Compute visible window and center cursor when possible
     let visible_h = area.height.saturating_sub(2) as usize; // minus borders
-    let mut start = app.editor.scroll.min(app.editor.lines.len());
-    if app.editor.cursor_row < start {
-        start = app.editor.cursor_row;
+    let len = app.editor.lines.len();
+    let mut start = 0usize;
+    if len > visible_h {
+        if app.editor.cursor_row <= visible_h / 2 {
+            start = 0;
+        } else if app.editor.cursor_row >= len.saturating_sub(visible_h / 2) {
+            start = len.saturating_sub(visible_h);
+        } else {
+            start = app.editor.cursor_row - visible_h / 2;
+        }
     }
-    if app.editor.cursor_row >= start + visible_h {
-        start = app.editor.cursor_row + 1 - visible_h;
-    }
-    let end = min(app.editor.lines.len(), start + visible_h);
+    let end = min(len, start + visible_h);
 
-    // Persist scroll so it doesn't jump between frames
-    // (This avoids cursor visual drift)
-    //
     // Note: long lines are clipped instead of wrapped to keep cursor math correct.
     // Tabs insert 4 spaces to avoid width mismatch.
     let mut rows: Vec<Line> = Vec::with_capacity(end - start);
     for i in start..end {
-        let mut line = Line::from(highlight_line(&app.editor.lines[i]));
+        let line_str = &app.editor.lines[i];
+        let mut line = Line::from(highlight_line(line_str));
+        if let Some(((sr, sc), (er, ec))) = app.editor.selection_range() {
+            if i >= sr && i <= er {
+                let (sel_start, sel_end) = if sr == er {
+                    (sc, ec)
+                } else if i == sr {
+                    (sc, Editor::char_count(line_str))
+                } else if i == er {
+                    (0, ec)
+                } else {
+                    (0, Editor::char_count(line_str))
+                };
+                apply_selection(&mut line, sel_start, sel_end);
+            }
+        }
         if Some(i) == app.diag_line {
             line = line.style(
                 Style::default()

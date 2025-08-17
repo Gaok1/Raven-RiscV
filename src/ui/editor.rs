@@ -4,7 +4,7 @@ pub struct Editor {
     pub lines: Vec<String>,
     pub cursor_row: usize,
     pub cursor_col: usize,
-    pub scroll: usize,
+    pub selection_anchor: Option<(usize, usize)>,
 }
 
 impl Editor {
@@ -21,7 +21,7 @@ impl Editor {
             lines: sample,
             cursor_row: 0,
             cursor_col: 0,
-            scroll: 0,
+            selection_anchor: None,
         }
     }
 
@@ -59,6 +59,36 @@ impl Editor {
             .nth(char_pos)
             .map(|(i, _)| i)
             .unwrap_or_else(|| s.len())
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+    }
+
+    pub fn start_selection(&mut self) {
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some((self.cursor_row, self.cursor_col));
+        }
+    }
+
+    pub fn select_all(&mut self) {
+        if self.lines.is_empty() {
+            return;
+        }
+        self.selection_anchor = Some((0, 0));
+        self.cursor_row = self.lines.len() - 1;
+        self.cursor_col = Self::char_count(&self.lines[self.cursor_row]);
+    }
+
+    pub fn selection_range(&self) -> Option<((usize, usize), (usize, usize))> {
+        self.selection_anchor.map(|(sr, sc)| {
+            let mut start = (sr, sc);
+            let mut end = (self.cursor_row, self.cursor_col);
+            if start > end {
+                std::mem::swap(&mut start, &mut end);
+            }
+            (start, end)
+        })
     }
 
     pub fn insert_char(&mut self, ch: char) {
@@ -165,6 +195,34 @@ impl Editor {
             let len = Self::char_count(self.current_line());
             self.cursor_col = self.cursor_col.min(len);
         }
+    }
+
+    pub fn move_home(&mut self) {
+        self.cursor_col = 0;
+    }
+
+    pub fn move_end(&mut self) {
+        let len = Self::char_count(self.current_line());
+        self.cursor_col = len;
+    }
+
+    pub fn page_up(&mut self) {
+        let h = 20usize;
+        if self.cursor_row >= h {
+            self.cursor_row -= h;
+        } else {
+            self.cursor_row = 0;
+        }
+        let len = Self::char_count(self.current_line());
+        self.cursor_col = self.cursor_col.min(len);
+    }
+
+    pub fn page_down(&mut self) {
+        let h = 20usize;
+        let max_row = self.lines.len().saturating_sub(1);
+        self.cursor_row = (self.cursor_row + h).min(max_row);
+        let len = Self::char_count(self.current_line());
+        self.cursor_col = self.cursor_col.min(len);
     }
 
     pub fn text(&self) -> String {
