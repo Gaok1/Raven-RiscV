@@ -543,6 +543,7 @@ fn parse_imm(s: &str) -> Option<i32> {
     }
 }
 
+// Parse shift amount (shamt) for SLLI, SRLI, SRAI
 fn parse_shamt(s: &str) -> Result<u8, String> {
     let v = parse_imm(s).ok_or_else(|| format!("invalid shamt: {s}"))?;
     if (0..=31).contains(&v) {

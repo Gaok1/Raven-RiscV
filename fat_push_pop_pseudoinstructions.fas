@@ -3,6 +3,8 @@
   call fat
   call end
 
+#args a0 number to calculate fatorial
+#returns s0 fat(a0)
 fat:
     li t0,2
     blt a0,t0, minFat
