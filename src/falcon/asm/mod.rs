@@ -57,6 +57,12 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
                 if ltrim.starts_with("la ") {
                     items.push((pc_text, LineKind::La(ltrim.to_string())));
                     pc_text = pc_text.wrapping_add(8);
+                } else if ltrim.starts_with("push ") {
+                    items.push((pc_text, LineKind::Push(ltrim.to_string())));
+                    pc_text = pc_text.wrapping_add(8);
+                } else if ltrim.starts_with("pop ") {
+                    items.push((pc_text, LineKind::Pop(ltrim.to_string())));
+                    pc_text = pc_text.wrapping_add(8);
                 } else {
                     items.push((pc_text, LineKind::Instr(ltrim.to_string())));
                     pc_text = pc_text.wrapping_add(4);
@@ -102,6 +108,20 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
                 words.push(w1);
                 words.push(w2);
             }
+            LineKind::Push(s) => {
+                let (i1, i2) = parse_push(&s)?;
+                let w1 = encode(i1).map_err(|e| e.to_string())?;
+                let w2 = encode(i2).map_err(|e| e.to_string())?;
+                words.push(w1);
+                words.push(w2);
+            }
+            LineKind::Pop(s) => {
+                let (i1, i2) = parse_pop(&s)?;
+                let w1 = encode(i1).map_err(|e| e.to_string())?;
+                let w2 = encode(i2).map_err(|e| e.to_string())?;
+                words.push(w1);
+                words.push(w2);
+            }
         }
     }
 
@@ -117,6 +137,8 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
 enum LineKind {
     Instr(String),
     La(String),
+    Push(String),
+    Pop(String),
 }
 
 fn preprocess(text: &str) -> Vec<String> {
@@ -427,6 +449,38 @@ fn parse_la(s: &str, labels: &HashMap<String, u32>) -> Result<(Instruction, Inst
     ))
 }
 
+fn parse_push(s: &str) -> Result<(Instruction, Instruction), String> {
+    // "push rs"
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 {
+        return Err("expected 'rs'".into());
+    }
+    let rs = parse_reg(&ops[0]).ok_or("invalid rs")?;
+    Ok((
+        Instruction::Addi { rd: 2, rs1: 2, imm: -4 },
+        Instruction::Sw { rs2: rs, rs1: 2, imm: 0 },
+    ))
+}
+
+fn parse_pop(s: &str) -> Result<(Instruction, Instruction), String> {
+    // "pop rd"
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 {
+        return Err("expected 'rd'".into());
+    }
+    let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
+    Ok((
+        Instruction::Lw { rd, rs1: 2, imm: 0 },
+        Instruction::Addi { rd: 2, rs1: 2, imm: 4 },
+    ))
+}
+
 fn split_operands(rest: &str) -> Vec<String> {
     rest.split(',')
         .map(|t| t.trim().to_string())
@@ -576,5 +630,27 @@ mod tests {
 
         let expected_jal = encode(Instruction::Jal { rd: 1, imm: 4 }).expect("encode jal");
         assert_eq!(prog.text[0], expected_jal);
+    }
+
+    #[test]
+    fn push_expands_correctly() {
+        let asm = ".text\npush a0";
+        let prog = assemble(asm, 0).expect("assemble");
+        assert_eq!(prog.text.len(), 2);
+        let expected_addi = encode(Instruction::Addi { rd: 2, rs1: 2, imm: -4 }).expect("encode addi");
+        let expected_sw = encode(Instruction::Sw { rs2: 10, rs1: 2, imm: 0 }).expect("encode sw");
+        assert_eq!(prog.text[0], expected_addi);
+        assert_eq!(prog.text[1], expected_sw);
+    }
+
+    #[test]
+    fn pop_expands_correctly() {
+        let asm = ".text\npop a0";
+        let prog = assemble(asm, 0).expect("assemble");
+        assert_eq!(prog.text.len(), 2);
+        let expected_lw = encode(Instruction::Lw { rd: 10, rs1: 2, imm: 0 }).expect("encode lw");
+        let expected_addi = encode(Instruction::Addi { rd: 2, rs1: 2, imm: 4 }).expect("encode addi");
+        assert_eq!(prog.text[0], expected_lw);
+        assert_eq!(prog.text[1], expected_addi);
     }
 }

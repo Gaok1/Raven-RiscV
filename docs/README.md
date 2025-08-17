@@ -51,6 +51,8 @@ Labels (`label:`) can be defined in any segment. To load a label address, use th
 - `jr rs1` → `jalr x0, rs1, 0`
 - `ret` → `jalr x0, ra, 0`
 - `la rd, label` → loads the address of `label`
+- `push rs` → `addi sp, sp, -4` ; `sw rs, 0(sp)`
+- `pop rd` → `lw rd, 0(sp)` ; `addi sp, sp, 4`
 
 ## Registers and Memory
 
