@@ -240,31 +240,57 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
 
     // --- Left sidebar: registers or RAM memory ---
     if app.show_registers {
+        let reg_block = Block::default()
+            .borders(Borders::ALL)
+            .title("Registers — t:ram f:fmt s:step r:run p:pause");
+        let inner = reg_block.inner(cols[0]);
+        let lines = inner.height.saturating_sub(2) as usize;
+        let total = 33usize; // PC + x0..x31
+        let max_scroll = total.saturating_sub(lines);
+        let start = app.regs_scroll.min(max_scroll);
+        let end = (start + lines).min(total);
         let mut rows = Vec::new();
-        for i in 0..32u8 {
-            let name = reg_name(i);
-            let val = app.cpu.x[i as usize];
-            let changed = val != app.prev_x[i as usize];
-            let style = if changed {
-                Style::default().fg(Color::Yellow)
+        for idx in start..end {
+            if idx == 0 {
+                let val = app.cpu.pc;
+                let changed = val != app.prev_pc;
+                let style = if changed {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                let val_str = if app.show_hex {
+                    format!("0x{val:08x}")
+                } else {
+                    format!("{val}")
+                };
+                rows.push(Row::new(vec![
+                    Cell::from("PC").style(style),
+                    Cell::from(val_str).style(style),
+                ]));
             } else {
-                Style::default()
-            };
-            let val_str = if app.show_hex {
-                format!("0x{val:08x}")
-            } else {
-                format!("{val}")
-            };
-            rows.push(Row::new(vec![
-                Cell::from(format!("x{i:02} ({name})")).style(style),
-                Cell::from(val_str).style(style),
-            ]));
+                let reg_index = (idx - 1) as u8;
+                let name = reg_name(reg_index);
+                let val = app.cpu.x[reg_index as usize];
+                let changed = val != app.prev_x[reg_index as usize];
+                let style = if changed {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                let val_str = if app.show_hex {
+                    format!("0x{val:08x}")
+                } else {
+                    format!("{val}")
+                };
+                rows.push(Row::new(vec![
+                    Cell::from(format!("x{reg_index:02} ({name})")).style(style),
+                    Cell::from(val_str).style(style),
+                ]));
+            }
         }
-        let reg_table = Table::new(rows, [Constraint::Length(14), Constraint::Length(20)]).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Registers — t:ram f:fmt s:step r:run p:pause"),
-        );
+        let reg_table =
+            Table::new(rows, [Constraint::Length(14), Constraint::Length(20)]).block(reg_block);
         f.render_widget(reg_table, cols[0]);
     } else {
         let mem_block = Block::default()

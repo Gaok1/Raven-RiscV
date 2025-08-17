@@ -154,6 +154,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('f'), Tab::Run) => {
                     app.show_hex = !app.show_hex;
                 }
+                (KeyCode::Up, Tab::Run) if app.show_registers => {
+                    app.regs_scroll = app.regs_scroll.saturating_sub(1);
+                }
+                (KeyCode::Down, Tab::Run) if app.show_registers => {
+                    app.regs_scroll = app.regs_scroll.saturating_add(1);
+                }
+                (KeyCode::PageUp, Tab::Run) if app.show_registers => {
+                    app.regs_scroll = app.regs_scroll.saturating_sub(10);
+                }
+                (KeyCode::PageDown, Tab::Run) if app.show_registers => {
+                    app.regs_scroll = app.regs_scroll.saturating_add(10);
+                }
                 (KeyCode::Up, Tab::Run) if !app.show_registers => {
                     app.mem_view_addr = app.mem_view_addr.saturating_sub(4);
                     app.mem_region = MemRegion::Custom;
