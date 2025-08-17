@@ -132,10 +132,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     KeyCode::Delete => app.editor.delete_char(),
                     KeyCode::Enter => app.editor.enter(),
                     KeyCode::Tab => app.editor.insert_spaces(4), // use spaces to avoid cursor width issues
-                    KeyCode::Char(c) => {
-                        app.editor.clear_selection();
-                        app.editor.insert_char(c)
-                    } // includes '1'/'2'
+                    KeyCode::Char(c) => app.editor.insert_char(c), // includes '1'/'2'
                     _ => {}
                 },
                 // In Insert mode, other tabs ignore typing
@@ -230,27 +227,37 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.regs_scroll = app.regs_scroll.saturating_add(10);
                 }
                 (KeyCode::Up, Tab::Run) if !app.show_registers => {
-                    app.mem_view_addr = app.mem_view_addr.saturating_sub(4);
+                    app.mem_view_addr = app.mem_view_addr.saturating_sub(app.mem_view_bytes);
                     app.mem_region = MemRegion::Custom;
                 }
                 (KeyCode::Down, Tab::Run) if !app.show_registers => {
-                    let max = app.mem_size.saturating_sub(4) as u32;
+                    let max = app.mem_size.saturating_sub(app.mem_view_bytes as usize) as u32;
                     if app.mem_view_addr < max {
-                        app.mem_view_addr = app.mem_view_addr.saturating_add(4).min(max);
+                        app.mem_view_addr = app
+                            .mem_view_addr
+                            .saturating_add(app.mem_view_bytes)
+                            .min(max);
                     }
                     app.mem_region = MemRegion::Custom;
                 }
                 (KeyCode::PageUp, Tab::Run) if !app.show_registers => {
-                    let delta: u32 = 4 * 16;
+                    let delta: u32 = app.mem_view_bytes * 16;
                     app.mem_view_addr = app.mem_view_addr.saturating_sub(delta);
                     app.mem_region = MemRegion::Custom;
                 }
                 (KeyCode::PageDown, Tab::Run) if !app.show_registers => {
-                    let delta: u32 = 4 * 16;
-                    let max = app.mem_size.saturating_sub(4) as u32;
+                    let delta: u32 = app.mem_view_bytes * 16;
+                    let max = app.mem_size.saturating_sub(app.mem_view_bytes as usize) as u32;
                     let new = app.mem_view_addr.saturating_add(delta);
                     app.mem_view_addr = new.min(max);
                     app.mem_region = MemRegion::Custom;
+                }
+                (KeyCode::Char('b'), Tab::Run) if !app.show_registers => {
+                    app.mem_view_bytes = match app.mem_view_bytes {
+                        4 => 2,
+                        2 => 1,
+                        _ => 4,
+                    };
                 }
                 (KeyCode::Char('d'), Tab::Run) => {
                     app.mem_view_addr = app.data_base;
