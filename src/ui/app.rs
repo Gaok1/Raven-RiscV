@@ -1,12 +1,18 @@
-use super::{editor::Editor, input::handle_key, view::ui};
+use super::{
+    editor::Editor,
+    input::{handle_key, handle_mouse},
+    view::ui,
+};
 use crate::falcon::{self, Cpu, Ram};
-use crossterm::event::{self, Event};
-use ratatui::DefaultTerminal;
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    execute,
+};
+use ratatui::{DefaultTerminal, layout::Rect};
 use std::{
     io,
     time::{Duration, Instant},
 };
-
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(super) enum Tab {
@@ -66,6 +72,9 @@ pub struct App {
     // Docs state
     pub(super) docs_scroll: usize,
 
+    // Mouse tracking
+    pub(super) mouse_x: u16,
+    pub(super) mouse_y: u16,
 }
 
 impl App {
@@ -106,6 +115,8 @@ impl App {
             step_interval: Duration::from_millis(80),
             faulted: false,
             docs_scroll: 0,
+            mouse_x: 0,
+            mouse_y: 0,
         }
     }
 
@@ -217,14 +228,23 @@ impl App {
 }
 
 pub fn run(terminal: &mut DefaultTerminal, mut app: App) -> io::Result<()> {
+    execute!(terminal.backend_mut(), EnableMouseCapture)?;
     let mut last_draw = Instant::now();
     loop {
         // Input
         if event::poll(Duration::from_millis(10))? {
-            if let Event::Key(key) = event::read()? {
-                if handle_key(&mut app, key)? {
-                    break;
+            match event::read()? {
+                Event::Key(key) => {
+                    if handle_key(&mut app, key)? {
+                        break;
+                    }
                 }
+                Event::Mouse(me) => {
+                    let size = terminal.size()?;
+                    let area = Rect::new(0, 0, size.width, size.height);
+                    handle_mouse(&mut app, me, area);
+                }
+                _ => {}
             }
         }
         // Tick/run
@@ -235,6 +255,7 @@ pub fn run(terminal: &mut DefaultTerminal, mut app: App) -> io::Result<()> {
             //last_draw = Instant::now();
         }
     }
+    execute!(terminal.backend_mut(), DisableMouseCapture)?;
     Ok(())
 }
 fn extract_line_info(err: &str) -> (Option<usize>, String) {
