@@ -7,3 +7,11 @@ edition = "2024"
 ratatui = { version = "0.28", features = ["all-widgets"] }
 crossterm = "0.29"
 rfd = "0.15"
+
+[profile.release]
+opt-level = 3        # máxima otimização de código
+lto = "fat"          # LTO completo 
+codegen-units = 1    # força compilação monolítica (melhor perf)
+panic = "abort"      # remove desempacotamento; reduz overhead
+debug = false
+incremental = false

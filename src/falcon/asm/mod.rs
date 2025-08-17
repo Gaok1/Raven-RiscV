@@ -5,8 +5,11 @@ use std::collections::HashMap;
 
 // Structure returned with code and data
 pub struct Program {
+    /// Assembled code (instructions) in little-endian format.
     pub text: Vec<u32>,
+    /// Raw data bytes, also in little-endian format.
     pub data: Vec<u8>,
+    /// Base address for data region.
     pub data_base: u32,
 }
 
@@ -23,10 +26,11 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
     let mut section = Section::Text;
     let mut pc_text = base_pc;
     let mut pc_data = 0u32; // offset from data_base
-    let mut items = Vec::new(); // (pc, LineKind)
+    let mut items: Vec<(u32, LineKind)> = Vec::new(); // (pc, LineKind)
     let mut data_bytes = Vec::<u8>::new();
     let mut labels = HashMap::<String, u32>::new();
 
+    // Iterate over lines and collect labels and instructions
     for raw in &lines {
         if raw == ".text" {
             section = Section::Text;
@@ -46,8 +50,8 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
             };
             labels.insert(lab.trim().to_string(), addr);
             line = rest[1..].trim();
-            if line.is_empty() {
-                continue;
+            if line.is_empty() { //instruction label,
+                continue;       
             }
         }
 
@@ -78,8 +82,19 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
                         data_bytes.push(v as u8);
                         pc_data += 1;
                     }
+                } else if let Some(rest) = line.strip_prefix(".half") {
+                    for h in rest.split(',') {
+                        let v = parse_imm(h).ok_or_else(|| format!("invalid .half: {h}"))?;
+                        if !(0..=65535).contains(&v) {
+                            return Err(format!(".half outside 0..65535: {v}"));
+                        }
+                        let bytes = (v as u16).to_le_bytes();
+                        data_bytes.extend_from_slice(&bytes);
+                        pc_data += 2;
+                    }
                 } else if let Some(rest) = line.strip_prefix(".word") {
                     for w in rest.split(',') {
+
                         let v = parse_imm(w).ok_or_else(|| format!("invalid .word: {w}"))?;
                         let bytes = (v as u32).to_le_bytes();
                         data_bytes.extend_from_slice(&bytes);
@@ -460,8 +475,16 @@ fn parse_push(s: &str) -> Result<(Instruction, Instruction), String> {
     }
     let rs = parse_reg(&ops[0]).ok_or("invalid rs")?;
     Ok((
-        Instruction::Addi { rd: 2, rs1: 2, imm: -4 }, // alocate stack space
-        Instruction::Sw { rs2: rs, rs1: 2, imm: 4 }, //write into sp+4 
+        Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: -4,
+        }, // alocate stack space
+        Instruction::Sw {
+            rs2: rs,
+            rs1: 2,
+            imm: 4,
+        }, //write into sp+4
     ))
 }
 
@@ -477,7 +500,11 @@ fn parse_pop(s: &str) -> Result<(Instruction, Instruction), String> {
     let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
     Ok((
         Instruction::Lw { rd, rs1: 2, imm: 4 }, // read from sp+4
-        Instruction::Addi { rd: 2, rs1: 2, imm: 4 }, // deallocate stack space (sp += 4)
+        Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: 4,
+        }, // deallocate stack space (sp += 4)
     ))
 }
 
@@ -638,8 +665,18 @@ mod tests {
         let asm = ".text\npush a0";
         let prog = assemble(asm, 0).expect("assemble");
         assert_eq!(prog.text.len(), 2);
-        let expected_addi = encode(Instruction::Addi { rd: 2, rs1: 2, imm: -4 }).expect("encode addi");
-        let expected_sw = encode(Instruction::Sw { rs2: 10, rs1: 2, imm: 0 }).expect("encode sw");
+        let expected_addi = encode(Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: -4,
+        })
+        .expect("encode addi");
+        let expected_sw = encode(Instruction::Sw {
+            rs2: 10,
+            rs1: 2,
+            imm: 0,
+        })
+        .expect("encode sw");
         assert_eq!(prog.text[0], expected_addi);
         assert_eq!(prog.text[1], expected_sw);
     }
@@ -649,8 +686,18 @@ mod tests {
         let asm = ".text\npop a0";
         let prog = assemble(asm, 0).expect("assemble");
         assert_eq!(prog.text.len(), 2);
-        let expected_lw = encode(Instruction::Lw { rd: 10, rs1: 2, imm: 0 }).expect("encode lw");
-        let expected_addi = encode(Instruction::Addi { rd: 2, rs1: 2, imm: 4 }).expect("encode addi");
+        let expected_lw = encode(Instruction::Lw {
+            rd: 10,
+            rs1: 2,
+            imm: 0,
+        })
+        .expect("encode lw");
+        let expected_addi = encode(Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: 4,
+        })
+        .expect("encode addi");
         assert_eq!(prog.text[0], expected_lw);
         assert_eq!(prog.text[1], expected_addi);
     }

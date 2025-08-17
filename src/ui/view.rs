@@ -1,5 +1,5 @@
 use super::{
-    app::{App, EditorMode, FileDialogMode, MemRegion, Tab},
+    app::{App, EditorMode, MemRegion, Tab},
     editor::Editor,
 };
 use crate::falcon::{self, memory::Bus};
@@ -69,9 +69,6 @@ pub fn ui(f: &mut Frame, app: &App) {
     let status = Paragraph::new(status).block(Block::default().borders(Borders::ALL));
     f.render_widget(status, chunks[2]);
 
-    if app.file_dialog.is_some() {
-        render_file_dialog(f, app);
-    }
 }
 
 fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
@@ -216,31 +213,6 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-fn render_file_dialog(f: &mut Frame, app: &App) {
-    if let Some(fd) = &app.file_dialog {
-        let area = centered_rect(60, 7, f.size());
-        f.render_widget(Clear, area);
-        let title = match fd.mode {
-            FileDialogMode::Import => "Import .fas file",
-            FileDialogMode::Export => "Export .fas file",
-        };
-        let mut lines = vec![Line::from(fd.filename.clone())];
-        if let Some(err) = &fd.error {
-            lines.push(Line::from(Span::styled(
-                err.clone(),
-                Style::default().fg(Color::Red),
-            )));
-        } else {
-            lines.push(Line::from("Enter file name and press Enter"));
-        }
-        let block = Block::default().borders(Borders::ALL).title(title);
-        let para = Paragraph::new(lines).block(block);
-        f.render_widget(para, area);
-        let x = area.x + 1 + fd.filename.len() as u16;
-        let y = area.y + 1;
-        f.set_cursor_position((x, y));
-    }
-}
 
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
     let cw = r.width.saturating_sub(width) / 2;

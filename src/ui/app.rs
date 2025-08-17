@@ -7,27 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub(super) enum FileDialogMode {
-    Import,
-    Export,
-}
-
-pub(super) struct FileDialog {
-    pub mode: FileDialogMode,
-    pub filename: String,
-    pub error: Option<String>,
-}
-
-impl FileDialog {
-    pub fn new(mode: FileDialogMode) -> Self {
-        Self {
-            mode,
-            filename: String::new(),
-            error: None,
-        }
-    }
-}
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(super) enum Tab {
@@ -87,8 +66,6 @@ pub struct App {
     // Docs state
     pub(super) docs_scroll: usize,
 
-    // Import/export dialog
-    pub(super) file_dialog: Option<FileDialog>,
 }
 
 impl App {
@@ -129,7 +106,6 @@ impl App {
             step_interval: Duration::from_millis(80),
             faulted: false,
             docs_scroll: 0,
-            file_dialog: None,
         }
     }
 
@@ -256,7 +232,7 @@ pub fn run(terminal: &mut DefaultTerminal, mut app: App) -> io::Result<()> {
         // Draw ~60 FPS cap
         if last_draw.elapsed() >= Duration::from_millis(16) {
             terminal.draw(|f| ui(f, &app))?;
-            last_draw = Instant::now();
+            //last_draw = Instant::now();
         }
     }
     Ok(())

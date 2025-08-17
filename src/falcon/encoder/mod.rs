@@ -2,13 +2,16 @@
 use crate::falcon::instruction::Instruction;
 use crate::falcon::arch::*;
 
+
 #[inline] fn r(f7:u32, rs2:u32, rs1:u32, f3:u32, rd:u32, opc:u32) -> u32 {
     (f7<<25) | (rs2<<20) | (rs1<<15) | (f3<<12) | (rd<<7) | opc
 }
+
 #[inline] fn i(imm12:i32, rs1:u32, f3:u32, rd:u32, opc:u32) -> u32 {
-    let imm = (imm12 as i32) & 0xFFF;
+    let imm = (imm12 as i32) & 0xFFF; // limit to 12 bits
     ((imm as u32)<<20) | (rs1<<15) | (f3<<12) | (rd<<7) | opc
 }
+
 #[inline] fn s(imm12:i32, rs2:u32, rs1:u32, f3:u32, opc:u32) -> u32 {
     let imm = (imm12 as i32) & 0xFFF;
     let imm_lo = (imm & 0x1F) as u32;
