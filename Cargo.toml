@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 ratatui = { version = "0.28", features = ["all-widgets"] }
 crossterm = "0.29"
+rfd = "0.15"

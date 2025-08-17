@@ -1,8 +1,9 @@
 use super::{
-    app::{App, EditorMode, FileDialog, FileDialogMode, MemRegion, Tab},
+    app::{App, EditorMode, FileDialog as AppFileDialog, FileDialogMode, MemRegion, Tab},
     editor::Editor,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use rfd::FileDialog as OSFileDialog;
 use std::{io, time::Instant};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
@@ -30,11 +31,30 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('o')) {
-                app.file_dialog = Some(FileDialog::new(FileDialogMode::Import));
+                if let Some(path) = OSFileDialog::new()
+                    .add_filter("Falcon ASM", &["fas"])
+                    .pick_file()
+                {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        app.editor.lines = content.lines().map(|s| s.to_string()).collect();
+                        app.editor.cursor_row = 0;
+                        app.editor.cursor_col = 0;
+                    }
+                } else {
+                    app.file_dialog = Some(AppFileDialog::new(FileDialogMode::Import));
+                }
                 return Ok(false);
             }
             if ctrl && matches!(key.code, KeyCode::Char('s')) {
-                app.file_dialog = Some(FileDialog::new(FileDialogMode::Export));
+                if let Some(path) = OSFileDialog::new()
+                    .add_filter("Falcon ASM", &["fas"])
+                    .set_file_name("program.fas")
+                    .save_file()
+                {
+                    let _ = std::fs::write(path, app.editor.text());
+                } else {
+                    app.file_dialog = Some(AppFileDialog::new(FileDialogMode::Export));
+                }
                 return Ok(false);
             }
 
@@ -79,11 +99,30 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('o')) {
-                app.file_dialog = Some(FileDialog::new(FileDialogMode::Import));
+                if let Some(path) = OSFileDialog::new()
+                    .add_filter("Falcon ASM", &["fas"])
+                    .pick_file()
+                {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        app.editor.lines = content.lines().map(|s| s.to_string()).collect();
+                        app.editor.cursor_row = 0;
+                        app.editor.cursor_col = 0;
+                    }
+                } else {
+                    app.file_dialog = Some(AppFileDialog::new(FileDialogMode::Import));
+                }
                 return Ok(false);
             }
             if ctrl && matches!(key.code, KeyCode::Char('s')) {
-                app.file_dialog = Some(FileDialog::new(FileDialogMode::Export));
+                if let Some(path) = OSFileDialog::new()
+                    .add_filter("Falcon ASM", &["fas"])
+                    .set_file_name("program.fas")
+                    .save_file()
+                {
+                    let _ = std::fs::write(path, app.editor.text());
+                } else {
+                    app.file_dialog = Some(AppFileDialog::new(FileDialogMode::Export));
+                }
                 return Ok(false);
             }
 

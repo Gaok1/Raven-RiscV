@@ -1,10 +1,10 @@
 use super::app::{App, EditorMode, FileDialogMode, MemRegion, Tab};
 use crate::falcon::{self, memory::Bus};
+use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap,
 };
-use ratatui::Frame;
 use std::cmp::min;
 
 pub fn ui(f: &mut Frame, app: &App) {
@@ -602,7 +602,7 @@ fn detect_format(word: u32) -> EncFormat {
     }
 }
 
-fn render_bit_fields(f: &mut Frame, area: Rect, _w: u32, fmt: EncFormat) {
+fn render_bit_fields(f: &mut Frame, area: Rect, w: u32, fmt: EncFormat) {
     use Color::*;
     let (segments, title) = match fmt {
         EncFormat::R => (
@@ -672,18 +672,33 @@ fn render_bit_fields(f: &mut Frame, area: Rect, _w: u32, fmt: EncFormat) {
     };
 
     // Visual: colored bars + labels in field order (MSB..LSB)
-    let spans: Vec<Span> = segments
-        .into_iter()
+    let label_spans: Vec<Span> = segments
+        .iter()
         .map(|(label, width, color)| {
-            let bar = "▮".repeat(width.max(1));
-            Span::styled(format!("{} {} ", bar, label), Style::default().fg(color))
+            let bar = "▮".repeat((*width).max(1) as usize);
+            Span::styled(format!("{} {} ", bar, label), Style::default().fg(*color))
         })
         .collect();
 
-    let bits_line = Paragraph::new(Line::from(spans))
+    // Bits string for the current word
+    let bit_str = format!("{:032b}", w);
+    let mut bit_spans: Vec<Span> = Vec::new();
+    let mut idx = 0usize;
+    for (i, (_, width, color)) in segments.iter().enumerate() {
+        let end = idx + (*width as usize);
+        let slice = &bit_str[idx..end];
+        bit_spans.push(Span::styled(slice.to_string(), Style::default().fg(*color)));
+        if i + 1 < segments.len() {
+            bit_spans.push(Span::raw(" "));
+        }
+        idx = end;
+    }
+
+    let lines = vec![Line::from(label_spans), Line::from(bit_spans)];
+    let para = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: true });
-    f.render_widget(bits_line, area);
+    f.render_widget(para, area);
 }
 
 fn render_field_values(f: &mut Frame, area: Rect, w: u32, fmt: EncFormat) {
