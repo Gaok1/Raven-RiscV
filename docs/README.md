@@ -24,7 +24,7 @@ Implements the essential subset of **RV32I**:
 - **JALR`
 - **SYSTEM:** `ECALL`, `EBREAK` (treated as HALT)
 
-*Not yet implemented:* FENCE/CSR and floating point.
+*Not implemented:* FENCE/CSR and floating point.
 
 ## Assembler and Directives
 
