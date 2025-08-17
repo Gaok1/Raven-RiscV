@@ -1,5 +1,8 @@
-use super::app::{App, EditorMode,  MemRegion, Tab};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use super::app::{App, EditorMode, MemRegion, Tab};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 use rfd::FileDialog as OSFileDialog;
 use std::{io, time::Instant};
 
@@ -7,7 +10,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     if key.kind != KeyEventKind::Press {
         return Ok(false);
     }
-    
+
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
@@ -35,7 +38,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.editor.cursor_row = 0;
                         app.editor.cursor_col = 0;
                     }
-                } 
+                }
                 return Ok(false);
             }
             if ctrl && matches!(key.code, KeyCode::Char('s')) {
@@ -45,7 +48,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     .save_file()
                 {
                     let _ = std::fs::write(path, app.editor.text());
-                } 
+                }
                 return Ok(false);
             }
 
@@ -282,4 +285,24 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     }
 
     Ok(false)
+}
+
+pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
+    app.mouse_x = me.column;
+    app.mouse_y = me.row;
+
+    if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+        // Tabs area: top block height is 3 with a border; titles are on row 1
+        if me.row == area.y + 1 {
+            let width = area.width.saturating_sub(2); // subtract borders
+            let x = me.column.saturating_sub(area.x + 1);
+            let tab_width = width / 3;
+            let idx = (x / tab_width).min(2);
+            app.tab = match idx {
+                0 => Tab::Editor,
+                1 => Tab::Run,
+                _ => Tab::Docs,
+            };
+        }
+    }
 }
