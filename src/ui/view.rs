@@ -24,7 +24,19 @@ pub fn ui(f: &mut Frame, app: &App) {
     // Tabs with strong highlight and divider
     let titles = ["Editor", "Run", "Docs"]
         .into_iter()
-        .map(|t| Line::from(t))
+        .enumerate()
+        .map(|(i, t)| {
+            let mut line = Line::from(t);
+            let tab = match i {
+                0 => Tab::Editor,
+                1 => Tab::Run,
+                _ => Tab::Docs,
+            };
+            if Some(tab) == app.hover_tab && tab != app.tab {
+                line = line.style(Style::default().bg(Color::DarkGray));
+            }
+            line
+        })
         .collect::<Vec<_>>();
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title("Falcon ASM"))
@@ -68,7 +80,6 @@ pub fn ui(f: &mut Frame, app: &App) {
 
     let status = Paragraph::new(status).block(Block::default().borders(Borders::ALL));
     f.render_widget(status, chunks[2]);
-
 }
 
 fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
@@ -212,7 +223,6 @@ fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         f.set_cursor_position((cursor_x, cursor_y));
     }
 }
-
 
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
     let cw = r.width.saturating_sub(width) / 2;

@@ -75,6 +75,7 @@ pub struct App {
     // Mouse tracking
     pub(super) mouse_x: u16,
     pub(super) mouse_y: u16,
+    pub(super) hover_tab: Option<Tab>,
 }
 
 impl App {
@@ -117,6 +118,7 @@ impl App {
             docs_scroll: 0,
             mouse_x: 0,
             mouse_y: 0,
+            hover_tab: None,
         }
     }
 

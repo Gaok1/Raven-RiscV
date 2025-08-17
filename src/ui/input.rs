@@ -291,18 +291,33 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
     app.mouse_y = me.row;
 
-    if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-        // Tabs area: top block height is 3 with a border; titles are on row 1
-        if me.row == area.y + 1 {
-            let width = area.width.saturating_sub(2); // subtract borders
-            let x = me.column.saturating_sub(area.x + 1);
-            let tab_width = width / 3;
-            let idx = (x / tab_width).min(2);
-            app.tab = match idx {
-                0 => Tab::Editor,
-                1 => Tab::Run,
-                _ => Tab::Docs,
-            };
+    // Determine which tab (if any) is hovered by the cursor. Tabs are laid out
+    // exactly as rendered: "Editor │ Run │ Docs". We compute the bounds based on
+    // the title widths and divider rather than splitting the area evenly so that
+    // the hover/click regions align with the actual tab positions.
+    app.hover_tab = None;
+    if me.row == area.y + 1 {
+        let x = me.column.saturating_sub(area.x + 1); // inside border
+        let titles = [
+            ("Editor", Tab::Editor),
+            ("Run", Tab::Run),
+            ("Docs", Tab::Docs),
+        ];
+        let divider = " │ ".len() as u16;
+        let mut pos: u16 = 0;
+        for (i, (title, tab)) in titles.iter().enumerate() {
+            let title_width = title.len() as u16; // ASCII titles
+            if x < pos + title_width {
+                app.hover_tab = Some(*tab);
+                if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    app.tab = *tab;
+                }
+                break;
+            }
+            pos += title_width;
+            if i < titles.len() - 1 {
+                pos += divider;
+            }
         }
     }
 }
