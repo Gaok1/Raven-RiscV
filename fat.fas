@@ -1,0 +1,28 @@
+
+
+.text
+  li a0, 5
+  call fatorial
+  call end
+
+fatorial:
+    li t0,2
+    blt a0,t0, minFat
+    addi sp,sp,-8
+    sw ra,4(sp)   #store ra
+    sw a0,8(sp)  # store a0
+    #fat(n-1)
+    addi a0,a0,-1
+    call fatorial
+    # s0 * a0(stack)
+    lw ra,4(sp)
+    lw a0, 8(sp)
+    mul s0, a0,s0    
+    addi sp,sp,8
+    ret
+    minFat:
+        li s0,1
+        ret
+
+end:
+    ecall

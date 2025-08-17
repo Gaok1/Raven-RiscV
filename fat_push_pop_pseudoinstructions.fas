@@ -1,0 +1,23 @@
+.text
+  li a0, 5
+  call fat
+  call end
+
+fat:
+    li t0,2
+    blt a0,t0, minFat
+    push ra
+    push a0
+    #fat(n-1)
+    addi a0,a0,-1
+    call fat
+    # s0 * a0(stack)
+    pop a0
+    pop ra
+    mul s0, a0,s0    
+    ret
+    minFat:
+        li s0,1
+        ret
+end:
+    ecall

@@ -460,8 +460,8 @@ fn parse_push(s: &str) -> Result<(Instruction, Instruction), String> {
     }
     let rs = parse_reg(&ops[0]).ok_or("invalid rs")?;
     Ok((
-        Instruction::Addi { rd: 2, rs1: 2, imm: -4 },
-        Instruction::Sw { rs2: rs, rs1: 2, imm: 0 },
+        Instruction::Addi { rd: 2, rs1: 2, imm: -4 }, // alocate stack space
+        Instruction::Sw { rs2: rs, rs1: 2, imm: 4 }, //write into sp+4 
     ))
 }
 
@@ -476,8 +476,8 @@ fn parse_pop(s: &str) -> Result<(Instruction, Instruction), String> {
     }
     let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
     Ok((
-        Instruction::Lw { rd, rs1: 2, imm: 0 },
-        Instruction::Addi { rd: 2, rs1: 2, imm: 4 },
+        Instruction::Lw { rd, rs1: 2, imm: 4 }, // read from sp+4
+        Instruction::Addi { rd: 2, rs1: 2, imm: 4 }, // deallocate stack space (sp += 4)
     ))
 }
 
