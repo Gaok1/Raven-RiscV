@@ -186,6 +186,15 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
                 imm: branch_imm(&ops[0], pc, labels)?,
             })
         }
+        "call" => {
+            if ops.len() != 1 {
+                return Err("call: expected label/immediate".into());
+            }
+            Ok(Jal {
+                rd: 1,
+                imm: branch_imm(&ops[0], pc, labels)?,
+            })
+        }
         "jr" => {
             if ops.len() != 1 {
                 return Err("jr: expected register".into());
@@ -406,11 +415,7 @@ fn parse_la(s: &str, labels: &HashMap<String, u32>) -> Result<(Instruction, Inst
     // we need to shift the high part before generating the opcode.
     let hi = ((addr + 0x800) >> 12) << 12; // aligned high part
     let lo = addr - hi; // 12-bit low part
-    let lo_signed = if lo & 0x800 != 0 {
-        lo - 0x1000
-    } else {
-        lo
-    };
+    let lo_signed = if lo & 0x800 != 0 { lo - 0x1000 } else { lo };
 
     Ok((
         Instruction::Lui { rd, imm: hi },
@@ -548,12 +553,28 @@ mod tests {
         // Two instructions should be emitted: LUI and ADDI
         assert_eq!(prog.text.len(), 2);
 
-        let expected_lui =
-            encode(Instruction::Lui { rd: 5, imm: 0x1000 }).expect("encode lui");
-        let expected_addi =
-            encode(Instruction::Addi { rd: 5, rs1: 5, imm: 0 }).expect("encode addi");
+        let expected_lui = encode(Instruction::Lui { rd: 5, imm: 0x1000 }).expect("encode lui");
+        let expected_addi = encode(Instruction::Addi {
+            rd: 5,
+            rs1: 5,
+            imm: 0,
+        })
+        .expect("encode addi");
 
         assert_eq!(prog.text[0], expected_lui);
         assert_eq!(prog.text[1], expected_addi);
+    }
+
+    #[test]
+    fn call_expands_to_jal_ra() {
+        // Simple program with a call to a local label
+        let asm = ".text\ncall func\nfunc: ebreak";
+        let prog = assemble(asm, 0).expect("assemble");
+
+        // Should emit: JAL ra, func; EBREAK
+        assert_eq!(prog.text.len(), 2);
+
+        let expected_jal = encode(Instruction::Jal { rd: 1, imm: 4 }).expect("encode jal");
+        assert_eq!(prog.text[0], expected_jal);
     }
 }

@@ -38,7 +38,7 @@ docs/
 - `.text` and `.data` segments (data starts at `base_pc + 0x1000`).
 - `.byte` and `.word` directives to insert values in the data section.
 - Labels in any segment; `la rd, label` emits `lui` + `addi`.
-- Other pseudo-instructions: `nop`, `mv`, `li`, `subi`, `j`, `jr`, `ret`.
+- Other pseudo-instructions: `nop`, `mv`, `li`, `subi`, `j`, `call`, `jr`, `ret`.
 
 ## Execution
 
