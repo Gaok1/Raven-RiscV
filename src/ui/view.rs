@@ -351,24 +351,52 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     } else {
         let mem_block = Block::default()
             .borders(Borders::ALL)
-            .title("RAM Memory — t:regs f:fmt s:step r:run p:pause");
+            .title("RAM Memory — t:regs f:fmt b:bytes s:step r:run p:pause");
         f.render_widget(mem_block.clone(), cols[0]);
 
         let inner = mem_block.inner(cols[0]);
         let mut items = Vec::new();
         let base = app.mem_view_addr;
         let lines = inner.height.saturating_sub(2) as u32;
-        for off in (0..lines).map(|i| i * 4) {
+        let bytes = app.mem_view_bytes;
+        for off in (0..lines).map(|i| i * bytes) {
             let addr = base.wrapping_add(off);
-            if in_mem_range(app, addr) {
-                let w = app.mem.load32(addr);
-                let val_str = if app.show_hex {
-                    format!("0x{w:08x}")
-                } else {
-                    format!("{w}")
+            let max = app.mem_size.saturating_sub(bytes as usize) as u32;
+            if addr <= max {
+                let val_str = match bytes {
+                    4 => {
+                        let w = app.mem.load32(addr);
+                        if app.show_hex {
+                            format!("0x{w:08x}")
+                        } else {
+                            format!("{w}")
+                        }
+                    }
+                    2 => {
+                        let w = app.mem.load16(addr);
+                        if app.show_hex {
+                            format!("0x{w:04x}")
+                        } else {
+                            format!("{w}")
+                        }
+                    }
+                    _ => {
+                        let w = app.mem.load8(addr);
+                        if app.show_hex {
+                            format!("0x{w:02x}")
+                        } else {
+                            format!("{w}")
+                        }
+                    }
                 };
-                let item = ListItem::new(format!("0x{addr:08x}: {val_str}"));
-                items.push(item);
+                let mut text = format!("0x{addr:08x}: {val_str}");
+                if addr == app.cpu.x[2] {
+                    text.push_str("   ▶ sp");
+                    let item = ListItem::new(text).style(Style::default().fg(Color::Yellow));
+                    items.push(item);
+                } else {
+                    items.push(ListItem::new(text));
+                }
             }
         }
         let list = List::new(items);
@@ -461,19 +489,35 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     } else {
         ("PAUSE", Color::Red)
     };
-    let line1 = Line::from(vec![
+    let mut spans = vec![
         Span::raw("View: "),
         Span::styled(view_text, Style::default().fg(view_color)),
         Span::raw("  Format: "),
         Span::styled(fmt_text, Style::default().fg(fmt_color)),
-        Span::raw("  Region: "),
-        Span::styled(region_text, Style::default().fg(region_color)),
-        Span::raw("  State: "),
-        Span::styled(run_text, Style::default().fg(run_color)),
-    ]);
-    let line2 = Line::from(
-        "Commands: t=toggle view  f=toggle format  s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll",
-    );
+    ];
+    if !app.show_registers {
+        let bytes_text = match app.mem_view_bytes {
+            4 => "4B",
+            2 => "2B",
+            _ => "1B",
+        };
+        spans.push(Span::raw("  Bytes: "));
+        spans.push(Span::styled(bytes_text, Style::default().fg(Color::Yellow)));
+    }
+    spans.push(Span::raw("  Region: "));
+    spans.push(Span::styled(region_text, Style::default().fg(region_color)));
+    spans.push(Span::raw("  State: "));
+    spans.push(Span::styled(run_text, Style::default().fg(run_color)));
+    let line1 = Line::from(spans);
+    let line2 = if app.show_registers {
+        Line::from(
+            "Commands: t=toggle view  f=toggle format  s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll",
+        )
+    } else {
+        Line::from(
+            "Commands: t=toggle view  f=toggle format  b=bytes  s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll",
+        )
+    };
     let para = Paragraph::new(vec![line1, line2])
         .block(Block::default().borders(Borders::ALL).title("Run Controls"));
     f.render_widget(para, area);

@@ -91,7 +91,37 @@ impl Editor {
         })
     }
 
+    fn delete_range(&mut self, start: (usize, usize), end: (usize, usize)) {
+        let (sr, sc) = start;
+        let (er, ec) = end;
+        if sr == er {
+            let line = &mut self.lines[sr];
+            let sb = Self::byte_at(line, sc);
+            let eb = Self::byte_at(line, ec);
+            line.replace_range(sb..eb, "");
+        } else {
+            let tail = {
+                let last = &self.lines[er];
+                let eb = Self::byte_at(last, ec);
+                last[eb..].to_string()
+            };
+            {
+                let first = &mut self.lines[sr];
+                let sb = Self::byte_at(first, sc);
+                first.truncate(sb);
+                first.push_str(&tail);
+            }
+            self.lines.drain(sr + 1..=er);
+        }
+        self.cursor_row = sr;
+        self.cursor_col = sc;
+        self.clear_selection();
+    }
+
     pub fn insert_char(&mut self, ch: char) {
+        if let Some((start, end)) = self.selection_range() {
+            self.delete_range(start, end);
+        }
         self.ensure_line();
         let line = self.current_line();
         let col = self.cursor_col.min(Self::char_count(line));
@@ -107,6 +137,10 @@ impl Editor {
     }
 
     pub fn backspace(&mut self) {
+        if let Some((start, end)) = self.selection_range() {
+            self.delete_range(start, end);
+            return;
+        }
         if self.lines.is_empty() {
             return;
         }
@@ -130,6 +164,10 @@ impl Editor {
     }
 
     pub fn delete_char(&mut self) {
+        if let Some((start, end)) = self.selection_range() {
+            self.delete_range(start, end);
+            return;
+        }
         if self.lines.is_empty() {
             return;
         }
@@ -150,6 +188,9 @@ impl Editor {
     }
 
     pub fn enter(&mut self) {
+        if let Some((start, end)) = self.selection_range() {
+            self.delete_range(start, end);
+        }
         self.ensure_line();
         let (idx_bytes, rest) = {
             let line = self.current_line();
