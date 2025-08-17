@@ -141,7 +141,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.single_step();
                 }
                 (KeyCode::Char('r'), Tab::Run) => {
-                    app.is_running = true;
+                    if !app.faulted {
+                        app.is_running = true;
+                    }
                 }
                 (KeyCode::Char('p'), Tab::Run) => {
                     app.is_running = false;

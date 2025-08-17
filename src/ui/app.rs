@@ -79,6 +79,7 @@ pub struct App {
     pub(super) is_running: bool,
     pub(super) last_step_time: Instant,
     pub(super) step_interval: Duration,
+    pub(super) faulted: bool,
 
     // Docs state
     pub(super) docs_scroll: usize,
@@ -93,7 +94,7 @@ impl App {
         let base_pc = 0x0000_0000;
         cpu.pc = base_pc;
         let mem_size = 128 * 1024;
-        cpu.write(2, mem_size as u32); // initialize stack pointer to top of memory
+        cpu.write(2, mem_size as u32 - 4); // initialize stack pointer to a valid word
         let data_base = base_pc + 0x1000;
         Self {
             tab: Tab::Editor,
@@ -120,6 +121,7 @@ impl App {
             is_running: false,
             last_step_time: Instant::now(),
             step_interval: Duration::from_millis(80),
+            faulted: false,
             docs_scroll: 0,
             file_dialog: None,
         }
@@ -133,8 +135,9 @@ impl App {
         self.mem_size = 128 * 1024;
         self.cpu = Cpu::default();
         self.cpu.pc = self.base_pc;
-        self.cpu.write(2, self.mem_size as u32); // reset stack pointer
+        self.cpu.write(2, self.mem_size as u32 - 4); // reset stack pointer
         self.mem = Ram::new(self.mem_size);
+        self.faulted = false;
 
         match assemble(&self.editor.text(), self.base_pc) {
             Ok(prog) => {
@@ -213,7 +216,16 @@ impl App {
 
     pub(super) fn single_step(&mut self) {
         self.prev_x = self.cpu.x; // snapshot before step
-        let alive = falcon::exec::step(&mut self.cpu, &mut self.mem);
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            falcon::exec::step(&mut self.cpu, &mut self.mem)
+        }));
+        let alive = match res {
+            Ok(v) => v,
+            Err(_) => {
+                self.faulted = true;
+                false
+            }
+        };
         if !alive {
             self.is_running = false;
         }
