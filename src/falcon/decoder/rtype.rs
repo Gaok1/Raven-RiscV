@@ -27,6 +27,6 @@ pub(super) fn decode(word:u32)->Result<Instruction,&'static str>{
         (0x01, 0x5) => Instruction::Divu{rd,rs1,rs2},
         (0x01, 0x6) => Instruction::Rem{rd,rs1,rs2},
         (0x01, 0x7) => Instruction::Remu{rd,rs1,rs2},
-        _ => return Err("R-type inválido"),
+        _ => return Err("Invalid R-type"),
     })
 }

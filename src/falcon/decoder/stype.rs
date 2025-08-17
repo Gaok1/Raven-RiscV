@@ -15,6 +15,6 @@ pub(super) fn decode(word:u32)->Result<Instruction,&'static str>{
         0x0 => Instruction::Sb{rs2,rs1,imm},
         0x1 => Instruction::Sh{rs2,rs1,imm},
         0x2 => Instruction::Sw{rs2,rs1,imm},
-        _ => return Err("Store inválido"),
+        _ => return Err("Invalid store"),
     })
 }

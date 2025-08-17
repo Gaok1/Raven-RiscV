@@ -3,7 +3,7 @@ use crate::falcon::encoder::encode;
 use crate::falcon::instruction::Instruction;
 use std::collections::HashMap;
 
-// Estrutura retornada com código e dados
+// Structure returned with code and data
 pub struct Program {
     pub text: Vec<u32>,
     pub data: Vec<u8>,
@@ -13,16 +13,16 @@ pub struct Program {
 // ---------- API ----------
 pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
     let lines = preprocess(text);
-    let data_base = base_pc + 0x1000; // região de dados após código
+    let data_base = base_pc + 0x1000; // data region after code
 
-    // 1ª passada: tabela de símbolos
+    // 1st pass: symbol table
     enum Section {
         Text,
         Data,
     }
     let mut section = Section::Text;
     let mut pc_text = base_pc;
-    let mut pc_data = 0u32; // offset a partir de data_base
+    let mut pc_data = 0u32; // offset from data_base
     let mut items = Vec::new(); // (pc, LineKind)
     let mut data_bytes = Vec::<u8>::new();
     let mut labels = HashMap::<String, u32>::new();
@@ -65,28 +65,28 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, String> {
             Section::Data => {
                 if let Some(rest) = line.strip_prefix(".byte") {
                     for b in rest.split(',') {
-                        let v = parse_imm(b).ok_or_else(|| format!(".byte inválido: {b}"))?;
+                        let v = parse_imm(b).ok_or_else(|| format!("invalid .byte: {b}"))?;
                         if !(0..=255).contains(&v) {
-                            return Err(format!(".byte fora de 0..255: {v}"));
+                            return Err(format!(".byte outside 0..255: {v}"));
                         }
                         data_bytes.push(v as u8);
                         pc_data += 1;
                     }
                 } else if let Some(rest) = line.strip_prefix(".word") {
                     for w in rest.split(',') {
-                        let v = parse_imm(w).ok_or_else(|| format!(".word inválido: {w}"))?;
+                        let v = parse_imm(w).ok_or_else(|| format!("invalid .word: {w}"))?;
                         let bytes = (v as u32).to_le_bytes();
                         data_bytes.extend_from_slice(&bytes);
                         pc_data += 4;
                     }
                 } else {
-                    return Err(format!("diretiva de dados desconhecida: {line}"));
+                    return Err(format!("unknown data directive: {line}"));
                 }
             }
         }
     }
 
-    // 2ª passada: monta
+    // 2nd pass: assemble
     let mut words = Vec::with_capacity(items.len());
     for (pc, kind) in items {
         match kind {
@@ -133,20 +133,20 @@ fn preprocess(text: &str) -> Vec<String> {
 fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instruction, String> {
     // ex: "addi x1, x0, 10"
     let mut parts = s.split_whitespace();
-    let mnemonic = parts.next().ok_or("linha vazia")?.to_lowercase();
+    let mnemonic = parts.next().ok_or("empty line")?.to_lowercase();
     let rest = parts.collect::<Vec<_>>().join(" ");
     let ops = split_operands(&rest);
 
     use Instruction::*;
 
-    let get_reg = |t: &str| parse_reg(t).ok_or_else(|| format!("registrador inválido: {t}"));
-    let get_imm = |t: &str| parse_imm(t).ok_or_else(|| format!("imediato inválido: {t}"));
+    let get_reg = |t: &str| parse_reg(t).ok_or_else(|| format!("invalid register: {t}"));
+    let get_imm = |t: &str| parse_imm(t).ok_or_else(|| format!("invalid immediate: {t}"));
 
     match mnemonic.as_str() {
-        // ---------- Pseudoinstruções ----------
+        // ---------- Pseudo-instructions ----------
         "nop" => {
             if !ops.is_empty() {
-                return Err("nop não leva operandos".into());
+                return Err("nop takes no operands".into());
             }
             Ok(Addi {
                 rd: 0,
@@ -156,7 +156,7 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         }
         "mv" => {
             if ops.len() != 2 {
-                return Err("esperado 'rd, rs'".into());
+                return Err("expected 'rd, rs'".into());
             }
             let rd = get_reg(&ops[0])?;
             let rs = get_reg(&ops[1])?;
@@ -168,18 +168,18 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         }
         "li" => {
             if ops.len() != 2 {
-                return Err("esperado 'rd, imm'".into());
+                return Err("expected 'rd, imm'".into());
             }
             let rd = get_reg(&ops[0])?;
             let imm = get_imm(&ops[1])?;
             if !(-2048..=2047).contains(&imm) {
-                return Err("li: imediato fora de 12 bits".into());
+                return Err("li: immediate out of 12-bit range".into());
             }
             Ok(Addi { rd, rs1: 0, imm })
         }
         "j" => {
             if ops.len() != 1 {
-                return Err("j: esperado rótulo/imediato".into());
+                return Err("j: expected label/immediate".into());
             }
             Ok(Jal {
                 rd: 0,
@@ -188,14 +188,14 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         }
         "jr" => {
             if ops.len() != 1 {
-                return Err("jr: esperado registrador".into());
+                return Err("jr: expected register".into());
             }
             let rs1 = get_reg(&ops[0])?;
             Ok(Jalr { rd: 0, rs1, imm: 0 })
         }
         "ret" => {
             if !ops.is_empty() {
-                return Err("ret não leva operandos".into());
+                return Err("ret takes no operands".into());
             }
             Ok(Jalr {
                 rd: 0,
@@ -205,14 +205,14 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         }
         "subi" => {
             if ops.len() != 3 {
-                return Err("esperado 'rd, rs1, imm'".into());
+                return Err("expected 'rd, rs1, imm'".into());
             }
             let rd = get_reg(&ops[0])?;
             let rs1 = get_reg(&ops[1])?;
             let imm = get_imm(&ops[2])?;
             let neg = -imm;
             if !(-2048..=2047).contains(&neg) {
-                return Err("subi: imediato fora de 12 bits".into());
+                return Err("subi: immediate out of 12-bit range".into());
             }
             Ok(Addi { rd, rs1, imm: neg })
         }
@@ -221,7 +221,7 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" | "mul"
         | "mulh" | "mulhsu" | "mulhu" | "div" | "divu" | "rem" | "remu" => {
             if ops.len() != 3 {
-                return Err("esperado 'rd, rs1, rs2'".into());
+                return Err("expected 'rd, rs1, rs2'".into());
             }
             let rd = get_reg(&ops[0])?;
             let rs1 = get_reg(&ops[1])?;
@@ -252,7 +252,7 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         // ---------- I-type ----------
         "addi" | "andi" | "ori" | "xori" | "slti" | "sltiu" => {
             if ops.len() != 3 {
-                return Err("esperado 'rd, rs1, imm'".into());
+                return Err("expected 'rd, rs1, imm'".into());
             }
             let rd = get_reg(&ops[0])?;
             let rs1 = get_reg(&ops[1])?;
@@ -269,7 +269,7 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         }
         "slli" | "srli" | "srai" => {
             if ops.len() != 3 {
-                return Err("esperado 'rd, rs1, shamt'".into());
+                return Err("expected 'rd, rs1, shamt'".into());
             }
             let rd = get_reg(&ops[0])?;
             let rs1 = get_reg(&ops[1])?;
@@ -306,10 +306,10 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
             })
         }
 
-        // ---------- Branches (label ou imediato) ----------
+        // ---------- Branches (label or immediate) ----------
         "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" => {
             if ops.len() != 3 {
-                return Err("esperado 'rs1, rs2, label/imediato'".into());
+                return Err("expected 'rs1, rs2, label/immediate'".into());
             }
             let rs1 = get_reg(&ops[0])?;
             let rs2 = get_reg(&ops[1])?;
@@ -328,7 +328,7 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         // ---------- U/J ----------
         "lui" | "auipc" => {
             if ops.len() != 2 {
-                return Err("esperado 'rd, imm'".into());
+                return Err("expected 'rd, imm'".into());
             }
             let rd = get_reg(&ops[0])?;
             let imm = get_imm(&ops[1])?;
@@ -339,10 +339,10 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
             })
         }
 
-        // jal: dois formatos: "jal rd,label" ou "jal label" (rd=ra)
+        // jal: two formats: "jal rd,label" or "jal label" (rd=ra)
         "jal" => {
             if ops.is_empty() {
-                return Err("jal: faltou destino".into());
+                return Err("jal: missing destination".into());
             }
             if ops.len() == 1 {
                 let rd = 1; // ra
@@ -354,13 +354,13 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
                     imm: branch_imm(&ops[1], pc, labels)?,
                 })
             } else {
-                Err("jal: argumentos demais".into())
+                Err("jal: too many arguments".into())
             }
         }
         // jalr rd, rs1, imm
         "jalr" => {
             if ops.len() != 3 {
-                return Err("jalr: esperado 'rd, rs1, imm'".into());
+                return Err("jalr: expected 'rd, rs1, imm'".into());
             }
             Ok(Jalr {
                 rd: get_reg(&ops[0])?,
@@ -372,18 +372,18 @@ fn parse_instr(s: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<Instru
         // system
         "ecall" => {
             if !ops.is_empty() {
-                return Err("ecall não leva operandos".into());
+                return Err("ecall takes no operands".into());
             }
             Ok(Ecall)
         }
         "ebreak" => {
             if !ops.is_empty() {
-                return Err("ebreak não leva operandos".into());
+                return Err("ebreak takes no operands".into());
             }
             Ok(Ebreak)
         }
 
-        _ => Err(format!("mnemônico não suportado: {mnemonic}")),
+        _ => Err(format!("unsupported mnemonic: {mnemonic}")),
     }
 }
 
@@ -394,18 +394,18 @@ fn parse_la(s: &str, labels: &HashMap<String, u32>) -> Result<(Instruction, Inst
     let rest = parts.collect::<Vec<_>>().join(" ");
     let ops = split_operands(&rest);
     if ops.len() != 2 {
-        return Err("esperado 'rd, label'".into());
+        return Err("expected 'rd, label'".into());
     }
-    let rd = parse_reg(&ops[0]).ok_or("rd inválido")?;
+    let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
     let addr = *labels
         .get(&ops[1])
-        .ok_or_else(|| format!("rótulo não encontrado: {}", ops[1]))? as i32;
+        .ok_or_else(|| format!("label not found: {}", ops[1]))? as i32;
 
-    // Dividimos o endereço em parte alta (alinhada a 12 bits) e parte baixa.
-    // A instrução `lui` carrega os 20 bits superiores já deslocados, portanto
-    // precisamos deslocar a parte alta antes de gerar o opcode.
-    let hi = ((addr + 0x800) >> 12) << 12; // parte alta alinhada
-    let lo = addr - hi; // parte baixa de 12 bits
+    // Split the address into a high part (aligned to 12 bits) and a low part.
+    // The `lui` instruction loads the upper 20 bits already shifted, therefore
+    // we need to shift the high part before generating the opcode.
+    let hi = ((addr + 0x800) >> 12) << 12; // aligned high part
+    let lo = addr - hi; // 12-bit low part
     let lo_signed = if lo & 0x800 != 0 {
         lo - 0x1000
     } else {
@@ -485,24 +485,24 @@ fn parse_imm(s: &str) -> Option<i32> {
 }
 
 fn parse_shamt(s: &str) -> Result<u8, String> {
-    let v = parse_imm(s).ok_or_else(|| format!("shamt inválido: {s}"))?;
+    let v = parse_imm(s).ok_or_else(|| format!("invalid shamt: {s}"))?;
     if (0..=31).contains(&v) {
         Ok(v as u8)
     } else {
-        Err(format!("shamt fora de faixa: {v}"))
+        Err(format!("shamt out of range: {v}"))
     }
 }
 
-// beq/bne/... e jal: token pode ser número ou label
+// beq/bne/... and jal: token can be a number or label
 fn branch_imm(tok: &str, pc: u32, labels: &HashMap<String, u32>) -> Result<i32, String> {
     if let Some(v) = parse_imm(tok) {
         return Ok(v);
     }
     let target = labels
         .get(&tok.to_string())
-        .ok_or_else(|| format!("rótulo não encontrado: {tok}"))?;
+        .ok_or_else(|| format!("label not found: {tok}"))?;
     let imm = (*target as i64) - (pc as i64);
-    // checagem básica de alcance (13 bits para B, 21 bits para J). Aqui só avisamos.
+    // basic range check (13 bits for B, 21 bits for J). Here we only warn.
     Ok(imm as i32)
 }
 
@@ -511,25 +511,25 @@ fn parse_memop(op: &str) -> Result<(i32, u8), String> {
     // "imm(rs1)"
     let (imm_s, rest) = op
         .split_once('(')
-        .ok_or_else(|| format!("operand mem inválido: {op}"))?;
-    let rs1_s = rest.strip_suffix(')').ok_or("faltou ')'")?;
-    let imm = parse_imm(imm_s.trim()).ok_or_else(|| format!("imm inválido: {imm_s}"))?;
-    let rs1 = parse_reg(rs1_s.trim()).ok_or_else(|| format!("rs1 inválido: {rs1_s}"))?;
+        .ok_or_else(|| format!("invalid mem operand: {op}"))?;
+    let rs1_s = rest.strip_suffix(')').ok_or("missing ')'")?;
+    let imm = parse_imm(imm_s.trim()).ok_or_else(|| format!("invalid imm: {imm_s}"))?;
+    let rs1 = parse_reg(rs1_s.trim()).ok_or_else(|| format!("invalid rs1: {rs1_s}"))?;
     Ok((imm, rs1))
 }
 fn load_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
     if ops.len() != 2 {
-        return Err("load: esperado 'rd, imm(rs1)'".into());
+        return Err("load: expected 'rd, imm(rs1)'".into());
     }
-    let rd = parse_reg(&ops[0]).ok_or("rd inválido")?;
+    let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
     let (imm, rs1) = parse_memop(&ops[1])?;
     Ok((rd, imm, rs1))
 }
 fn store_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
     if ops.len() != 2 {
-        return Err("store: esperado 'rs2, imm(rs1)'".into());
+        return Err("store: expected 'rs2, imm(rs1)'".into());
     }
-    let rs2 = parse_reg(&ops[0]).ok_or("rs2 inválido")?;
+    let rs2 = parse_reg(&ops[0]).ok_or("invalid rs2")?;
     let (imm, rs1) = parse_memop(&ops[1])?;
     Ok((rs2, imm, rs1))
 }
@@ -541,11 +541,11 @@ mod tests {
 
     #[test]
     fn la_generates_lui_addi_pair() {
-        // Assembla um programa simples usando 'la' para um símbolo em .data
+        // Assemble a simple program using 'la' for a symbol in .data
         let asm = ".data\nvar: .word 0\n.text\nla t0, var";
         let prog = assemble(asm, 0).expect("assemble");
 
-        // Devem ser emitidas duas instruções: LUI e ADDI
+        // Two instructions should be emitted: LUI and ADDI
         assert_eq!(prog.text.len(), 2);
 
         let expected_lui =

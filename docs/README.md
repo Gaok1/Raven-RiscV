@@ -1,20 +1,19 @@
-# Falcon ASM 🦅 – Emulador Educacional RISC-V (RV32I)
+# Falcon ASM 🦅 – Educational RISC-V (RV32I) Emulator
 <img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="400"/>
 
+Falcon ASM is an emulator written in Rust focused on clarity and learning. It exposes the **fetch → decode → execute** cycle and provides a complete view of how a basic RISC-V processor works.
 
-Falcon ASM é um emulador escrito em Rust com foco em clareza e aprendizado. O objetivo é expor o ciclo **fetch → decode → execute** e oferecer uma visão completa de como um processador RISC-V básico funciona.
+The project includes:
 
-O projeto inclui:
+- Instruction decoder and encoder
+- Two-pass text assembler with label support
+- `.text` and `.data` segments with data directives
+- Little-endian registers and memory
+- Execution engine ready for integration with graphical interfaces
 
-- **Decodificador e encoder** de instruções
-- **Montador textual de duas passagens** com suporte a rótulos
-- **Segmentos `.text` e `.data`** com diretivas de dados
-- **Registradores e memória** little-endian
-- **Motor de execução** pronto para integração com interfaces gráficas
+## Project Status
 
-## Estado do Projeto
-
-Implementa o subconjunto essencial do **RV32I**:
+Implements the essential subset of **RV32I**:
 
 - **R-type:** `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
 - **I-type (OP-IMM):** `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
@@ -22,26 +21,26 @@ Implementa o subconjunto essencial do **RV32I**:
 - **Stores:** `SB, SH, SW`
 - **Branches:** `BEQ, BNE, BLT, BGE, BLTU, BGEU`
 - **U/J:** `LUI, AUIPC, JAL`
-- **JALR**
-- **SYSTEM:** `ECALL`, `EBREAK` (tratados como HALT)
+- **JALR`
+- **SYSTEM:** `ECALL`, `EBREAK` (treated as HALT)
 
-*Ainda não implementados:* FENCE/CSR e ponto flutuante.
+*Not yet implemented:* FENCE/CSR and floating point.
 
-## Montador e Diretivas
+## Assembler and Directives
 
-O montador aceita código dividido em segmentos:
+The assembler accepts code split into segments:
 
-- `.text` – segmento padrão de instruções.
-- `.data` – segmento de dados, carregado **0x1000 bytes** após o endereço base do programa.
+- `.text` – instruction segment.
+- `.data` – data segment, loaded **0x1000 bytes** after the program base address.
 
-Dentro de `.data` são suportadas as diretivas:
+Inside `.data` the following directives are supported:
 
-- `.byte v1, v2, ...` – valores de 8 bits
-- `.word w1, w2, ...` – valores de 32 bits em little-endian
+- `.byte v1, v2, ...` – 8-bit values
+- `.word w1, w2, ...` – 32-bit values in little-endian
 
-Rótulos (`label:`) podem ser definidos em qualquer segmento. Para obter o endereço de um rótulo, utilize a pseudoinstrução `la rd, label`, que gera um par `lui`/`addi` automaticamente.
+Labels (`label:`) can be defined in any segment. To load a label address, use the `la rd, label` pseudo-instruction, which emits a `lui`/`addi` pair.
 
-### Pseudoinstruções disponíveis
+### Available Pseudo-instructions
 
 - `nop` → `addi x0, x0, 0`
 - `mv rd, rs` → `addi rd, rs, 0`
@@ -50,14 +49,14 @@ Rótulos (`label:`) podem ser definidos em qualquer segmento. Para obter o ender
 - `j label` → `jal x0, label`
 - `jr rs1` → `jalr x0, rs1, 0`
 - `ret` → `jalr x0, ra, 0`
-- `la rd, label` → carrega o endereço de `label`
+- `la rd, label` → loads the address of `label`
 
-## Registradores e Memória
+## Registers and Memory
 
-- Registradores `x0..x31` com aliases: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`. `x0` é sempre 0.
-- Memória little-endian com operações `load8/16/32` e `store8/16/32`.
+- Registers `x0..x31` with aliases: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`. `x0` is always 0.
+- Little-endian memory with `load8/16/32` and `store8/16/32` operations.
 
-## Resumo de Opcodes
+## Opcode Summary
 
 ```
 RTYPE = 0x33
@@ -72,17 +71,17 @@ JALR  = 0x67
 SYSTEM= 0x73
 ```
 
-Para detalhes de formato e tabelas `funct3/funct7`, consulte [`docs/format.md`](format.md).
+For format details and `funct3/funct7` tables see [`docs/format.md`](format.md).
 
-## Execução
+## Running
 
-Requisitos: Rust estável (via [rustup.rs](https://rustup.rs)).
+Requirements: stable Rust (via [rustup.rs](https://rustup.rs)).
 
 ```bash
 cargo run
 ```
 
-Exemplo mínimo:
+Minimal example:
 
 ```rust
 use falcon::asm::assemble;
@@ -105,10 +104,10 @@ load_words(&mut mem, cpu.pc, &prog.text);
 load_bytes(&mut mem, prog.data_base, &prog.data);
 ```
 
-O emulador executa instruções enquanto `step` retornar `true`.
+The emulator executes instructions while `step` returns `true`.
 
 # Examples
-## code editor
+## Code editor
 <img width="1918" height="1009" alt="image" src="https://github.com/user-attachments/assets/4ade62a4-e3e0-4c69-b42b-ae52d5bd8397" />
 
 ## Running code (emulator)
@@ -118,5 +117,3 @@ O emulador executa instruções enquanto `step` retornar `true`.
 
 ### RAM view
 <img width="1920" height="999" alt="image" src="https://github.com/user-attachments/assets/63386101-393f-47d1-a559-9a3b74da95ac" />
-
-

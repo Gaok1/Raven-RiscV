@@ -1,28 +1,26 @@
-# Falcon ASM 🦅 – Emulador Educacional RISC-V (RV32I)
+# Falcon ASM 🦅 – Educational RISC-V (RV32I) Emulator
 
-Falcon ASM combina um emulador simples de RISC-V com um montador textual de
-duas passagens. Foi escrito em Rust para fins de estudo, exibindo o ciclo
-**fetch → decode → execute**.
+Falcon ASM combines a simple RISC-V emulator with a two-pass text assembler. It is written in Rust for study purposes, showing the **fetch → decode → execute** cycle.
 
-## Estrutura do projeto
+## Project structure
 
 ```
 src/
   main.rs
   falcon/
-    arch.rs        # constantes e opcodes
-    asm/           # montador (.text/.data, rótulos, pseudoinstruções)
+    arch.rs        # constants and opcodes
+    asm/           # assembler (.text/.data, labels, pseudo instructions)
     decoder/       # u32 -> Instruction
     encoder/       # Instruction -> u32
-    exec.rs        # loop de execução
-    memory.rs      # RAM simples
-    registers.rs   # Cpu com x0..x31 e pc
+    exec.rs        # execution loop
+    memory.rs      # simple RAM
+    registers.rs   # Cpu with x0..x31 and pc
 docs/
   README.md
-  format.md       # descrição de formatos e regras do montador
+  format.md       # encoding formats and assembler rules
 ```
 
-## Conjunto de instruções suportado
+## Supported instruction set
 
 - **R-type:** `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
 - **I-type (OP-IMM):** `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
@@ -33,23 +31,21 @@ docs/
 - **JALR**
 - **SYSTEM:** `ECALL`, `EBREAK`
 
-*Em falta:* FENCE/CSR e ponto flutuante.
+*Missing:* FENCE/CSR and floating point.
 
-## Montador
+## Assembler
 
-- Segmentos `.text` e `.data` (dados iniciam em `base_pc + 0x1000`).
-- Diretivas `.byte` e `.word` para inserir valores na seção de dados.
-- Rótulos em qualquer segmento; `la rd, label` gera `lui` + `addi`.
-- Demais pseudoinstruções: `nop`, `mv`, `li`, `subi`, `j`, `jr`, `ret`.
+- `.text` and `.data` segments (data starts at `base_pc + 0x1000`).
+- `.byte` and `.word` directives to insert values in the data section.
+- Labels in any segment; `la rd, label` emits `lui` + `addi`.
+- Other pseudo-instructions: `nop`, `mv`, `li`, `subi`, `j`, `jr`, `ret`.
 
-## Execução
+## Execution
 
-Requer [Rust](https://rustup.rs).
+Requires [Rust](https://rustup.rs).
 
 ```bash
 cargo run
 ```
 
-O programa exemplo em `main.rs` monta uma pequena rotina, carrega código e
-dados na memória e executa até encontrar `ecall`.
-
+The example program in `main.rs` assembles a small routine, loads code and data into memory and executes until it encounters `ecall`.

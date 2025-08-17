@@ -16,8 +16,8 @@ use crate::falcon::arch::*;
     (imm_hi<<25) | (rs2<<20) | (rs1<<15) | (f3<<12) | (imm_lo<<7) | opc
 }
 #[inline] fn b(imm_bytes:i32, rs2:u32, rs1:u32, f3:u32, opc:u32) -> u32 {
-    // imm é deslocamento em BYTES relativo ao PC (múltiplo de 2)
-    assert!(imm_bytes % 2 == 0, "B-imm deve ser múltiplo de 2");
+    // imm is a BYTES offset relative to the PC (multiple of 2)
+    assert!(imm_bytes % 2 == 0, "B-imm must be a multiple of 2");
     let imm = imm_bytes as u32;
     let b12  = ((imm >> 12) & 1) << 31;
     let b10_5= ((imm >> 5)  & 0x3F) << 25;
@@ -26,12 +26,12 @@ use crate::falcon::arch::*;
     b12 | b10_5 | (rs2<<20) | (rs1<<15) | (f3<<12) | b4_1 | b11 | opc
 }
 #[inline] fn u(imm20:i32, rd:u32, opc:u32) -> u32 {
-    // pega os 20 bits altos (alinhado a 12)
+    // take the upper 20 bits (aligned to 12)
     ( (imm20 as u32) & 0xFFFFF000 ) | (rd<<7) | opc
 }
 #[inline] fn j(imm_bytes:i32, rd:u32, opc:u32) -> u32 {
-    // J-imm em bytes, múltiplo de 2
-    assert!(imm_bytes % 2 == 0, "J-imm deve ser múltiplo de 2");
+    // J-imm in bytes, multiple of 2
+    assert!(imm_bytes % 2 == 0, "J-imm must be a multiple of 2");
     let imm = imm_bytes as u32;
     let b20   = ((imm >> 20) & 1) << 31;
     let b10_1 = ((imm >> 1)  & 0x3FF) << 21;
@@ -86,7 +86,7 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
         Sh{rs2,rs1,imm} => s(imm, rs2 as u32, rs1 as u32, 0x1, OPC_STORE as u32),
         Sw{rs2,rs1,imm} => s(imm, rs2 as u32, rs1 as u32, 0x2, OPC_STORE as u32),
 
-        // Branches (imm em BYTES, relativo a PC)
+        // Branches (imm in BYTES, relative to PC)
         Beq{rs1,rs2,imm} => b(imm, rs2 as u32, rs1 as u32, 0x0, OPC_BRANCH as u32),
         Bne{rs1,rs2,imm} => b(imm, rs2 as u32, rs1 as u32, 0x1, OPC_BRANCH as u32),
         Blt{rs1,rs2,imm} => b(imm, rs2 as u32, rs1 as u32, 0x4, OPC_BRANCH as u32),

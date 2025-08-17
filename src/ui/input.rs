@@ -24,7 +24,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
-            // Assemble (Ctrl+R) também no modo Insert
+            // Assemble (Ctrl+R) also works in Insert mode
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
                 app.assemble_and_load();
                 return Ok(false);

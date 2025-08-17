@@ -47,14 +47,14 @@ impl Editor {
         &mut self.lines[self.cursor_row]
     }
 
-    // ---- helpers: trabalhar em índice de caractere, converter p/ byte quando necessário
+    // ---- helpers: work with character indices, convert to byte offsets when needed
     #[inline]
     pub fn char_count(s: &str) -> usize {
         s.chars().count()
     }
     #[inline]
     pub fn byte_at(s: &str, char_pos: usize) -> usize {
-        // retorna len() se for além do fim
+        // return len() if beyond the end
         s.char_indices()
             .nth(char_pos)
             .map(|(i, _)| i)
@@ -67,7 +67,7 @@ impl Editor {
         let col = self.cursor_col.min(Self::char_count(line));
         let byte_idx = Self::byte_at(line, col);
         self.current_line_mut().insert(byte_idx, ch);
-        self.cursor_col = col + 1; // inserir avança o cursor
+        self.cursor_col = col + 1; // inserting advances the cursor
     }
 
     pub fn insert_spaces(&mut self, n: usize) {
@@ -81,7 +81,7 @@ impl Editor {
             return;
         }
         if self.cursor_col > 0 {
-            // remove o caractere anterior ao cursor
+            // remove the character before the cursor
             let col = self.cursor_col - 1;
             let (start, end) = {
                 let line = self.current_line();
@@ -90,7 +90,7 @@ impl Editor {
             self.current_line_mut().replace_range(start..end, "");
             self.cursor_col = col;
         } else if self.cursor_row > 0 {
-            // juntar com a linha anterior
+            // merge with the previous line
             let cur = self.lines.remove(self.cursor_row);
             self.cursor_row -= 1;
             let prev_len_chars = Self::char_count(&self.lines[self.cursor_row]);
@@ -106,14 +106,14 @@ impl Editor {
         let len_chars = Self::char_count(self.current_line());
         let col = self.cursor_col.min(len_chars);
         if col < len_chars {
-            // delete no próprio ponto
+            // delete at the current position
             let (start, end) = {
                 let line = self.current_line();
                 (Self::byte_at(line, col), Self::byte_at(line, col + 1))
             };
             self.current_line_mut().replace_range(start..end, "");
         } else if self.cursor_row + 1 < self.lines.len() {
-            // fim da linha: mescla com a próxima
+            // end of line: merge with the next
             let next = self.lines.remove(self.cursor_row + 1);
             self.current_line_mut().push_str(&next);
         }
