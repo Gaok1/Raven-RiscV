@@ -26,7 +26,7 @@ pub fn decode(word: u32) -> Result<Instruction, &'static str> {
         OPC_LUI    => itype::decode_lui(word),
         OPC_AUIPC  => itype::decode_auipc(word),
         OPC_SYSTEM => itype::decode_system(word),
-        _ => Err("opcode desconhecido"),
+        _ => Err("unknown opcode"),
     }
 }
 
@@ -49,5 +49,5 @@ pub fn disasm(word: u32) -> String {
 }
 
 
-// expõe helpers pros submódulos
+// expose helpers to submodules
 

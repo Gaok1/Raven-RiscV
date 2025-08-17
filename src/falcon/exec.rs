@@ -6,7 +6,7 @@ pub fn step<B: Bus>(cpu: &mut Cpu, mem: &mut B) -> bool {
     let word = mem.load32(pc);
     let instr = match crate::falcon::decoder::decode(word) {
         Ok(i) => i,
-        Err(_) => return false, // sinaliza erro/halt
+        Err(_) => return false, // signal error/halt
     };
     cpu.pc = pc.wrapping_add(4);
 
@@ -122,7 +122,7 @@ pub fn step<B: Bus>(cpu: &mut Cpu, mem: &mut B) -> bool {
             mem.store32(a, cpu.read(rs2));
         }
 
-        // Branches (offset relativo ao PC da instrução fetchada)
+        // Branches (offset relative to the PC of the fetched instruction)
         Instruction::Beq{rs1,rs2,imm} if cpu.read(rs1)==cpu.read(rs2) => cpu.pc = pc.wrapping_add(imm as u32),
         Instruction::Bne{rs1,rs2,imm} if cpu.read(rs1)!=cpu.read(rs2) => cpu.pc = pc.wrapping_add(imm as u32),
         Instruction::Blt{rs1,rs2,imm} if (cpu.read(rs1) as i32) <  (cpu.read(rs2) as i32) => cpu.pc = pc.wrapping_add(imm as u32),
@@ -186,8 +186,8 @@ mod tests {
     fn sw_stores_word() {
         let mut cpu = Cpu::default();
         let mut mem = Ram::new(64);
-        cpu.write(1, 0xDEADBEEF); // valor a ser armazenado
-        cpu.write(2, 0x20);       // endereço base
+        cpu.write(1, 0xDEADBEEF); // value to be stored
+        cpu.write(2, 0x20);       // base address
         let sw = encoder::encode(Instruction::Sw { rs2: 1, rs1: 2, imm: 0 }).unwrap();
         let ecall = encoder::encode(Instruction::Ecall).unwrap();
         mem.store32(0, sw);

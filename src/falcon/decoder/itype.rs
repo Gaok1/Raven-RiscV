@@ -23,7 +23,7 @@ pub(super) fn decode_opimm(word:u32)->Result<Instruction,&'static str>{
             if bits(word,31,25)==0 { Instruction::Srli { rd, rs1, shamt } }
             else                    { Instruction::Srai { rd, rs1, shamt } }
         }
-        _ => return Err("I-type OP-IMM inválido"),
+        _ => return Err("Invalid I-type OP-IMM"),
     })
 }
 
@@ -39,7 +39,7 @@ pub(super) fn decode_loads(word:u32)->Result<Instruction,&'static str>{
         0x2 => Instruction::Lw { rd, rs1, imm },
         0x4 => Instruction::Lbu{ rd, rs1, imm },
         0x5 => Instruction::Lhu{ rd, rs1, imm },
-        _ => return Err("Load inválido"),
+        _ => return Err("Invalid load"),
     })
 }
 
@@ -47,7 +47,7 @@ pub(super) fn decode_jalr(word:u32)->Result<Instruction,&'static str>{
     let rd  = bits(word, 11, 7) as u8;
     let funct3 = bits(word, 14, 12) as u8;
     let rs1 = bits(word, 19, 15) as u8;
-    if funct3 != 0 { return Err("JALR com funct3 != 0"); }
+    if funct3 != 0 { return Err("JALR with funct3 != 0"); }
     let imm = sext(bits(word,31,20), 12);
     Ok(Instruction::Jalr{ rd, rs1, imm })
 }
@@ -65,6 +65,6 @@ pub(super) fn decode_auipc(word:u32)->Result<Instruction,&'static str>{
 }
 
 pub(super) fn decode_system(_word:u32)->Result<Instruction,&'static str>{
-    // MVP: trata ECALL/EBREAK como halt
+    // MVP: treat ECALL/EBREAK as halt
     Ok(Instruction::Ecall)
 }

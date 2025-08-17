@@ -33,6 +33,6 @@ pub enum Instruction {
     Lui{ rd:u8, imm:i32 }, Auipc{ rd:u8, imm:i32 },
     Jal{ rd:u8, imm:i32 },
 
-    // System (MVP: só ecall/ebreak como “halt”)
+    // System (MVP: only ecall/ebreak as "halt")
     Ecall, Ebreak,
 }

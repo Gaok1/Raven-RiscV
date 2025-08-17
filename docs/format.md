@@ -1,16 +1,15 @@
-# Falcon ASM – Referência de Codificação e ISA (RV32I)
+# Falcon ASM – Encoding and ISA Reference (RV32I)
 
-Este documento descreve o que está implementado no **Falcon ASM**, um emulador
-educacional de RISC-V. Aqui estão documentados:
+This document describes what is implemented in **Falcon ASM**, an educational RISC-V emulator. It covers:
 
-- formatos de instrução e campos de bits;
-- opcodes, `funct3` e `funct7` usados;
-- faixas de imediatos e requisitos de alinhamento;
-- regras do montador textual, incluindo rótulos, segmentos e pseudoinstruções.
+- instruction formats and bit fields;
+- opcodes, `funct3` and `funct7` used;
+- immediate ranges and alignment requirements;
+- rules of the text assembler, including labels, segments and pseudo-instructions.
 
-## Estado atual
+## Current State
 
-Suporte ao subconjunto essencial do **RV32I**:
+Supports the essential subset of **RV32I**:
 
 - **R-type:** `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
 - **I-type (OP-IMM):** `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
@@ -18,98 +17,98 @@ Suporte ao subconjunto essencial do **RV32I**:
 - **Stores:** `SB, SH, SW`
 - **Branches:** `BEQ, BNE, BLT, BGE, BLTU, BGEU`
 - **U/J:** `LUI, AUIPC, JAL`
-- **JALR`
-- **SYSTEM:** `ECALL`, `EBREAK` (interpretados como HALT)
+- **JALR**
+- **SYSTEM:** `ECALL`, `EBREAK` (interpreted as HALT)
 
-*Não implementados:* instruções FENCE/CSR e ponto flutuante.
+*Not implemented:* FENCE/CSR instructions and floating point.
 
-## Tamanho de palavra, endianness e PC
+## Word Size, Endianness and PC
 
-- **Palavra:** 32 bits
+- **Word:** 32 bits
 - **Endianness:** little-endian (`{to,from}_le_bytes`)
-- **PC:** avança **+4** por instrução. Branches e jumps usam deslocamento relativo ao endereço da instrução.
+- **PC:** advances **+4** per instruction. Branches and jumps use offsets relative to the instruction address.
 
-## Registradores
+## Registers
 
-- Registradores `x0..x31`; gravações em `x0` são ignoradas.
-- Aliases aceitos pelo montador: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`.
+- Registers `x0..x31`; writes to `x0` are ignored.
+- Assembler aliases: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`.
 
-## 🧾 Formatos de instrução (32 bits)
+## 🧾 Instruction Formats (32 bits)
 
-### Exemplo geral (R-type)
+### General example (R-type)
 
-| Campo   | Bits  | Descrição                            |
-|---------|-------|--------------------------------------|
-| opcode  | [6:0] | opcode principal                     |
-| rd      | [11:7]| registrador destino                  |
-| funct3  | [14:12]| subtipo                             |
-| rs1     | [19:15]| registrador fonte 1                 |
-| rs2     | [24:20]| registrador fonte 2                 |
-| funct7  | [31:25]| subtipo adicional                   |
+| Field   | Bits  | Description                     |
+|--------|-------|---------------------------------|
+| opcode | [6:0] | main opcode                     |
+| rd     | [11:7]| destination register            |
+| funct3 |[14:12]| subtype                         |
+| rs1    |[19:15]| source register 1               |
+| rs2    |[24:20]| source register 2               |
+| funct7 |[31:25]| additional subtype              |
 
-Outros formatos (I, S, B, U, J) reorganizam campos e imediatos.
+Other formats (I, S, B, U, J) rearrange fields and immediates.
 
-### I-type (OP-IMM, LOADs e JALR)
+### I-type (OP-IMM, LOADs and JALR)
 
-| Campo      | Bits  |
-|------------|-------|
-| opcode     | [6:0] |
-| rd         | [11:7]|
-| funct3     | [14:12]|
-| rs1        | [19:15]|
-| imm[11:0]  | [31:20]|
+| Field     | Bits  |
+|-----------|-------|
+| opcode    | [6:0] |
+| rd        | [11:7]|
+| funct3    |[14:12]|
+| rs1       |[19:15]|
+| imm[11:0] |[31:20]|
 
-- Imediatos de 12 bits com sinal (-2048..2047)
-- Shifts (`SLLI/SRLI/SRAI`) usam `shamt` em [24:20] e `funct7` = `0x00` (`SLLI/SRLI`) ou `0x20` (`SRAI`).
+- 12-bit signed immediates (-2048..2047)
+- Shifts (`SLLI/SRLI/SRAI`) use `shamt` in [24:20] and `funct7` = `0x00` (`SLLI/SRLI`) or `0x20` (`SRAI`).
 
 ### S-type (Stores)
 
-| Campo      | Bits  |
-|------------|-------|
-| opcode     | [6:0] |
-| imm[4:0]   | [11:7]|
-| funct3     | [14:12]|
-| rs1        | [19:15]|
-| rs2        | [24:20]|
-| imm[11:5]  | [31:25]|
+| Field     | Bits  |
+|-----------|-------|
+| opcode    | [6:0] |
+| imm[4:0]  | [11:7]|
+| funct3    |[14:12]|
+| rs1       |[19:15]|
+| rs2       |[24:20]|
+| imm[11:5] |[31:25]|
 
 ### B-type (Branches)
 
-| Campo      | Bits  |
-|------------|-------|
-| opcode     | [6:0] |
-| imm[11]    | [7]   |
-| imm[4:1]   | [11:8]|
-| funct3     | [14:12]|
-| rs1        | [19:15]|
-| rs2        | [24:20]|
-| imm[10:5]  | [30:25]|
-| imm[12]    | [31]  |
+| Field     | Bits  |
+|-----------|-------|
+| opcode    | [6:0] |
+| imm[11]   | [7]   |
+| imm[4:1]  |[11:8] |
+| funct3    |[14:12]|
+| rs1       |[19:15]|
+| rs2       |[24:20]|
+| imm[10:5] |[30:25]|
+| imm[12]   |[31]  |
 
-- Imediatos de 13 bits (em bytes) com **bit0 = 0**. O montador calcula `target_pc - instruction_pc`.
+- 13-bit immediates (bytes) with **bit0 = 0**. The assembler computes `target_pc - instruction_pc`.
 
 ### U-type (LUI/AUIPC)
 
-| Campo      | Bits  |
-|------------|-------|
-| opcode     | [6:0] |
-| rd         | [11:7]|
-| imm[31:12] | [31:12]|
+| Field     | Bits  |
+|-----------|-------|
+| opcode    | [6:0] |
+| rd        |[11:7]|
+| imm[31:12]|[31:12]|
 
 ### J-type (JAL)
 
-| Campo      | Bits  |
-|------------|-------|
-| opcode     | [6:0] |
-| rd         | [11:7]|
-| imm[19:12] | [19:12]|
-| imm[11]    | [20]  |
-| imm[10:1]  | [30:21]|
-| imm[20]    | [31]  |
+| Field     | Bits  |
+|-----------|-------|
+| opcode    | [6:0] |
+| rd        |[11:7]|
+| imm[19:12]|[19:12]|
+| imm[11]   | [20] |
+| imm[10:1] |[30:21]|
+| imm[20]   | [31] |
 
-- Imediatos de 21 bits (bytes) com **bit0 = 0**. Montador calcula deslocamento relativo.
+- 21-bit immediates (bytes) with **bit0 = 0**. The assembler computes the relative offset.
 
-## 🔢 Opcodes por tipo
+## 🔢 Opcodes by type
 
 - `OPC_RTYPE = 0x33`
 - `OPC_OPIMM = 0x13`
@@ -171,22 +170,22 @@ Outros formatos (I, S, B, U, J) reorganizam campos e imediatos.
 
 ### SYSTEM (opcode 0x73)
 
-- `ECALL` (`0x00000073`) e `EBREAK` (`0x00100073`) terminam a execução.
+- `ECALL` (`0x00000073`) and `EBREAK` (`0x00100073`) halt execution.
 
-## Regras do Montador
+## Assembler Rules
 
-- **Duas passagens**: a primeira coleta rótulos (`label:`); a segunda resolve e codifica.
-- **Comentários**: qualquer coisa após `;` ou `#` é ignorada.
-- **Separador**: `instr op1, op2, op3`.
-- **Diretivas de segmento**:
-  - `.text` inicia a seção de código.
-  - `.data` inicia a seção de dados (alocada a partir de `base_pc + 0x1000`).
-  - Dentro de `.data`:
-    - `.byte` insere valores de 8 bits.
-    - `.word` insere palavras de 32 bits.
-- **Loads/Stores**: sintaxe `imm(rs1)`.
-- **Branches/Jumps**: operando pode ser imediato ou rótulo. Deslocamento calculado em bytes; `B`/`J` exigem múltiplos de 2.
-- **Pseudoinstruções**:
+- **Two passes**: the first collects labels (`label:`); the second resolves and encodes.
+- **Comments**: anything after `;` or `#` is ignored.
+- **Separator**: `instr op1, op2, op3`.
+- **Segment directives**:
+  - `.text` starts the code section.
+  - `.data` starts the data section (allocated from `base_pc + 0x1000`).
+  - Inside `.data`:
+    - `.byte` inserts 8-bit values.
+    - `.word` inserts 32-bit words.
+- **Loads/Stores**: syntax `imm(rs1)`.
+- **Branches/Jumps**: operand may be immediate or label. Offsets are byte-based; `B`/`J` require multiples of 2.
+- **Pseudo-instructions**:
   - `nop` → `addi x0, x0, 0`
   - `mv rd, rs` → `addi rd, rs, 0`
   - `li rd, imm12` → `addi rd, x0, imm`
@@ -194,9 +193,9 @@ Outros formatos (I, S, B, U, J) reorganizam campos e imediatos.
   - `j label` → `jal x0, label`
   - `jr rs1` → `jalr x0, rs1, 0`
   - `ret` → `jalr x0, ra, 0`
-  - `la rd, label` → gera `lui`/`addi` para carregar o endereço de dados
+  - `la rd, label` → emits `lui`/`addi` to load a data address
 
-## Exemplo de código
+## Example Code
 
 ```asm
 .data
@@ -208,5 +207,4 @@ val: .word 0
   ecall
 ```
 
-Este programa carrega o endereço de `val`, grava o número 5 na memória e chama `ecall`.
-
+This program loads the address of `val`, stores the number 5 in memory and calls `ecall`.

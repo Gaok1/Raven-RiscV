@@ -20,6 +20,6 @@ pub(super) fn decode(word:u32)->Result<Instruction,&'static str>{
         0x5 => Instruction::Bge{rs1,rs2,imm},
         0x6 => Instruction::Bltu{rs1,rs2,imm},
         0x7 => Instruction::Bgeu{rs1,rs2,imm},
-        _ => return Err("Branch inválido"),
+        _ => return Err("Invalid branch"),
     })
 }

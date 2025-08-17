@@ -469,7 +469,7 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
 
     let mut out = Vec::new();
 
-    // preservar espaços à esquerda exatamente
+    // preserve leading spaces exactly
     let mut lead_len = 0usize;
     for ch in s.chars() {
         if ch.is_whitespace() {
@@ -483,7 +483,7 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
     }
     let trimmed = &s[lead_len..];
 
-    // achar fim do primeiro token (mnemonico/label) SEM perder o espaço seguinte
+    // find end of the first token (mnemonic/label) WITHOUT losing the following space
     let first_end = trimmed
         .char_indices()
         .find(|&(_, c)| c.is_whitespace())
@@ -491,23 +491,23 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
         .unwrap_or(trimmed.len());
 
     let first = &trimmed[..first_end];
-    let rest = &trimmed[first_end..]; // inclui os espaços imediatamente após o primeiro token
+    let rest = &trimmed[first_end..]; // includes the spaces immediately after the first token
 
     if first.ends_with(':') {
         out.push(Span::styled(first, Style::default().fg(Yellow)));
         if !rest.is_empty() {
             out.push(Span::raw(rest));
-        } // mantém tudo (inclui espaços)
+        } // keep everything (including spaces)
         return out;
     }
 
-    // mnemonico
+    // mnemonic
     out.push(Span::styled(
         first,
         Style::default().fg(Cyan).add_modifier(Modifier::BOLD),
     ));
 
-    // Operandos + pontuação, preservando espaços exatamente
+    // Operands + punctuation, preserving spaces exactly
     let mut token = String::new();
     for ch in rest.chars() {
         if ",()\t ".contains(ch) {
@@ -515,7 +515,7 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
                 out.push(color_operand(&token));
                 token.clear();
             }
-            out.push(Span::raw(ch.to_string())); // preserva separadores e espaços
+            out.push(Span::raw(ch.to_string())); // preserve separators and spaces
         } else {
             token.push(ch);
         }
