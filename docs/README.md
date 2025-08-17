@@ -47,6 +47,7 @@ Labels (`label:`) can be defined in any segment. To load a label address, use th
 - `li rd, imm12` → `addi rd, x0, imm`
 - `subi rd, rs1, imm` → `addi rd, rs1, -imm`
 - `j label` → `jal x0, label`
+- `call label` → `jal ra, label`
 - `jr rs1` → `jalr x0, rs1, 0`
 - `ret` → `jalr x0, ra, 0`
 - `la rd, label` → loads the address of `label`

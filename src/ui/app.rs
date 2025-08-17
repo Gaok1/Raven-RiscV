@@ -92,6 +92,8 @@ impl App {
         let mut cpu = Cpu::default();
         let base_pc = 0x0000_0000;
         cpu.pc = base_pc;
+        let mem_size = 128 * 1024;
+        cpu.write(2, mem_size as u32); // initialize stack pointer to top of memory
         let data_base = base_pc + 0x1000;
         Self {
             tab: Tab::Editor,
@@ -107,8 +109,8 @@ impl App {
             diag_line_text: None,
             cpu,
             prev_x: [0; 32],
-            mem_size: 128 * 1024,
-            mem: Ram::new(128 * 1024),
+            mem_size,
+            mem: Ram::new(mem_size),
             base_pc,
             data_base,
             mem_view_addr: data_base,
@@ -128,9 +130,10 @@ impl App {
         use falcon::program::{load_bytes, load_words};
 
         self.prev_x = self.cpu.x; // keep snapshot before reset
+        self.mem_size = 128 * 1024;
         self.cpu = Cpu::default();
         self.cpu.pc = self.base_pc;
-        self.mem_size = 128 * 1024;
+        self.cpu.write(2, self.mem_size as u32); // reset stack pointer
         self.mem = Ram::new(self.mem_size);
 
         match assemble(&self.editor.text(), self.base_pc) {
