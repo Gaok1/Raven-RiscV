@@ -3,11 +3,11 @@ use super::{
     editor::Editor,
 };
 use crate::falcon::{self, memory::Bus};
-use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{
-    Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap,
+    Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap,
 };
+use ratatui::Frame;
 use std::cmp::min;
 
 pub fn ui(f: &mut Frame, app: &App) {
@@ -454,18 +454,106 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-fn render_run_menu(f: &mut Frame, area: Rect, _app: &App) {
+fn render_run_menu(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered_rect(area.width / 2, area.height / 2, area);
     f.render_widget(Clear, popup);
-    let lines = vec![
-        Line::from("s: step    r: run    p: pause"),
-        Line::from("d: data    k: stack"),
-        Line::from("t: toggle view"),
-        Line::from("f: toggle format"),
-        Line::from("b: bytes (RAM view)"),
-        Line::from("m or Esc: close"),
+
+    let key_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+
+    let (view_text, view_color) = if app.show_registers {
+        ("REGS", Color::Blue)
+    } else {
+        ("RAM", Color::Green)
+    };
+    let (fmt_text, fmt_color) = if app.show_hex {
+        ("HEX", Color::Magenta)
+    } else {
+        ("DEC", Color::Cyan)
+    };
+    let (region_text, region_color) = match app.mem_region {
+        MemRegion::Data => ("DATA", Color::Yellow),
+        MemRegion::Stack => ("STACK", Color::LightBlue),
+        MemRegion::Custom => ("ADDR", Color::Gray),
+    };
+    let bytes_text = match app.mem_view_bytes {
+        4 => "4B",
+        2 => "2B",
+        _ => "1B",
+    };
+    let (run_text, run_color) = if app.is_running {
+        ("RUN", Color::Green)
+    } else {
+        ("PAUSE", Color::Red)
+    };
+
+    let mut status = vec![
+        Span::raw("View: "),
+        Span::styled(view_text, Style::default().fg(view_color)),
+        Span::raw("  Format: "),
+        Span::styled(fmt_text, Style::default().fg(fmt_color)),
     ];
-    let menu = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Menu"));
+    if !app.show_registers {
+        status.push(Span::raw("  Bytes: "));
+        status.push(Span::styled(bytes_text, Style::default().fg(Color::Yellow)));
+    }
+    status.push(Span::raw("  Region: "));
+    status.push(Span::styled(region_text, Style::default().fg(region_color)));
+    status.push(Span::raw("  State: "));
+    status.push(Span::styled(run_text, Style::default().fg(run_color)));
+
+    let lines = vec![
+        Line::from(status),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("[s]", key_style),
+            Span::raw(" Step"),
+            Span::raw("  "),
+            Span::styled("[r]", key_style),
+            Span::raw(" Run"),
+            Span::raw("  "),
+            Span::styled("[p]", key_style),
+            Span::raw(" Pause"),
+        ]),
+        Line::from(vec![
+            Span::styled("[d]", key_style),
+            Span::raw(" View data"),
+            Span::raw("  "),
+            Span::styled("[k]", key_style),
+            Span::raw(" View stack"),
+        ]),
+        Line::from(vec![
+            Span::styled("[t]", key_style),
+            Span::raw(" Toggle view"),
+        ]),
+        Line::from(vec![
+            Span::styled("[f]", key_style),
+            Span::raw(" Toggle format"),
+        ]),
+        Line::from(vec![
+            Span::styled("[b]", key_style),
+            Span::raw(" Cycle bytes"),
+        ]),
+        Line::from(vec![
+            Span::styled("[m]", key_style),
+            Span::raw(" Close menu"),
+            Span::raw("  "),
+            Span::styled("[Esc]", key_style),
+            Span::raw(" Close menu"),
+        ]),
+    ];
+    let menu = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .title(Span::styled(
+                "Menu",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+    );
     f.render_widget(menu, popup);
 }
 
