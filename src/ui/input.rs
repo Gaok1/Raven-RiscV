@@ -307,7 +307,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         let mut pos: u16 = 0;
         for (i, (title, tab)) in titles.iter().enumerate() {
             let title_width = title.len() as u16; // ASCII titles
-            if x < pos + title_width {
+            if x >= pos && x < pos + title_width {
                 app.hover_tab = Some(*tab);
                 if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
                     app.tab = *tab;
