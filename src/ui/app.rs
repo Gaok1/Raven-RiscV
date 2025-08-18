@@ -68,6 +68,7 @@ pub struct App {
     pub(super) last_step_time: Instant,
     pub(super) step_interval: Duration,
     pub(super) faulted: bool,
+    pub(super) show_menu: bool,
 
     // Docs state
     pub(super) docs_scroll: usize,
@@ -115,6 +116,7 @@ impl App {
             last_step_time: Instant::now(),
             step_interval: Duration::from_millis(80),
             faulted: false,
+            show_menu: false,
             docs_scroll: 0,
             mouse_x: 0,
             mouse_y: 0,

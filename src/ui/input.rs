@@ -143,8 +143,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             app.last_assemble_msg = None;
         }
         EditorMode::Command => {
-            // Quit in command mode only
-            if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
+            // Quit in command mode or close run menu
+            if key.code == KeyCode::Esc {
+                if app.tab == Tab::Run && app.show_menu {
+                    app.show_menu = false;
+                    return Ok(false);
+                } else {
+                    return Ok(true);
+                }
+            }
+            if key.code == KeyCode::Char('q') {
                 return Ok(true);
             }
 
@@ -189,6 +197,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('3'), _) => app.tab = Tab::Docs,
 
                 // Run controls
+                (KeyCode::Char('m'), Tab::Run) => {
+                    app.show_menu = !app.show_menu;
+                }
                 (KeyCode::Char('s'), Tab::Run) => {
                     app.single_step();
                 }
@@ -200,10 +211,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('p'), Tab::Run) => {
                     app.is_running = false;
                 }
-                (KeyCode::Char('t'), Tab::Run) => {
+                (KeyCode::Char('t'), Tab::Run) if app.show_menu => {
                     app.show_registers = !app.show_registers;
                 }
-                (KeyCode::Char('f'), Tab::Run) => {
+                (KeyCode::Char('f'), Tab::Run) if app.show_menu => {
                     app.show_hex = !app.show_hex;
                 }
                 (KeyCode::Up, Tab::Run) if app.show_registers => {
@@ -244,7 +255,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.mem_view_addr = new.min(max);
                     app.mem_region = MemRegion::Custom;
                 }
-                (KeyCode::Char('b'), Tab::Run) if !app.show_registers => {
+                (KeyCode::Char('b'), Tab::Run) if app.show_menu && !app.show_registers => {
                     app.mem_view_bytes = match app.mem_view_bytes {
                         4 => 2,
                         2 => 1,
