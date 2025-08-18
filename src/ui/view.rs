@@ -265,7 +265,7 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     render_run_status(f, chunks[1], app);
 
     // Main area
-    let area = chunks[2];
+    let main = chunks[2];
     // layout: left=regs/RAM, middle=instruction memory, right=details
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -274,13 +274,13 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(38), // instruction memory
             Constraint::Min(46),    // current instruction info
         ])
-        .split(area);
+        .split(main);
 
     // --- Left sidebar: registers or RAM memory ---
     if app.show_registers {
         let reg_block = Block::default()
             .borders(Borders::ALL)
-            .title("Registers — t:ram f:fmt s:step r:run p:pause");
+            .title("Registers — s:step r:run p:pause m:menu");
         let inner = reg_block.inner(cols[0]);
         let lines = inner.height.saturating_sub(2) as usize;
         let total = 33usize; // PC + x0..x31
@@ -333,7 +333,7 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     } else {
         let mem_block = Block::default()
             .borders(Borders::ALL)
-            .title("RAM Memory — t:regs f:fmt b:bytes s:step r:run p:pause");
+            .title("RAM Memory — s:step r:run p:pause m:menu");
         f.render_widget(mem_block.clone(), cols[0]);
 
         let inner = mem_block.inner(cols[0]);
@@ -448,6 +448,25 @@ fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let fmt = detect_format(cur_word);
     render_bit_fields(f, mid_chunks[1], cur_word, fmt);
     render_field_values(f, mid_chunks[2], cur_word, fmt);
+
+    if app.show_menu {
+        render_run_menu(f, area, app);
+    }
+}
+
+fn render_run_menu(f: &mut Frame, area: Rect, _app: &App) {
+    let popup = centered_rect(area.width / 2, area.height / 2, area);
+    f.render_widget(Clear, popup);
+    let lines = vec![
+        Line::from("s: step    r: run    p: pause"),
+        Line::from("d: data    k: stack"),
+        Line::from("t: toggle view"),
+        Line::from("f: toggle format"),
+        Line::from("b: bytes (RAM view)"),
+        Line::from("m or Esc: close"),
+    ];
+    let menu = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Menu"));
+    f.render_widget(menu, popup);
 }
 
 fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
@@ -491,15 +510,9 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     spans.push(Span::raw("  State: "));
     spans.push(Span::styled(run_text, Style::default().fg(run_color)));
     let line1 = Line::from(spans);
-    let line2 = if app.show_registers {
-        Line::from(
-            "Commands: t=toggle view  f=toggle format  s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll",
-        )
-    } else {
-        Line::from(
-            "Commands: t=toggle view  f=toggle format  b=bytes  s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll",
-        )
-    };
+    let line2 = Line::from(
+        "Commands: s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll  m=menu",
+    );
     let para = Paragraph::new(vec![line1, line2])
         .block(Block::default().borders(Borders::ALL).title("Run Controls"));
     f.render_widget(para, area);
