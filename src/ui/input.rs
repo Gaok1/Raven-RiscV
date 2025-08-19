@@ -302,6 +302,44 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
     app.mouse_y = me.row;
 
+    match me.kind {
+        MouseEventKind::ScrollUp => match app.tab {
+            Tab::Editor => app.editor.move_up(),
+            Tab::Run => {
+                if app.show_registers {
+                    app.regs_scroll = app.regs_scroll.saturating_sub(1);
+                } else {
+                    app.mem_view_addr = app.mem_view_addr.saturating_sub(app.mem_view_bytes);
+                    app.mem_region = MemRegion::Custom;
+                }
+            }
+            Tab::Docs => {
+                app.docs_scroll = app.docs_scroll.saturating_sub(1);
+            }
+        },
+        MouseEventKind::ScrollDown => match app.tab {
+            Tab::Editor => app.editor.move_down(),
+            Tab::Run => {
+                if app.show_registers {
+                    app.regs_scroll = app.regs_scroll.saturating_add(1);
+                } else {
+                    let max = app.mem_size.saturating_sub(app.mem_view_bytes as usize) as u32;
+                    if app.mem_view_addr < max {
+                        app.mem_view_addr = app
+                            .mem_view_addr
+                            .saturating_add(app.mem_view_bytes)
+                            .min(max);
+                    }
+                    app.mem_region = MemRegion::Custom;
+                }
+            }
+            Tab::Docs => {
+                app.docs_scroll += 1;
+            }
+        },
+        _ => {}
+    }
+
     // Determine which tab (if any) is hovered by the cursor. Tabs are laid out
     // exactly as rendered: "Editor │ Run │ Docs". We compute the bounds based on
     // the title widths and divider rather than splitting the area evenly so that
