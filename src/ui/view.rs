@@ -3,11 +3,11 @@ use super::{
     editor::Editor,
 };
 use crate::falcon::{self, memory::Bus};
+use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap,
 };
-use ratatui::Frame;
 use std::cmp::min;
 
 pub fn ui(f: &mut Frame, app: &App) {
@@ -580,9 +580,19 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     };
     let mut spans = vec![
         Span::raw("View: "),
-        Span::styled(view_text, Style::default().fg(view_color)),
+        Span::styled(
+            view_text,
+            Style::default()
+                .fg(view_color)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
         Span::raw("  Format: "),
-        Span::styled(fmt_text, Style::default().fg(fmt_color)),
+        Span::styled(
+            fmt_text,
+            Style::default()
+                .fg(fmt_color)
+                .add_modifier(Modifier::UNDERLINED),
+        ),
     ];
     if !app.show_registers {
         let bytes_text = match app.mem_view_bytes {
@@ -591,12 +601,27 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
             _ => "1B",
         };
         spans.push(Span::raw("  Bytes: "));
-        spans.push(Span::styled(bytes_text, Style::default().fg(Color::Yellow)));
+        spans.push(Span::styled(
+            bytes_text,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::UNDERLINED),
+        ));
     }
     spans.push(Span::raw("  Region: "));
-    spans.push(Span::styled(region_text, Style::default().fg(region_color)));
+    spans.push(Span::styled(
+        region_text,
+        Style::default()
+            .fg(region_color)
+            .add_modifier(Modifier::UNDERLINED),
+    ));
     spans.push(Span::raw("  State: "));
-    spans.push(Span::styled(run_text, Style::default().fg(run_color)));
+    spans.push(Span::styled(
+        run_text,
+        Style::default()
+            .fg(run_color)
+            .add_modifier(Modifier::UNDERLINED),
+    ));
     let line1 = Line::from(spans);
     let line2 = Line::from(
         "Commands: s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll  m=menu",
