@@ -34,9 +34,25 @@ pub(super) enum MemRegion {
     Custom,
 }
 
+// NOVOS CAMPOS DE ESTADO
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum RunHover {
+    None,
+    View, Format, Bytes, Region, State,        // barra de status da aba Run
+    MStep, MRun, MPause,                       // popup: linha 1
+    MViewData, MViewStack,                     // popup: linha 2
+    MToggleView, MToggleFormat, MCycleBytes,   // popup: linhas 3–5
+    MClose,                                    // popup: fechar
+}
+
+
+
+
+
 pub struct App {
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
+    pub hover_run: RunHover,
     // Editor state
     pub(super) editor: Editor,
     pub(super) editor_dirty: bool,

@@ -1,3 +1,5 @@
+use crate::ui::app::RunHover;
+
 use super::app::{App, EditorMode, MemRegion, Tab};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -298,10 +300,263 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     Ok(false)
 }
 
+
+fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
+    use RunHover::*;
+    let (view_text, view_color) = if app.show_registers { ("REGS", Color::Blue) } else { ("RAM", Color::Green) };
+    let (fmt_text, fmt_color)   = if app.show_hex       { ("HEX", Color::Magenta) } else { ("DEC", Color::Cyan) };
+    let (region_text, region_color) = match app.mem_region {
+        MemRegion::Data => ("DATA", Color::Yellow),
+        MemRegion::Stack => ("STACK", Color::LightBlue),
+        MemRegion::Custom => ("ADDR", Color::Gray),
+    };
+    let run_text = if app.is_running { "RUN" } else { "PAUSE" };
+
+    let mut spans: Vec<Span> = Vec::new();
+    let emph = |txt: &str, base: Style, active: bool| {
+        if active { Span::styled(txt.to_string(), base.bg(Color::DarkGray).add_modifier(Modifier::BOLD)) }
+        else { Span::styled(txt.to_string(), base.add_modifier(Modifier::UNDERLINED)) }
+    };
+
+    spans.push(Span::raw("View: "));
+    spans.push(emph(view_text, Style::default().fg(view_color), app.hover_run == View));
+    spans.push(Span::raw("  Format: "));
+    spans.push(emph(fmt_text, Style::default().fg(fmt_color), app.hover_run == Format));
+
+    if !app.show_registers {
+        let bytes_text = match app.mem_view_bytes { 4=>"4B", 2=>"2B", _=>"1B" };
+        spans.push(Span::raw("  Bytes: "));
+        spans.push(emph(bytes_text, Style::default().fg(Color::Yellow), app.hover_run == Bytes));
+    }
+
+    spans.push(Span::raw("  Region: "));
+    spans.push(emph(region_text, Style::default().fg(region_color), app.hover_run == Region));
+
+    spans.push(Span::raw("  State: "));
+    spans.push(emph(run_text, Style::default().fg(if app.is_running { Color::Green } else { Color::Red }), app.hover_run == State));
+
+    let line1 = Line::from(spans);
+    let line2 = Line::from("Commands: s=step  r=run  p=pause  d=data  k=stack  Up/Down/PgUp/PgDn scroll  m=menu");
+
+    let para = Paragraph::new(vec![line1, line2])
+        .block(Block::default().borders(Borders::ALL).title("Run Controls"));
+    f.render_widget(para, area);
+}
+
+
+fn render_run_menu(f: &mut Frame, area: Rect, app: &App) {
+    use RunHover::*;
+    let popup = centered_rect(area.width / 2, area.height / 2, area);
+    f.render_widget(Clear, popup);
+
+    let key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+
+    let (view_text, view_color) = if app.show_registers { ("REGS", Color::Blue) } else { ("RAM", Color::Green) };
+    let (fmt_text, fmt_color)   = if app.show_hex       { ("HEX", Color::Magenta) } else { ("DEC", Color::Cyan) };
+    let (region_text, region_color) = match app.mem_region {
+        MemRegion::Data => ("DATA", Color::Yellow),
+        MemRegion::Stack => ("STACK", Color::LightBlue),
+        MemRegion::Custom => ("ADDR", Color::Gray),
+    };
+    let bytes_text = match app.mem_view_bytes { 4 => "4B", 2 => "2B", _ => "1B" };
+    let (run_text, run_color) = if app.is_running { ("RUN", Color::Green) } else { ("PAUSE", Color::Red) };
+
+    // Cabeçalho de status
+    let mut status = vec![
+        Span::raw("View: "), Span::styled(view_text, Style::default().fg(view_color)),
+        Span::raw("  Format: "), Span::styled(fmt_text, Style::default().fg(fmt_color)),
+    ];
+    if !app.show_registers {
+        status.push(Span::raw("  Bytes: "));
+        status.push(Span::styled(bytes_text, Style::default().fg(Color::Yellow)));
+    }
+    status.push(Span::raw("  Region: "));
+    status.push(Span::styled(region_text, Style::default().fg(region_color)));
+    status.push(Span::raw("  State: "));
+    status.push(Span::styled(run_text, Style::default().fg(run_color)));
+
+    // Helper de “botão” com hover
+    let btn = |label: &str, key: &str, hover: bool| -> Vec<Span> {
+        let mut v = Vec::new();
+        let s_key = if hover { key_style.bg(Color::DarkGray) } else { key_style };
+        let s_lbl = if hover { Style::default().bg(Color::DarkGray) } else { Style::default() };
+        v.push(Span::styled(format!("[{}]", key), s_key));
+        v.push(Span::raw(" "));
+        v.push(Span::styled(label.to_string(), s_lbl));
+        v
+    };
+
+    let lines = vec![
+        Line::from(status),
+        Line::raw(""),
+        Line::from({
+            let mut v = Vec::new();
+            v.extend(btn("Step", "s", app.hover_run == MStep));
+            v.push(Span::raw("  "));
+            v.extend(btn("Run", "r", app.hover_run == MRun));
+            v.push(Span::raw("  "));
+            v.extend(btn("Pause", "p", app.hover_run == MPause));
+            v
+        }),
+        Line::from({
+            let mut v = Vec::new();
+            v.extend(btn("View data", "d", app.hover_run == MViewData));
+            v.push(Span::raw("  "));
+            v.extend(btn("View stack", "k", app.hover_run == MViewStack));
+            v
+        }),
+        Line::from(btn("Toggle view (REGS/RAM)", "t", app.hover_run == MToggleView)),
+        Line::from(btn("Toggle format (HEX/DEC)", "f", app.hover_run == MToggleFormat)),
+        Line::from(if app.show_registers {
+            vec![Span::raw("(bytes disabled in REGS view)")]
+        } else {
+            btn("Cycle bytes (4B/2B/1B)", "b", app.hover_run == MCycleBytes)
+        }),
+        Line::from(btn("Close menu", "m / Esc", app.hover_run == MClose)),
+    ];
+
+    let menu = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .title(Span::styled("Menu", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+    );
+    f.render_widget(menu, popup);
+}
+
+
+fn compute_run_status_hover(app: &App, me: MouseEvent, area: Rect) -> RunHover {
+    
+    let root = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ]).split(area);
+    let run = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(4),
+            Constraint::Min(0),
+        ]).split(root[1]);
+    let status = run[1];
+    if me.row != status.y + 1 { return None; }
+
+    // Reconstrói os rótulos exatamente como em render_run_status
+    let view = if app.show_registers { "REGS" } else { "RAM" };
+    let fmt  = if app.show_hex { "HEX" } else { "DEC" };
+    let bytes = match app.mem_view_bytes { 4=>"4B", 2=>"2B", _=>"1B" };
+    let region = match app.mem_region { MemRegion::Data=>"DATA", MemRegion::Stack=>"STACK", MemRegion::Custom=>"ADDR" };
+    let state = if app.is_running { "RUN" } else { "PAUSE" };
+
+    let mut pos = status.x + 1;
+    let col = me.column;
+
+    let range = |start: &mut u16, label: &str| {
+        let s = *start;
+        *start += label.len() as u16;
+        (s, *start)
+    };
+    let skip = |start: &mut u16, s: &str| { *start += s.len() as u16; };
+
+    skip(&mut pos, "View: ");
+    let (v0,v1) = range(&mut pos, view);
+
+    skip(&mut pos, "  Format: ");
+    let (f0,f1) = range(&mut pos, fmt);
+
+    let (b0,b1) = if !app.show_registers {
+        skip(&mut pos, "  Bytes: ");
+        let (a,b) = range(&mut pos, bytes);
+        (a,b)
+    } else { (0,0) };
+
+    skip(&mut pos, "  Region: ");
+    let (r0,r1) = range(&mut pos, region);
+
+    skip(&mut pos, "  State: ");
+    let (s0,s1) = range(&mut pos, state);
+
+    if col>=v0 && col<v1 { View }
+    else if col>=f0 && col<f1 { Format }
+    else if !app.show_registers && col>=b0 && col<b1 { Bytes }
+    else if col>=r0 && col<r1 { Region }
+    else if col>=s0 && col<s1 { State }
+    else { None }
+}
+
+fn compute_run_menu_hover(app: &App, me: MouseEvent, area: Rect) -> RunHover {
+    
+    let popup = centered_rect(area.width / 2, area.height / 2, area);
+    if me.column < popup.x + 1 || me.column >= popup.x + popup.width - 1
+        || me.row < popup.y + 1 || me.row >= popup.y + popup.height - 1 {
+        return None;
+    }
+    let x = me.column - (popup.x + 1);
+    let y = me.row - (popup.y + 1);
+
+    // Mapear as mesmas linhas/labels usadas no render_run_menu
+    match y {
+        2 => {
+            let step = "[s] Step";
+            let run  = "[r] Run";
+            let pause= "[p] Pause";
+            let mut pos: u16 = 0;
+            if x < step.len() as u16 { return MStep; }
+            pos += step.len() as u16 + 2;
+            if x >= pos && x < pos + run.len() as u16 { return MRun; }
+            pos += run.len() as u16 + 2;
+            if x >= pos && x < pos + pause.len() as u16 { return MPause; }
+            None
+        }
+        3 => {
+            let d = "[d] View data";
+            let k = "[k] View stack";
+            let mut pos: u16 = 0;
+            if x < d.len() as u16 { return MViewData; }
+            pos += d.len() as u16 + 2;
+            if x >= pos && x < pos + k.len() as u16 { return MViewStack; }
+            None
+        }
+        4 => MToggleView,
+        5 => MToggleFormat,
+        6 => if app.show_registers { None } else { MCycleBytes },
+        7 => MClose,
+        _ => None,
+    }
+}
+
+
+
+
 pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
     app.mouse_y = me.row;
 
+    // Atualiza hover dos tabs (como você já fazia)
+    app.hover_tab = None;
+    if me.row == area.y + 1 {
+        let x = me.column.saturating_sub(area.x + 1);
+        let titles = [("Editor", Tab::Editor), ("Run", Tab::Run), ("Docs", Tab::Docs)];
+        let divider = " │ ".len() as u16;
+        let mut pos: u16 = 0;
+        for (i, (title, tab)) in titles.iter().enumerate() {
+            let w = title.len() as u16;
+            if x >= pos && x < pos + w {
+                app.hover_tab = Some(*tab);
+                if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    app.tab = *tab;
+                }
+                break;
+            }
+            pos += w;
+            if i + 1 < titles.len() { pos += divider; }
+        }
+    }
+
+    // Scrolls padrão
     match me.kind {
         MouseEventKind::ScrollUp => match app.tab {
             Tab::Editor => app.editor.move_up(),
@@ -313,9 +568,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     app.mem_region = MemRegion::Custom;
                 }
             }
-            Tab::Docs => {
-                app.docs_scroll = app.docs_scroll.saturating_sub(1);
-            }
+            Tab::Docs => app.docs_scroll = app.docs_scroll.saturating_sub(1),
         },
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.move_down(),
@@ -325,60 +578,40 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 } else {
                     let max = app.mem_size.saturating_sub(app.mem_view_bytes as usize) as u32;
                     if app.mem_view_addr < max {
-                        app.mem_view_addr = app
-                            .mem_view_addr
+                        app.mem_view_addr = app.mem_view_addr
                             .saturating_add(app.mem_view_bytes)
                             .min(max);
                     }
                     app.mem_region = MemRegion::Custom;
                 }
             }
-            Tab::Docs => {
-                app.docs_scroll += 1;
-            }
+            Tab::Docs => app.docs_scroll += 1,
         },
-        MouseEventKind::Down(MouseButton::Left) => {
-            if let Tab::Run = app.tab {
-                if app.show_menu {
-                    handle_run_menu_click(app, me, area);
-                } else {
-                    handle_run_status_click(app, me, area);
-                }
-            }
-        }
         _ => {}
     }
 
-    // Determine which tab (if any) is hovered by the cursor. Tabs are laid out
-    // exactly as rendered: "Editor │ Run │ Docs". We compute the bounds based on
-    // the title widths and divider rather than splitting the area evenly so that
-    // the hover/click regions align with the actual tab positions.
-    app.hover_tab = None;
-    if me.row == area.y + 1 {
-        let x = me.column.saturating_sub(area.x + 1); // inside border
-        let titles = [
-            ("Editor", Tab::Editor),
-            ("Run", Tab::Run),
-            ("Docs", Tab::Docs),
-        ];
-        let divider = " │ ".len() as u16;
-        let mut pos: u16 = 0;
-        for (i, (title, tab)) in titles.iter().enumerate() {
-            let title_width = title.len() as u16; // ASCII titles
-            if x >= pos && x < pos + title_width {
-                app.hover_tab = Some(*tab);
-                if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                    app.tab = *tab;
-                }
-                break;
+    // --- HOVER/Clique na aba RUN ---
+    if let Tab::Run = app.tab {
+        // Atualiza hover conforme mouse move
+        if matches!(me.kind, MouseEventKind::Moved) {
+            if app.show_menu {
+                app.hover_run = compute_run_menu_hover(app, me, area);
+            } else {
+                app.hover_run = compute_run_status_hover(app, me, area);
             }
-            pos += title_width;
-            if i < titles.len() - 1 {
-                pos += divider;
+        }
+
+        // Clique
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            if app.show_menu {
+                handle_run_menu_click(app, me, area);
+            } else {
+                handle_run_status_click(app, me, area);
             }
         }
     }
 }
+
 
 fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
     let root_chunks = Layout::default()
