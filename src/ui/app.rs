@@ -38,16 +38,21 @@ pub(super) enum MemRegion {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum RunHover {
     None,
-    View, Format, Bytes, Region, State,        // barra de status da aba Run
-    MStep, MRun, MPause,                       // popup: linha 1
-    MViewData, MViewStack,                     // popup: linha 2
-    MToggleView, MToggleFormat, MCycleBytes,   // popup: linhas 3–5
-    MClose,                                    // popup: fechar
+    View,
+    Format,
+    Bytes,
+    Region,
+    State, // barra de status da aba Run
+    MStep,
+    MRun,
+    MPause, // popup: linha 1
+    MViewData,
+    MViewStack, // popup: linha 2
+    MToggleView,
+    MToggleFormat,
+    MCycleBytes, // popup: linhas 3–5
+    MClose,      // popup: fechar
 }
-
-
-
-
 
 pub struct App {
     pub(super) tab: Tab,
@@ -133,6 +138,7 @@ impl App {
             step_interval: Duration::from_millis(80),
             faulted: false,
             show_menu: false,
+            hover_run: RunHover::None,
             docs_scroll: 0,
             mouse_x: 0,
             mouse_y: 0,
