@@ -1,5 +1,5 @@
 .data
-message: .asciz "olaa mundo"
+message: .asciz "Hello world"
 
 .text
   la t0, message
