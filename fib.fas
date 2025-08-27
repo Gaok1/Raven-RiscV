@@ -28,4 +28,4 @@ fib:
         li s0,0
         ret
 end:
-    ecall
+    halt
