@@ -1,6 +1,0 @@
-.data
-arr: .byte 1,2,3,4
-.text
-  la t0, arr
-  lb t1, 0(t0)
-  ecall
