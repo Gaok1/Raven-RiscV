@@ -3,5 +3,5 @@ message: .asciz "Hello world"
 
 .text
   la t0, message
-  printString a0
+  printString t0
   nop
