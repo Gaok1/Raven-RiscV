@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use std::cmp::min;
 
 use super::{App, Editor, EditorMode};
@@ -21,6 +21,7 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Color::Red
         };
+        // Editor: only colored text, neutral background
         Span::styled(msg.clone(), Style::default().fg(color))
     } else {
         Span::raw("Not compiled")
@@ -34,6 +35,8 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
     let para = Paragraph::new(vec![mode, build, commands]).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray))
+            .border_type(BorderType::Rounded)
             .title("Editor Status"),
     );
     f.render_widget(para, area);
@@ -134,7 +137,9 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     }
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .title("Editor (RISC-V ASM) — Esc: Command, i: Insert, Ctrl+R: Assemble");
+        .border_style(Style::default().fg(Color::DarkGray))
+        .border_type(BorderType::Rounded)
+        .title("Editor (RISC-V ASM) - Esc: Command, i: Insert, Ctrl+R: Assemble");
     if let Some(ok) = app.last_compile_ok {
         let (txt, color) = if ok {
             ("[OK]", Color::Green)

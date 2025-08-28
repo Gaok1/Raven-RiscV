@@ -1,6 +1,6 @@
 use crate::falcon::{self, memory::Bus};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
 use super::{App, MemRegion, RunButton};
@@ -18,25 +18,33 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Build/assemble status
-    let (msg, style) = if app.last_compile_ok == Some(false) {
+    let (msg, style, build_border) = if app.last_compile_ok == Some(false) {
         let line = app.diag_line.map(|n| n + 1).unwrap_or(0);
         let text = app.diag_line_text.as_deref().unwrap_or("");
         let err = app.diag_msg.as_deref().unwrap_or("");
         (
             format!("Error line {}: {} ({})", line, text, err),
             Style::default().bg(Color::Red).fg(Color::Black),
+            Color::Black,
         )
     } else if app.last_compile_ok == Some(true) {
         (
             app.last_assemble_msg.clone().unwrap_or_default(),
             Style::default().bg(Color::Green).fg(Color::Black),
+            Color::Black,
         )
     } else {
-        ("Not compiled".to_string(), Style::default())
+        ("Not compiled".to_string(), Style::default(), Color::DarkGray)
     };
     let status = Paragraph::new(msg)
         .style(style)
-        .block(Block::default().borders(Borders::ALL).title("Build"));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Build")
+                .border_style(Style::default().fg(build_border))
+                .border_type(BorderType::Rounded),
+        );
     f.render_widget(status, chunks[0]);
 
     // Run control status
@@ -57,7 +65,9 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     if app.show_registers {
         let reg_block = Block::default()
             .borders(Borders::ALL)
-            .title("Registers — s:step r:run p:pause");
+            .border_style(Style::default().fg(Color::DarkGray))
+            .border_type(BorderType::Rounded)
+            .title("Registers - s:step r:run p:pause");
         let inner = reg_block.inner(cols[0]);
         let lines = inner.height.saturating_sub(2) as usize;
         let total = 33usize; // PC + x0..x31
@@ -122,7 +132,9 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     } else {
         let mem_block = Block::default()
             .borders(Borders::ALL)
-            .title("RAM Memory — s:step r:run p:pause");
+            .border_style(Style::default().fg(Color::DarkGray))
+            .border_type(BorderType::Rounded)
+            .title("RAM Memory - s:step r:run p:pause");
         f.render_widget(mem_block.clone(), cols[0]);
 
         let inner = mem_block.inner(cols[0]);
@@ -202,12 +214,13 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let border_style = if app.hover_imem_bar {
         Style::default().fg(Color::Yellow)
     } else {
-        Style::default()
+        Style::default().fg(Color::DarkGray)
     };
     let imem_block = Block::default()
         .borders(Borders::ALL)
         .title("Instruction Memory")
-        .border_style(border_style);
+        .border_style(border_style)
+        .border_type(BorderType::Rounded);
     f.render_widget(imem_block.clone(), cols[1]);
     let inner = imem_block.inner(cols[1]);
     let mut items = Vec::new();
@@ -278,7 +291,8 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Current Instruction"),
+            .title("Current Instruction")
+            .border_style(Style::default().fg(Color::DarkGray)),
     );
     f.render_widget(pc_line, mid_chunks[0]);
 
@@ -402,8 +416,18 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
 
     let line1 = Line::from(spans);
     let line2 = Line::from("Commands: s=step  r=run  p=pause  Up/Down/PgUp/PgDn scroll");
-    let para = Paragraph::new(vec![line1, line2])
-        .block(Block::default().borders(Borders::ALL).title("Run Controls"));
+    let run_border_color = if app.hover_run_button.is_some() {
+        Color::LightCyan
+    } else {
+        Color::DarkGray
+    };
+    let para = Paragraph::new(vec![line1, line2]).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(run_border_color))
+            .border_type(BorderType::Rounded)
+            .title("Run Controls"),
+    );
     f.render_widget(para, area);
 }
 
@@ -564,7 +588,13 @@ fn render_bit_fields(f: &mut Frame, area: Rect, w: u32, fmt: EncFormat) {
 
     let lines = vec![Line::from(label_spans), Line::from(bit_spans)];
     let para = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .border_type(BorderType::Rounded),
+        )
         .wrap(Wrap { trim: true });
     f.render_widget(para, area);
 }
@@ -572,7 +602,9 @@ fn render_bit_fields(f: &mut Frame, area: Rect, w: u32, fmt: EncFormat) {
 fn render_field_values(f: &mut Frame, area: Rect, w: u32, fmt: EncFormat) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Parsed fields");
+        .title("Parsed fields")
+        .border_style(Style::default().fg(Color::DarkGray))
+        .border_type(BorderType::Rounded);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -679,12 +711,14 @@ fn render_console(f: &mut Frame, area: Rect, app: &App) {
     let border_style = if app.hover_console_bar {
         Style::default().fg(Color::Yellow)
     } else {
-        Style::default()
+        Style::default().fg(Color::DarkGray)
     };
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .title("Console — Ctrl+Up/Down scroll")
         .border_style(border_style);
+        
     let inner = block.inner(area);
     let h = inner.height.saturating_sub(1) as usize;
     let total = app.console.lines.len();
