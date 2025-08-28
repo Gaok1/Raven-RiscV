@@ -312,14 +312,33 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
         ("PAUSE", Color::Red)
     };
 
+    // Mapeia uma cor base para sua variante de destaque (hover)
+    let hover_color = |c: Color| match c {
+        Color::Blue => Color::LightBlue,
+        Color::Green => Color::LightGreen,
+        Color::Magenta => Color::LightMagenta,
+        Color::Cyan => Color::LightCyan,
+        Color::Yellow => Color::LightYellow,
+        Color::Red => Color::LightRed,
+        Color::Gray => Color::White,
+        Color::DarkGray => Color::Gray,
+        Color::LightBlue => Color::White,
+        Color::LightGreen => Color::White,
+        Color::LightMagenta => Color::White,
+        Color::LightCyan => Color::White,
+        Color::LightYellow => Color::White,
+        Color::White => Color::LightYellow,
+        Color::Black => Color::DarkGray,
+        _ => Color::White,
+    };
+
     let button = |text: &str, color: Color, hovered: bool| {
-        let mut style = Style::default().fg(Color::Black).bg(color);
-        if hovered {
-            // Destaque no hover usando negrito; Color não expõe r/g/b para todos os variantes.
-            style = style.add_modifier(Modifier::ITALIC);
+        let base = Style::default().fg(Color::Black);
+        let style = if hovered {
+            base.bg(hover_color(color)).add_modifier(Modifier::ITALIC)
         } else {
-            style = style.add_modifier(Modifier::DIM).bg(color); // Se não estiver hover, usar a cor original
-        }
+            base.bg(color).add_modifier(Modifier::DIM)
+        };
         Span::styled(format!("[{text}]"), style)
     };
 
@@ -702,10 +721,16 @@ fn render_console(f: &mut Frame, area: Rect, app: &App) {
     let arrow = Paragraph::new("▲").style(arrow_style);
     f.render_widget(arrow, arrow_area);
 
+    // Estilo do botão [CLR]: cor de fundo sempre visível e destaque em hover com itálico
     let clear_style = if app.hover_console_clear {
-        Style::default().fg(Color::Yellow)
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::LightRed)
+            .add_modifier(Modifier::ITALIC)
     } else {
         Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
     };
     let clear_x = area.x + area.width.saturating_sub(6);
     let clear_area = Rect::new(clear_x, area.y, 5, 1);
