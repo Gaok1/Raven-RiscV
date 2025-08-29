@@ -76,7 +76,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         EditorMode::Command => "COMMAND",
     };
     let status = format!(
-        "Mode: {}  |  Ctrl+R=Assemble  |  Ctrl+O=Import  |  Ctrl+S=Export  |  1/2/3 switch tabs (Command mode)",
+        "Mode: {}  |  Ctrl+R=Assemble  |  Ctrl+O=Import  |  Ctrl+S=Export  |  Ctrl+L=Language  |  1/2/3 switch tabs (Command mode)",
         mode
     );
 

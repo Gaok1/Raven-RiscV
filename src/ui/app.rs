@@ -52,6 +52,12 @@ pub(super) enum RunButton {
     State,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub(super) enum Lang {
+    EN,
+    PT,
+}
+
 pub struct App {
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
@@ -103,6 +109,9 @@ pub struct App {
 
     // Docs state
     pub(super) docs_scroll: usize,
+
+    // Language
+    pub(super) lang: Lang,
 
     // Mouse tracking
     pub(super) mouse_x: u16,
@@ -166,6 +175,7 @@ impl App {
             show_exit_popup: false,
             should_quit: false,
             docs_scroll: 0,
+            lang: Lang::EN,
             mouse_x: 0,
             mouse_y: 0,
             hover_tab: None,

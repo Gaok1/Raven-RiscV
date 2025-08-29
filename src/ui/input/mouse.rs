@@ -1,5 +1,5 @@
 use crate::ui::{
-    app::{App, EditorMode, FormatMode, MemRegion, RunButton, Tab},
+    app::{App, EditorMode, FormatMode, MemRegion, RunButton, Tab, Lang},
     editor::Editor,
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -58,6 +58,30 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             Tab::Docs => app.docs_scroll += 1,
         },
         _ => {}
+    }
+
+    // Docs: detect click on top-right language button
+    if let Tab::Docs = app.tab {
+        let root_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(1),
+            ])
+            .split(area);
+        let docs_area = root_chunks[1];
+        // header is 1 row at top of docs_area
+        let header_y = docs_area.y;
+        let btn_width = 4u16; // "[EN]" or "[PT]"
+        let btn_x_start = docs_area.x + docs_area.width.saturating_sub(btn_width);
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left))
+            && me.row == header_y
+            && me.column >= btn_x_start
+            && me.column < btn_x_start + btn_width
+        {
+            app.lang = match app.lang { Lang::EN => Lang::PT, Lang::PT => Lang::EN };
+        }
     }
 
     if let Tab::Editor = app.tab {

@@ -21,7 +21,7 @@ Implements the essential subset of **RV32I**:
 - **Stores:** `SB, SH, SW`
 - **Branches:** `BEQ, BNE, BLT, BGE, BLTU, BGEU`
 - **U/J:** `LUI, AUIPC, JAL`
-- **JALR`
+- **JALR**
 - **SYSTEM:** `ECALL`, `HALT`
 
 *Not implemented:* FENCE/CSR and floating point.
@@ -85,6 +85,16 @@ Example without pseudo-instructions:
     mv a0, t0     # value to print
     ecall
 ```
+
+## Instruction Types (how they work)
+
+- R-type (opcode `0x33`): register–register operations. `rd = OP(rs1, rs2)`.
+- I-type (opcode `0x13`): register–immediate ALU. `rd = OP(rs1, imm12)`. Shifts use 5-bit shamt.
+- Loads (opcode `0x03`): `LB/LH/LW/LBU/LHU` read from `rs1 + imm` to `rd`.
+- Stores (opcode `0x23`): `SB/SH/SW` write low 8/16/32 bits of `rs2` to `rs1 + imm`.
+- Branches (opcode `0x63`): PC-relative conditional jumps; assembler computes the offset.
+- U-type (`LUI/AUIPC`): upper immediates into `rd` or added to `pc`.
+- Jumps (`JAL/JALR`): write `pc+4` to `rd` and jump to target.
 
 ## Opcode Summary
 

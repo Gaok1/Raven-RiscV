@@ -1,4 +1,4 @@
-use crate::ui::app::{App, EditorMode, MemRegion, Tab};
+use crate::ui::app::{App, EditorMode, MemRegion, Tab, Lang};
 use arboard::Clipboard;
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -53,6 +53,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             // Assemble (Ctrl+R) also works in Insert mode
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
                 app.assemble_and_load();
+                return Ok(false);
+            }
+
+            // Toggle language (Ctrl+L)
+            if ctrl && matches!(key.code, KeyCode::Char('l')) {
+                app.lang = match app.lang { Lang::EN => Lang::PT, Lang::PT => Lang::EN };
                 return Ok(false);
             }
 
@@ -202,6 +208,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             // Global assemble
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
                 app.assemble_and_load();
+                return Ok(false);
+            }
+
+            // Toggle language (Ctrl+L)
+            if ctrl && matches!(key.code, KeyCode::Char('l')) {
+                app.lang = match app.lang { Lang::EN => Lang::PT, Lang::PT => Lang::EN };
                 return Ok(false);
             }
 
