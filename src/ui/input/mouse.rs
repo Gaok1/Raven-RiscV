@@ -213,7 +213,10 @@ fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
                 };
             }
             RunButton::Sign => {
-                app.show_signed = !app.show_signed;
+                // Disable sign toggle unless in decimal format
+                if matches!(app.fmt_mode, FormatMode::Dec) {
+                    app.show_signed = !app.show_signed;
+                }
             }
             RunButton::Bytes => {
                 app.mem_view_bytes = match app.mem_view_bytes {
@@ -338,7 +341,12 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     } else if col >= fmt_start && col < fmt_end {
         Some(RunButton::Format)
     } else if col >= sign_start && col < sign_end {
-        Some(RunButton::Sign)
+        // Only allow clicking Sign when in decimal format
+        if matches!(app.fmt_mode, FormatMode::Dec) {
+            Some(RunButton::Sign)
+        } else {
+            None
+        }
     } else if !app.show_registers && col >= bytes_start && col < bytes_end {
         Some(RunButton::Bytes)
     } else if col >= state_start && col < state_end {

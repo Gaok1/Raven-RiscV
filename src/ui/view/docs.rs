@@ -111,9 +111,9 @@ Pseudo‑instructions:
 - j label → jal x0, label; call label → jal ra, label
 - jr rs → jalr x0, rs, 0; ret → jalr x0, ra, 0
 - la rd, label → lui/addi to load absolute address
-- push rs → addi sp, sp, -4; sw rs, 0(sp)
+ - push rs → addi sp, sp, -4; sw rs, 4(sp)
 - pop rd → lw rd, 0(sp); addi sp, sp, 4
-- print rd | printString label|rd | read → set a7 and ecall (see Syscalls)
+ - print rd | printString label | read label → set a7 and ecall (see Syscalls)
 
 Notes
 - Assembler supports .text/.data segments, labels, and data directives (.byte/.half/.word/.dword/.ascii/.asciz/.space).
@@ -158,9 +158,9 @@ Pseudoinstruções:
 - j label → jal x0, label; call label → jal ra, label
 - jr rs → jalr x0, rs, 0; ret → jalr x0, ra, 0
 - la rd, label → usa lui/addi para carregar endereço absoluto
-- push rs → addi sp, sp, -4; sw rs, 0(sp)
+ - push rs → addi sp, sp, -4; sw rs, 4(sp)
 - pop rd → lw rd, 0(sp); addi sp, sp, 4
-- print rd | printString label|rd | read → define a7 e chama ecall (ver Syscalls)
+ - print rd | printString label | read label → define a7 e chama ecall (ver Syscalls)
 
 Notas
 - O assembler suporta seções .text/.data, rótulos e diretivas de dados (.byte/.half/.word/.dword/.ascii/.asciz/.space).

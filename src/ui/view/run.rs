@@ -262,7 +262,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let arrow_x = cols[1].x + cols[1].width - 1;
     let arrow_y = cols[1].y + cols[1].height / 2;
     let arrow_area = Rect::new(arrow_x, arrow_y, 1, 1);
-    let arrow = Paragraph::new("▶").style(arrow_style);
+    let arrow = Paragraph::new(">").style(arrow_style);
     f.render_widget(arrow, arrow_area);
 
     // --- Right column: current instruction details ---
@@ -315,10 +315,20 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
         FormatMode::Dec => ("DEC", Color::Cyan),
         FormatMode::Str => ("STR", Color::Yellow),
     };
-    let (sign_text, sign_color) = if app.show_signed {
-        ("SGN", Color::LightGreen)
+    // Sign toggle only meaningful in decimal mode; gray out otherwise
+    let sign_enabled = matches!(app.fmt_mode, FormatMode::Dec);
+    let (sign_text, sign_color) = if sign_enabled {
+        if app.show_signed {
+            ("SGN", Color::LightGreen)
+        } else {
+            ("UNS", Color::LightBlue)
+        }
     } else {
-        ("UNS", Color::LightBlue)
+        if app.show_signed {
+            ("SGN", Color::DarkGray)
+        } else {
+            ("UNS", Color::DarkGray)
+        }
     };
     let (run_text, run_color) = if app.is_running {
         ("RUN", Color::Green)
@@ -390,7 +400,8 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     spans.push(button(
         sign_text,
         sign_color,
-        app.hover_run_button == Some(RunButton::Sign),
+        // Only highlight on hover if enabled
+        sign_enabled && app.hover_run_button == Some(RunButton::Sign),
     ));
 
     if !app.show_registers {
@@ -737,7 +748,7 @@ fn render_console(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
     if app.console.reading {
-        lines.push(Line::from(format!("> {}", app.console.current)));
+        lines.push(Line::from(format!("► {}", app.console.current)));
     }
     let para = Paragraph::new(lines)
         .block(block)
