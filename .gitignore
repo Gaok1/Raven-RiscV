@@ -1,1 +1,6 @@
 /target
+# Ignore generated distribution artifacts
+/dist/
+
+# Ignore local assignment/note files
+/atividade_final_falcon_asm*

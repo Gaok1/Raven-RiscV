@@ -1,52 +1,52 @@
-# Falcon ASM – Encoding and ISA Reference (RV32I)
+# Falcon ASM — Encoding Reference and ISA (RV32I)
 
-This document describes what is implemented in **Falcon ASM**, an educational RISC-V emulator. It covers:
+This document describes what is implemented in Falcon ASM, an educational RISC‑V emulator. It covers:
 
 - instruction formats and bit fields;
-- opcodes, `funct3` and `funct7` used;
-- immediate ranges and alignment requirements;
-- rules of the text assembler, including labels, segments and pseudo-instructions.
+- opcodes, `funct3` and `funct7` values used;
+- immediate ranges and alignment rules;
+- text assembler rules including labels, segments and pseudos.
 
 ## Current State
 
-Supports the essential subset of **RV32I**:
+Supports the essential subset of RV32I:
 
-- **R-type:** `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
-- **I-type (OP-IMM):** `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
-- **Loads:** `LB, LH, LW, LBU, LHU`
-- **Stores:** `SB, SH, SW`
-- **Branches:** `BEQ, BNE, BLT, BGE, BLTU, BGEU`
-- **U/J:** `LUI, AUIPC, JAL`
-- **JALR**
-- **SYSTEM:** `ECALL`, `HALT`
+- R-type: `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
+- I-type (OP-IMM): `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
+- Loads: `LB, LH, LW, LBU, LHU`
+- Stores: `SB, SH, SW`
+- Branches: `BEQ, BNE, BLT, BGE, BLTU, BGEU`
+- U/J: `LUI, AUIPC, JAL`
+- JALR
+- SYSTEM: `ECALL`, `HALT`
 
-*Not implemented:* FENCE/CSR instructions and floating point.
+Not implemented: FENCE/CSR and floating point.
 
 ## Word Size, Endianness and PC
 
-- **Word:** 32 bits
-- **Endianness:** little-endian (`{to,from}_le_bytes`)
-- **PC:** advances **+4** per instruction. Branches and jumps use offsets relative to the instruction address.
+- Word: 32 bits
+- Endianness: little‑endian (`{to,from}_le_bytes`)
+- PC: advances by +4 per instruction. Branches and jumps use PC‑relative offsets.
 
 ## Registers
 
 - Registers `x0..x31`; writes to `x0` are ignored.
 - Assembler aliases: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`.
 
-## 🧾 Instruction Formats (32 bits)
+## Instruction Formats (32-bit)
 
-### General example (R-type)
+R-type example
 
-| Field   | Bits  | Description                     |
-|--------|-------|---------------------------------|
-| opcode | [6:0] | main opcode                     |
-| rd     | [11:7]| destination register            |
-| funct3 |[14:12]| subtype                         |
-| rs1    |[19:15]| source register 1               |
-| rs2    |[24:20]| source register 2               |
-| funct7 |[31:25]| additional subtype              |
+| Field  | Bits  | Description                  |
+|--------|-------|------------------------------|
+| opcode | [6:0] | major opcode                 |
+| rd     | [11:7]| destination register         |
+| funct3 |[14:12]| subtype                      |
+| rs1    |[19:15]| source register 1            |
+| rs2    |[24:20]| source register 2            |
+| funct7 |[31:25]| additional subtype           |
 
-Other formats (I, S, B, U, J) rearrange fields and immediates.
+Other formats (I, S, B, U, J) rearrange fields and immediates accordingly.
 
 ### I-type (OP-IMM, LOADs and JALR)
 
@@ -83,16 +83,16 @@ Other formats (I, S, B, U, J) rearrange fields and immediates.
 | rs1       |[19:15]|
 | rs2       |[24:20]|
 | imm[10:5] |[30:25]|
-| imm[12]   |[31]  |
+| imm[12]   |[31]   |
 
-- 13-bit immediates (bytes) with **bit0 = 0**. The assembler computes `target_pc - instruction_pc`.
+- 13-bit immediates (in bytes) with bit0 = 0. The assembler computes `target_pc - instruction_pc`.
 
 ### U-type (LUI/AUIPC)
 
 | Field     | Bits  |
 |-----------|-------|
 | opcode    | [6:0] |
-| rd        |[11:7]|
+| rd        |[11:7] |
 | imm[31:12]|[31:12]|
 
 ### J-type (JAL)
@@ -100,15 +100,15 @@ Other formats (I, S, B, U, J) rearrange fields and immediates.
 | Field     | Bits  |
 |-----------|-------|
 | opcode    | [6:0] |
-| rd        |[11:7]|
+| rd        |[11:7] |
 | imm[19:12]|[19:12]|
-| imm[11]   | [20] |
+| imm[11]   | [20]  |
 | imm[10:1] |[30:21]|
-| imm[20]   | [31] |
+| imm[20]   | [31]  |
 
-- 21-bit immediates (bytes) with **bit0 = 0**. The assembler computes the relative offset.
+- 21-bit immediates (in bytes) with bit0 = 0. The assembler computes the relative displacement.
 
-## 🔢 Opcodes by type
+## Opcodes by Type
 
 - `OPC_RTYPE = 0x33`
 - `OPC_OPIMM = 0x13`
@@ -123,7 +123,7 @@ Other formats (I, S, B, U, J) rearrange fields and immediates.
 
 ## FUNCT3/FUNCT7
 
-### R-type (opcode 0x33)
+R-type (opcode 0x33)
 
 - `0x0`: `ADD` (`funct7=0x00`), `SUB` (`funct7=0x20`)
 - `0x1`: `SLL`
@@ -132,7 +132,7 @@ Other formats (I, S, B, U, J) rearrange fields and immediates.
 - `0x6`: `OR`
 - `0x7`: `AND`
 
-### I-type OP-IMM (opcode 0x13)
+I-type OP-IMM (opcode 0x13)
 
 - `0x0`: `ADDI`
 - `0x4`: `XORI`
@@ -141,7 +141,7 @@ Other formats (I, S, B, U, J) rearrange fields and immediates.
 - `0x1`: `SLLI`
 - `0x5`: `SRLI` (`0x00`) / `SRAI` (`0x20`)
 
-### LOADs (opcode 0x03)
+LOADs (opcode 0x03)
 
 - `0x0`: `LB`
 - `0x1`: `LH`
@@ -149,13 +149,13 @@ Other formats (I, S, B, U, J) rearrange fields and immediates.
 - `0x4`: `LBU`
 - `0x5`: `LHU`
 
-### STOREs (opcode 0x23)
+STOREs (opcode 0x23)
 
 - `0x0`: `SB`
 - `0x1`: `SH`
 - `0x2`: `SW`
 
-### BRANCH (opcode 0x63)
+BRANCH (opcode 0x63)
 
 - `0x0`: `BEQ`
 - `0x1`: `BNE`
@@ -164,80 +164,27 @@ Other formats (I, S, B, U, J) rearrange fields and immediates.
 - `0x6`: `BLTU`
 - `0x7`: `BGEU`
 
-### JALR (opcode 0x67)
+JALR (opcode 0x67)
 
 - `funct3 = 0x0`
 
-### SYSTEM (opcode 0x73)
+SYSTEM (opcode 0x73)
 
-- `ECALL` (`0x00000073`) and `HALT` (`0x00100073`) halt execution.
+- `ECALL` (`0x00000073`) and `HALT` (`0x00100073`) terminate execution.
 
-## Syscalls
+## Syscalls and Pseudos
 
-`ecall` uses the value in `a7` to select a system call and `a0` for arguments.
-The emulator implements the following calls:
+`ecall` uses `a7` to select the syscall and `a0` for arguments.
 
-| `a7` | Pseudo-instruction | Description | Argument |
-|------|--------------------|-------------|----------|
-| 1 | `print rd` | Print the decimal value in `a0`. | `a0` = register to print |
-| 2 | `printString label\|rd` | Print the NUL-terminated string at `a0`. | `a0` = address |
-| 3 | `read` | Read a line into memory at `a0` and append NUL. | `a0` = destination |
+- `a7=1` — `print rd`: prints the value in `rd` (`a0=rd`).
+- `a7=2` — `printString label`: prints the NUL‑terminated string at `label` (`a0=addr`).
+- `a7=3` — `read label`: reads a line into memory at `label` and appends NUL.
 
-Example:
-
-```asm
-    li a7, 1
-    mv a0, t0
-    ecall
-```
-
-Unrecognized codes stop execution.
+Note: by pedagogical choice, `DIV/DIVU/REM/REMU` with a zero divisor stop execution with an error, instead of the RISC‑V specified quotient/remainder behavior. This is intentional to highlight error conditions.
 
 ## Assembler Rules
 
-- **Two passes**: the first collects labels (`label:`); the second resolves and encodes.
-- **Comments**: anything after `;` or `#` is ignored.
-- **Separator**: `instr op1, op2, op3`.
-- **Segment directives**:
-  - `.text` or `.section .text` starts the code section.
-  - `.data` or `.section .data` starts the data section (allocated from `base_pc + 0x1000`).
-  - Inside `.data`:
-    - `.byte` inserts 8-bit values.
-    - `.half` inserts 16-bit values.
-    - `.word` inserts 32-bit words.
-    - `.dword` inserts 64-bit words.
-    - `.ascii "text"` emits raw bytes.
-    - `.asciz "text"` / `.string "text"` emit strings with a trailing zero.
-    - `.space n` / `.zero n` reserve `n` zero bytes.
-- **Loads/Stores**: syntax `imm(rs1)`.
-- **Branches/Jumps**: operand may be immediate or label. Offsets are byte-based; `B`/`J` require multiples of 2.
-- **Pseudo-instructions**:
-  - `nop` → `addi x0, x0, 0`
-  - `mv rd, rs` → `addi rd, rs, 0`
-  - `li rd, imm12` → `addi rd, x0, imm`
-  - `subi rd, rs1, imm` → `addi rd, rs1, -imm`
-  - `j label` → `jal x0, label`
-  - `call label` → `jal ra, label`
-  - `jr rs1` → `jalr x0, rs1, 0`
-  - `ret` → `jalr x0, ra, 0`
-  - `la rd, label` → emits `lui`/`addi` to load a data address
-  - `push rs` → `addi sp, sp, -4` ; `sw rs, 0(sp)`
-  - `pop rd` → `lw rd, 0(sp)` ; `addi sp, sp, 4`
-  - `halt` → `0x00100073` (stops execution)
-  - `print rd` → `a7=1, a0=rd, ecall`
-  - `printString label|rd` → `a7=2, a0=addr, ecall`
-  - `read` → `a7=3, a0=dest, ecall`
-
-## Example Code
-
-```asm
-.data
-val: .word 0
-.text
-  la t0, val
-  addi t1, x0, 5
-  sw t1, 0(t0)
-  ecall
-```
-
-This program loads the address of `val`, stores the number 5 in memory and calls `ecall`.
+- Two passes: first collects labels; second resolves and encodes.
+- Comments: everything after `;` or `#` is ignored.
+- Separator: `instr op1, op2, op3`.
+- Supported pseudos: `nop`, `mv`, `li` (12‑bit), `subi`, `j/call`, `jr/ret`, `la`, `push/pop` (uses `4(sp)`), `print`, `printString label`, `read label`.
