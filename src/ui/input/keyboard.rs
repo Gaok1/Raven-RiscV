@@ -64,7 +64,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             if ctrl && matches!(key.code, KeyCode::Char('o')) {
                 if let Some(path) = OSFileDialog::new()
-                    .add_filter("Falcon ASM", &["fas"])
+                    .add_filter("Falcon ASM", &["fas", "asm"])
                     .pick_file()
                 {
                     if let Ok(content) = std::fs::read_to_string(path) {
@@ -77,7 +77,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
             if ctrl && matches!(key.code, KeyCode::Char('s')) {
                 if let Some(path) = OSFileDialog::new()
-                    .add_filter("Falcon ASM", &["fas"])
+                    .add_filter("Falcon ASM", &["fas", "asm"])
                     .set_file_name("program.fas")
                     .save_file()
                 {

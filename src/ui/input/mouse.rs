@@ -219,11 +219,20 @@ fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
                 }
             }
             RunButton::Bytes => {
-                app.mem_view_bytes = match app.mem_view_bytes {
+                // Cycle byte width 4 -> 2 -> 1 -> 4
+                let next = match app.mem_view_bytes {
                     4 => 2,
                     2 => 1,
                     _ => 4,
                 };
+                app.mem_view_bytes = next;
+                // Align base address to the new byte width so regrouping
+                // always starts at proper boundaries (prevents mis-grouping
+                // after scrolling in 1-byte mode and switching back).
+                if next > 1 {
+                    let mask = !(next as u32 - 1);
+                    app.mem_view_addr &= mask;
+                }
             }
             RunButton::Region => {
                 app.mem_region = match app.mem_region {
