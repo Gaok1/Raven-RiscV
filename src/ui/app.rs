@@ -69,6 +69,11 @@ pub struct App {
     pub(super) last_assemble_msg: Option<String>,
     pub(super) last_compile_ok: Option<bool>,
 
+    // Keep last successfully assembled program for restart/loading without re-assembling
+    pub(super) last_ok_text: Option<Vec<u32>>,   // instructions
+    pub(super) last_ok_data: Option<Vec<u8>>,    // data bytes
+    pub(super) last_ok_data_base: Option<u32>,   // data base address
+
     // Compile diagnostics
     pub(super) diag_line: Option<usize>, // 0-based line index
     pub(super) diag_msg: Option<String>,
@@ -93,6 +98,8 @@ pub struct App {
     pub(super) imem_drag: bool,
     pub(super) imem_drag_start_x: u16,
     pub(super) imem_width_start: u16,
+    pub(super) imem_scroll: usize,
+    pub(super) hover_imem_addr: Option<u32>,
     pub(super) console_height: u16,
     pub(super) hover_console_bar: bool,
     pub(super) hover_console_clear: bool,
@@ -140,6 +147,9 @@ impl App {
             auto_check_delay: Duration::from_millis(400),
             last_assemble_msg: None,
             last_compile_ok: None,
+            last_ok_text: None,
+            last_ok_data: None,
+            last_ok_data_base: None,
             diag_line: None,
             diag_msg: None,
             diag_line_text: None,
@@ -161,6 +171,8 @@ impl App {
             imem_drag: false,
             imem_drag_start_x: 0,
             imem_width_start: 38,
+            imem_scroll: 0,
+            hover_imem_addr: None,
             console_height: 5,
             hover_console_bar: false,
             hover_console_clear: false,
@@ -214,6 +226,13 @@ impl App {
                 self.mem_view_addr = prog.data_base;
                 self.mem_region = MemRegion::Data;
 
+                // Save last good program for restart
+                self.last_ok_text = Some(prog.text.clone());
+                self.last_ok_data = Some(prog.data.clone());
+                self.last_ok_data_base = Some(prog.data_base);
+                self.imem_scroll = 0;
+                self.hover_imem_addr = None;
+
                 self.last_assemble_msg = Some(format!(
                     "Assembled {} instructions, {} data bytes.",
                     prog.text.len(),
@@ -240,6 +259,10 @@ impl App {
         use falcon::asm::assemble;
         match assemble(&self.editor.text(), self.base_pc) {
             Ok(prog) => {
+                // Save last good program snapshot
+                self.last_ok_text = Some(prog.text.clone());
+                self.last_ok_data = Some(prog.data.clone());
+                self.last_ok_data_base = Some(prog.data_base);
                 self.last_assemble_msg = Some(format!(
                     "OK: {} instructions, {} data bytes",
                     prog.text.len(),
@@ -260,16 +283,80 @@ impl App {
         self.editor_dirty = false;
     }
 
+    // Load the last successfully assembled program without re-parsing source
+    fn load_last_ok_program(&mut self) {
+        use falcon::program::{load_bytes, load_words};
+        if let (Some(ref text), Some(ref data), Some(data_base)) = (
+            self.last_ok_text.as_ref(),
+            self.last_ok_data.as_ref(),
+            self.last_ok_data_base,
+        ) {
+            self.prev_x = self.cpu.x; // keep snapshot before reset
+            self.mem_size = 128 * 1024;
+            self.cpu = Cpu::default();
+            self.cpu.pc = self.base_pc;
+            self.prev_pc = self.cpu.pc;
+            self.cpu.write(2, self.mem_size as u32 - 4); // reset stack pointer
+            self.mem = Ram::new(self.mem_size);
+            self.faulted = false;
+
+            if let Err(e) = load_words(&mut self.mem, self.base_pc, text) {
+                self.console.push_error(e.to_string());
+                self.faulted = true;
+                return;
+            }
+            if let Err(e) = load_bytes(&mut self.mem, data_base, data) {
+                self.console.push_error(e.to_string());
+                self.faulted = true;
+                return;
+            }
+
+            self.data_base = data_base;
+            self.mem_view_addr = data_base;
+            self.mem_region = MemRegion::Data;
+
+            // Mirror the manual assemble message for consistency
+            self.last_assemble_msg = Some(format!(
+                "Assembled {} instructions, {} data bytes.",
+                text.len(),
+                data.len()
+            ));
+            self.last_compile_ok = Some(true);
+            self.imem_scroll = 0;
+            self.hover_imem_addr = None;
+        }
+    }
+
+    // Public: restart simulation to the initial state of the last good program
+    pub(super) fn restart_simulation(&mut self) {
+        self.is_running = false;
+        self.faulted = false;
+        self.load_last_ok_program();
+    }
+
     fn tick(&mut self) {
         if self.is_running && self.last_step_time.elapsed() >= self.step_interval {
             self.single_step();
             self.last_step_time = Instant::now();
         }
-        // auto syntax check while in editor, with debounce
+        // While running, keep instruction memory view following the PC
+        if self.is_running {
+            if self.cpu.pc >= self.base_pc {
+                let pc_idx = ((self.cpu.pc - self.base_pc) / 4) as usize;
+                self.imem_scroll = pc_idx.saturating_sub(2);
+            } else {
+                self.imem_scroll = 0;
+            }
+        }
+        // Auto syntax check while in editor, with debounce
         if matches!(self.tab, Tab::Editor) && self.editor_dirty {
             if let Some(t) = self.last_edit_at {
                 if t.elapsed() >= self.auto_check_delay {
                     self.check_assemble();
+                    // If source has no errors, auto-build (assemble and load) using last good program
+                    if self.last_compile_ok == Some(true) {
+                        self.load_last_ok_program();
+                    }
                 }
             }
         }

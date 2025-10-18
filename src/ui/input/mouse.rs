@@ -175,6 +175,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             MouseEventKind::Down(MouseButton::Left) => {
                 handle_run_status_click(app, me, area);
                 start_imem_drag(app, me, area);
+                handle_imem_click(app, me, area);
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
             }
@@ -405,6 +406,40 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
     } else if !app.imem_drag {
         app.hover_imem_bar = false;
     }
+
+    // Compute inner content area of instruction memory
+    let inner = Rect::new(
+        imem.x + 1,
+        imem.y + 1,
+        imem.width.saturating_sub(2),
+        imem.height.saturating_sub(2),
+    );
+    // Only track hover within inner area rows
+    if me.column >= inner.x
+        && me.column < inner.x + inner.width
+        && me.row >= inner.y
+        && me.row < inner.y + inner.height
+    {
+        if let Some(ref text) = app.last_ok_text {
+            let rows = inner.height.saturating_sub(2) as usize;
+            let total = text.len();
+            let max_scroll = total.saturating_sub(rows);
+            if app.imem_scroll > max_scroll {
+                app.imem_scroll = max_scroll;
+            }
+            let row = (me.row - inner.y) as usize;
+            let idx = app.imem_scroll + row;
+            if idx < total {
+                app.hover_imem_addr = Some(app.base_pc + (idx as u32) * 4);
+            } else {
+                app.hover_imem_addr = None;
+            }
+        } else {
+            app.hover_imem_addr = None;
+        }
+    } else {
+        app.hover_imem_addr = None;
+    }
 }
 
 fn start_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
@@ -621,6 +656,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         ])
         .split(main);
     let side = cols[0];
+    let imem = cols[1];
     if me.column >= side.x
         && me.column < side.x + side.width
         && me.row >= side.y
@@ -649,6 +685,57 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
                 }
             }
             app.mem_region = MemRegion::Custom;
+        }
+    }
+
+    // Scroll Instruction Memory when hovering its area
+    if me.column >= imem.x
+        && me.column < imem.x + imem.width
+        && me.row >= imem.y
+        && me.row < imem.y + imem.height
+    {
+        // Disable IMEM scroll while program is running
+        if app.is_running {
+            return;
+        }
+        if let Some(ref text) = app.last_ok_text {
+            let visible = imem.height.saturating_sub(2) as usize;
+            let total = text.len();
+            let max_scroll = total.saturating_sub(visible);
+            if app.imem_scroll > max_scroll {
+                app.imem_scroll = max_scroll;
+            }
+            if up {
+                app.imem_scroll = app.imem_scroll.saturating_sub(1);
+            } else {
+                app.imem_scroll = (app.imem_scroll + 1).min(max_scroll);
+            }
+        }
+    }
+}
+
+fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let cols = run_cols(app, area);
+    let imem = cols[1];
+    // Ignore clicks on the resize bar
+    let bar_x = imem.x + imem.width - 1;
+    if me.column == bar_x {
+        return;
+    }
+    let inner = Rect::new(
+        imem.x + 1,
+        imem.y + 1,
+        imem.width.saturating_sub(2),
+        imem.height.saturating_sub(2),
+    );
+    if me.column >= inner.x
+        && me.column < inner.x + inner.width
+        && me.row >= inner.y
+        && me.row < inner.y + inner.height
+    {
+        if let Some(addr) = app.hover_imem_addr {
+            app.prev_pc = app.cpu.pc;
+            app.cpu.pc = addr;
         }
     }
 }

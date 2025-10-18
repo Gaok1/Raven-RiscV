@@ -50,9 +50,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
-            // Assemble (Ctrl+R) also works in Insert mode
+            // Ctrl+R: Restart simulation if on Run tab; otherwise assemble
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
-                app.assemble_and_load();
+                if matches!(app.tab, Tab::Run) {
+                    app.restart_simulation();
+                } else {
+                    app.assemble_and_load();
+                }
                 return Ok(false);
             }
 
@@ -205,9 +209,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
-            // Global assemble
+            // Ctrl+R: Restart simulation if on Run tab; otherwise assemble
             if ctrl && matches!(key.code, KeyCode::Char('r')) {
-                app.assemble_and_load();
+                if matches!(app.tab, Tab::Run) {
+                    app.restart_simulation();
+                } else {
+                    app.assemble_and_load();
+                }
                 return Ok(false);
             }
 

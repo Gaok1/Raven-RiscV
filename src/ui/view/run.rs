@@ -17,35 +17,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    // Build/assemble status
-    let (msg, style, build_border) = if app.last_compile_ok == Some(false) {
-        let line = app.diag_line.map(|n| n + 1).unwrap_or(0);
-        let text = app.diag_line_text.as_deref().unwrap_or("");
-        let err = app.diag_msg.as_deref().unwrap_or("");
-        (
-            format!("Error line {}: {} ({})", line, text, err),
-            Style::default().bg(Color::Red).fg(Color::Black),
-            Color::Black,
-        )
-    } else if app.last_compile_ok == Some(true) {
-        (
-            app.last_assemble_msg.clone().unwrap_or_default(),
-            Style::default().bg(Color::Green).fg(Color::Black),
-            Color::Black,
-        )
-    } else {
-        ("Not compiled".to_string(), Style::default(), Color::DarkGray)
-    };
-    let status = Paragraph::new(msg)
-        .style(style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Build")
-                .border_style(Style::default().fg(build_border))
-                .border_type(BorderType::Rounded),
-        );
-    f.render_widget(status, chunks[0]);
+    super::components::render_build_status(f, chunks[0], app);
 
     // Run control status
     render_run_status(f, chunks[1], app);
@@ -67,7 +39,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray))
             .border_type(BorderType::Rounded)
-            .title("Registers - s:step r:run p:pause");
+            .title("Registers - s:step r:run p:pause Ctrl+R:restart");
         let inner = reg_block.inner(cols[0]);
         let lines = inner.height.saturating_sub(2) as usize;
         let total = 33usize; // PC + x0..x31
@@ -134,7 +106,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray))
             .border_type(BorderType::Rounded)
-            .title("RAM Memory - s:step r:run p:pause");
+            .title("RAM Memory - s:step r:run p:pause Ctrl+R:restart");
         f.render_widget(mem_block.clone(), cols[0]);
 
         let inner = mem_block.inner(cols[0]);
@@ -224,7 +196,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(imem_block.clone(), cols[1]);
     let inner = imem_block.inner(cols[1]);
     let mut items = Vec::new();
-    let base = app.cpu.pc.saturating_sub(32);
+    let base = app.base_pc.saturating_add((app.imem_scroll as u32).saturating_mul(4));
     let lines = inner.height.saturating_sub(2) as u32;
     for off in (0..lines).map(|i| i * 4) {
         let addr = base.wrapping_add(off);
@@ -253,6 +225,27 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let list = List::new(items);
     f.render_widget(list, inner);
 
+    // Hover highlight segment (light blue bar) over the hovered instruction
+    if let Some(addr) = app.hover_imem_addr {
+        let start_addr = base;
+        let visible_rows = inner.height.saturating_sub(2) as u32;
+        let end_addr = start_addr.saturating_add(visible_rows.saturating_mul(4));
+        if addr >= start_addr && addr < end_addr {
+            let row = (addr.saturating_sub(start_addr) / 4) as u16;
+            let y = inner.y + row;
+            let x = inner.x;
+            // narrow segment so it overlays without hiding the contents
+            let seg_w: u16 = 2;
+            let w = seg_w.min(inner.width);
+            if w > 0 {
+                let seg = Rect::new(x, y, w, 1);
+                let bar = Paragraph::new(" ".repeat(w as usize))
+                    .style(Style::default().bg(Color::Rgb(180, 230, 255)));
+                f.render_widget(bar, seg);
+            }
+        }
+    }
+
     // Arrow indicator on right border
     let arrow_style = if app.hover_imem_bar {
         Style::default().fg(Color::Yellow)
@@ -275,23 +268,27 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(cols[2]);
 
-    let (cur_word, disasm_str) = if in_mem_range(app, app.cpu.pc) {
+    let (detail_addr, cur_word, disasm_str) = if let Some(addr) = app.hover_imem_addr {
+        let w = app.mem.load32(addr).unwrap_or(0);
+        let dis = disasm_word(w);
+        (addr, w, dis)
+    } else if in_mem_range(app, app.cpu.pc) {
         let w = app.mem.load32(app.cpu.pc).unwrap_or(0);
         let dis = disasm_word(w);
-        (w, dis)
+        (app.cpu.pc, w, dis)
     } else {
-        (0, "<PC out of RAM>".to_string())
+        (app.cpu.pc, 0, "<PC out of RAM>".to_string())
     };
 
     let pc_line = Paragraph::new(vec![
-        Line::from(format!("PC = 0x{:08x}", app.cpu.pc)),
+        Line::from(format!("Addr = 0x{:08x}{}", detail_addr, if app.hover_imem_addr.is_some() { " (hover)" } else { " (PC)" })),
         Line::from(format!("Word = 0x{:08x}", cur_word)),
         Line::from(format!("Instr = {}", disasm_str)),
     ])
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Current Instruction")
+            .title("Instruction Details")
             .border_style(Style::default().fg(Color::DarkGray)),
     );
     f.render_widget(pc_line, mid_chunks[0]);
@@ -301,7 +298,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     render_field_values(f, mid_chunks[2], cur_word, fmt);
 
     // --- Console ---
-    render_console(f, chunks[3], app);
+    super::components::render_console(f, chunks[3], app);
 }
 
 fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
@@ -426,7 +423,7 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     ));
 
     let line1 = Line::from(spans);
-    let line2 = Line::from("Commands: s=step  r=run  p=pause  Up/Down/PgUp/PgDn scroll");
+    let line2 = Line::from("Commands: s=step  r=run  p=pause  Ctrl+R=restart  Up/Down/PgUp/PgDn scroll");
     let run_border_color = if app.hover_run_button.is_some() {
         Color::LightCyan
     } else {
@@ -443,7 +440,14 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn in_mem_range(app: &App, addr: u32) -> bool {
-    (addr as usize) < app.mem_size.saturating_sub(3)
+    // If we know the last assembled text size, clamp range to actual instructions
+    if let Some(ref text) = app.last_ok_text {
+        let start = app.base_pc;
+        let end = start.saturating_add((text.len() as u32).saturating_mul(4));
+        addr >= start && addr < end
+    } else {
+        (addr as usize) < app.mem_size.saturating_sub(3)
+    }
 }
 
 fn reg_name(i: u8) -> &'static str {

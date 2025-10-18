@@ -10,6 +10,7 @@ pub(super) use super::editor::Editor;
 mod docs;
 mod editor;
 mod run;
+mod components;
 
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};
@@ -76,7 +77,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         EditorMode::Command => "COMMAND",
     };
     let status = format!(
-        "Mode: {}  |  Ctrl+R=Assemble  |  Ctrl+O=Import  |  Ctrl+S=Export  |  Ctrl+L=Language  |  1/2/3 switch tabs (Command mode)",
+        "Mode: {}  |  Auto-assemble on success  |  Ctrl+R=Restart (Run)  |  Ctrl+O=Import  |  Ctrl+S=Export  |  Ctrl+L=Language  |  1/2/3 switch tabs (Command mode)",
         mode
     );
 
