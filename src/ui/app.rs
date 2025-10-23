@@ -334,6 +334,47 @@ impl App {
         self.load_last_ok_program();
     }
 
+    // Load a raw binary into memory at base_pc and update editor/disasm state
+    pub(super) fn load_binary(&mut self, bytes: &[u8]) {
+        use falcon::program::load_bytes;
+        self.prev_x = self.cpu.x;
+        self.mem_size = 128 * 1024;
+        self.cpu = Cpu::default();
+        self.cpu.pc = self.base_pc;
+        self.prev_pc = self.cpu.pc;
+        self.cpu.write(2, self.mem_size as u32 - 4);
+        self.mem = Ram::new(self.mem_size);
+        self.faulted = false;
+
+        if let Err(e) = load_bytes(&mut self.mem, self.base_pc, bytes) {
+            self.console.push_error(e.to_string());
+            self.faulted = true;
+            return;
+        }
+
+        // Convert bytes to words for instruction display and export
+        let mut words = Vec::new();
+        for chunk in bytes.chunks(4) {
+            let mut b = [0u8; 4];
+            for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
+            words.push(u32::from_le_bytes(b));
+        }
+        self.last_ok_text = Some(words);
+        self.last_ok_data = Some(Vec::new());
+        self.last_ok_data_base = Some(self.data_base);
+        self.last_assemble_msg = Some(format!(
+            "Loaded binary: {} bytes ({} words)",
+            bytes.len(),
+            self.last_ok_text.as_ref().map(|v| v.len()).unwrap_or(0)
+        ));
+        self.last_compile_ok = Some(true);
+        self.diag_line = None;
+        self.diag_msg = None;
+        self.diag_line_text = None;
+        self.imem_scroll = 0;
+        self.hover_imem_addr = None;
+    }
+
     fn tick(&mut self) {
         if self.is_running && self.last_step_time.elapsed() >= self.step_interval {
             self.single_step();

@@ -28,11 +28,50 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
     };
     let build = Line::from(vec![Span::raw("Build: "), compile_span]);
 
-    let commands = Line::from(
-        "Commands: Esc=Command  |  Auto-assemble on success  |  Ctrl+O=Import  |  Ctrl+S=Export  |  Ctrl+R=Restart (Run tab)",
-    );
+    // Actions with clickable buttons (hover highlights via mouse coords)
+    let inner_x = area.x + 1;
+    let actions_y = area.y + 1 + 2; // third content line (inside block)
+    let mut x = inner_x;
+    let import_label = "Import: ";
+    let export_label = "Export: ";
+    let gap = "   ";
+    let btn_ibin = "[BIN]";
+    let btn_icode = "[CODE]";
+    let btn_ebin = "[BIN]";
+    let btn_ecode = "[CODE]";
 
-    let para = Paragraph::new(vec![mode, build, commands]).block(
+    let style_btn = |start: u16, txt: &str| {
+        let w = txt.len() as u16;
+        let hovered = app.mouse_y == actions_y && app.mouse_x >= start && app.mouse_x < start + w;
+        if hovered {
+            Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::ITALIC)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::DarkGray)
+        }
+    };
+
+    let mut actions_spans: Vec<Span> = Vec::new();
+    actions_spans.push(Span::raw(import_label));
+    x += import_label.len() as u16;
+    actions_spans.push(Span::styled(btn_ibin, style_btn(x, btn_ibin)));
+    x += btn_ibin.len() as u16;
+    actions_spans.push(Span::raw(" "));
+    x += 1;
+    actions_spans.push(Span::styled(btn_icode, style_btn(x, btn_icode)));
+    x += btn_icode.len() as u16;
+    actions_spans.push(Span::raw(gap));
+    x += gap.len() as u16;
+    actions_spans.push(Span::raw(export_label));
+    x += export_label.len() as u16;
+    actions_spans.push(Span::styled(btn_ebin, style_btn(x, btn_ebin)));
+    x += btn_ebin.len() as u16;
+    actions_spans.push(Span::raw(" "));
+    x += 1;
+    actions_spans.push(Span::styled(btn_ecode, style_btn(x, btn_ecode)));
+
+    let actions = Line::from(actions_spans);
+
+    let para = Paragraph::new(vec![mode, build, actions]).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray))

@@ -1,0 +1,26 @@
+.data
+arr:    .word 12, 7, 25, 9, 13
+prefix: .asciz "Max: "
+
+.text
+    la t0, arr
+    li t1, 5       # length
+    lw s0, 0(t0)   # max = arr[0]
+    li t2, 1       # i = 1
+
+max_loop:
+    slli t3, t2, 2
+    add  t3, t0, t3
+    lw   t4, 0(t3)
+    blt  s0, t4, update
+    j    next
+update:
+    mv   s0, t4
+next:
+    addi t2, t2, 1
+    blt  t2, t1, max_loop
+
+    printString prefix
+    print s0
+    halt
+

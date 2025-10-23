@@ -1,0 +1,20 @@
+.text
+    # Fast exponentiation: result = base^exp
+    li a0, 3       # base
+    li a1, 5       # exp
+    li s0, 1       # result
+
+pow_loop:
+    beq  a1, zero, pow_done
+    andi t0, a1, 1
+    beq  t0, zero, skip_mul
+    mul  s0, s0, a0
+skip_mul:
+    mul  a0, a0, a0
+    srli a1, a1, 1
+    j    pow_loop
+
+pow_done:
+    print s0
+    halt
+

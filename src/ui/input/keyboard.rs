@@ -75,6 +75,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.editor.lines = content.lines().map(|s| s.to_string()).collect();
                         app.editor.cursor_row = 0;
                         app.editor.cursor_col = 0;
+                        // Assemble immediately after importing a new file
+                        app.assemble_and_load();
                     }
                 }
                 return Ok(false);
@@ -255,6 +257,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.editor.lines = content.lines().map(|s| s.to_string()).collect();
                         app.editor.cursor_row = 0;
                         app.editor.cursor_col = 0;
+                        // Assemble immediately after importing a new file
+                        app.assemble_and_load();
                     }
                 }
                 return Ok(false);

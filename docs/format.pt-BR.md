@@ -178,7 +178,7 @@ SYSTEM (opcode 0x73)
 
 - `a7=1` — `print rd`: imprime o valor de `rd` (`a0=rd`).
 - `a7=2` — `printString label`: imprime a string NUL‑terminada em `label` (`a0=addr`).
-- `a7=3` — `read label`: lê uma linha para a memória em `label` e adiciona NUL.
+- `a7=3` — `read label`: lê uma linha do console para a memória em `label` e adiciona NUL.
 
 Observação: por escolha pedagógica, `DIV/DIVU/REM/REMU` com divisor zero interrompem a execução com erro, em vez do comportamento padrão do RISC‑V. Isso é intencional para evidenciar condições de erro.
 

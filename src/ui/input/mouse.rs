@@ -4,6 +4,7 @@ use crate::ui::{
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use rfd::FileDialog as OSFileDialog;
 
 use super::max_regs_scroll;
 
@@ -97,7 +98,12 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(5), Constraint::Min(3)])
             .split(chunks[1]);
+        let status_area = editor_chunks[0];
         let editor_area = editor_chunks[1];
+
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            handle_editor_status_click(app, me, status_area);
+        }
 
         let start = {
             let visible_h = editor_area.height.saturating_sub(2) as usize;
@@ -439,6 +445,107 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
         }
     } else {
         app.hover_imem_addr = None;
+    }
+}
+
+fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) {
+    // Third content line inside the status block contains the actions
+    let inner_x = status_area.x + 1;
+    let actions_y = status_area.y + 1 + 2;
+    if me.row != actions_y {
+        return;
+    }
+    let mut x = inner_x;
+    let import_label = "Import: ";
+    let export_label = "Export: ";
+    let gap = "   ";
+    let btn_ibin = "[BIN]";
+    let btn_icode = "[CODE]";
+    let btn_ebin = "[BIN]";
+    let btn_ecode = "[CODE]";
+
+    x += import_label.len() as u16;
+    let ibin_start = x; let ibin_end = x + btn_ibin.len() as u16; x = ibin_end + 1; // space
+    let icode_start = x; let icode_end = x + btn_icode.len() as u16; x = icode_end;
+    x += gap.len() as u16;
+    x += export_label.len() as u16;
+    let ebin_start = x; let ebin_end = x + btn_ebin.len() as u16; x = ebin_end + 1;
+    let ecode_start = x; let ecode_end = x + btn_ecode.len() as u16;
+
+    let col = me.column;
+    if col >= ibin_start && col < ibin_end {
+        // Import BIN
+        if let Some(path) = OSFileDialog::new()
+            .add_filter("Binary", &["bin", "img"])
+            .pick_file()
+        {
+            if let Ok(bytes) = std::fs::read(path) {
+                app.load_binary(&bytes);
+                use crate::ui::view::disasm::disasm_word;
+                let mut lines = Vec::new();
+                for chunk in bytes.chunks(4) {
+                    let mut b = [0u8; 4];
+                    for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
+                    let w = u32::from_le_bytes(b);
+                    lines.push(disasm_word(w));
+                }
+                app.editor.lines = lines;
+                app.editor.cursor_row = 0;
+                app.editor.cursor_col = 0;
+            }
+        }
+        return;
+    }
+    if col >= icode_start && col < icode_end {
+        // Import CODE
+        if let Some(path) = OSFileDialog::new()
+            .add_filter("Falcon ASM", &["fas", "asm"])
+            .pick_file()
+        {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                app.editor.lines = content.lines().map(|s| s.to_string()).collect();
+                app.editor.cursor_row = 0;
+                app.editor.cursor_col = 0;
+                // Assemble immediately after importing a new file (mouse action)
+                app.assemble_and_load();
+            }
+        }
+        return;
+    }
+    if col >= ebin_start && col < ebin_end {
+        // Export BIN
+        if let Some(path) = OSFileDialog::new()
+            .add_filter("Binary", &["bin"])
+            .set_file_name("program.bin")
+            .save_file()
+        {
+            let words = if let Some(ref t) = app.last_ok_text {
+                t.clone()
+            } else {
+                match crate::falcon::asm::assemble(&app.editor.text(), app.base_pc) {
+                    Ok(p) => p.text,
+                    Err(e) => {
+                        app.console.push_error(format!("Cannot export: assemble error at line {}: {}", e.line + 1, e.msg));
+                        return;
+                    }
+                }
+            };
+            let mut bytes = Vec::with_capacity(words.len()*4);
+            for w in words { bytes.extend_from_slice(&w.to_le_bytes()); }
+            let _ = std::fs::write(path, bytes);
+        }
+        return;
+    }
+    if col >= ecode_start && col < ecode_end {
+        // Export CODE
+        if let Some(path) = OSFileDialog::new()
+            .add_filter("Falcon ASM", &["fas", "asm"])
+            .set_file_name("program.fas")
+            .save_file()
+        {
+            let _ = std::fs::write(path, app.editor.text());
+        }
+        return;
     }
 }
 

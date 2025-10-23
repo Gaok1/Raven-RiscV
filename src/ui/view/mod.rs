@@ -11,6 +11,7 @@ mod docs;
 mod editor;
 mod run;
 mod components;
+pub mod disasm;
 
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};

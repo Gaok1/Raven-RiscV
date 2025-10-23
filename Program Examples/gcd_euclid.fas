@@ -1,0 +1,16 @@
+.text
+    # Compute gcd(a0, a1) using Euclid's algorithm (remainder form)
+    li a0, 28
+    li a1, 18
+
+gcd_loop:
+    beq  a1, zero, gcd_done  # if b == 0 -> done
+    remu t0, a0, a1          # t0 = a % b
+    mv   a0, a1              # a = b
+    mv   a1, t0              # b = r
+    j    gcd_loop
+
+gcd_done:
+    print a0                 # gcd result
+    halt
+

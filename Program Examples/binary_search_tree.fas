@@ -1,9 +1,10 @@
-.data
+.section .data
 
 len: .word 0
 
 tree: .word 0,0,20
-.text
+
+.section .text
 
 main:
 
@@ -50,17 +51,19 @@ insert_tree:
         call insert_tree
         pop a1
         sw s0,4(a1)
-        pop ra
-        mv s0,a1
-        ret
+        j insertion_end
+
     insert_right:
         lw a1, 8(a1)
         call insert_tree
         pop a1
         sw s0,8(a1)
+        
+    insertion_end:
         pop ra
         mv s0,a1
         ret
+
     return_node: #criação do node
         push ra
         call alocate_tree_node

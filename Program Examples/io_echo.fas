@@ -1,0 +1,12 @@
+.data
+prompt: .asciz "Enter text: "
+buf:    .space 128
+nl:     .asciz "\n"
+
+.text
+    printString prompt
+    read        buf
+    printString buf
+    printString nl
+    halt
+

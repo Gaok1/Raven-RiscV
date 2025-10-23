@@ -1,0 +1,19 @@
+.data
+msg: .asciz "Sum 1..10: "
+
+.text
+    # print label
+    printString msg
+    # sum = 0, i = 1, n = 10
+    li s0, 0
+    li t0, 1
+    li t1, 10
+    addi t2, t1, 1   # limit = n + 1
+loop:
+    add  s0, s0, t0  # sum += i
+    addi t0, t0, 1   # i++
+    blt  t0, t2, loop
+    # print result
+    print s0
+    halt
+

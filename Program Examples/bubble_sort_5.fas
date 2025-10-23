@@ -1,0 +1,46 @@
+.data
+arr: .word 5, 1, 4, 2, 3
+msg: .asciz "Sorted values:"
+
+.text
+    # Print header
+    printString msg
+
+    # Setup base pointer and length
+    la t0, arr      # base address of arr
+    li t4, 5        # n = 5
+    li t1, 0        # i = 0
+
+outer:
+    li  t2, 0       # j = 0
+    sub s2, t4, t1  # s2 = n - i
+    addi s2, s2, -1 # limit = n - 1 - i
+
+inner:
+    slli t3, t2, 2  # offset = j * 4
+    add  t3, t0, t3 # addr of arr[j]
+    addi t5, t3, 4  # addr of arr[j+1]
+    lw   s0, 0(t3)
+    lw   s1, 0(t5)
+    blt  s0, s1, no_swap
+    sw   s1, 0(t3)
+    sw   s0, 0(t5)
+no_swap:
+    addi t2, t2, 1
+    blt  t2, s2, inner
+
+    addi t1, t1, 1
+    blt  t1, t4, outer
+
+    # Print sorted array
+    li   t2, 0
+print_loop:
+    slli t3, t2, 2
+    add  t3, t0, t3
+    lw   a0, 0(t3)
+    print a0
+    addi t2, t2, 1
+    blt  t2, t4, print_loop
+
+    halt
+
