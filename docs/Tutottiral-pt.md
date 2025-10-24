@@ -147,7 +147,7 @@ Com a simulação pausada, pressione **'S'** para pular para a próxima instruç
 
 ## **5. Executando IO**
 O FALCON-ASM foi projetado para ser intuitivo e direto, sem perder a fidelidade ao comportamento real da arquitetura RISC-V.
-Para reduzir o boilerplate e tornar o código mais legível, a plataforma inclui um conjunto de pseudo-instruções que simplificam operações comuns - especialmente de entrada e saída (I/O) e de manipulação da pilha (STACK).
+Para reduzir o boilerplate e tornar o código mais legível, a plataforma inclui um conjunto de pseudo-instruções que simplificam operações comuns — especialmente de entrada e saída (I/O) e de manipulação da pilha (STACK).
 
 Embora todas as pseudo-instruções estejam documentadas em format.md, este capítulo apresenta um exemplo prático que demonstra como o FALCON interage com o I/O e como essas abstrações facilitam o desenvolvimento.
 
@@ -190,7 +190,5 @@ calculate:
     ret
 
 ```
-
-A execução está logo abaixo
 
 ![WindowsTerminal_e0XEHNKWAu](https://github.com/user-attachments/assets/f9b87e26-bc89-4a14-88cb-4b46bf8aed64)
