@@ -109,17 +109,17 @@ pub(crate) fn parse_print(s: &str) -> Result<Vec<Instruction>, String> {
     ])
 }
 
-pub(crate) fn parse_print_string(
+pub(crate) fn parse_print_str(
     s: &str,
     labels: &HashMap<String, u32>,
 ) -> Result<Vec<Instruction>, String> {
-    // "printString label"
+    // "printStr label" (no newline)
     let mut parts = s.split_whitespace();
     parts.next();
     let rest = parts.collect::<Vec<_>>().join(" ");
     let ops = split_operands(&rest);
     if ops.len() != 1 || parse_reg(&ops[0]).is_some() {
-        return Err("printString: expected 'label'".into());
+        return Err("printStr: expected 'label'".into());
     }
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
@@ -129,6 +129,28 @@ pub(crate) fn parse_print_string(
             rs1: 0,
             imm: 2,
         },
+        i1,
+        i2,
+        Instruction::Ecall,
+    ])
+}
+
+pub(crate) fn parse_print_strln(
+    s: &str,
+    labels: &HashMap<String, u32>,
+) -> Result<Vec<Instruction>, String> {
+    // "printStrLn label" (append + newline)
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 || parse_reg(&ops[0]).is_some() {
+        return Err("printStrLn: expected 'label'".into());
+    }
+    let la_line = format!("la a0, {}", ops[0]);
+    let (i1, i2) = parse_la(&la_line, labels)?;
+    Ok(vec![
+        Instruction::Addi { rd: 17, rs1: 0, imm: 4 },
         i1,
         i2,
         Instruction::Ecall,
@@ -161,3 +183,62 @@ pub(crate) fn parse_read(
     ])
 }
 
+pub(crate) fn parse_read_byte(
+    s: &str,
+    labels: &HashMap<String, u32>,
+) -> Result<Vec<Instruction>, String> {
+    // "readByte label" -> a7=64; a0=addr; ecall
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 || parse_reg(&ops[0]).is_some() {
+        return Err("readByte: expected 'label'".into());
+    }
+    let la_line = format!("la a0, {}", ops[0]);
+    let (i1, i2) = parse_la(&la_line, labels)?;
+    Ok(vec![
+        Instruction::Addi { rd: 17, rs1: 0, imm: 64 },
+        i1, i2, Instruction::Ecall,
+    ])
+}
+
+pub(crate) fn parse_read_half(
+    s: &str,
+    labels: &HashMap<String, u32>,
+) -> Result<Vec<Instruction>, String> {
+    // "readHalf label" -> a7=65; a0=addr; ecall
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 || parse_reg(&ops[0]).is_some() {
+        return Err("readHalf: expected 'label'".into());
+    }
+    let la_line = format!("la a0, {}", ops[0]);
+    let (i1, i2) = parse_la(&la_line, labels)?;
+    Ok(vec![
+        Instruction::Addi { rd: 17, rs1: 0, imm: 65 },
+        i1, i2, Instruction::Ecall,
+    ])
+}
+
+pub(crate) fn parse_read_word(
+    s: &str,
+    labels: &HashMap<String, u32>,
+) -> Result<Vec<Instruction>, String> {
+    // "readWord label" -> a7=66; a0=addr; ecall
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 || parse_reg(&ops[0]).is_some() {
+        return Err("readWord: expected 'label'".into());
+    }
+    let la_line = format!("la a0, {}", ops[0]);
+    let (i1, i2) = parse_la(&la_line, labels)?;
+    Ok(vec![
+        Instruction::Addi { rd: 17, rs1: 0, imm: 66 },
+        i1, i2, Instruction::Ecall,
+    ])
+}

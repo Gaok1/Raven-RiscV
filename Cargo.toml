@@ -9,6 +9,7 @@ crossterm = "0.29"
 rfd = "0.15"
 arboard = "3"
 thiserror = "1"
+comfy-table = "7"
 
 [profile.release]
 opt-level = 3        # máxima optmizing

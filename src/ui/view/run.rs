@@ -376,7 +376,7 @@ fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
         let (region_text, region_color) = match app.mem_region {
             MemRegion::Data => ("DATA", Color::Yellow),
             MemRegion::Stack => ("STACK", Color::LightBlue),
-            MemRegion::Custom => ("ADDR", Color::Gray),
+            MemRegion::Custom => ("DATA", Color::Yellow), // hide ADDR label
         };
         spans.push(Span::raw("  Region "));
         spans.push(button(

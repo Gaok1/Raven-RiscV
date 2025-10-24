@@ -315,13 +315,12 @@ impl App {
             self.mem_view_addr = data_base;
             self.mem_region = MemRegion::Data;
 
-            // Mirror the manual assemble message for consistency
+            // Mirror info, but do NOT change compile status; it must reflect editor build
             self.last_assemble_msg = Some(format!(
-                "Assembled {} instructions, {} data bytes.",
+                "Loaded last successful build: {} instructions, {} data bytes.",
                 text.len(),
                 data.len()
             ));
-            self.last_compile_ok = Some(true);
             self.imem_scroll = 0;
             self.hover_imem_addr = None;
         }

@@ -5,7 +5,7 @@ use crate::falcon::instruction::Instruction;
 
 use super::errors::AsmError;
 use super::program::Program;
-use super::pseudo::{parse_la, parse_pop, parse_print, parse_print_string, parse_push, parse_read};
+use super::pseudo::{parse_la, parse_pop, parse_print, parse_print_str, parse_print_strln, parse_push, parse_read, parse_read_byte, parse_read_half, parse_read_word};
 use super::utils::*;
 
 // ---------- API ----------
@@ -86,11 +86,25 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 } else if ltrim == "print" || ltrim.starts_with("print ") {
                     items.push((pc_text, LineKind::Print(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(12);
-                } else if ltrim == "printString" || ltrim.starts_with("printString ") {
-                    items.push((pc_text, LineKind::PrintString(ltrim.to_string()), *line_no));
+                } else if ltrim == "printStr" || ltrim.starts_with("printStr ")
+                    || ltrim == "printString" || ltrim.starts_with("printString ")
+                {
+                    items.push((pc_text, LineKind::PrintStr(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(16);
+                } else if ltrim == "printStrLn" || ltrim.starts_with("printStrLn ") {
+                    items.push((pc_text, LineKind::PrintStrLn(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(16);
                 } else if ltrim == "read" || ltrim.starts_with("read ") {
                     items.push((pc_text, LineKind::Read(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(16);
+                } else if ltrim == "readByte" || ltrim.starts_with("readByte ") {
+                    items.push((pc_text, LineKind::ReadByte(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(16);
+                } else if ltrim == "readHalf" || ltrim.starts_with("readHalf ") {
+                    items.push((pc_text, LineKind::ReadHalf(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(16);
+                } else if ltrim == "readWord" || ltrim.starts_with("readWord ") {
+                    items.push((pc_text, LineKind::ReadWord(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(16);
                 } else {
                     items.push((pc_text, LineKind::Instr(ltrim.to_string()), *line_no));
@@ -270,8 +284,25 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                     words.push(w);
                 }
             }
-            LineKind::PrintString(s) => {
-                let insts = parse_print_string(&s, &labels).map_err(|e| AsmError {
+            LineKind::PrintStr(s) => {
+                // accept both 'printStr' and legacy 'printString' mnemonics
+                let s_norm = if s.starts_with("printString") {
+                    s.replacen("printString", "printStr", 1)
+                } else { s.clone() };
+                let insts = parse_print_str(&s_norm, &labels).map_err(|e| AsmError {
+                    line: line_no,
+                    msg: e,
+                })?;
+                for inst in insts {
+                    let w = encode(inst).map_err(|e| AsmError {
+                        line: line_no,
+                        msg: e.to_string(),
+                    })?;
+                    words.push(w);
+                }
+            }
+            LineKind::PrintStrLn(s) => {
+                let insts = parse_print_strln(&s, &labels).map_err(|e| AsmError {
                     line: line_no,
                     msg: e,
                 })?;
@@ -296,6 +327,18 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                     words.push(w);
                 }
             }
+            LineKind::ReadByte(s) => {
+                let insts = parse_read_byte(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
+            LineKind::ReadHalf(s) => {
+                let insts = parse_read_half(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
+            LineKind::ReadWord(s) => {
+                let insts = parse_read_word(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
         }
     }
 
@@ -314,8 +357,12 @@ enum LineKind {
     Push(String),
     Pop(String),
     Print(String),
-    PrintString(String),
+    PrintStr(String),
+    PrintStrLn(String),
     Read(String),
+    ReadByte(String),
+    ReadHalf(String),
+    ReadWord(String),
 }
 
 fn parse_instr(

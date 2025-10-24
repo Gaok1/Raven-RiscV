@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Image Annotator Pro</title>
+<style>
+  body {
+    margin: 0;
+    background: #1e1e1e;
+    color: #eee;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+  }
+  #toolbar {
+    display: flex;
+    align-items: center;
+    background: #2c2c2c;
+    padding: 8px 12px;
+    gap: 10px;
+    border-bottom: 2px solid #444;
+  }
+  button, input[type=color] {
+    background: #444;
+    border: none;
+    padding: 6px 10px;
+    border-radius: 6px;
+    color: #eee;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  button:hover, button.active {
+    background: #007b8f;
+  }
+  input[type=color] {
+    width: 40px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid #555;
+  }
+  #canvasContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: calc(100vh - 50px);
+    background: #111;
+    overflow: auto;
+  }
+  #canvas {
+    background: #222;
+    cursor: crosshair;
+    box-shadow: 0 0 10px #000;
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="rect">⬛ Retângulo</button>
+  <button id="arrow">➡️ Seta</button>
+  <button id="line">〣 Linha</button>
+  <button id="text">🅣 Texto</button>
+  <input type="color" id="color" value="#00bcd4">
+  <button id="save">💾 Salvar</button>
+</div>
+<div id="canvasContainer">
+  <canvas id="canvas"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const colorPicker = document.getElementById("color");
+
+let tool = "rect";
+let drawing = false;
+let startX, startY;
+let shapes = [];
+let redoStack = [];
+let selectedText = null;
+let offsetX, offsetY;
+let image = null;
+
+// === Ferramenta ativa ===
+const setTool = (t) => {
+  tool = t;
+  document.querySelectorAll("#toolbar button").forEach(b => b.classList.remove("active"));
+  document.getElementById(t).classList.add("active");
+};
+["rect", "arrow", "line", "text"].forEach(id => {
+  document.getElementById(id).onclick = () => setTool(id);
+});
+setTool("rect");
+
+// === Desenhar seta ===
+function drawArrow(x1, y1, x2, y2, color) {
+  const headlen = 10;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const angle = Math.atan2(dy, dx);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6),
+             y2 - headlen * Math.sin(angle - Math.PI / 6));
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6),
+             y2 - headlen * Math.sin(angle + Math.PI / 6));
+  ctx.strokeStyle = color;
+  ctx.stroke();
+}
+
+// === Redesenhar ===
+function redraw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (image) ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  for (const s of shapes) {
+    ctx.strokeStyle = ctx.fillStyle = s.color;
+    ctx.lineWidth = 2;
+    if (s.type === "rect") ctx.strokeRect(s.x, s.y, s.w, s.h);
+    else if (s.type === "line") {
+      ctx.beginPath(); ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); ctx.stroke();
+    }
+    else if (s.type === "arrow") drawArrow(s.x1, s.y1, s.x2, s.y2, s.color);
+    else if (s.type === "text") {
+      ctx.font = "16px Arial";
+      ctx.fillText(s.text, s.x, s.y);
+    }
+  }
+}
+
+// === Histórico ===
+function saveState() {
+  redoStack = [];
+}
+function undo() {
+  if (shapes.length === 0) return;
+  redoStack.push(shapes.pop());
+  redraw();
+}
+function redo() {
+  if (redoStack.length === 0) return;
+  shapes.push(redoStack.pop());
+  redraw();
+}
+
+// === Eventos ===
+canvas.onmousedown = (e) => {
+  const {offsetX: x, offsetY: y} = e;
+  startX = x; startY = y; drawing = true;
+
+  // mover texto
+  selectedText = shapes.find(s => s.type === "text" &&
+    Math.abs(s.x - x) < 50 && Math.abs(s.y - y) < 20);
+  if (selectedText) {
+    offsetX = x - selectedText.x;
+    offsetY = y - selectedText.y;
+  } else if (tool === "text") {
+    const text = prompt("Digite o texto:");
+    if (text) shapes.push({type: "text", text, x, y, color: colorPicker.value});
+    drawing = false;
+    redraw();
+    saveState();
+  }
+};
+
+canvas.onmousemove = (e) => {
+  const {offsetX: x, offsetY: y} = e;
+  if (selectedText && drawing) {
+    selectedText.x = x - offsetX;
+    selectedText.y = y - offsetY;
+    redraw();
+    return;
+  }
+  if (!drawing) return;
+  redraw();
+  ctx.strokeStyle = colorPicker.value;
+  ctx.lineWidth = 2;
+  if (tool === "rect") ctx.strokeRect(startX, startY, x - startX, y - startY);
+  else if (tool === "line") {
+    ctx.beginPath(); ctx.moveTo(startX, startY); ctx.lineTo(x, y); ctx.stroke();
+  } else if (tool === "arrow") drawArrow(startX, startY, x, y, colorPicker.value);
+};
+
+canvas.onmouseup = (e) => {
+  const {offsetX: x, offsetY: y} = e;
+  if (selectedText) {
+    selectedText = null;
+    drawing = false;
+    saveState();
+    return;
+  }
+  if (!drawing) return;
+  drawing = false;
+  const color = colorPicker.value;
+  if (tool === "rect") shapes.push({type: "rect", x: startX, y: startY, w: x - startX, h: y - startY, color});
+  else if (tool === "line") shapes.push({type: "line", x1: startX, y1: startY, x2: x, y2: y, color});
+  else if (tool === "arrow") shapes.push({type: "arrow", x1: startX, y1: startY, x2: x, y2: y, color});
+  redraw();
+  saveState();
+};
+
+// === Ctrl+V imagem ===
+window.addEventListener("paste", e => {
+  const item = e.clipboardData.items[0];
+  if (item && item.type.startsWith("image/")) {
+    const blob = item.getAsFile();
+    const img = new Image();
+    img.onload = () => {
+      image = img;
+      const scale = Math.min(window.innerWidth / img.width, (window.innerHeight - 50) / img.height, 1);
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      redraw();
+    };
+    img.src = URL.createObjectURL(blob);
+  }
+});
+
+// === Salvar imagem ===
+document.getElementById("save").onclick = () => {
+  const link = document.createElement("a");
+  link.download = "annotated.png";
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+};
+
+// === Atalhos ===
+window.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+  }
+});
+</script>
+</body>
+</html>

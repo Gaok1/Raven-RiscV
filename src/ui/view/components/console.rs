@@ -38,10 +38,19 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
     } else {
         Style::default().fg(Color::DarkGray)
     };
+    // Title with optional waiting flag
+    let mut title_spans: Vec<Span> = vec![Span::raw("Console - Ctrl+Up/Down scroll")];
+    if app.console.reading {
+        title_spans.push(Span::raw("  "));
+        title_spans.push(Span::styled(
+            "waiting input",
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        ));
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title("Console - Ctrl+Up/Down scroll")
+        .title(Line::from(title_spans))
         .border_style(border_style);
 
     let inner = block.inner(area);

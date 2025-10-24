@@ -59,7 +59,8 @@ Labels (`label:`) can be defined in any segment. To load an absolute label addre
 - `push rs` -> `addi sp, sp, -4` ; `sw rs, 4(sp)`
 - `pop rd` -> `lw rd, 4(sp)` ; `addi sp, sp, 4`
 - `print rd` -> sets `a7=1`, prints integer in `rd`
-- `printString label` -> sets `a7=2`, loads `a0` with `label`, prints NUL-terminated string
+- `printStr label` -> sets `a7=2`, loads `a0` with `label`, appends NUL-terminated string (no newline)
+- `printStrLn label` -> sets `a7=4`, loads `a0` with `label`, prints string and newline
 - `read label` -> sets `a7=3`, loads `a0` with `label`, reads a line into memory
 
 ## Registers and Memory
@@ -74,8 +75,14 @@ Place the syscall number in `a7`, set arguments in `a0`, then execute `ecall`.
 | `a7` | Pseudo-instruction | Description |
 |------|--------------------|-------------|
 | 1 | `print rd` | Print the decimal value from register `rd` (`a0=rd`). |
-| 2 | `printString label` | Print the NUL-terminated string at `label` (`a0=addr`). |
+| 2 | `printStr label` | Append the NUL-terminated string at `label` (no newline). |
 | 3 | `read label` | Read a line into memory at `label` and append a NUL byte. |
+| 4 | `printStrLn label` | Append string at `label` and start a new line. |
+| 64 | `readByte label` | Read number (dec or `0x`hex) and store 1 byte at `label`. |
+| 65 | `readHalf label` | Read number and store 2 bytes (little-endian) at `label`. |
+| 66 | `readWord label` | Read number and store 4 bytes (little-endian) at `label`. |
+
+Invalid inputs or values out of range for `readByte/Half/Word` print an error and the emulator waits for a new input without advancing the PC.
 
 Example without pseudo-instructions:
 
@@ -105,28 +112,4 @@ Requirements: stable Rust (via [rustup.rs](https://rustup.rs)).
 cargo run
 ```
 
-Minimal example:
-
-```rust
-use falcon::asm::assemble;
-use falcon::program::{load_bytes, load_words};
-
-let asm = r#"
-    .data
-msg: .byte 1, 2, 3
-    .text
-    la a0, msg
-    ecall
-"#;
-
-let mut mem = falcon::Ram::new(64 * 1024);
-let mut cpu = falcon::Cpu::default();
-cpu.pc = 0;
-
-let prog = assemble(asm, cpu.pc).expect("assemble");
-load_words(&mut mem, cpu.pc, &prog.text);
-load_bytes(&mut mem, prog.data_base, &prog.data);
-```
-
-The emulator executes while `step` returns `true`; encountering `halt` or an unknown syscall stops execution.
 

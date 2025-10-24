@@ -1,4 +1,5 @@
 use crate::ui::app::{App, EditorMode, MemRegion, Tab, Lang};
+use crate::ui::view::docs::docs_total_rows;
 use arboard::Clipboard;
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -44,7 +45,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
     match app.mode {
         EditorMode::Insert => {
-            // Special: Esc leaves insert -> command
+            // Esc: leave insert -> command (stop typing)
             if key.code == KeyCode::Esc {
                 app.mode = EditorMode::Command;
                 return Ok(false);
@@ -205,7 +206,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             app.last_assemble_msg = None;
         }
         EditorMode::Command => {
-            // Quit in command mode
+            // Quit popup remains available
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
                 app.show_exit_popup = true;
                 return Ok(false);
@@ -275,14 +276,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             match (key.code, app.tab) {
-                (KeyCode::Char('i') | KeyCode::Enter, Tab::Editor) => {
-                    app.mode = EditorMode::Insert;
-                    return Ok(false);
-                }
-                // Tab switching only in command mode
-                (KeyCode::Char('1'), _) => app.tab = Tab::Editor,
-                (KeyCode::Char('2'), _) => app.tab = Tab::Run,
-                (KeyCode::Char('3'), _) => app.tab = Tab::Docs,
+                // Remove keyboard-based mode switching and tab switching; tabs change via mouse only
 
                 // Run controls
                 (KeyCode::Char('s'), Tab::Run) => {
@@ -370,19 +364,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 }
 
                 // Docs scroll
-                (KeyCode::Up, Tab::Docs) => {
-                    app.docs_scroll = app.docs_scroll.saturating_sub(1);
-                }
-                (KeyCode::Down, Tab::Docs) => {
-                    app.docs_scroll += 1;
-                }
-                (KeyCode::PageUp, Tab::Docs) => {
-                    app.docs_scroll = app.docs_scroll.saturating_sub(10);
-                }
-                (KeyCode::PageDown, Tab::Docs) => {
-                    app.docs_scroll += 10;
-                }
-
+                (KeyCode::Up, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_sub(1); clamp_docs_scroll_keyboard(app); }
+                (KeyCode::Down, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_add(1); clamp_docs_scroll_keyboard(app); }
+                (KeyCode::PageUp, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_sub(10); clamp_docs_scroll_keyboard(app); }
+                (KeyCode::PageDown, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_add(10); clamp_docs_scroll_keyboard(app); }
+                
                 // Editor navigation in command mode (optional)
                 (KeyCode::Up, Tab::Editor) => app.editor.move_up(),
                 (KeyCode::Down, Tab::Editor) => app.editor.move_down(),
@@ -392,5 +378,20 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     }
 
     Ok(false)
+}
+
+fn clamp_docs_scroll_keyboard(app: &mut App) {
+    // Approximate visible rows using current terminal height and docs layout
+    if let Ok((_, h)) = terminal::size() {
+        // Root layout: 3 (tabs) + min(5) main + 1 (status)
+        let docs_area_h = h.saturating_sub(4) as usize;
+        // Docs split: 1 header + body
+        let body_h = docs_area_h.saturating_sub(1);
+        // Paragraph border (2) + ASCII table overhead (4)
+        let visible_rows = body_h.saturating_sub(6);
+        let total = docs_total_rows();
+        let max_start = total.saturating_sub(visible_rows);
+        if app.docs_scroll > max_start { app.docs_scroll = max_start; }
+    }
 }
 

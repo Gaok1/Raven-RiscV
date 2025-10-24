@@ -177,8 +177,15 @@ SYSTEM (opcode 0x73)
 `ecall` uses `a7` to select the syscall and `a0` for arguments.
 
 - `a7=1` — `print rd`: prints the value in `rd` (`a0=rd`).
-- `a7=2` — `printString label`: prints the NUL‑terminated string at `label` (`a0=addr`).
-- `a7=3` — `read label`: reads a line into memory at `label` and appends NUL.
+- `a7=2` — `printStr label`: appends the NUL-terminated string at `label` to the current console line (no newline).
+- `a7=3` — `read label`: reads a full line into memory at `label` and appends NUL.
+- `a7=4` — `printStrLn label`: appends the NUL-terminated string at `label` and then starts a new line (newline).
+
+- `a7=64` — `readByte label`: reads a number from console (decimal or `0x` hex) and stores 1 byte at `label`.
+- `a7=65` — `readHalf label`: reads a number and stores 2 bytes (little-endian) at `label`.
+- `a7=66` — `readWord label`: reads a number and stores 4 bytes (little-endian) at `label`.
+
+Input parsing for `readByte/Half/Word` accepts unsigned decimal or `0x`-prefixed hexadecimal. Values outside the target size range or invalid inputs trigger a console error and the emulator waits for a new input (PC does not advance) until a valid value is provided.
 
 Note: by pedagogical choice, `DIV/DIVU/REM/REMU` with a zero divisor stop execution with an error, instead of the RISC‑V specified quotient/remainder behavior. This is intentional to highlight error conditions.
 
@@ -187,4 +194,4 @@ Note: by pedagogical choice, `DIV/DIVU/REM/REMU` with a zero divisor stop execut
 - Two passes: first collects labels; second resolves and encodes.
 - Comments: everything after `;` or `#` is ignored.
 - Separator: `instr op1, op2, op3`.
-- Supported pseudos: `nop`, `mv`, `li` (12‑bit), `subi`, `j/call`, `jr/ret`, `la`, `push/pop` (uses `4(sp)`), `print`, `printString label`, `read label`.
+- Supported pseudos: `nop`, `mv`, `li` (12-bit), `subi`, `j/call`, `jr/ret`, `la`, `push/pop` (uses `4(sp)`), `print`, `printStr label`, `printStrLn label`, `read label`, `readByte label`, `readHalf label`, `readWord label`.

@@ -6,15 +6,6 @@ use std::cmp::min;
 use super::{App, Editor, EditorMode};
 
 pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
-    let (mode_text, mode_color) = match app.mode {
-        EditorMode::Insert => ("INSERT", Color::Green),
-        EditorMode::Command => ("COMMAND", Color::Blue),
-    };
-    let mode = Line::from(vec![
-        Span::raw("Mode: "),
-        Span::styled(mode_text, Style::default().fg(mode_color)),
-    ]);
-
     let compile_span = if let Some(msg) = &app.last_assemble_msg {
         let color = if app.last_compile_ok == Some(true) {
             Color::Green
@@ -30,7 +21,8 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
 
     // Actions with clickable buttons (hover highlights via mouse coords)
     let inner_x = area.x + 1;
-    let actions_y = area.y + 1 + 2; // third content line (inside block)
+    // actions line is the second content line now (after removing mode line)
+    let actions_y = area.y + 1 + 1;
     let mut x = inner_x;
     let import_label = "Import: ";
     let export_label = "Export: ";
@@ -71,7 +63,8 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
 
     let actions = Line::from(actions_spans);
 
-    let para = Paragraph::new(vec![mode, build, actions]).block(
+    // Remove mode line; keep only build status and actions
+    let para = Paragraph::new(vec![build, actions]).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray))
@@ -178,7 +171,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title("Editor (RISC-V ASM) - Esc: Command, i: Insert, Auto-assemble (Ctrl+R: Restart on Run)");
+        .title("Editor (Risc-v ASM) -  Ctrrl + r: Build");
     if let Some(ok) = app.last_compile_ok {
         let (txt, color) = if ok {
             ("[OK]", Color::Green)
@@ -208,57 +201,90 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
         return vec![Span::raw("")];
     }
 
+    // Detect start of comment (';' or '#')
+    let c1 = s.find(';');
+    let c2 = s.find('#');
+    let comment_idx = match (c1, c2) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+
+    // If the line is comment-only (first non-space is ';' or '#'), dim the whole line
+    if let Some(ci) = comment_idx {
+        let mut ws = 0usize;
+        for ch in s.chars() {
+            if ch.is_whitespace() { ws += ch.len_utf8(); } else { break; }
+        }
+        if ci == ws {
+            return vec![Span::styled(s, Style::default().fg(DarkGray))];
+        }
+    }
+
+    // Split into code and comment parts
+    let (code, comment) = if let Some(ci) = comment_idx { (&s[..ci], &s[ci..]) } else { (s, "") };
+
     let mut out = Vec::new();
 
-    let mut lead_len = 0usize;
-    for ch in s.chars() {
-        if ch.is_whitespace() {
-            lead_len += ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-    if lead_len > 0 {
-        out.push(Span::raw(&s[..lead_len]));
-    }
-    let trimmed = &s[lead_len..];
-
-    let first_end = trimmed
-        .char_indices()
-        .find(|&(_, c)| c.is_whitespace())
-        .map(|(i, _)| i)
-        .unwrap_or(trimmed.len());
-
-    let first = &trimmed[..first_end];
-    let rest = &trimmed[first_end..];
-
-    if first.ends_with(':') {
-        out.push(Span::styled(first, Style::default().fg(Yellow)));
-        if !rest.is_empty() {
-            out.push(Span::raw(rest));
-        }
-        return out;
-    }
-
-    out.push(Span::styled(
-        first,
-        Style::default().fg(Cyan).add_modifier(Modifier::BOLD),
-    ));
-
-    let mut token = String::new();
-    for ch in rest.chars() {
-        if ",()\t ".contains(ch) {
-            if !token.is_empty() {
-                out.push(color_operand(&token));
-                token.clear();
+    // Highlight the code part (same logic as before)
+    if !code.is_empty() {
+        let mut lead_len = 0usize;
+        for ch in code.chars() {
+            if ch.is_whitespace() {
+                lead_len += ch.len_utf8();
+            } else {
+                break;
             }
-            out.push(Span::raw(ch.to_string()));
-        } else {
-            token.push(ch);
+        }
+        if lead_len > 0 {
+            out.push(Span::raw(&code[..lead_len]));
+        }
+        let trimmed = &code[lead_len..];
+
+        if !trimmed.is_empty() {
+            let first_end = trimmed
+                .char_indices()
+                .find(|&(_, c)| c.is_whitespace())
+                .map(|(i, _)| i)
+                .unwrap_or(trimmed.len());
+
+            let first = &trimmed[..first_end];
+            let rest = &trimmed[first_end..];
+
+            if first.ends_with(':') {
+                out.push(Span::styled(first, Style::default().fg(Yellow)));
+                if !rest.is_empty() {
+                    out.push(Span::raw(rest));
+                }
+            } else {
+                out.push(Span::styled(
+                    first,
+                    Style::default().fg(Cyan).add_modifier(Modifier::BOLD),
+                ));
+
+                let mut token = String::new();
+                for ch in rest.chars() {
+                    if ",()\t ".contains(ch) {
+                        if !token.is_empty() {
+                            out.push(color_operand(&token));
+                            token.clear();
+                        }
+                        out.push(Span::raw(ch.to_string()));
+                    } else {
+                        token.push(ch);
+                    }
+                }
+                if !token.is_empty() {
+                    out.push(color_operand(&token));
+                }
+            }
         }
     }
-    if !token.is_empty() {
-        out.push(color_operand(&token));
+
+    // Append the comment part dimmed
+    if !comment.is_empty() {
+        out.push(Span::styled(comment, Style::default().fg(DarkGray)));
     }
 
     out

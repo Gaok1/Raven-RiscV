@@ -7,6 +7,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use rfd::FileDialog as OSFileDialog;
 
 use super::max_regs_scroll;
+use crate::ui::view::docs::docs_total_rows;
 
 pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
@@ -22,10 +23,13 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.hover_run_button = None;
     if me.row == area.y + 1 {
         let x = me.column.saturating_sub(area.x + 1);
-        let titles = [
-            ("Editor", Tab::Editor),
-            ("Run", Tab::Run),
-            ("Docs", Tab::Docs),
+        let t_editor = crate::ui::i18n::T::new("Editor", "Editor");
+        let t_run = crate::ui::i18n::T::new("Run", "Run");
+        let t_docs = crate::ui::i18n::T::new("Docs", "Docs");
+        let titles: [(&str, Tab); 3] = [
+            (t_editor.get(app.lang), Tab::Editor),
+            (t_run.get(app.lang), Tab::Run),
+            (t_docs.get(app.lang), Tab::Docs),
         ];
         let divider = " │ ".len() as u16;
         let mut pos: u16 = 0;
@@ -51,12 +55,18 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         MouseEventKind::ScrollUp => match app.tab {
             Tab::Editor => app.editor.move_up(),
             Tab::Run => handle_run_scroll(app, me, area, true),
-            Tab::Docs => app.docs_scroll = app.docs_scroll.saturating_sub(1),
+            Tab::Docs => {
+                app.docs_scroll = app.docs_scroll.saturating_sub(1);
+                clamp_docs_scroll(app, area);
+            }
         },
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.move_down(),
             Tab::Run => handle_run_scroll(app, me, area, false),
-            Tab::Docs => app.docs_scroll += 1,
+            Tab::Docs => {
+                app.docs_scroll = app.docs_scroll.saturating_add(1);
+                clamp_docs_scroll(app, area);
+            }
         },
         _ => {}
     }
@@ -247,8 +257,7 @@ fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
                         app.mem_view_addr = app.cpu.x[2];
                         MemRegion::Stack
                     }
-                    MemRegion::Stack => MemRegion::Custom,
-                    MemRegion::Custom => {
+                    _ => {
                         app.mem_view_addr = app.data_base;
                         MemRegion::Data
                     }
@@ -310,7 +319,7 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     let region_text = match app.mem_region {
         MemRegion::Data => "DATA",
         MemRegion::Stack => "STACK",
-        MemRegion::Custom => "ADDR",
+        MemRegion::Custom => "DATA", // hide ADDR option
     };
     let run_text = if app.is_running { "RUN" } else { "PAUSE" };
 
@@ -448,10 +457,30 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
+fn clamp_docs_scroll(app: &mut App, area: Rect) {
+    // Replicate the docs layout to get body area height
+    let root_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ])
+        .split(area);
+    let docs_area = root_chunks[1];
+    // In docs view, header is 1 row at top of docs_area; body is the rest
+    let body_height = docs_area.height.saturating_sub(1);
+    // Paragraph border consumes 2 rows; ASCII table consumes 4 overhead
+    let visible_rows = body_height.saturating_sub(2 + 4) as usize; // body - borders - ascii overhead
+    let total = docs_total_rows();
+    let max_start = total.saturating_sub(visible_rows);
+    if app.docs_scroll > max_start { app.docs_scroll = max_start; }
+}
+
 fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) {
-    // Third content line inside the status block contains the actions
+    // Actions line is the second content line inside the status block
     let inner_x = status_area.x + 1;
-    let actions_y = status_area.y + 1 + 2;
+    let actions_y = status_area.y + 1 + 1;
     if me.row != actions_y {
         return;
     }

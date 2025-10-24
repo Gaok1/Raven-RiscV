@@ -177,8 +177,15 @@ SYSTEM (opcode 0x73)
 `ecall` usa `a7` para selecionar a chamada de sistema e `a0` para argumentos.
 
 - `a7=1` — `print rd`: imprime o valor de `rd` (`a0=rd`).
-- `a7=2` — `printString label`: imprime a string NUL‑terminada em `label` (`a0=addr`).
+- `a7=2` — `printStr label`: concatena a string NUL-terminada em `label` na linha atual do console (sem quebra de linha).
 - `a7=3` — `read label`: lê uma linha do console para a memória em `label` e adiciona NUL.
+- `a7=4` — `printStrLn label`: concatena a string NUL-terminada e inicia nova linha (com quebra).
+
+- `a7=64` — `readByte label`: lê um número (decimal ou `0x`hex) e armazena 1 byte em `label`.
+- `a7=65` — `readHalf label`: lê um número e armazena 2 bytes (little-endian) em `label`.
+- `a7=66` — `readWord label`: lê um número e armazena 4 bytes (little-endian) em `label`.
+
+Tratamento de overflow/erros: para `readByte/Half/Word` valores fora da faixa do tamanho alvo ou entradas inválidas geram uma mensagem de erro no console e o emulador volta a aguardar uma nova entrada (o PC não avança) até que um valor válido seja fornecido.
 
 Observação: por escolha pedagógica, `DIV/DIVU/REM/REMU` com divisor zero interrompem a execução com erro, em vez do comportamento padrão do RISC‑V. Isso é intencional para evidenciar condições de erro.
 
@@ -187,5 +194,6 @@ Observação: por escolha pedagógica, `DIV/DIVU/REM/REMU` com divisor zero inte
 - Duas passagens: a primeira coleta rótulos (`label:`); a segunda resolve e codifica.
 - Comentários: tudo após `;` ou `#` é ignorado.
 - Separador: `instr op1, op2, op3`.
-- Pseudos suportadas: `nop`, `mv`, `li` (12 bits), `subi`, `j/call`, `jr/ret`, `la`, `push/pop` (usa `4(sp)`), `print`, `printString label`, `read label`.
+- Pseudos suportadas: `nop`, `mv`, `li` (12 bits), `subi`, `j/call`, `jr/ret`, `la`, `push/pop` (usa `4(sp)`), `print`, `printStr label`, `printStrLn label`, `read label`, `readByte label`, `readHalf label`, `readWord label`.
+
 

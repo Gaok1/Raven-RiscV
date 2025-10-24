@@ -7,7 +7,7 @@ use ratatui::{
 pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
 pub(super) use super::editor::Editor;
 
-mod docs;
+pub mod docs;
 mod editor;
 mod run;
 mod components;
@@ -28,7 +28,11 @@ pub fn ui(f: &mut Frame, app: &App) {
         ])
         .split(size);
 
-    let titles = ["Editor", "Run", "Docs"]
+    let t_editor = crate::ui::i18n::T::new("Editor", "Editor");
+    let t_run = crate::ui::i18n::T::new("Run", "Run");
+    let t_docs = crate::ui::i18n::T::new("Docs", "Docs");
+
+    let titles = vec![t_editor.get(app.lang), t_run.get(app.lang), t_docs.get(app.lang)]
         .into_iter()
         .enumerate()
         .map(|(i, t)| {

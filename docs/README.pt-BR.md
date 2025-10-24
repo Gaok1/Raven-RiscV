@@ -61,7 +61,8 @@ Rótulos (`label:`) podem ser definidos em qualquer segmento. Para carregar o en
 - `push rs` -> `addi sp, sp, -4` ; `sw rs, 4(sp)`
 - `pop rd` -> `lw rd, 4(sp)` ; `addi sp, sp, 4`
 - `print rd` -> define `a7=1`, imprime o valor em `rd`
-- `printString label` -> define `a7=2`, carrega `a0` e imprime string no rótulo
+- `printStr label` -> define `a7=2`, carrega `a0` e concatena a string (sem nova linha)
+- `printStrLn label` -> define `a7=4`, carrega `a0` e imprime string + nova linha
 - `read label` -> define `a7=3`, carrega `a0` e lê uma linha para a memória no rótulo
 
 ## Registradores e Memória
@@ -77,8 +78,14 @@ defina argumentos em `a0` e execute `ecall`.
 | `a7` | Pseudoinstrução | Descrição |
 |------|------------------|-----------|
 | 1 | `print rd` | Imprime o valor decimal do registrador `rd` (`a0=rd`). |
-| 2 | `printString label` | Imprime a string NUL‑terminada em `label` (`a0=addr`). |
+| 2 | `printStr label` | Concatena a string NUL‑terminada em `label` (sem nova linha). |
 | 3 | `read label` | Lê uma linha de entrada para a memória em `label` e adiciona NUL. |
+| 4 | `printStrLn label` | Concatena a string e inicia nova linha. |
+| 64 | `readByte label` | Lê um número (dec ou `0x`hex) e grava 1 byte no endereço de `label`. |
+| 65 | `readHalf label` | Lê um número e grava 2 bytes (little‑endian) em `label`. |
+| 66 | `readWord label` | Lê um número e grava 4 bytes (little‑endian) em `label`. |
+
+Entradas inválidas ou fora da faixa para `readByte/Half/Word` geram erro no console e o emulador volta a aguardar uma nova entrada, sem avançar o PC.
 
 Exemplo sem pseudoinstruções:
 
@@ -147,5 +154,5 @@ O emulador executa instruções enquanto `step` retorna `true`; `halt` ou syscal
 
 ### Console
 
-A aba Run possui um console inferior onde as syscalls `print`, `printString` e `read` fazem E/S. `print rd` mostra o valor decimal de um registrador, `printString label` imprime uma string terminada em NUL no rótulo, e `read label` armazena uma linha no endereço do rótulo. Role com `Ctrl+Up/Down` para revisar linhas anteriores.
+A aba Run possui um console inferior onde as syscalls `print`, `printStr/printStrLn` e `read/read*` fazem E/S. `print rd` mostra o valor de um registrador; `printStr label` concatena a string sem quebra de linha e `printStrLn label` imprime com quebra; `read label` lê uma linha inteira; `readByte/Half/Word label` lê um número e grava 1/2/4 bytes no endereço do rótulo. Role com `Ctrl+Up/Down` para revisar linhas anteriores.
 
