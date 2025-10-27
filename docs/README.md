@@ -32,6 +32,7 @@ The assembler accepts code split into segments:
 
 - `.text` or `.section .text` — instruction segment
 - `.data` or `.section .data` — data segment, loaded 0x1000 bytes after the program base address
+- `.bss` or `.section .bss` — uninitialized data; does not take space in the file, but is reserved and zeroed at load time right after `.data`
 
 Inside `.data` the following directives are supported:
 
@@ -42,6 +43,13 @@ Inside `.data` the following directives are supported:
 - `.ascii "text"` — raw bytes
 - `.asciz "text"` / `.string "text"` — string with NUL terminator
 - `.space n` / `.zero n` — n zero bytes
+
+Inside `.bss` the following directives are supported:
+
+- `.space n` / `.zero n` / `.skip n` — reserve n bytes (zero-initialized on load)
+- `.align n` — align the next symbol/offset to `n` bytes (power-of-two recommended)
+
+Explicit data directives like `.byte/.half/.word/.dword/.ascii/.asciz/.string` are not allowed in `.bss`.
 
 Labels (`label:`) can be defined in any segment. To load an absolute label address, use `la rd, label` which emits a `lui`/`addi` pair.
 
@@ -110,6 +118,17 @@ Requirements: stable Rust (via [rustup.rs](https://rustup.rs)).
 
 ```bash
 cargo run
+```
+
+If you embed the assembler, remember to reserve and zero the BSS region after loading `.data`:
+
+```rust
+use falcon::program::{load_words, load_bytes, zero_bytes};
+let prog = falcon::asm::assemble(source, base_pc)?;
+load_words(&mut mem, base_pc, &prog.text)?;
+load_bytes(&mut mem, prog.data_base, &prog.data)?;
+let bss_base = prog.data_base + prog.data.len() as u32;
+zero_bytes(&mut mem, bss_base, prog.bss_size)?;
 ```
 
 

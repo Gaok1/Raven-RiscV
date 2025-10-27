@@ -19,3 +19,13 @@ pub fn load_bytes(mem: &mut impl Bus, base: u32, bytes: &[u8]) -> Result<(), Fal
     }
     Ok(())
 }
+
+/// Zeros a contiguous memory region of `size` bytes at `base`.
+pub fn zero_bytes(mem: &mut impl Bus, base: u32, size: u32) -> Result<(), FalconError> {
+    let mut addr = base;
+    for _ in 0..size {
+        mem.store8(addr, 0)?;
+        addr = addr.wrapping_add(1);
+    }
+    Ok(())
+}

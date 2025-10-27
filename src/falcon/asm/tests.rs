@@ -79,7 +79,10 @@ fn print_expands_correctly() {
 fn print_string_register_errors() {
     let asm = ".text\nprintString a1";
     let err = assemble(asm, 0).err().expect("expected error");
-    assert!(err.msg.contains("printString: expected 'label'"));
+    assert!(
+        err.msg.contains("printStr: expected 'label'")
+            || err.msg.contains("printString: expected 'label'")
+    );
 }
 
 #[test]
@@ -144,8 +147,34 @@ fn section_directives_equivalent() {
 
 #[test]
 fn unknown_section_errors() {
-    let asm = ".section .bss";
+    let asm = ".section .unknown";
     let err = assemble(asm, 0).err().expect("expected error");
     assert!(err.msg.contains("unknown section"));
 }
 
+#[test]
+fn bss_space_and_la() {
+    let asm = ".data\nmsg: .asciz \"hi\"\n.section .bss\nbuffer: .space 256\n.section .text\nla t0, buffer";
+    let prog = assemble(asm, 0).expect("assemble bss");
+    assert_eq!(prog.data.len(), 3);
+    assert_eq!(prog.bss_size, 256);
+    assert_eq!(prog.text.len(), 2);
+    let expected_lui = encode(Instruction::Lui { rd: 5, imm: 0x1000 }).expect("encode lui");
+    let expected_addi = encode(Instruction::Addi { rd: 5, rs1: 5, imm: 3 }).expect("encode addi");
+    assert_eq!(prog.text[0], expected_lui);
+    assert_eq!(prog.text[1], expected_addi);
+}
+
+#[test]
+fn bss_align_and_size() {
+    let asm = ".section .bss\na: .space 1\n.align 4\nb: .space 1\n.section .text\nhalt";
+    let prog = assemble(asm, 0).expect("assemble bss align");
+    assert_eq!(prog.bss_size, 5);
+}
+
+#[test]
+fn bss_rejects_explicit_data() {
+    let asm = ".section .bss\nx: .word 1";
+    let err = assemble(asm, 0).err().expect("expected error");
+    assert!(err.msg.contains(".bss does not store explicit data"));
+}

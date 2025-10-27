@@ -73,6 +73,7 @@ pub struct App {
     pub(super) last_ok_text: Option<Vec<u32>>,   // instructions
     pub(super) last_ok_data: Option<Vec<u8>>,    // data bytes
     pub(super) last_ok_data_base: Option<u32>,   // data base address
+    pub(super) last_ok_bss_size: Option<u32>,    // bss size
 
     // Compile diagnostics
     pub(super) diag_line: Option<usize>, // 0-based line index
@@ -150,6 +151,7 @@ impl App {
             last_ok_text: None,
             last_ok_data: None,
             last_ok_data_base: None,
+            last_ok_bss_size: None,
             diag_line: None,
             diag_msg: None,
             diag_line_text: None,
@@ -198,7 +200,7 @@ impl App {
 
     pub(super) fn assemble_and_load(&mut self) {
         use falcon::asm::assemble;
-        use falcon::program::{load_bytes, load_words};
+        use falcon::program::{load_bytes, load_words, zero_bytes};
 
         self.prev_x = self.cpu.x; // keep snapshot before reset
         self.mem_size = 128 * 1024;
@@ -221,6 +223,15 @@ impl App {
                     self.faulted = true;
                     return;
                 }
+                // Reserve and zero BSS region after .data
+                let bss_base = prog.data_base.saturating_add(prog.data.len() as u32);
+                if prog.bss_size > 0 {
+                    if let Err(e) = zero_bytes(&mut self.mem, bss_base, prog.bss_size) {
+                        self.console.push_error(e.to_string());
+                        self.faulted = true;
+                        return;
+                    }
+                }
 
                 self.data_base = prog.data_base;
                 self.mem_view_addr = prog.data_base;
@@ -230,13 +241,15 @@ impl App {
                 self.last_ok_text = Some(prog.text.clone());
                 self.last_ok_data = Some(prog.data.clone());
                 self.last_ok_data_base = Some(prog.data_base);
+                self.last_ok_bss_size = Some(prog.bss_size);
                 self.imem_scroll = 0;
                 self.hover_imem_addr = None;
 
                 self.last_assemble_msg = Some(format!(
-                    "Assembled {} instructions, {} data bytes.",
+                    "Assembled {} instructions, {} data bytes, {} bss bytes.",
                     prog.text.len(),
-                    prog.data.len()
+                    prog.data.len(),
+                    prog.bss_size
                 ));
                 self.last_compile_ok = Some(true);
                 self.diag_line = None;
@@ -263,10 +276,12 @@ impl App {
                 self.last_ok_text = Some(prog.text.clone());
                 self.last_ok_data = Some(prog.data.clone());
                 self.last_ok_data_base = Some(prog.data_base);
+                self.last_ok_bss_size = Some(prog.bss_size);
                 self.last_assemble_msg = Some(format!(
-                    "OK: {} instructions, {} data bytes",
+                    "OK: {} instructions, {} data bytes, {} bss bytes",
                     prog.text.len(),
-                    prog.data.len()
+                    prog.data.len(),
+                    prog.bss_size
                 ));
                 self.last_compile_ok = Some(true);
                 self.diag_line = None;
@@ -285,7 +300,7 @@ impl App {
 
     // Load the last successfully assembled program without re-parsing source
     fn load_last_ok_program(&mut self) {
-        use falcon::program::{load_bytes, load_words};
+        use falcon::program::{load_bytes, load_words, zero_bytes};
         if let (Some(ref text), Some(ref data), Some(data_base)) = (
             self.last_ok_text.as_ref(),
             self.last_ok_data.as_ref(),
@@ -310,16 +325,29 @@ impl App {
                 self.faulted = true;
                 return;
             }
+            // Re-initialize BSS with zeros
+            if let Some(bss) = self.last_ok_bss_size {
+                if bss > 0 {
+                    let bss_base = data_base.saturating_add(data.len() as u32);
+                    if let Err(e) = zero_bytes(&mut self.mem, bss_base, bss) {
+                        self.console.push_error(e.to_string());
+                        self.faulted = true;
+                        return;
+                    }
+                }
+            }
 
             self.data_base = data_base;
             self.mem_view_addr = data_base;
             self.mem_region = MemRegion::Data;
 
             // Mirror info, but do NOT change compile status; it must reflect editor build
+            let bss_sz = self.last_ok_bss_size.unwrap_or(0);
             self.last_assemble_msg = Some(format!(
-                "Loaded last successful build: {} instructions, {} data bytes.",
+                "Loaded last successful build: {} instructions, {} data bytes, {} bss bytes.",
                 text.len(),
-                data.len()
+                data.len(),
+                bss_sz
             ));
             self.imem_scroll = 0;
             self.hover_imem_addr = None;

@@ -17,13 +17,16 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
     enum Section {
         Text,
         Data,
+        Bss,
     }
     let mut section = Section::Text;
     let mut pc_text = base_pc;
     let mut pc_data = 0u32; // offset from data_base
+    let mut pc_bss = 0u32;  // offset/size within .bss
     let mut items: Vec<(u32, LineKind, usize)> = Vec::new(); // (pc, LineKind, line number)
     let mut data_bytes = Vec::<u8>::new();
-    let mut labels = HashMap::<String, u32>::new();
+    // Collect label defs by section and offset; resolve absolute addresses after first pass
+    let mut label_defs = HashMap::<String, (Section, u32)>::new();
 
     // Iterate over lines and collect labels and instructions
     for (line_no, raw) in &lines {
@@ -35,11 +38,16 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
             section = Section::Data;
             continue;
         }
+        if raw == ".bss" {
+            section = Section::Bss;
+            continue;
+        }
         if let Some(rest) = raw.strip_prefix(".section") {
             let name = rest.trim();
             match name {
                 ".text" | "text" => section = Section::Text,
                 ".data" | "data" => section = Section::Data,
+                ".bss" | "bss" => section = Section::Bss,
                 "" => {
                     return Err(AsmError {
                         line: *line_no,
@@ -59,11 +67,12 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
         let mut line = raw.as_str();
         if let Some(idx) = line.find(':') {
             let (lab, rest) = line.split_at(idx);
-            let addr = match section {
-                Section::Text => pc_text,
-                Section::Data => data_base + pc_data,
+            let (sec, off) = match section {
+                Section::Text => (Section::Text, pc_text),
+                Section::Data => (Section::Data, pc_data),
+                Section::Bss => (Section::Bss, pc_bss),
             };
-            labels.insert(lab.trim().to_string(), addr);
+            label_defs.insert(lab.trim().to_string(), (sec, off));
             line = rest[1..].trim();
             if line.is_empty() {
                 // instruction label only
@@ -205,7 +214,54 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                     });
                 }
             }
+            Section::Bss => {
+                // .bss accepts size/alignment directives but no explicit data
+                if let Some(rest) = line
+                    .strip_prefix(".space")
+                    .or_else(|| line.strip_prefix(".zero"))
+                    .or_else(|| line.strip_prefix(".skip"))
+                {
+                    let n = parse_imm(rest).ok_or_else(|| AsmError {
+                        line: *line_no,
+                        msg: format!("invalid size: {rest}"),
+                    })?;
+                    if n < 0 {
+                        return Err(AsmError { line: *line_no, msg: format!("size must be positive: {n}") });
+                    }
+                    pc_bss = pc_bss.wrapping_add(n as u32);
+                } else if let Some(rest) = line.strip_prefix(".align") {
+                    let n = parse_imm(rest).ok_or_else(|| AsmError { line: *line_no, msg: format!("invalid align: {rest}") })?;
+                    if n <= 0 { return Err(AsmError { line: *line_no, msg: format!("alignment must be positive: {n}") }); }
+                    let n = n as u32;
+                    let mask = n - 1;
+                    let aligned = if (pc_bss & mask) == 0 { pc_bss } else { (pc_bss + mask) & !mask };
+                    pc_bss = aligned;
+                } else if line.starts_with(".byte")
+                    || line.starts_with(".half")
+                    || line.starts_with(".word")
+                    || line.starts_with(".dword")
+                    || line.starts_with(".ascii")
+                    || line.starts_with(".asciz")
+                    || line.starts_with(".string")
+                {
+                    return Err(AsmError { line: *line_no, msg: ".bss does not store explicit data; use .space/.zero/.skip/.align".into() });
+                } else {
+                    return Err(AsmError { line: *line_no, msg: format!("unknown .bss directive: {line}") });
+                }
+            }
         }
+    }
+
+    // Build final labels map with absolute addresses
+    let mut labels = HashMap::<String, u32>::new();
+    let data_size = pc_data;
+    for (name, (sec, off)) in label_defs.into_iter() {
+        let addr = match sec {
+            Section::Text => off, // pc_text was absolute when captured
+            Section::Data => data_base + off,
+            Section::Bss => data_base + data_size + off,
+        };
+        labels.insert(name, addr);
     }
 
     // 2nd pass: assemble
@@ -346,6 +402,7 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
         text: words,
         data: data_bytes,
         data_base,
+        bss_size: pc_bss,
     })
 }
 

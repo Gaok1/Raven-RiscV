@@ -6,5 +6,6 @@ pub struct Program {
     pub data: Vec<u8>,
     /// Base address for data region.
     pub data_base: u32,
+    /// Total size in bytes of the BSS segment (not stored in `data`).
+    pub bss_size: u32,
 }
-

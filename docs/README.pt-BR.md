@@ -34,6 +34,7 @@ O assembler aceita código dividido em segmentos:
 
 - `.text` ou `.section .text` – segmento de instruções.
 - `.data` ou `.section .data` – segmento de dados, carregado 0x1000 bytes após o endereço base do programa.
+- `.bss` ou `.section .bss` – dados não inicializados; não ocupa espaço no arquivo, mas é reservado e zerado no carregamento logo após o `.data`.
 
 No `.data` as seguintes diretivas são suportadas:
 
@@ -44,6 +45,13 @@ No `.data` as seguintes diretivas são suportadas:
 - `.ascii "texto"` – bytes brutos
 - `.asciz "texto"` / `.string "texto"` – string com terminador NUL
 - `.space n` / `.zero n` – n bytes zero
+
+No `.bss` as seguintes diretivas são suportadas:
+
+- `.space n` / `.zero n` / `.skip n` — reserva n bytes (zerados no carregamento)
+- `.align n` — alinha o próximo símbolo/deslocamento para `n` bytes (potência de 2 recomendada)
+
+Diretivas que inserem dados explícitos como `.byte/.half/.word/.dword/.ascii/.asciz/.string` não são permitidas em `.bss`.
 
 Rótulos (`label:`) podem ser definidos em qualquer segmento. Para carregar o endereço absoluto de um rótulo, use a pseudoinstrução `la rd, label`, que emite um par `lui`/`addi`.
 
@@ -119,7 +127,7 @@ Exemplo mínimo:
 
 ```rust
 use falcon::asm::assemble;
-use falcon::program::{load_bytes, load_words};
+use falcon::program::{load_bytes, load_words, zero_bytes};
 
 let asm = r#"
     .data
@@ -136,6 +144,9 @@ cpu.pc = 0;
 let prog = assemble(asm, cpu.pc).expect("assemble");
 load_words(&mut mem, cpu.pc, &prog.text);
 load_bytes(&mut mem, prog.data_base, &prog.data);
+// Reserve e zere a região BSS logo após .data
+let bss_base = prog.data_base + prog.data.len() as u32;
+zero_bytes(&mut mem, bss_base, prog.bss_size).unwrap();
 ```
 
 O emulador executa instruções enquanto `step` retorna `true`; `halt` ou syscall desconhecida encerram a execução.
