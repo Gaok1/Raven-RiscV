@@ -49,8 +49,6 @@ Inside `.bss` the following directives are supported:
 - `.space n` / `.zero n` / `.skip n` — reserve n bytes (zero-initialized on load)
 - `.align n` — align the next symbol/offset to `n` bytes (power-of-two recommended)
 
-Explicit data directives like `.byte/.half/.word/.dword/.ascii/.asciz/.string` are not allowed in `.bss`.
-
 Labels (`label:`) can be defined in any segment. To load an absolute label address, use `la rd, label` which emits a `lui`/`addi` pair.
 
 ### Available Pseudo-instructions
