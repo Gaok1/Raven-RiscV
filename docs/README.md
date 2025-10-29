@@ -1,127 +1,45 @@
-# Falcon ASM — Educational RISC-V (RV32I) Emulator
+# Falcon ASM — an approachable RISC-V (RV32I) emulator
 <img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="400"/>
 
-Falcon ASM is a Rust emulator focused on clarity and learning. It exposes the fetch -> decode -> execute cycle and provides a clear view of how a basic RISC‑V processor works.
+Falcon ASM is a small Rust project that shows every moving part of a classic fetch → decode → execute loop. It is meant for
+students, hobbyists, and teachers who want to tinker with the RISC-V base ISA without reading thousands of lines of
+optimization-heavy code.
 
-The project includes:
+Beyond the core emulator, Falcon ships with a built-in IDE experience: a project browser, source editor with syntax
+highlighting, an instruction-by-instruction visualizer, and panels for registers, memory, and syscalls. You can assemble,
+run, pause, and rewind without leaving the interface, making it easy to demonstrate how each instruction manipulates state or
+to debug student assignments in real time. The goal is to be a simulator and teaching platform that feels welcoming even if
+you are opening RISC-V for the very first time.
 
-- Instruction decoder and encoder
-- Two-pass text assembler with labels
-- `.text`/`.section .text` and `.data`/`.section .data` segments with data directives
-- Little-endian registers and memory
-- Execution engine ready for a terminal UI (TUI)
+## What Falcon includes
 
-## Project Status
+- **Readable core** – the CPU, memory, and instruction decoder are written to be followed line by line.
+- **Integrated assembler** – assemble `.text`, `.data`, and `.bss` segments (with directives like `.byte`, `.word`, `.ascii`,
+  `.space`) and common pseudo-instructions (`la`, `call`, `ret`, `push`, `pop`, `printStr`, `printStrLn`, `read`, and more).
+- **Syscall helpers** – set `a7` and call `ecall` to print values or strings, read user input, or halt the program.
+- **RV32I + M coverage** – arithmetic, loads/stores, branches, jumps, multiplication, division, and a friendly error model for
+  unsupported instructions.
 
-Implements the essential subset of RV32I:
+The emulator follows the usual RISC-V register naming (`zero`, `ra`, `sp`, `a0`…`a7`, `t0`…`t6`, `s0`…`s11`) and uses a
+little-endian memory layout so you can mirror the behavior of popular textbooks and course material.
 
-- R-type: `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
-- I-type (OP-IMM): `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
-- Loads: `LB, LH, LW, LBU, LHU`
-- Stores: `SB, SH, SW`
-- Branches: `BEQ, BNE, BLT, BGE, BLTU, BGEU`
-- U/J: `LUI, AUIPC, JAL`
-- JALR
-- SYSTEM: `ECALL`, `HALT`
+## Quick start
 
-Not implemented: FENCE/CSR and floating point.
+1. Install the Rust toolchain from [rustup.rs](https://rustup.rs).
+2. Clone this repository and run:
 
-## Assembler and Directives
+   ```bash
+   cargo run
+   ```
 
-The assembler accepts code split into segments:
+3. Write a program with `.text` and `.data` sections, assemble it with Falcon, and watch each step as you single-step through
+   execution.
 
-- `.text` or `.section .text` — instruction segment
-- `.data` or `.section .data` — data segment, loaded 0x1000 bytes after the program base address
-- `.bss` or `.section .bss` — uninitialized data; does not take space in the file, but is reserved and zeroed at load time right after `.data`
-
-Inside `.data` the following directives are supported:
-
-- `.byte v1, v2, ...` — 8-bit values
-- `.half h1, h2, ...` — 16-bit values
-- `.word w1, w2, ...` — 32-bit values in little-endian
-- `.dword d1, d2, ...` — 64-bit values in little-endian
-- `.ascii "text"` — raw bytes
-- `.asciz "text"` / `.string "text"` — string with NUL terminator
-- `.space n` / `.zero n` — n zero bytes
-
-Inside `.bss` the following directives are supported:
-
-- `.space n` / `.zero n` / `.skip n` — reserve n bytes (zero-initialized on load)
-- `.align n` — align the next symbol/offset to `n` bytes (power-of-two recommended)
-
-Labels (`label:`) can be defined in any segment. To load an absolute label address, use `la rd, label` which emits a `lui`/`addi` pair.
-
-### Available Pseudo-instructions
-
-- `nop` -> `addi x0, x0, 0`
-- `mv rd, rs` -> `addi rd, rs, 0`
-- `li rd, imm12` -> `addi rd, x0, imm` (12-bit only by design)
-- `subi rd, rs1, imm` -> `addi rd, rs1, -imm`
-- `j label` -> `jal x0, label`
-- `call label` -> `jal ra, label`
-- `jr rs1` -> `jalr x0, rs1, 0`
-- `ret` -> `jalr x0, ra, 0`
-- `la rd, label` -> load absolute address of `label`
-- `push rs` -> `addi sp, sp, -4` ; `sw rs, 4(sp)`
-- `pop rd` -> `lw rd, 4(sp)` ; `addi sp, sp, 4`
-- `print rd` -> sets `a7=1`, prints integer in `rd`
-- `printStr label` -> sets `a7=2`, loads `a0` with `label`, appends NUL-terminated string (no newline)
-- `printStrLn label` -> sets `a7=4`, loads `a0` with `label`, prints string and newline
-- `read label` -> sets `a7=3`, loads `a0` with `label`, reads a line into memory
-
-## Registers and Memory
-
-- Registers `x0..x31` with aliases: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`. `x0` is always 0.
-- Little-endian memory with `load8/16/32` and `store8/16/32` operations.
-
-## Syscalls
-
-Place the syscall number in `a7`, set arguments in `a0`, then execute `ecall`.
-
-| `a7` | Pseudo-instruction | Description |
-|------|--------------------|-------------|
-| 1 | `print rd` | Print the decimal value from register `rd` (`a0=rd`). |
-| 2 | `printStr label` | Append the NUL-terminated string at `label` (no newline). |
-| 3 | `read label` | Read a line into memory at `label` and append a NUL byte. |
-| 4 | `printStrLn label` | Append string at `label` and start a new line. |
-| 64 | `readByte label` | Read number (dec or `0x`hex) and store 1 byte at `label`. |
-| 65 | `readHalf label` | Read number and store 2 bytes (little-endian) at `label`. |
-| 66 | `readWord label` | Read number and store 4 bytes (little-endian) at `label`. |
-
-Invalid inputs or values out of range for `readByte/Half/Word` print an error and the emulator waits for a new input without advancing the PC.
-
-Example without pseudo-instructions:
-
-```asm
-    li a7, 1      # select syscall
-    mv a0, t0     # value to print
-    ecall
-```
-
-## Instruction Types (how they work)
-
-- R-type (opcode `0x33`): register-register operations. `rd = OP(rs1, rs2)`.
-- I-type (opcode `0x13`): register-immediate ALU. `rd = OP(rs1, imm12)`. Shifts use 5-bit shamt (`SRAI` with `funct7=0x20`).
-- Loads (opcode `0x03`): `LB/LH/LW/LBU/LHU` read from `rs1 + imm` to `rd`.
-- Stores (opcode `0x23`): `SB/SH/SW` write the low 8/16/32 bits of `rs2` to `rs1 + imm`.
-- Branches (opcode `0x63`): PC-relative conditional jumps; the assembler computes the offset from labels.
-- U-type (`LUI/AUIPC`): `LUI` loads bits [31:12] into `rd`; `AUIPC` adds the immediate to the current `pc`.
-- Jumps (`JAL/JALR`): `JAL` writes `pc+4` into `rd` and jumps to `pc + imm21`; `JALR` writes `pc+4` into `rd` and jumps to `(rs1 + imm12) & !1`.
-
-See [`docs/format.md`](format.md) for bit layouts and more details.
-
-## Running
-
-Requirements: stable Rust (via [rustup.rs](https://rustup.rs)).
-
-```bash
-cargo run
-```
-
-If you embed the assembler, remember to reserve and zero the BSS region after loading `.data`:
+Embedding Falcon elsewhere? Use the helper functions to place each segment in memory:
 
 ```rust
 use falcon::program::{load_words, load_bytes, zero_bytes};
+
 let prog = falcon::asm::assemble(source, base_pc)?;
 load_words(&mut mem, base_pc, &prog.text)?;
 load_bytes(&mut mem, prog.data_base, &prog.data)?;
@@ -129,4 +47,16 @@ let bss_base = prog.data_base + prog.data.len() as u32;
 zero_bytes(&mut mem, bss_base, prog.bss_size)?;
 ```
 
+## Learn more
 
+- Follow the step-by-step walkthrough in the English [tutorial](Tutorial.md) to assemble and run your first programs.
+- Dive into instruction formats, bit layouts, and pseudo-instructions in the English [`format.md`](format.md).
+- Browse the `Program Examples/` directory for sample projects that exercise syscalls, arithmetic, and control flow.
+
+## Contributing and roadmap
+
+Falcon is intentionally small, and contributions are welcome! Ideas on the horizon include CSR/fence support, floating-point
+extensions, and higher-level tooling around the emulator.
+
+Whether you are preparing a lecture, debugging your first assembly homework, or building a teaching tool, Falcon ASM aims to be
+a friendly place to explore the RISC-V ecosystem. Enjoy the flight!
