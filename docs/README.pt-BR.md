@@ -25,7 +25,7 @@ O emulador usa a convenção padrão de registradores (`zero`, `ra`, `sp`, `a0`�
 little-endian, reproduzindo o comportamento esperado em cursos e materiais introdutórios.
 
 ## Primeiros passos
-
+0. Baixe e rode a útima release para sua plataforma ou 
 1. Instale o Rust pelo [rustup.rs](https://rustup.rs).
 2. Clone este repositório e execute:
 
