@@ -24,7 +24,7 @@ The emulator follows the usual RISC-V register naming (`zero`, `ra`, `sp`, `a0`â
 little-endian memory layout so you can mirror the behavior of popular textbooks and course material.
 
 ## Quick start
-
+0. Download and run the latest release or
 1. Install the Rust toolchain from [rustup.rs](https://rustup.rs).
 2. Clone this repository and run:
 
