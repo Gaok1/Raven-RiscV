@@ -35,7 +35,7 @@ little-endian memory layout so you can mirror the behavior of popular textbooks 
 3. Write a program with `.text` and `.data` sections, assemble it with Falcon, and watch each step as you single-step through
    execution.
 
-Embedding Falcon elsewhere? Use the helper functions to place each segment in memory:
+## Embedding Falcon elsewhere? Use the helper functions to place each segment in memory:
 
 ```rust
 use falcon::program::{load_words, load_bytes, zero_bytes};
