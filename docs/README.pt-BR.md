@@ -1,169 +1,65 @@
-# Falcon ASM - Emulador Educacional RISC-V (RV32I)
+# Falcon ASM — um emulador RISC-V (RV32I) para aprender brincando
 <img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="400"/>
 
 Idioma: [Português (BR)](README.pt-BR.md) | [English](README.md)
 
-Falcon ASM é um emulador escrito em Rust focado em clareza e aprendizado. Ele expõe o ciclo buscar -> decodificar -> executar e oferece uma visão clara de como um processador básico RISC-V funciona.
+O Falcon ASM é um projeto pequeno em Rust que revela cada etapa do ciclo buscar → decodificar → executar. Ele foi pensado para
+estudantes, entusiastas e professores que querem experimentar a base do ISA RISC-V sem esbarrar em um código cheio de
+micro-otimizações.
 
-O projeto inclui:
+Além do núcleo do emulador, o Falcon traz uma experiência de IDE integrada: explorador de projetos, editor com destaque de
+sintaxe, visualização passo a passo das instruções e painéis dedicados para registradores, memória e syscalls. Você monta,
+executa, pausa e volta no tempo sem sair da interface, o que facilita demonstrar como cada instrução altera o estado ou
+depurar trabalhos de alunos em tempo real. A proposta é ser um simulador e uma plataforma de ensino acolhedora mesmo para quem
+está abrindo o RISC-V pela primeira vez.
 
-- Decoder e encoder de instruções
-- Assembler de texto em duas passagens com suporte a rótulos
-- Segmentos `.text`/`.section .text` e `.data`/`.section .data` com diretivas de dados
-- Registradores e memória little-endian
-- Motor de execução pronto para integração com interfaces de terminal (TUI)
+## O que vem no Falcon
 
-## Status do Projeto
+- **Núcleo legível** – CPU, memória e decodificador foram escritos para você acompanhar linha a linha.
+- **Assembler integrado** – monte segmentos `.text`, `.data` e `.bss` com diretivas como `.byte`, `.word`, `.ascii`, `.space`
+  e um conjunto de pseudoinstruções (`la`, `call`, `ret`, `push`, `pop`, `printStr`, `printStrLn`, `read`, entre outras).
+- **Facilidades de syscall** – basta definir `a7` e chamar `ecall` para imprimir valores, strings, ler entradas do usuário ou
+  encerrar o programa.
+- **Cobertura RV32I + M** – aritmética, loads/stores, desvios, saltos, multiplicação, divisão e mensagens amigáveis para
+  instruções não suportadas.
 
-Implementa o subconjunto essencial de RV32I:
+O emulador usa a convenção padrão de registradores (`zero`, `ra`, `sp`, `a0`…`a7`, `t0`…`t6`, `s0`…`s11`) e memória
+little-endian, reproduzindo o comportamento esperado em cursos e materiais introdutórios.
 
-- Tipo R: `ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU`
-- Tipo I (OP-IMM): `ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI`
-- Loads: `LB, LH, LW, LBU, LHU`
-- Stores: `SB, SH, SW`
-- Branches: `BEQ, BNE, BLT, BGE, BLTU, BGEU`
-- U/J: `LUI, AUIPC, JAL`
-- JALR
-- SYSTEM: `ECALL`, `HALT`
+## Primeiros passos
 
-Não implementado: FENCE/CSR e ponto flutuante.
+1. Instale o Rust pelo [rustup.rs](https://rustup.rs).
+2. Clone este repositório e execute:
 
-## Assembler e Diretivas
+   ```bash
+   cargo run
+   ```
 
-O assembler aceita código dividido em segmentos:
+3. Escreva um programa com seções `.text` e `.data`, monte com o Falcon e acompanhe cada passo enquanto avança instrução por
+   instrução.
 
-- `.text` ou `.section .text` – segmento de instruções.
-- `.data` ou `.section .data` – segmento de dados, carregado 0x1000 bytes após o endereço base do programa.
-- `.bss` ou `.section .bss` – dados não inicializados; não ocupa espaço no arquivo, mas é reservado e zerado no carregamento logo após o `.data`.
-
-No `.data` as seguintes diretivas são suportadas:
-
-- `.byte v1, v2, ...` – valores de 8 bits
-- `.half h1, h2, ...` – valores de 16 bits
-- `.word w1, w2, ...` – valores de 32 bits em little-endian
-- `.dword d1, d2, ...` – valores de 64 bits em little-endian
-- `.ascii "texto"` – bytes brutos
-- `.asciz "texto"` / `.string "texto"` – string com terminador NUL
-- `.space n` / `.zero n` – n bytes zero
-
-No `.bss` as seguintes diretivas são suportadas:
-
-- `.space n` / `.zero n` / `.skip n` — reserva n bytes (zerados no carregamento)
-- `.align n` — alinha o próximo símbolo/deslocamento para `n` bytes (potência de 2 recomendada)
-
-Diretivas que inserem dados explícitos como `.byte/.half/.word/.dword/.ascii/.asciz/.string` não são permitidas em `.bss`.
-
-Rótulos (`label:`) podem ser definidos em qualquer segmento. Para carregar o endereço absoluto de um rótulo, use a pseudoinstrução `la rd, label`, que emite um par `lui`/`addi`.
-
-### Pseudoinstruções Disponíveis
-
-- `nop` -> `addi x0, x0, 0`
-- `mv rd, rs` -> `addi rd, rs, 0`
-- `li rd, imm12` -> `addi rd, x0, imm` (somente 12 bits, por escolha didática)
-- `subi rd, rs1, imm` -> `addi rd, rs1, -imm`
-- `j label` -> `jal x0, label`
-- `call label` -> `jal ra, label`
-- `jr rs1` -> `jalr x0, rs1, 0`
-- `ret` -> `jalr x0, ra, 0`
-- `la rd, label` -> carrega o endereço de `label`
-- `push rs` -> `addi sp, sp, -4` ; `sw rs, 4(sp)`
-- `pop rd` -> `lw rd, 4(sp)` ; `addi sp, sp, 4`
-- `print rd` -> define `a7=1`, imprime o valor em `rd`
-- `printStr label` -> define `a7=2`, carrega `a0` e concatena a string (sem nova linha)
-- `printStrLn label` -> define `a7=4`, carrega `a0` e imprime string + nova linha
-- `read label` -> define `a7=3`, carrega `a0` e lê uma linha para a memória no rótulo
-
-## Registradores e Memória
-
-- Registradores `x0..x31` com apelidos: `zero, ra, sp, gp, tp, t0..t6, s0/fp, s1, a0..a7, s2..s11`. `x0` é sempre 0.
-- Memória little‑endian com operações `load8/16/32` e `store8/16/32`.
-
-## Syscalls
-
-Falcon ASM implementa algumas chamadas de sistema básicas. Coloque o número da syscall em `a7`,
-defina argumentos em `a0` e execute `ecall`.
-
-| `a7` | Pseudoinstrução | Descrição |
-|------|------------------|-----------|
-| 1 | `print rd` | Imprime o valor decimal do registrador `rd` (`a0=rd`). |
-| 2 | `printStr label` | Concatena a string NUL‑terminada em `label` (sem nova linha). |
-| 3 | `read label` | Lê uma linha de entrada para a memória em `label` e adiciona NUL. |
-| 4 | `printStrLn label` | Concatena a string e inicia nova linha. |
-| 64 | `readByte label` | Lê um número (dec ou `0x`hex) e grava 1 byte no endereço de `label`. |
-| 65 | `readHalf label` | Lê um número e grava 2 bytes (little‑endian) em `label`. |
-| 66 | `readWord label` | Lê um número e grava 4 bytes (little‑endian) em `label`. |
-
-Entradas inválidas ou fora da faixa para `readByte/Half/Word` geram erro no console e o emulador volta a aguardar uma nova entrada, sem avançar o PC.
-
-Exemplo sem pseudoinstruções:
-
-```asm
-    li a7, 1      # seleciona syscall
-    mv a0, t0     # valor a imprimir
-    ecall
-```
-
-## Tipos de Instrução (como funcionam)
-
-- Tipo R (opcode `0x33`): operações registrador‑registrador. `rd = OP(rs1, rs2)`.
-- Tipo I (opcode `0x13`): ALU registrador‑imediato. `rd = OP(rs1, imm12)`. Shifts usam `shamt` de 5 bits (`SRAI` com `funct7=0x20`).
-- Loads (opcode `0x03`): `LB/LH/LW/LBU/LHU` leem de `rs1 + imm` e escrevem em `rd`.
-- Stores (opcode `0x23`): `SB/SH/SW` escrevem os 8/16/32 bits menos significativos de `rs2` em `rs1 + imm`.
-- Branches (opcode `0x63`): desvios condicionais relativos ao PC (13 bits em bytes). O assembler calcula a partir de rótulos.
-- U‑type (`LUI/AUIPC`): `LUI` carrega os bits [31:12] em `rd`; `AUIPC` soma o imediato ao `pc` atual.
-- Jumps (`JAL/JALR`): `JAL` escreve `pc+4` em `rd` e salta para `pc + imm21`; `JALR` escreve `pc+4` em `rd` e salta para `(rs1 + imm12) & !1`.
-
-Veja [`docs/format.pt-BR.md`](format.pt-BR.md) para layouts de bits e mais detalhes.
-
-## Executando
-
-Requisitos: Rust estável (via [rustup.rs](https://rustup.rs)).
-
-```bash
-cargo run
-```
-
-Exemplo mínimo:
+Vai embutir o Falcon em outro projeto? Use os auxiliares para posicionar cada segmento na memória:
 
 ```rust
-use falcon::asm::assemble;
-use falcon::program::{load_bytes, load_words, zero_bytes};
+use falcon::program::{load_words, load_bytes, zero_bytes};
 
-let asm = r#"
-    .data
-msg: .byte 1, 2, 3
-    .text
-    la a0, msg
-    ecall
-"#;
-
-let mut mem = falcon::Ram::new(64 * 1024);
-let mut cpu = falcon::Cpu::default();
-cpu.pc = 0;
-
-let prog = assemble(asm, cpu.pc).expect("assemble");
-load_words(&mut mem, cpu.pc, &prog.text);
-load_bytes(&mut mem, prog.data_base, &prog.data);
-// Reserve e zere a região BSS logo após .data
+let prog = falcon::asm::assemble(source, base_pc)?;
+load_words(&mut mem, base_pc, &prog.text)?;
+load_bytes(&mut mem, prog.data_base, &prog.data)?;
 let bss_base = prog.data_base + prog.data.len() as u32;
-zero_bytes(&mut mem, bss_base, prog.bss_size).unwrap();
+zero_bytes(&mut mem, bss_base, prog.bss_size)?;
 ```
 
-O emulador executa instruções enquanto `step` retorna `true`; `halt` ou syscall desconhecida encerram a execução.
+## Continue aprendendo
 
-# Exemplos
-## Editor de código
-<img width="1918" height="1009" alt="image" src="https://github.com/user-attachments/assets/4ade62a4-e3e0-4c69-b42b-ae52d5bd8397" />
+- Siga o passo a passo do [tutorial em português](Tutorial-pt.md) para montar e executar seus primeiros programas.
+- Consulte os layouts de instrução e as pseudoinstruções detalhadas no [`format.pt-BR.md`](format.pt-BR.md).
+- Explore o diretório `Program Examples/` para ver programas que exercitam syscalls, aritmética e controle de fluxo.
 
-## Executando código (emulador)
+## Contribuições e próximos passos
 
-### Visão de registradores
-<img width="1917" height="997" alt="image" src="https://github.com/user-attachments/assets/6be9a0ec-b64f-4cab-b9b5-ff581a27f692" />
+O Falcon é propositalmente enxuto, e contribuições são muito bem-vindas! Entre as ideias futuras estão suporte a CSR/fence,
+extensões de ponto flutuante e ferramentas extras ao redor do emulador.
 
-### Visão da RAM
-<img width="1920" height="999" alt="image" src="https://github.com/user-attachments/assets/63386101-393f-47d1-a559-9a3b74da95ac" />
-
-### Console
-
-A aba Run possui um console inferior onde as syscalls `print`, `printStr/printStrLn` e `read/read*` fazem E/S. `print rd` mostra o valor de um registrador; `printStr label` concatena a string sem quebra de linha e `printStrLn label` imprime com quebra; `read label` lê uma linha inteira; `readByte/Half/Word label` lê um número e grava 1/2/4 bytes no endereço do rótulo. Role com `Ctrl+Up/Down` para revisar linhas anteriores.
-
+Seja preparando uma aula, corrigindo seu primeiro trabalho de assembly ou construindo um material didático, o Falcon ASM quer ser
+um espaço acolhedor para explorar o ecossistema RISC-V. Bons voos!
