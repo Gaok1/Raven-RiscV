@@ -9,6 +9,6 @@ This folder is used by the CI workflow to store built release binaries:
 - `falconasm-x86_64-apple-darwin`
 - `falconasm-aarch64-apple-darwin`
 
-Run the workflow from GitHub Actions or tag a release (e.g. `v1.0.0`) to generate the artifacts. Tagged builds also attach the binaries directly to the GitHub Release.
+Run the workflow from GitHub Actions or tag a release (e.g. `v1.0.0`) to generate the artifacts and upload them for download.
 
 Note: the Linux aarch64 build uses `cross` with a `Cross.toml` pre-build step to install `libwayland-dev:arm64` (after adding the `arm64` dpkg architecture), which is required by `wayland-sys` during cross-compilation.
