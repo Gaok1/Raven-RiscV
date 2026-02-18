@@ -170,7 +170,6 @@ a reminder about immediate ranges or special cases.
 
 Falcon’s assembler is intentionally lightweight so you can follow every step:
 
-- Two passes: the first collects labels, the second encodes instructions and resolves immediates.
 - Comments begin with `;` or `#`.
 - Instructions follow the `mnemonic rd, rs1, rs2` style with commas as separators.
 - Text, data, and BSS segments are all supported (`.text`, `.data`, `.bss`) along with directives such as `.word`, `.byte`, `.ascii`,
