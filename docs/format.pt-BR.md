@@ -1,8 +1,6 @@
 # Guia de formato do Falcon ASM — RV32I em linguagem direta
 
-Este é o guia de bolso do Falcon ASM, nosso emulador RISC-V pensado para ensino. Use-o como referência rápida quando o
-[Tutorial-pt](Tutorial-pt.md) mostra *como* montar um programa e você quer confirmar *por que* cada instrução gera aquele código.
-Chegou aqui vindo do README e quer mergulhar nos detalhes? Bem-vindo.
+Este é o guia de bolso do Falcon ASM, nosso emulador RISC-V pensado para ensino. Use-o como referência rápida.
 
 ## Como aproveitar este documento
 
