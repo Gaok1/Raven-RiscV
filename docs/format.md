@@ -1,8 +1,6 @@
 # Falcon ASM format guide — RV32I in plain language
 
-This is the companion reference for Falcon ASM, our teaching-friendly RISC-V emulator. Use it as a cheat sheet when the
-[Tutorial](Tutorial.md) shows *how* to assemble a program and you want to double-check *why* an instruction encodes a certain way.
-If you are coming from the README and feel ready to dig into the nitty-gritty, you are in the right place.
+This is the companion reference for Falcon ASM, our teaching-friendly RISC-V emulator. Use it as a cheat sheet.
 
 ## How to read this document
 
