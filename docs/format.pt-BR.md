@@ -167,15 +167,43 @@ do imediato ou algum detalhe importante.
 <a id="comportamento-do-assembler-e-pseudoinstrucoes"></a>
 ## Comportamento do assembler e pseudoinstruções
 
-O assembler do Falcon é direto justamente para que você acompanhe cada passo:
+O assembler do Falcon é propositalmente simples para que você consiga acompanhar cada etapa:
 
-- Comentários começam em `;` ou `#`.
-- As instruções seguem `mnemonic rd, rs1, rs2`, com vírgulas separando os operandos.
-- Segmentos `.text`, `.data` e `.bss` são aceitos, junto com diretivas como `.word`, `.byte`, `.ascii`, `.asciiz` e `.space`.
-- Pseudoinstruções comuns expandem para RV32I real: `nop`, `mv`, `li` (imediatos de 12 bits), `subi`, `j`/`jal`/`call`,
-  `jr`/`ret`, `la`, `push`, `pop`, `print`, `printStr`, `printStrLn`, `read`, `readByte`, `readHalf`, `readWord`.
+- Montagem em duas passagens: a 1ª coleta rótulos (`.text`, `.data` e `.bss`); a 2ª resolve rótulos e codifica instruções.
+- Comentários começam com `;` ou `#`.
+- Operandos são separados por vírgula (`mnemonic op1, op2, ...`).
+- Seções/diretivas suportadas incluem `.text`, `.data`, `.bss`, `.section`, `.word`, `.byte`, `.half`, `.ascii`, `.asciz`/`.asciiz`, `.space` e `.align`.
 
-Quer ver a expansão? Rode `cargo run`, monte o programa e acompanhe o traço de instruções: o Falcon imprime cada decodificação.
+### Referência de pseudoinstruções
+
+A tabela abaixo documenta os formatos aceitos no Falcon e a forma exata (conceitual) de expansão usada pelo assembler.
+
+| Pseudo | Formato aceito | Expansão (conceitual) | Observações |
+| --- | --- | --- | --- |
+| `nop` | `nop` | `addi x0, x0, 0` | Não aceita operandos. |
+| `mv` | `mv rd, rs` | `addi rd, rs, 0` | Cópia entre registradores. |
+| `li` | `li rd, imm` | `addi rd, x0, imm` | Imediato deve caber em 12 bits com sinal (`-2048..2047`). |
+| `subi` | `subi rd, rs1, imm` | `addi rd, rs1, -imm` | `-imm` deve caber em 12 bits com sinal. |
+| `j` | `j label_ou_imm` | `jal x0, label_ou_imm` | Imediato PC-relativo de 21 bits (bit 0 precisa ser par). |
+| `call` | `call label_ou_imm` | `jal ra, label_ou_imm` | Salva endereço de retorno em `ra` (`x1`). |
+| `jr` | `jr rs1` | `jalr x0, rs1, 0` | Salto indireto sem link. |
+| `ret` | `ret` | `jalr x0, ra, 0` | Retorna para o endereço em `ra` (`x1`). |
+| `la` | `la rd, label` | `lui rd, hi(label)` + `addi rd, rd, lo(label)` | Usa divisão hi/lo com arredondamento (`+0x800`) para caber em 12 bits com sinal no low. |
+| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 4(sp)` | Expansão atual do Falcon grava no endereço do `sp` antigo. |
+| `pop` | `pop rd` | `lw rd, 4(sp)` + `addi sp, sp, 4` | Expansão atual do Falcon lê do endereço do `sp` antigo. |
+| `print` | `print rd` | `addi a7, x0, 1` + `addi a0, rd, 0` + `ecall` | Imprime valor de registrador. |
+| `printStr` | `printStr label` | `addi a7, x0, 2` + `la a0, label` + `ecall` | Imprime string NUL-terminada (sem quebra de linha). |
+| `printString` | `printString label` | igual a `printStr label` | Alias legado aceito pelo assembler. |
+| `printStrLn` | `printStrLn label` | `addi a7, x0, 4` + `la a0, label` + `ecall` | Imprime string e adiciona quebra de linha. |
+| `read` | `read label` | `addi a7, x0, 3` + `la a0, label` + `ecall` | Lê uma linha inteira para memória em `label` (NUL-terminada). |
+| `readByte` | `readByte label` | `addi a7, x0, 64` + `la a0, label` + `ecall` | Grava 1 byte em `label`. |
+| `readHalf` | `readHalf label` | `addi a7, x0, 65` + `la a0, label` + `ecall` | Grava 2 bytes (little-endian) em `label`. |
+| `readWord` | `readWord label` | `addi a7, x0, 66` + `la a0, label` + `ecall` | Grava 4 bytes (little-endian) em `label`. |
+
+> `jal` e `jalr` são instruções reais da ISA (não pseudo) e também são suportadas diretamente.
+> Em `jal`, você pode usar `jal label` (com `rd=ra` implícito) ou `jal rd, label`.
+
+Para observar a expansão final em execução, rode `cargo run`, monte o programa e acompanhe o traço de instruções decodificadas na interface.
 
 ## Syscalls disponíveis
 

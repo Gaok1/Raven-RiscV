@@ -168,15 +168,41 @@ a reminder about immediate ranges or special cases.
 
 Falcon’s assembler is intentionally lightweight so you can follow every step:
 
+- Two-pass assembly: pass 1 collects labels (including `.text`, `.data`, and `.bss` symbols); pass 2 resolves labels and encodes instructions.
 - Comments begin with `;` or `#`.
-- Instructions follow the `mnemonic rd, rs1, rs2` style with commas as separators.
-- Text, data, and BSS segments are all supported (`.text`, `.data`, `.bss`) along with directives such as `.word`, `.byte`, `.ascii`,
-  `.asciiz`, and `.space`.
-- Common pseudo-instructions expand to real RV32I encodings: `nop`, `mv`, `li` (12-bit immediates), `subi`, `j`/`jal`/`call`,
-  `jr`/`ret`, `la`, `push`, `pop`, `print`, `printStr`, `printStrLn`, `read`, `readByte`, `readHalf`, `readWord`.
+- Operands are comma-separated (`mnemonic op1, op2, ...`).
+- Supported sections/directives include `.text`, `.data`, `.bss`, `.section`, `.word`, `.byte`, `.half`, `.ascii`, `.asciz`/`.asciiz`, `.space`, and `.align`.
 
-If you ever wonder how a pseudo expands, assemble with `cargo run` and peek at the instruction trace; Falcon prints every decoded
-instruction so you can see the real opcodes.
+### Pseudo-instructions reference
+
+The table below documents the pseudo forms implemented by Falcon and the exact expansion shape used by the assembler.
+
+| Pseudo | Accepted format | Expansion (conceptual) | Notes |
+| --- | --- | --- | --- |
+| `nop` | `nop` | `addi x0, x0, 0` | No operands allowed. |
+| `mv` | `mv rd, rs` | `addi rd, rs, 0` | Register copy. |
+| `li` | `li rd, imm` | `addi rd, x0, imm` | Immediate must fit signed 12-bit (`-2048..2047`). |
+| `subi` | `subi rd, rs1, imm` | `addi rd, rs1, -imm` | `-imm` must fit signed 12-bit. |
+| `j` | `j label_or_imm` | `jal x0, label_or_imm` | 21-bit PC-relative immediate (bit 0 must be even). |
+| `call` | `call label_or_imm` | `jal ra, label_or_imm` | Saves return address in `ra` (`x1`). |
+| `jr` | `jr rs1` | `jalr x0, rs1, 0` | Indirect jump, no link. |
+| `ret` | `ret` | `jalr x0, ra, 0` | Return to address in `ra` (`x1`). |
+| `la` | `la rd, label` | `lui rd, hi(label)` + `addi rd, rd, lo(label)` | Uses hi/lo split with rounding (`+0x800`) so low part fits signed 12-bit. |
+| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 4(sp)` | Current Falcon expansion stores at old `sp` address. |
+| `pop` | `pop rd` | `lw rd, 4(sp)` + `addi sp, sp, 4` | Current Falcon expansion loads from old `sp` address. |
+| `print` | `print rd` | `addi a7, x0, 1` + `addi a0, rd, 0` + `ecall` | Prints register value. |
+| `printStr` | `printStr label` | `addi a7, x0, 2` + `la a0, label` + `ecall` | Prints NUL-terminated string (no newline). |
+| `printString` | `printString label` | same as `printStr label` | Legacy alias accepted by the assembler. |
+| `printStrLn` | `printStrLn label` | `addi a7, x0, 4` + `la a0, label` + `ecall` | Prints string and appends newline. |
+| `read` | `read label` | `addi a7, x0, 3` + `la a0, label` + `ecall` | Reads a full line into memory at `label` (NUL-terminated). |
+| `readByte` | `readByte label` | `addi a7, x0, 64` + `la a0, label` + `ecall` | Stores 1 byte at `label`. |
+| `readHalf` | `readHalf label` | `addi a7, x0, 65` + `la a0, label` + `ecall` | Stores 2 bytes (little-endian) at `label`. |
+| `readWord` | `readWord label` | `addi a7, x0, 66` + `la a0, label` + `ecall` | Stores 4 bytes (little-endian) at `label`. |
+
+> `jal` and `jalr` are real ISA instructions (not pseudos) and are also supported directly.
+> `jal` accepts both `jal label` (implicit `rd=ra`) and `jal rd, label`.
+
+If you want to inspect the final expansion in practice, assemble with `cargo run` and check the decoded instruction trace in the run view.
 
 ## Syscalls you can try
 
