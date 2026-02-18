@@ -169,7 +169,6 @@ do imediato ou algum detalhe importante.
 
 O assembler do Falcon é propositalmente simples para que você consiga acompanhar cada etapa:
 
-- Montagem em duas passagens: a 1ª coleta rótulos (`.text`, `.data` e `.bss`); a 2ª resolve rótulos e codifica instruções.
 - Comentários começam com `;` ou `#`.
 - Operandos são separados por vírgula (`mnemonic op1, op2, ...`).
 - Seções/diretivas suportadas incluem `.text`, `.data`, `.bss`, `.section`, `.word`, `.byte`, `.half`, `.ascii`, `.asciz`/`.asciiz`, `.space` e `.align`.
