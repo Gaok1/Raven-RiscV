@@ -168,7 +168,6 @@ a reminder about immediate ranges or special cases.
 
 Falcon’s assembler is intentionally lightweight so you can follow every step:
 
-- Two-pass assembly: pass 1 collects labels (including `.text`, `.data`, and `.bss` symbols); pass 2 resolves labels and encodes instructions.
 - Comments begin with `;` or `#`.
 - Operands are comma-separated (`mnemonic op1, op2, ...`).
 - Supported sections/directives include `.text`, `.data`, `.bss`, `.section`, `.word`, `.byte`, `.half`, `.ascii`, `.asciz`/`.asciiz`, `.space`, and `.align`.
@@ -188,8 +187,8 @@ The table below documents the pseudo forms implemented by Falcon and the exact e
 | `jr` | `jr rs1` | `jalr x0, rs1, 0` | Indirect jump, no link. |
 | `ret` | `ret` | `jalr x0, ra, 0` | Return to address in `ra` (`x1`). |
 | `la` | `la rd, label` | `lui rd, hi(label)` + `addi rd, rd, lo(label)` | Uses hi/lo split with rounding (`+0x800`) so low part fits signed 12-bit. |
-| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 4(sp)` | Current Falcon expansion stores at old `sp` address. |
-| `pop` | `pop rd` | `lw rd, 4(sp)` + `addi sp, sp, 4` | Current Falcon expansion loads from old `sp` address. |
+| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 4(sp)` | store the `rs` value at the stack and decreases `sp` by 4 |
+| `pop` | `pop rd` | `lw rd, 4(sp)` + `addi sp, sp, 4` | increases `sp` by 4 and load the value at `rd` |
 | `print` | `print rd` | `addi a7, x0, 1` + `addi a0, rd, 0` + `ecall` | Prints register value. |
 | `printStr` | `printStr label` | `addi a7, x0, 2` + `la a0, label` + `ecall` | Prints NUL-terminated string (no newline). |
 | `printString` | `printString label` | same as `printStr label` | Legacy alias accepted by the assembler. |
