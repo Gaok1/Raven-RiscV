@@ -171,7 +171,6 @@ do imediato ou algum detalhe importante.
 
 O assembler do Falcon é direto justamente para que você acompanhe cada passo:
 
-- Duas passagens: a primeira coleta rótulos, a segunda resolve e codifica as instruções.
 - Comentários começam em `;` ou `#`.
 - As instruções seguem `mnemonic rd, rs1, rs2`, com vírgulas separando os operandos.
 - Segmentos `.text`, `.data` e `.bss` são aceitos, junto com diretivas como `.word`, `.byte`, `.ascii`, `.asciiz` e `.space`.
