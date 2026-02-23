@@ -146,7 +146,7 @@ fn pretty_instr(i: &falcon::instruction::Instruction) -> String {
         Jal { rd, imm } => format!("jal  {}, {imm}", reg_name(rd)),
         Jalr { rd, rs1, imm } => format!("jalr {}, {}, {imm}", reg_name(rd), reg_name(rs1)),
         Ecall => "ecall".to_string(),
-        Halt => "halt".to_string(),
+        Ebreak | Halt => "ebreak".to_string(),
     }
 }
 
@@ -187,4 +187,3 @@ fn reg_name(i: u8) -> &'static str {
         _ => "",
     }
 }
-

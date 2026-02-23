@@ -543,7 +543,7 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         Jal { rd, imm } => format_single_reg_imm("jal", rd, imm),
         Jalr { rd, rs1, imm } => format_reg_imm("jalr", rd, rs1, imm),
         Ecall => "ecall".to_string(),
-        Halt => "halt".to_string(),
+        Ebreak | Halt => "ebreak".to_string(),
     }
 }
 

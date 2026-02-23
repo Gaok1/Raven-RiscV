@@ -632,6 +632,10 @@ fn parse_instr(
             if !ops.is_empty() { return Err("ecall takes no operands".into()); }
             Ok(Ecall)
         }
+        "ebreak" => {
+            if !ops.is_empty() { return Err("ebreak takes no operands".into()); }
+            Ok(Ebreak)
+        }
         "halt" => {
             if !ops.is_empty() { return Err("halt takes no operands".into()); }
             Ok(Halt)
@@ -640,4 +644,3 @@ fn parse_instr(
         _ => Err(format!("unsupported mnemonic: {mnemonic}")),
     }
 }
-

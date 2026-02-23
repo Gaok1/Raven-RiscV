@@ -126,8 +126,8 @@ pub fn step<B: Bus>(
             }
             return Ok(cont);
         }
-        Instruction::Halt => {
-            console.push_error(format!("HALT at 0x{pc:08X}"));
+        Instruction::Ebreak | Instruction::Halt => {
+            console.push_error(format!("EBREAK/HALT at 0x{pc:08X}"));
             return Ok(false);
         }
         _ => {}
@@ -361,6 +361,31 @@ mod tests {
         let inst = encoder::encode(Instruction::Halt).unwrap();
         mem.store32(0, inst).unwrap();
         assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
+    }
+
+    #[test]
+    fn ebreak_halts() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(4);
+        let mut console = crate::ui::Console::default();
+        let inst = encoder::encode(Instruction::Ebreak).unwrap();
+        mem.store32(0, inst).unwrap();
+        assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
+    }
+
+    #[test]
+    fn halt_and_ebreak_encode_same() {
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        let ebreak = encoder::encode(Instruction::Ebreak).unwrap();
+        assert_eq!(halt, 0x0010_0073);
+        assert_eq!(ebreak, 0x0010_0073);
+        assert_eq!(halt, ebreak);
+    }
+
+    #[test]
+    fn decode_ebreak_is_canonical() {
+        let inst = crate::falcon::decoder::decode(0x0010_0073).unwrap();
+        assert!(matches!(inst, Instruction::Ebreak));
     }
 
     #[test]

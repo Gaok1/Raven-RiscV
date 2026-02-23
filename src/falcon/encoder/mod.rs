@@ -104,7 +104,7 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
 
         Jalr{rd,rs1,imm} => i(imm, rs1 as u32, 0x0, rd as u32, OPC_JALR as u32),
 
-        Ecall => 0x00000073,  // SYSTEM/ECALL
-        Halt => 0x00100073,   // SYSTEM/HALT
+        Ecall => 0x0000_0073,          // SYSTEM/ECALL
+        Ebreak | Halt => 0x0010_0073,  // SYSTEM/EBREAK (alias: HALT)
     })
 }

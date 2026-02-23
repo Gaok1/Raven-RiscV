@@ -32,7 +32,7 @@ use in class or during workshops.
 | Stores | `SB`, `SH`, `SW` |
 | Branches | `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU` |
 | Upper / jumps | `LUI`, `AUIPC`, `JAL`, `JALR` |
-| System | `ECALL`, `HALT` |
+| System | `ECALL`, `EBREAK` (alias: `HALT`) |
 
 Division by zero is treated as a teaching moment: `DIV`, `DIVU`, `REM`, and `REMU` halt the emulator with a descriptive error instead
 of following the architected “divide-by-zero” results. The interruption makes it obvious something unexpected happened.
@@ -162,7 +162,8 @@ a reminder about immediate ranges or special cases.
 
 **`JALR` (`0x67`):** uses `funct3 = 0x0`.
 
-**System (`0x73`):** Falcon implements two encodings: `ECALL` (`0x00000073`) and `HALT` (`0x00100073`).
+**System (`0x73`):** Falcon implements two encodings: `ECALL` (`0x00000073`) and `EBREAK` (`0x00100073`). The assembler accepts
+`halt` as an alias for `ebreak`.
 
 ## Assembler behaviour and pseudo-instructions
 

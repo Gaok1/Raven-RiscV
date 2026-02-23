@@ -33,6 +33,20 @@ fn call_expands_to_jal_ra() {
 }
 
 #[test]
+fn ebreak_is_alias_of_halt() {
+    let prog_halt = assemble(".text\nhalt", 0).expect("assemble halt");
+    let prog_ebreak = assemble(".text\nebreak", 0).expect("assemble ebreak");
+
+    assert_eq!(prog_halt.text, prog_ebreak.text);
+    assert_eq!(prog_ebreak.text.len(), 1);
+    assert_eq!(
+        prog_ebreak.text[0],
+        encode(Instruction::Ebreak).expect("encode ebreak")
+    );
+    assert_eq!(prog_ebreak.text[0], 0x0010_0073);
+}
+
+#[test]
 fn push_expands_correctly() {
     let asm = ".text\npush a0";
     let prog = assemble(asm, 0).expect("assemble");
