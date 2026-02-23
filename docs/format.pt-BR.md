@@ -32,7 +32,7 @@ amigável para aulas e oficinas.
 | Stores | `SB`, `SH`, `SW` |
 | Branches | `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU` |
 | Superiores / saltos | `LUI`, `AUIPC`, `JAL`, `JALR` |
-| Sistema | `ECALL`, `HALT` |
+| Sistema | `ECALL`, `EBREAK` (alias: `HALT`) |
 
 Divisão por zero vira oportunidade de aprendizado: `DIV`, `DIVU`, `REM` e `REMU` encerram o emulador com uma mensagem clara em vez
 do resultado “arquitetado”. A interrupção evidencia que algo inesperado ocorreu.
@@ -162,7 +162,8 @@ do imediato ou algum detalhe importante.
 
 **`JALR` (`0x67`):** usa `funct3 = 0x0`.
 
-**System (`0x73`):** o Falcon implementa dois códigos: `ECALL` (`0x00000073`) e `HALT` (`0x00100073`).
+**System (`0x73`):** o Falcon implementa dois códigos: `ECALL` (`0x00000073`) e `EBREAK` (`0x00100073`). O assembler aceita
+`halt` como alias de `ebreak`.
 
 <a id="comportamento-do-assembler-e-pseudoinstrucoes"></a>
 ## Comportamento do assembler e pseudoinstruções

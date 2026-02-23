@@ -67,7 +67,7 @@ pub(super) fn decode_auipc(word:u32)->Result<Instruction,FalconError>{
 pub(super) fn decode_system(word: u32) -> Result<Instruction, FalconError> {
     match word {
         0x0000_0073 => Ok(Instruction::Ecall),
-        0x0010_0073 => Ok(Instruction::Halt),
+        0x0010_0073 => Ok(Instruction::Ebreak),
         _ => Err(FalconError::Decode("Unknown system instruction")),
     }
 }

@@ -114,7 +114,8 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
 
     // System
     push("SYS", "ecall", "ecall", "System call. a7 selects service; a0 holds arg/result" );
-    push("SYS", "halt",  "halt",  "Stop execution" );
+    push("SYS", "ebreak", "ebreak", "Stop execution (alias: halt)" );
+    push("SYS", "halt",  "halt",  "Alias of ebreak" );
 
     // Pseudo-instructions (assembler)
     push("Pseudo", "nop",   "nop",               "No operation" );
@@ -236,7 +237,8 @@ pub fn docs_total_rows() -> usize {
     push("I", "jalr", "jalr rd, rs1, imm",  "Jump to rs1+imm & ~1; rd=return addr" );
     // System
     push("SYS", "ecall", "ecall", "System call. a7 selects service; a0 holds arg/result" );
-    push("SYS", "halt",  "halt",  "Stop execution" );
+    push("SYS", "ebreak", "ebreak", "Stop execution (alias: halt)" );
+    push("SYS", "halt",  "halt",  "Alias of ebreak" );
     // Pseudo-instructions (assembler)
     push("Pseudo", "nop",   "nop",               "No operation" );
     push("Pseudo", "mv",    "mv rd, rs",         "Move rd = rs (addi rd, rs, 0)" );
@@ -258,4 +260,3 @@ pub fn docs_total_rows() -> usize {
     push("Pseudo", "readWord",  "readWord label",       "Read number and store 4 bytes at label (little-endian)" );
     rows_all.len()
 }
-
