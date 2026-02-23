@@ -477,7 +477,7 @@ mod tests {
         let mut mem = Ram::new(4);
         let mut console = crate::ui::Console::default();
         cpu.write(10, 42);
-        cpu.write(17, 1);
+        cpu.write(17, 1000);
         let inst = encoder::encode(Instruction::Ecall).unwrap();
         mem.store32(0, inst).unwrap();
         assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
@@ -495,7 +495,7 @@ mod tests {
             mem.store8(addr + i as u32, *b).unwrap();
         }
         cpu.write(10, addr);
-        cpu.write(17, 2);
+        cpu.write(17, 1001);
         let inst = encoder::encode(Instruction::Ecall).unwrap();
         mem.store32(0, inst).unwrap();
         assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
@@ -510,7 +510,7 @@ mod tests {
         console.push_input("hi");
         let addr = 8u32;
         cpu.write(10, addr);
-        cpu.write(17, 3);
+        cpu.write(17, 1003);
         let inst = encoder::encode(Instruction::Ecall).unwrap();
         mem.store32(0, inst).unwrap();
 
@@ -527,7 +527,7 @@ mod tests {
         let mut console = crate::ui::Console::default();
         let addr = 8u32;
         cpu.write(10, addr);
-        cpu.write(17, 3);
+        cpu.write(17, 1003);
         let ecall = encoder::encode(Instruction::Ecall).unwrap();
         let halt = encoder::encode(Instruction::Halt).unwrap();
         mem.store32(0, ecall).unwrap();
@@ -544,5 +544,69 @@ mod tests {
         assert_eq!(mem.load8(addr + 2).unwrap(), 0);
 
         assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
+    }
+
+    #[test]
+    fn linux_write_writes_stdout() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        let mut console = crate::ui::Console::default();
+
+        let addr = 8u32;
+        let bytes = b"hi\n";
+        for (i, b) in bytes.iter().enumerate() {
+            mem.store8(addr + i as u32, *b).unwrap();
+        }
+
+        cpu.write(17, 64); // write
+        cpu.write(10, 1); // fd=stdout
+        cpu.write(11, addr); // buf
+        cpu.write(12, bytes.len() as u32); // count
+
+        let ecall = encoder::encode(Instruction::Ecall).unwrap();
+        mem.store32(0, ecall).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.stdout, bytes);
+        assert_eq!(cpu.read(10), bytes.len() as u32);
+    }
+
+    #[test]
+    fn linux_read_reads_line() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        let mut console = crate::ui::Console::default();
+        console.push_input("hi");
+
+        let addr = 8u32;
+        cpu.write(17, 63); // read
+        cpu.write(10, 0); // fd=stdin
+        cpu.write(11, addr); // buf
+        cpu.write(12, 8); // count
+
+        let ecall = encoder::encode(Instruction::Ecall).unwrap();
+        mem.store32(0, ecall).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.read(10), 3);
+        assert_eq!(mem.load8(addr).unwrap(), b'h');
+        assert_eq!(mem.load8(addr + 1).unwrap(), b'i');
+        assert_eq!(mem.load8(addr + 2).unwrap(), b'\n');
+    }
+
+    #[test]
+    fn linux_exit_sets_exit_code() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(4);
+        let mut console = crate::ui::Console::default();
+
+        cpu.write(17, 93); // exit
+        cpu.write(10, 7); // status
+
+        let ecall = encoder::encode(Instruction::Ecall).unwrap();
+        mem.store32(0, ecall).unwrap();
+
+        assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.exit_code, Some(7));
     }
 }

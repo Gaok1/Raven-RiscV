@@ -451,7 +451,7 @@ impl App {
         if !alive {
             self.is_running = false;
             if !self.console.reading {
-                self.faulted = true;
+                self.faulted = self.cpu.exit_code.is_none();
             }
         }
 
