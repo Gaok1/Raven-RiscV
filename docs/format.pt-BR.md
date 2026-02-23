@@ -191,14 +191,14 @@ A tabela abaixo documenta os formatos aceitos no Falcon e a forma exata (conceit
 | `la` | `la rd, label` | `lui rd, hi(label)` + `addi rd, rd, lo(label)` | Usa divisão hi/lo com arredondamento (`+0x800`) para caber em 12 bits com sinal no low. |
 | `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 4(sp)` | Guarda o valor de `rs` na pilha em `sp` e subtrai `sp` em 4|
 | `pop` | `pop rd` | `lw rd, 4(sp)` + `addi sp, sp, 4` | Aumenta `sp` em 4 e guarda o valor em `rd`|
-| `print` | `print rd` | `addi a7, x0, 1` + `addi a0, rd, 0` + `ecall` | Imprime valor de registrador. |
-| `printStr` | `printStr label` | `addi a7, x0, 2` + `la a0, label` + `ecall` | Imprime string NUL-terminada (sem quebra de linha). |
+| `print` | `print rd` | `addi a7, x0, 1000` + `addi a0, rd, 0` + `ecall` | Imprime valor de registrador. |
+| `printStr` | `printStr label` | `addi a7, x0, 1001` + `la a0, label` + `ecall` | Imprime string NUL-terminada (sem quebra de linha). |
 | `printString` | `printString label` | igual a `printStr label` | Alias legado aceito pelo assembler. |
-| `printStrLn` | `printStrLn label` | `addi a7, x0, 4` + `la a0, label` + `ecall` | Imprime string e adiciona quebra de linha. |
-| `read` | `read label` | `addi a7, x0, 3` + `la a0, label` + `ecall` | Lê uma linha inteira para memória em `label` (NUL-terminada). |
-| `readByte` | `readByte label` | `addi a7, x0, 64` + `la a0, label` + `ecall` | Grava 1 byte em `label`. |
-| `readHalf` | `readHalf label` | `addi a7, x0, 65` + `la a0, label` + `ecall` | Grava 2 bytes (little-endian) em `label`. |
-| `readWord` | `readWord label` | `addi a7, x0, 66` + `la a0, label` + `ecall` | Grava 4 bytes (little-endian) em `label`. |
+| `printStrLn` | `printStrLn label` | `addi a7, x0, 1002` + `la a0, label` + `ecall` | Imprime string e adiciona quebra de linha. |
+| `read` | `read label` | `addi a7, x0, 1003` + `la a0, label` + `ecall` | Lê uma linha inteira para memória em `label` (NUL-terminada). |
+| `readByte` | `readByte label` | `addi a7, x0, 1010` + `la a0, label` + `ecall` | Grava 1 byte em `label`. |
+| `readHalf` | `readHalf label` | `addi a7, x0, 1011` + `la a0, label` + `ecall` | Grava 2 bytes (little-endian) em `label`. |
+| `readWord` | `readWord label` | `addi a7, x0, 1012` + `la a0, label` + `ecall` | Grava 4 bytes (little-endian) em `label`. |
 
 > `jal` e `jalr` são instruções reais da ISA (não pseudo) e também são suportadas diretamente.
 > Em `jal`, você pode usar `jal label` (com `rd=ra` implícito) ou `jal rd, label`.
@@ -207,19 +207,135 @@ Para observar a expansão final em execução, rode `cargo run`, monte o program
 
 ## Syscalls disponíveis
 
-Todas as chamadas usam `a7` para selecionar o serviço e os registradores de argumento padrão para dados.
+O Falcon suporta um ABI estilo Linux (mínimo) e algumas extensões didáticas do próprio Falcon.
 
-| Valor em `a7` | Comportamento |
-| --- | --- |
-| `1` | `print rd`: imprime o valor do registrador `rd` (o número do registrador vem em `a0`). |
-| `2` | `printStr label`: imprime uma string NUL-terminada sem quebra de linha. |
-| `3` | `read label`: lê uma linha da entrada padrão e armazena em `label` (com NUL ao final). |
-| `4` | `printStrLn label`: imprime a string NUL-terminada e adiciona uma quebra de linha. |
-| `64` | `readByte label`: aceita número decimal ou hexadecimal (`0x`) e grava um byte. |
-| `65` | `readHalf label`: mesma leitura, gravando dois bytes (little-endian). |
-| `66` | `readWord label`: idem, armazenando quatro bytes (little-endian). |
+### ABI (estilo Linux)
 
-Nos modos de leitura, o Falcon insiste até receber um valor válido para o tamanho pedido. Entradas inválidas geram uma mensagem
+- `a7` (`x17`): número do syscall
+- `a0..a5` (`x10..x15`): argumentos
+- retorno em `a0` (`x10`) (valores negativos significam `-errno`, representados como `i32 as u32`)
+
+### Como usar syscalls (mini tutorial)
+
+1) Coloque o número do syscall em `a7`.
+2) Coloque os argumentos em `a0..a5`.
+3) Execute `ecall`.
+4) Leia o retorno em `a0`.
+
+O Falcon implementa só um subconjunto pequeno. Quando um syscall não existe, o Falcon para a execução e mostra uma mensagem no
+console (isso ajuda no ensino, porque o erro fica explícito).
+
+#### Retornos e erros
+
+- Em sucesso, o syscall retorna um valor **não-negativo** em `a0` (por exemplo, quantos bytes foram lidos/escritos).
+- Em erro, o Falcon usa o padrão Linux de `-errno` em `a0`. Internamente isso fica em `u32` (porque os registradores são `u32`):
+  `a0 = (-(errno as i32)) as u32`.
+
+### Syscalls Linux (subset suportado)
+
+| `a7` | Nome | Notas |
+| --- | --- | --- |
+| `63` | `read` | `a0=fd`, `a1=buf`, `a2=count` (somente fd=0). Lê bytes (por linha, adiciona `\n`). |
+| `64` | `write` | `a0=fd`, `a1=buf`, `a2=count` (fd=1/2). Escreve `count` bytes da memória. |
+| `93` | `exit` | `a0=status`. Encerra execução. |
+| `94` | `exit_group` | Igual a `exit` por enquanto. |
+
+#### Linux `write(64)`
+
+Argumentos:
+
+- `a0 = fd` (Falcon suporta `1` (stdout) e `2` (stderr); por enquanto ambos aparecem no console)
+- `a1 = buf` (ponteiro para bytes na memória)
+- `a2 = count` (quantidade de bytes para escrever)
+
+Retorno:
+
+- `a0 = bytes_written` ou `-errno`
+
+Exemplo curto (imprime "Hello!\\n" e sai):
+
+```asm
+.data
+msg: .ascii "Hello!"
+.byte 10          # '\n' (o Falcon não interpreta escapes dentro de .ascii/.asciz)
+
+.text
+    li a0, 1       # fd=stdout
+    la a1, msg     # buf
+    li a2, 7       # count
+    li a7, 64      # write
+    ecall
+
+    li a0, 0
+    li a7, 93      # exit
+    ecall
+```
+
+#### Linux `read(63)`
+
+Argumentos:
+
+- `a0 = fd` (Falcon suporta apenas `0`: stdin)
+- `a1 = buf` (ponteiro onde os bytes serão gravados)
+- `a2 = count` (máximo de bytes para ler)
+
+Retorno:
+
+- `a0 = bytes_read` ou `-errno`
+
+Notas importantes (simplificações didáticas):
+
+- A entrada vem do console da UI e é por linha. Quando há uma linha disponível, o Falcon adiciona `\n` ao final e entrega como bytes.
+- Se não há entrada, o Falcon pausa a execução (PC não avança) e fica aguardando o usuário digitar algo na UI.
+
+Exemplo curto (lê e faz echo):
+
+```asm
+.data
+buf: .space 64
+
+.text
+    li a0, 0       # fd=stdin
+    la a1, buf
+    li a2, 64
+    li a7, 63      # read
+    ecall
+
+    mv t0, a0      # n = bytes_read
+    li a0, 1       # fd=stdout
+    la a1, buf
+    mv a2, t0
+    li a7, 64      # write
+    ecall
+
+    li a0, 0
+    li a7, 93
+    ecall
+```
+
+#### Linux `exit(93)` / `exit_group(94)`
+
+Argumentos:
+
+- `a0 = status` (código de saída)
+
+Efeito:
+
+- Encerra a VM “normalmente” (isso não é fault na UI).
+
+### Extensões Falcon (usadas pelas pseudos)
+
+| `a7` | Nome | Usado por |
+| --- | --- | --- |
+| `1000` | `falcon_print_int` | `print rd` |
+| `1001` | `falcon_print_zstr` | `printStr` / `printString` |
+| `1002` | `falcon_print_zstr_ln` | `printStrLn` |
+| `1003` | `falcon_read_line_z` | `read label` |
+| `1010` | `falcon_read_u8` | `readByte label` |
+| `1011` | `falcon_read_u16` | `readHalf label` |
+| `1012` | `falcon_read_u32` | `readWord label` |
+
+Nas extensões `read*` do Falcon, ele insiste até receber um valor válido para o tamanho pedido. Entradas inválidas geram uma mensagem
 amigável e o PC **não** avança, destacando que a execução está em pausa.
 
 Pronto para ir além? Retorne ao [Tutorial-pt](Tutorial-pt.md) para ver exemplos guiados ou explore `Program Examples/` e enxergue

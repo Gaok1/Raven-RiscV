@@ -129,7 +129,7 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
     push("Pseudo", "la",    "la rd, label",      "Load address of label into rd (lui/addi). label: data or instruction label" );
     push("Pseudo", "push",  "push rs",           "sp -= 4; store rs at 4(sp)" );
     push("Pseudo", "pop",   "pop rd",            "load rd from 0(sp); sp += 4" );
-    push("Pseudo", "print",     "print rd",              "Print integer in rd (ecall a7=1, a0=rd)" );
+    push("Pseudo", "print",     "print rd",              "Print integer in rd (ecall a7=1000, a0=value)" );
     push("Pseudo", "printStr",  "printStr label",       "Print NUL string at label without newline (data label)" );
     push("Pseudo", "printStrLn","printStrLn label",     "Print NUL string at label and newline (data label)" );
     push("Pseudo", "read",      "read label",            "Read line into memory at label; NUL-terminate (data label)" );
@@ -251,7 +251,7 @@ pub fn docs_total_rows() -> usize {
     push("Pseudo", "la",    "la rd, label",      "Load address of label into rd (lui/addi). label: data or instruction label" );
     push("Pseudo", "push",  "push rs",           "sp -= 4; store rs at 4(sp)" );
     push("Pseudo", "pop",   "pop rd",            "load rd from 0(sp); sp += 4" );
-    push("Pseudo", "print",     "print rd",              "Print integer in rd (ecall a7=1, a0=rd)" );
+    push("Pseudo", "print",     "print rd",              "Print integer in rd (ecall a7=1000, a0=value)" );
     push("Pseudo", "printStr",  "printStr label",       "Print NUL string at label without newline (data label)" );
     push("Pseudo", "printStrLn","printStrLn label",     "Print NUL string at label and newline (data label)" );
     push("Pseudo", "read",      "read label",            "Read line into memory at label; NUL-terminate (data label)" );

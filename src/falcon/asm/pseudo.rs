@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::falcon::instruction::Instruction;
 
-use super::utils::{check_signed, check_u_imm, parse_imm, parse_reg, split_operands};
+use super::utils::{check_signed, check_u_imm, parse_reg, split_operands};
 
 pub(crate) fn parse_la(
     s: &str,
@@ -98,7 +98,7 @@ pub(crate) fn parse_print(s: &str) -> Result<Vec<Instruction>, String> {
         Instruction::Addi {
             rd: 17,
             rs1: 0,
-            imm: 1,
+            imm: 1000,
         },
         Instruction::Addi {
             rd: 10,
@@ -127,7 +127,7 @@ pub(crate) fn parse_print_str(
         Instruction::Addi {
             rd: 17,
             rs1: 0,
-            imm: 2,
+            imm: 1001,
         },
         i1,
         i2,
@@ -150,7 +150,7 @@ pub(crate) fn parse_print_strln(
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 4 },
+        Instruction::Addi { rd: 17, rs1: 0, imm: 1002 },
         i1,
         i2,
         Instruction::Ecall,
@@ -175,7 +175,7 @@ pub(crate) fn parse_read(
         Instruction::Addi {
             rd: 17,
             rs1: 0,
-            imm: 3,
+            imm: 1003,
         },
         i1,
         i2,
@@ -187,7 +187,7 @@ pub(crate) fn parse_read_byte(
     s: &str,
     labels: &HashMap<String, u32>,
 ) -> Result<Vec<Instruction>, String> {
-    // "readByte label" -> a7=64; a0=addr; ecall
+    // "readByte label" -> a7=1010; a0=addr; ecall
     let mut parts = s.split_whitespace();
     parts.next();
     let rest = parts.collect::<Vec<_>>().join(" ");
@@ -198,7 +198,7 @@ pub(crate) fn parse_read_byte(
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 64 },
+        Instruction::Addi { rd: 17, rs1: 0, imm: 1010 },
         i1, i2, Instruction::Ecall,
     ])
 }
@@ -207,7 +207,7 @@ pub(crate) fn parse_read_half(
     s: &str,
     labels: &HashMap<String, u32>,
 ) -> Result<Vec<Instruction>, String> {
-    // "readHalf label" -> a7=65; a0=addr; ecall
+    // "readHalf label" -> a7=1011; a0=addr; ecall
     let mut parts = s.split_whitespace();
     parts.next();
     let rest = parts.collect::<Vec<_>>().join(" ");
@@ -218,7 +218,7 @@ pub(crate) fn parse_read_half(
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 65 },
+        Instruction::Addi { rd: 17, rs1: 0, imm: 1011 },
         i1, i2, Instruction::Ecall,
     ])
 }
@@ -227,7 +227,7 @@ pub(crate) fn parse_read_word(
     s: &str,
     labels: &HashMap<String, u32>,
 ) -> Result<Vec<Instruction>, String> {
-    // "readWord label" -> a7=66; a0=addr; ecall
+    // "readWord label" -> a7=1012; a0=addr; ecall
     let mut parts = s.split_whitespace();
     parts.next();
     let rest = parts.collect::<Vec<_>>().join(" ");
@@ -238,7 +238,7 @@ pub(crate) fn parse_read_word(
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 66 },
+        Instruction::Addi { rd: 17, rs1: 0, imm: 1012 },
         i1, i2, Instruction::Ecall,
     ])
 }

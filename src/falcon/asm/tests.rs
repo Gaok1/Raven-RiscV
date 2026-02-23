@@ -79,7 +79,7 @@ fn print_expands_correctly() {
     let asm = ".text\nprint a1";
     let prog = assemble(asm, 0).expect("assemble");
     assert_eq!(prog.text.len(), 3);
-    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1 })
+    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1000 })
         .expect("encode addi");
     let expected_mv = encode(Instruction::Addi { rd: 10, rs1: 11, imm: 0 })
         .expect("encode addi");
@@ -104,7 +104,7 @@ fn print_string_label_expands_correctly() {
     let asm = ".data\nmsg: .asciz \"hi\"\n.text\nprintString msg";
     let prog = assemble(asm, 0).expect("assemble");
     assert_eq!(prog.text.len(), 4);
-    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 2 })
+    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1001 })
         .expect("encode addi");
     let expected_lui = encode(Instruction::Lui { rd: 10, imm: 0x1000 })
         .expect("encode lui");
@@ -122,7 +122,7 @@ fn read_label_expands_correctly() {
     let asm = ".data\nbuf: .space 4\n.text\nread buf";
     let prog = assemble(asm, 0).expect("assemble");
     assert_eq!(prog.text.len(), 4);
-    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 3 })
+    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1003 })
         .expect("encode addi");
     let expected_lui = encode(Instruction::Lui { rd: 10, imm: 0x1000 })
         .expect("encode lui");
