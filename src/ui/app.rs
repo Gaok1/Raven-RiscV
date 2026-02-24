@@ -52,12 +52,6 @@ pub(super) enum RunButton {
     State,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub(super) enum Lang {
-    EN,
-    PT,
-}
-
 pub struct App {
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
@@ -117,9 +111,6 @@ pub struct App {
 
     // Docs state
     pub(super) docs_scroll: usize,
-
-    // Language
-    pub(super) lang: Lang,
 
     // Mouse tracking
     pub(super) mouse_x: u16,
@@ -189,7 +180,6 @@ impl App {
             show_exit_popup: false,
             should_quit: false,
             docs_scroll: 0,
-            lang: Lang::EN,
             mouse_x: 0,
             mouse_y: 0,
             hover_tab: None,
@@ -293,6 +283,10 @@ impl App {
                 self.diag_msg = Some(e.msg.clone());
                 self.diag_line_text = self.editor.lines.get(e.line).cloned();
                 self.last_compile_ok = Some(false);
+                let line = e.line + 1;
+                let text = self.diag_line_text.as_deref().unwrap_or("");
+                let err = self.diag_msg.as_deref().unwrap_or("");
+                self.last_assemble_msg = Some(format!("Error line {}: {} ({})", line, text, err));
             }
         }
         self.editor_dirty = false;

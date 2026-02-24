@@ -331,6 +331,7 @@ fn exec_stores<B: Bus>(
 }
 
 // em src/falcon/exec.rs (logo abaixo de `step`)
+#[allow(dead_code)]
 pub fn run<B: crate::falcon::memory::Bus>(
     cpu: &mut crate::falcon::registers::Cpu,
     mem: &mut B,

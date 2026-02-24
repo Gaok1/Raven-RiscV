@@ -1,5 +1,5 @@
 use crate::ui::{
-    app::{App, EditorMode, FormatMode, MemRegion, RunButton, Tab, Lang},
+    app::{App, EditorMode, FormatMode, MemRegion, RunButton, Tab},
     editor::Editor,
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -7,7 +7,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use rfd::FileDialog as OSFileDialog;
 
 use super::max_regs_scroll;
-use crate::ui::view::docs::docs_total_rows;
+use crate::ui::view::docs::docs_body_line_count;
 
 pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
@@ -23,18 +23,18 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.hover_run_button = None;
     if me.row == area.y + 1 {
         let x = me.column.saturating_sub(area.x + 1);
-        let t_editor = crate::ui::i18n::T::new("Editor", "Editor");
-        let t_run = crate::ui::i18n::T::new("Run", "Run");
-        let t_docs = crate::ui::i18n::T::new("Docs", "Docs");
         let titles: [(&str, Tab); 3] = [
-            (t_editor.get(app.lang), Tab::Editor),
-            (t_run.get(app.lang), Tab::Run),
-            (t_docs.get(app.lang), Tab::Docs),
+            ("Editor", Tab::Editor),
+            ("Run", Tab::Run),
+            ("Docs", Tab::Docs),
         ];
-        let divider = " │ ".len() as u16;
+        let divider = 3u16; // " │ "
+        // Tabs widget default padding: one space on each side
+        let pad_left = 1u16;
+        let pad_right = 1u16;
         let mut pos: u16 = 0;
         for (i, (title, tab)) in titles.iter().enumerate() {
-            let w = title.len() as u16;
+            let w = pad_left + title.len() as u16 + pad_right;
             if x >= pos && x < pos + w {
                 app.hover_tab = Some(*tab);
                 if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -69,30 +69,6 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             }
         },
         _ => {}
-    }
-
-    // Docs: detect click on top-right language button
-    if let Tab::Docs = app.tab {
-        let root_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(5),
-                Constraint::Length(1),
-            ])
-            .split(area);
-        let docs_area = root_chunks[1];
-        // header is 1 row at top of docs_area
-        let header_y = docs_area.y;
-        let btn_width = 4u16; // "[EN]" or "[PT]"
-        let btn_x_start = docs_area.x + docs_area.width.saturating_sub(btn_width);
-        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left))
-            && me.row == header_y
-            && me.column >= btn_x_start
-            && me.column < btn_x_start + btn_width
-        {
-            app.lang = match app.lang { Lang::EN => Lang::PT, Lang::PT => Lang::EN };
-        }
     }
 
     if let Tab::Editor = app.tab {
@@ -458,7 +434,7 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn clamp_docs_scroll(app: &mut App, area: Rect) {
-    // Replicate the docs layout to get body area height
+    // Replicate the UI layout to get docs table viewport height
     let root_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -468,13 +444,19 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
         ])
         .split(area);
     let docs_area = root_chunks[1];
-    // In docs view, header is 1 row at top of docs_area; body is the rest
-    let body_height = docs_area.height.saturating_sub(1);
-    // Paragraph border consumes 2 rows; ASCII table consumes 4 overhead
-    let visible_rows = body_height.saturating_sub(2 + 4) as usize; // body - borders - ascii overhead
-    let total = docs_total_rows();
-    let max_start = total.saturating_sub(visible_rows);
-    if app.docs_scroll > max_start { app.docs_scroll = max_start; }
+    // Docs split: 2 meta lines + table
+    let table_h = docs_area.height.saturating_sub(2);
+    // Table fixed parts: top + header + header separator + bottom
+    let viewport_h = table_h.saturating_sub(4) as usize;
+    if viewport_h == 0 {
+        app.docs_scroll = 0;
+        return;
+    }
+    let total_body = docs_body_line_count(docs_area.width);
+    let max_start = total_body.saturating_sub(viewport_h);
+    if app.docs_scroll > max_start {
+        app.docs_scroll = max_start;
+    }
 }
 
 fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) {

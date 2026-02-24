@@ -78,7 +78,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
 }
 
 fn command_line() -> Line<'static> {
-    Line::from("Commands: s=step  r=run  p=pause  Ctrl+R=restart  Up/Down/PgUp/PgDn scroll")
+    Line::from("Commands: s=step  r=run  p=pause  R=restart  Up/Down/PgUp/PgDn scroll")
 }
 
 fn view_text(app: &App) -> &'static str {

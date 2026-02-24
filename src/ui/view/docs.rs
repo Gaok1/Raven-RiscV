@@ -1,262 +1,272 @@
+use comfy_table::{
+    presets::ASCII_BORDERS_ONLY, Cell as ACell, ContentArrangement, Row as ARow, Table as ATable,
+};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
-use std::cmp::min;
+use ratatui::widgets::Paragraph;
 
 use super::App;
-use crate::ui::app::Lang;
-use crate::ui::i18n::T;
 
-use comfy_table::{Table as ATable, Row as ARow, Cell as ACell, presets::ASCII_BORDERS_ONLY, ContentArrangement};
-
-pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
-    // Split header (1 row) and body
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(2)])
-        .split(area);
-
-    // Header: language toggle on the right
-    let lang_label = match app.lang { Lang::EN => "[EN]", Lang::PT => "[PT]" };
-    let btn_width = 4u16;
-    let header_area = chunks[0];
-    let btn_rect = Rect::new(
-        header_area.x + header_area.width.saturating_sub(btn_width),
-        header_area.y,
-        btn_width,
-        1,
-    );
-
-    // Draw left header hint
-    let header_hint = match app.lang {
-        Lang::EN => "Instruction Reference  •  Up/Down/PageUp/PageDown",
-        Lang::PT => "Referencia de Instrucoes  •  Cima/Baixo/PagUp/PagDn",
-    };
-    let left = Paragraph::new(header_hint);
-    f.render_widget(left, header_area);
-
-    // Draw language button
-    let button = Paragraph::new(Line::from(Span::styled(
-        lang_label,
-        Style::default().fg(Color::Black).bg(Color::LightYellow).add_modifier(Modifier::BOLD),
-    )));
-    f.render_widget(button, btn_rect);
-
-    // Body: build an ASCII table of instructions grouped by format
-    let title_t = T::new("Instruction Reference (EN)", "Referencia de Instrucoes (PT-BR)");
-    let h_format_t = T::new("Format", "Formato");
-    let h_mnemonic_t = T::new("Mnemonic", "Mnemonico");
-    let h_syntax_t = T::new("Syntax", "Sintaxe");
-    let h_desc_t = T::new("Description", "Descricao");
-
-    let mut rows_all: Vec<(String, String, String, String)> = Vec::new();
-    let mut push = |fmt: &str, mnem: &str, syn: &str, desc: &str| {
-        rows_all.push((fmt.to_string(), mnem.to_string(), syn.to_string(), desc.to_string()));
-    };
-
-    // R-type
-    push("R", "add",  "add rd, rs1, rs2", "rd = rs1 + rs2 (signed)" );
-    push("R", "sub",  "sub rd, rs1, rs2", "rd = rs1 - rs2 (signed)" );
-    push("R", "and",  "and rd, rs1, rs2", "rd = rs1 & rs2 (bitwise)" );
-    push("R", "or",   "or rd, rs1, rs2",  "rd = rs1 | rs2 (bitwise)" );
-    push("R", "xor",  "xor rd, rs1, rs2", "rd = rs1 ^ rs2 (bitwise)" );
-    push("R", "sll",  "sll rd, rs1, rs2", "rd = rs1 << (rs2 & 31)" );
-    push("R", "srl",  "srl rd, rs1, rs2", "rd = logical rs1 >> (rs2 & 31)" );
-    push("R", "sra",  "sra rd, rs1, rs2", "rd = arithmetic rs1 >> (rs2 & 31)" );
-    push("R", "slt",  "slt rd, rs1, rs2", "rd = 1 if rs1 < rs2 (signed) else 0" );
-    push("R", "sltu", "sltu rd, rs1, rs2", "rd = 1 if rs1 < rs2 (unsigned) else 0" );
-    // M extension
-    push("R(M)", "mul",    "mul rd, rs1, rs2",   "rd = (rs1 * rs2) low 32b" );
-    push("R(M)", "mulh",   "mulh rd, rs1, rs2",  "rd = (rs1 * rs2) high 32b signed" );
-    push("R(M)", "mulhsu", "mulhsu rd, rs1, rs2","rd = (signed rs1 * unsigned rs2) high 32b" );
-    push("R(M)", "mulhu",  "mulhu rd, rs1, rs2", "rd = (rs1 * rs2) high 32b unsigned" );
-    push("R(M)", "div",    "div rd, rs1, rs2",   "rd = rs1 / rs2 (signed)" );
-    push("R(M)", "divu",   "divu rd, rs1, rs2",  "rd = rs1 / rs2 (unsigned)" );
-    push("R(M)", "rem",    "rem rd, rs1, rs2",   "rd = rs1 % rs2 (signed)" );
-    push("R(M)", "remu",   "remu rd, rs1, rs2",  "rd = rs1 % rs2 (unsigned)" );
-
-    // I-type
-    push("I", "addi", "addi rd, rs1, imm",  "rd = rs1 + imm (12-bit signed)" );
-    push("I", "xori", "xori rd, rs1, imm",  "rd = rs1 ^ imm" );
-    push("I", "ori",  "ori rd, rs1, imm",   "rd = rs1 | imm" );
-    push("I", "andi", "andi rd, rs1, imm",  "rd = rs1 & imm" );
-    push("I", "slli", "slli rd, rs1, shamt","rd = rs1 << shamt (0..31)" );
-    push("I", "srli", "srli rd, rs1, shamt","rd = logical rs1 >> shamt" );
-    push("I", "srai", "srai rd, rs1, shamt","rd = arithmetic rs1 >> shamt" );
-
-    // Loads
-    push("Load", "lb",  "lb rd, imm(rs1)",  "Load 1 byte signed from memory[rs1+imm]" );
-    push("Load", "lh",  "lh rd, imm(rs1)",  "Load 2 bytes signed from memory[rs1+imm]" );
-    push("Load", "lw",  "lw rd, imm(rs1)",  "Load 4 bytes from memory[rs1+imm]" );
-    push("Load", "lbu", "lbu rd, imm(rs1)", "Load 1 byte unsigned from memory[rs1+imm]" );
-    push("Load", "lhu", "lhu rd, imm(rs1)", "Load 2 bytes unsigned from memory[rs1+imm]" );
-
-    // Stores
-    push("Store", "sb", "sb rs2, imm(rs1)", "Store low 1 byte of rs2 to memory[rs1+imm]" );
-    push("Store", "sh", "sh rs2, imm(rs1)", "Store low 2 bytes of rs2 to memory[rs1+imm]" );
-    push("Store", "sw", "sw rs2, imm(rs1)", "Store 4 bytes of rs2 to memory[rs1+imm]" );
-
-    // Branches
-    push("Branch", "beq",  "beq rs1, rs2, label",  "Branch if rs1==rs2. label: instruction label" );
-    push("Branch", "bne",  "bne rs1, rs2, label",  "Branch if rs1!=rs2. label: instruction label" );
-    push("Branch", "blt",  "blt rs1, rs2, label",  "Branch if rs1<rs2 (signed). label: instruction label" );
-    push("Branch", "bge",  "bge rs1, rs2, label",  "Branch if rs1>=rs2 (signed). label: instruction label" );
-    push("Branch", "bltu", "bltu rs1, rs2, label", "Branch if rs1<rs2 (unsigned). label: instruction label" );
-    push("Branch", "bgeu", "bgeu rs1, rs2, label", "Branch if rs1>=rs2 (unsigned). label: instruction label" );
-
-    // U-type
-    push("U", "lui",   "lui rd, imm20",  "rd = imm20 << 12 (upper 20 bits)" );
-    push("U", "auipc", "auipc rd, imm20","rd = PC + (imm20 << 12)" );
-
-    // Jumps
-    push("J", "jal",  "jal rd, label",      "Jump and link. rd=return addr; label: instruction label" );
-    push("I", "jalr", "jalr rd, rs1, imm",  "Jump to rs1+imm & ~1; rd=return addr" );
-
-    // System
-    push("SYS", "ecall", "ecall", "System call. a7 selects service; a0 holds arg/result" );
-    push("SYS", "ebreak", "ebreak", "Stop execution (alias: halt)" );
-    push("SYS", "halt",  "halt",  "Alias of ebreak" );
-
-    // Pseudo-instructions (assembler)
-    push("Pseudo", "nop",   "nop",               "No operation" );
-    push("Pseudo", "mv",    "mv rd, rs",         "Move rd = rs (addi rd, rs, 0)" );
-    push("Pseudo", "li",    "li rd, imm12",      "Load small immediate (12-bit) into rd" );
-    push("Pseudo", "subi",  "subi rd, rs1, imm", "rd = rs1 - imm (addi with negative)" );
-    push("Pseudo", "j",     "j label",           "Unconditional jump to label (instruction label)" );
-    push("Pseudo", "call",  "call label",        "Call subroutine (jal ra, label). label: instruction label" );
-    push("Pseudo", "jr",    "jr rs",             "Jump register (jalr x0, rs, 0)" );
-    push("Pseudo", "ret",   "ret",               "Return (jalr x0, ra, 0)" );
-    push("Pseudo", "la",    "la rd, label",      "Load address of label into rd (lui/addi). label: data or instruction label" );
-    push("Pseudo", "push",  "push rs",           "sp -= 4; store rs at 4(sp)" );
-    push("Pseudo", "pop",   "pop rd",            "load rd from 0(sp); sp += 4" );
-    push("Pseudo", "print",     "print rd",              "Print integer in rd (ecall a7=1000, a0=value)" );
-    push("Pseudo", "printStr",  "printStr label",       "Print NUL string at label without newline (data label)" );
-    push("Pseudo", "printStrLn","printStrLn label",     "Print NUL string at label and newline (data label)" );
-    push("Pseudo", "read",      "read label",            "Read line into memory at label; NUL-terminate (data label)" );
-    push("Pseudo", "readByte",  "readByte label",       "Read number (dec/0xhex) and store 1 byte at label" );
-    push("Pseudo", "readHalf",  "readHalf label",       "Read number and store 2 bytes at label (little-endian)" );
-    push("Pseudo", "readWord",  "readWord label",       "Read number and store 4 bytes at label (little-endian)" );
-
-    // Compute pagination: available inner height for the ASCII table
-    let body_area = chunks[1];
-    let inner_h = body_area.height.saturating_sub(2) as usize; // outer Paragraph borders
-    // ASCII table uses: top border + header + header border + rows + bottom border
-    // so data rows that fit = inner_h.saturating_sub(4)
-    let page_rows = inner_h.saturating_sub(4);
-    let total_rows = rows_all.len();
-    let max_start = total_rows.saturating_sub(page_rows);
-    let start = app.docs_scroll.min(max_start);
-    let end = min(total_rows, start + page_rows);
-
-    // Build ASCII table for this page
-    let mut t = ATable::new();
-    t.load_preset(ASCII_BORDERS_ONLY);
-    t.set_content_arrangement(ContentArrangement::Dynamic);
-    // Try to constrain table width to the inner width of Paragraph block
-    let inner_w = body_area.width.saturating_sub(2) as u16;
-    if inner_w > 0 { t.set_width(inner_w); }
-    t.set_header(ARow::from(vec![
-        ACell::new(h_format_t.get(app.lang)),
-        ACell::new(h_mnemonic_t.get(app.lang)),
-        ACell::new(h_syntax_t.get(app.lang)),
-        ACell::new(h_desc_t.get(app.lang)),
-    ]));
-    for (fmt, m, syn, desc) in rows_all[start..end].iter() {
-        t.add_row(ARow::from(vec![ACell::new(fmt), ACell::new(m), ACell::new(syn), ACell::new(desc)]));
-    }
-
-    let table_str = t.to_string();
-    let lines: Vec<Line> = table_str
-        .lines()
-        .map(|l| Line::raw(l.to_string()))
-        .collect();
-
-    let para = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(title_t.get(app.lang)));
-
-    f.render_widget(para, body_area);
+#[derive(Clone, Copy)]
+struct DocRow {
+    ty: &'static str,
+    mnemonic: &'static str,
+    operands: &'static str,
+    desc: &'static str,
+    expands: &'static str,
 }
 
-// Public helper: total number of data rows in Docs (for clamping scroll)
-pub fn docs_total_rows() -> usize {
-    let mut rows_all: Vec<(String, String, String, String)> = Vec::new();
-    let mut push = |fmt: &str, mnem: &str, syn: &str, desc: &str| {
-        rows_all.push((fmt.to_string(), mnem.to_string(), syn.to_string(), desc.to_string()));
+const DOCS: &[DocRow] = &[
+    // ---------- R-type ----------
+    DocRow { ty: "R", mnemonic: "add", operands: "rd, rs1, rs2", desc: "rd = rs1 + rs2 (signed)", expands: "" },
+    DocRow { ty: "R", mnemonic: "sub", operands: "rd, rs1, rs2", desc: "rd = rs1 - rs2 (signed)", expands: "" },
+    DocRow { ty: "R", mnemonic: "and", operands: "rd, rs1, rs2", desc: "rd = rs1 & rs2 (bitwise)", expands: "" },
+    DocRow { ty: "R", mnemonic: "or", operands: "rd, rs1, rs2", desc: "rd = rs1 | rs2 (bitwise)", expands: "" },
+    DocRow { ty: "R", mnemonic: "xor", operands: "rd, rs1, rs2", desc: "rd = rs1 ^ rs2 (bitwise)", expands: "" },
+    DocRow { ty: "R", mnemonic: "sll", operands: "rd, rs1, rs2", desc: "rd = rs1 << (rs2 & 31)", expands: "" },
+    DocRow { ty: "R", mnemonic: "srl", operands: "rd, rs1, rs2", desc: "rd = logical rs1 >> (rs2 & 31)", expands: "" },
+    DocRow { ty: "R", mnemonic: "sra", operands: "rd, rs1, rs2", desc: "rd = arithmetic rs1 >> (rs2 & 31)", expands: "" },
+    DocRow { ty: "R", mnemonic: "slt", operands: "rd, rs1, rs2", desc: "rd = 1 if rs1 < rs2 (signed) else 0", expands: "" },
+    DocRow { ty: "R", mnemonic: "sltu", operands: "rd, rs1, rs2", desc: "rd = 1 if rs1 < rs2 (unsigned) else 0", expands: "" },
+    // ---------- M extension ----------
+    DocRow { ty: "R(M)", mnemonic: "mul", operands: "rd, rs1, rs2", desc: "rd = (rs1 * rs2) low 32b", expands: "" },
+    DocRow { ty: "R(M)", mnemonic: "mulh", operands: "rd, rs1, rs2", desc: "rd = (rs1 * rs2) high 32b signed", expands: "" },
+    DocRow { ty: "R(M)", mnemonic: "mulhsu", operands: "rd, rs1, rs2", desc: "rd = (signed rs1 * unsigned rs2) high 32b", expands: "" },
+    DocRow { ty: "R(M)", mnemonic: "mulhu", operands: "rd, rs1, rs2", desc: "rd = (rs1 * rs2) high 32b unsigned", expands: "" },
+    DocRow { ty: "R(M)", mnemonic: "div", operands: "rd, rs1, rs2", desc: "rd = rs1 / rs2 (signed)", expands: "" },
+    DocRow { ty: "R(M)", mnemonic: "divu", operands: "rd, rs1, rs2", desc: "rd = rs1 / rs2 (unsigned)", expands: "" },
+    DocRow { ty: "R(M)", mnemonic: "rem", operands: "rd, rs1, rs2", desc: "rd = rs1 % rs2 (signed)", expands: "" },
+    DocRow { ty: "R(M)", mnemonic: "remu", operands: "rd, rs1, rs2", desc: "rd = rs1 % rs2 (unsigned)", expands: "" },
+    // ---------- I-type ----------
+    DocRow { ty: "I", mnemonic: "addi", operands: "rd, rs1, imm", desc: "rd = rs1 + imm (12-bit signed)", expands: "" },
+    DocRow { ty: "I", mnemonic: "xori", operands: "rd, rs1, imm", desc: "rd = rs1 ^ imm", expands: "" },
+    DocRow { ty: "I", mnemonic: "ori", operands: "rd, rs1, imm", desc: "rd = rs1 | imm", expands: "" },
+    DocRow { ty: "I", mnemonic: "andi", operands: "rd, rs1, imm", desc: "rd = rs1 & imm", expands: "" },
+    DocRow { ty: "I", mnemonic: "slti", operands: "rd, rs1, imm", desc: "rd = 1 if rs1 < imm (signed) else 0", expands: "" },
+    DocRow { ty: "I", mnemonic: "sltiu", operands: "rd, rs1, imm", desc: "rd = 1 if rs1 < imm (unsigned) else 0", expands: "" },
+    DocRow { ty: "I", mnemonic: "slli", operands: "rd, rs1, shamt", desc: "rd = rs1 << shamt (0..31)", expands: "" },
+    DocRow { ty: "I", mnemonic: "srli", operands: "rd, rs1, shamt", desc: "rd = logical rs1 >> shamt", expands: "" },
+    DocRow { ty: "I", mnemonic: "srai", operands: "rd, rs1, shamt", desc: "rd = arithmetic rs1 >> shamt", expands: "" },
+    // ---------- Loads ----------
+    DocRow { ty: "Load", mnemonic: "lb", operands: "rd, imm(rs1)", desc: "Load 1 byte signed from memory[rs1+imm]", expands: "" },
+    DocRow { ty: "Load", mnemonic: "lh", operands: "rd, imm(rs1)", desc: "Load 2 bytes signed from memory[rs1+imm]", expands: "" },
+    DocRow { ty: "Load", mnemonic: "lw", operands: "rd, imm(rs1)", desc: "Load 4 bytes from memory[rs1+imm]", expands: "" },
+    DocRow { ty: "Load", mnemonic: "lbu", operands: "rd, imm(rs1)", desc: "Load 1 byte unsigned from memory[rs1+imm]", expands: "" },
+    DocRow { ty: "Load", mnemonic: "lhu", operands: "rd, imm(rs1)", desc: "Load 2 bytes unsigned from memory[rs1+imm]", expands: "" },
+    // ---------- Stores ----------
+    DocRow { ty: "Store", mnemonic: "sb", operands: "rs2, imm(rs1)", desc: "Store low 1 byte of rs2 to memory[rs1+imm]", expands: "" },
+    DocRow { ty: "Store", mnemonic: "sh", operands: "rs2, imm(rs1)", desc: "Store low 2 bytes of rs2 to memory[rs1+imm]", expands: "" },
+    DocRow { ty: "Store", mnemonic: "sw", operands: "rs2, imm(rs1)", desc: "Store 4 bytes of rs2 to memory[rs1+imm]", expands: "" },
+    // ---------- Branches ----------
+    DocRow { ty: "Branch", mnemonic: "beq", operands: "rs1, rs2, label", desc: "Branch if rs1==rs2. label: instruction label", expands: "" },
+    DocRow { ty: "Branch", mnemonic: "bne", operands: "rs1, rs2, label", desc: "Branch if rs1!=rs2. label: instruction label", expands: "" },
+    DocRow { ty: "Branch", mnemonic: "blt", operands: "rs1, rs2, label", desc: "Branch if rs1<rs2 (signed). label: instruction label", expands: "" },
+    DocRow { ty: "Branch", mnemonic: "bge", operands: "rs1, rs2, label", desc: "Branch if rs1>=rs2 (signed). label: instruction label", expands: "" },
+    DocRow { ty: "Branch", mnemonic: "bltu", operands: "rs1, rs2, label", desc: "Branch if rs1<rs2 (unsigned). label: instruction label", expands: "" },
+    DocRow { ty: "Branch", mnemonic: "bgeu", operands: "rs1, rs2, label", desc: "Branch if rs1>=rs2 (unsigned). label: instruction label", expands: "" },
+    // ---------- U-type ----------
+    DocRow { ty: "U", mnemonic: "lui", operands: "rd, imm20", desc: "rd = imm20 << 12 (upper 20 bits)", expands: "" },
+    DocRow { ty: "U", mnemonic: "auipc", operands: "rd, imm20", desc: "rd = PC + (imm20 << 12)", expands: "" },
+    // ---------- Jumps ----------
+    DocRow { ty: "Jump", mnemonic: "jal", operands: "label | rd, label", desc: "Jump and link. If only label is given: rd=ra", expands: "" },
+    DocRow { ty: "Jump", mnemonic: "jalr", operands: "rd, rs1, imm", desc: "Jump to rs1+imm & ~1; rd=return addr", expands: "" },
+    // ---------- System ----------
+    DocRow { ty: "SYS", mnemonic: "ecall", operands: "", desc: "System call. a7 selects service; a0 holds arg/result", expands: "" },
+    DocRow { ty: "SYS", mnemonic: "ebreak", operands: "", desc: "Stop execution (debug break)", expands: "" },
+    DocRow { ty: "SYS", mnemonic: "halt", operands: "", desc: "Stop execution (alias of ebreak)", expands: "" },
+    // ---------- Pseudo-instructions ----------
+    DocRow { ty: "Pseudo", mnemonic: "nop", operands: "", desc: "No operation", expands: "addi x0, x0, 0" },
+    DocRow { ty: "Pseudo", mnemonic: "mv", operands: "rd, rs", desc: "Move rd = rs", expands: "addi rd, rs, 0" },
+    DocRow { ty: "Pseudo", mnemonic: "li", operands: "rd, imm12", desc: "Load small immediate (12-bit) into rd", expands: "addi rd, x0, imm" },
+    DocRow { ty: "Pseudo", mnemonic: "subi", operands: "rd, rs1, imm", desc: "rd = rs1 - imm", expands: "addi rd, rs1, -imm" },
+    DocRow { ty: "Pseudo", mnemonic: "j", operands: "label", desc: "Unconditional jump to label", expands: "jal x0, label" },
+    DocRow { ty: "Pseudo", mnemonic: "call", operands: "label", desc: "Call subroutine", expands: "jal ra, label" },
+    DocRow { ty: "Pseudo", mnemonic: "jr", operands: "rs", desc: "Jump register", expands: "jalr x0, rs, 0" },
+    DocRow { ty: "Pseudo", mnemonic: "ret", operands: "", desc: "Return", expands: "jalr x0, ra, 0" },
+    DocRow { ty: "Pseudo", mnemonic: "la", operands: "rd, label", desc: "Load address of label into rd", expands: "lui rd, hi; addi rd, rd, lo" },
+    DocRow { ty: "Pseudo", mnemonic: "push", operands: "rs", desc: "sp -= 4; store rs at 4(sp)", expands: "addi sp, sp, -4; sw rs, 4(sp)" },
+    DocRow { ty: "Pseudo", mnemonic: "pop", operands: "rd", desc: "load rd from 4(sp); sp += 4", expands: "lw rd, 4(sp); addi sp, sp, 4" },
+    DocRow { ty: "Pseudo", mnemonic: "print", operands: "rd", desc: "Print integer in rd (ecall a7=1000, a0=value)", expands: "addi a7, x0, 1000; addi a0, rd, 0; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "printStr", operands: "label", desc: "Print NUL string at label without newline", expands: "addi a7, x0, 1001; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "printStrLn", operands: "label", desc: "Print NUL string at label and newline", expands: "addi a7, x0, 1002; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "read", operands: "label", desc: "Read line into memory at label; NUL-terminate", expands: "addi a7, x0, 1003; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "readByte", operands: "label", desc: "Read number and store 1 byte at label", expands: "addi a7, x0, 1010; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "readHalf", operands: "label", desc: "Read number and store 2 bytes at label (little-endian)", expands: "addi a7, x0, 1011; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "readWord", operands: "label", desc: "Read number and store 4 bytes at label (little-endian)", expands: "addi a7, x0, 1012; lui a0, hi; addi a0, a0, lo; ecall" },
+];
+
+fn build_docs_table_string(width: u16) -> String {
+    let mut table = ATable::new();
+    table.load_preset(ASCII_BORDERS_ONLY);
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+    if width > 0 {
+        table.set_width(width);
+    }
+
+    table.set_header(ARow::from(vec![
+        ACell::new("Type"),
+        ACell::new("Mnemonic"),
+        ACell::new("Operands"),
+        ACell::new("Description"),
+        ACell::new("Expands"),
+    ]));
+
+    for r in DOCS {
+        table.add_row(ARow::from(vec![
+            ACell::new(r.ty),
+            ACell::new(r.mnemonic),
+            ACell::new(r.operands),
+            ACell::new(r.desc),
+            ACell::new(r.expands),
+        ]));
+    }
+
+    table.to_string()
+}
+
+fn is_register_token(token: &str) -> bool {
+    if let Some(n) = token.strip_prefix('x') {
+        if let Ok(v) = n.parse::<u8>() {
+            return v <= 31;
+        }
+    }
+
+    matches!(token, "ra" | "sp")
+        || (token.starts_with('a') && token[1..].parse::<u8>().is_ok_and(|v| v <= 7))
+        || (token.starts_with('t') && token[1..].parse::<u8>().is_ok_and(|v| v <= 6))
+        || (token.starts_with('s') && token[1..].parse::<u8>().is_ok_and(|v| v <= 11))
+}
+
+fn style_for_token(token: &str) -> Option<Style> {
+    match token {
+        "rd" => Some(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        "rs1" | "rs2" | "rs" => Some(Style::default().fg(Color::Cyan)),
+        "imm" | "imm12" | "imm20" | "shamt" | "hi" | "lo" => {
+            Some(Style::default().fg(Color::LightGreen))
+        }
+        "label" => Some(Style::default().fg(Color::Magenta)),
+        _ if is_register_token(token) => Some(Style::default().fg(Color::LightBlue)),
+        _ => None,
+    }
+}
+
+fn style_table_line(line: &str) -> Line<'_> {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut token = String::new();
+    let mut sep = String::new();
+
+    let flush_sep = |spans: &mut Vec<Span>, sep: &mut String| {
+        if !sep.is_empty() {
+            spans.push(Span::raw(std::mem::take(sep)));
+        }
     };
-    // Keep in sync with render_docs rows
-    // R-type
-    push("R", "add",  "add rd, rs1, rs2", "rd = rs1 + rs2 (signed)" );
-    push("R", "sub",  "sub rd, rs1, rs2", "rd = rs1 - rs2 (signed)" );
-    push("R", "and",  "and rd, rs1, rs2", "rd = rs1 & rs2 (bitwise)" );
-    push("R", "or",   "or rd, rs1, rs2",  "rd = rs1 | rs2 (bitwise)" );
-    push("R", "xor",  "xor rd, rs1, rs2", "rd = rs1 ^ rs2 (bitwise)" );
-    push("R", "sll",  "sll rd, rs1, rs2", "rd = rs1 << (rs2 & 31)" );
-    push("R", "srl",  "srl rd, rs1, rs2", "rd = logical rs1 >> (rs2 & 31)" );
-    push("R", "sra",  "sra rd, rs1, rs2", "rd = arithmetic rs1 >> (rs2 & 31)" );
-    push("R", "slt",  "slt rd, rs1, rs2", "rd = 1 if rs1 < rs2 (signed) else 0" );
-    push("R", "sltu", "sltu rd, rs1, rs2", "rd = 1 if rs1 < rs2 (unsigned) else 0" );
-    // M extension
-    push("R(M)", "mul",    "mul rd, rs1, rs2",   "rd = (rs1 * rs2) low 32b" );
-    push("R(M)", "mulh",   "mulh rd, rs1, rs2",  "rd = (rs1 * rs2) high 32b signed" );
-    push("R(M)", "mulhsu", "mulhsu rd, rs1, rs2","rd = (signed rs1 * unsigned rs2) high 32b" );
-    push("R(M)", "mulhu",  "mulhu rd, rs1, rs2", "rd = (rs1 * rs2) high 32b unsigned" );
-    push("R(M)", "div",    "div rd, rs1, rs2",   "rd = rs1 / rs2 (signed)" );
-    push("R(M)", "divu",   "divu rd, rs1, rs2",  "rd = rs1 / rs2 (unsigned)" );
-    push("R(M)", "rem",    "rem rd, rs1, rs2",   "rd = rs1 % rs2 (signed)" );
-    push("R(M)", "remu",   "remu rd, rs1, rs2",  "rd = rs1 % rs2 (unsigned)" );
-    // I-type
-    push("I", "addi", "addi rd, rs1, imm",  "rd = rs1 + imm (12-bit signed)" );
-    push("I", "xori", "xori rd, rs1, imm",  "rd = rs1 ^ imm" );
-    push("I", "ori",  "ori rd, rs1, imm",   "rd = rs1 | imm" );
-    push("I", "andi", "andi rd, rs1, imm",  "rd = rs1 & imm" );
-    push("I", "slli", "slli rd, rs1, shamt","rd = rs1 << shamt (0..31)" );
-    push("I", "srli", "srli rd, rs1, shamt","rd = logical rs1 >> shamt" );
-    push("I", "srai", "srai rd, rs1, shamt","rd = arithmetic rs1 >> shamt" );
-    // Loads
-    push("Load", "lb",  "lb rd, imm(rs1)",  "Load 1 byte signed from memory[rs1+imm]" );
-    push("Load", "lh",  "lh rd, imm(rs1)",  "Load 2 bytes signed from memory[rs1+imm]" );
-    push("Load", "lw",  "lw rd, imm(rs1)",  "Load 4 bytes from memory[rs1+imm]" );
-    push("Load", "lbu", "lbu rd, imm(rs1)", "Load 1 byte unsigned from memory[rs1+imm]" );
-    push("Load", "lhu", "lhu rd, imm(rs1)", "Load 2 bytes unsigned from memory[rs1+imm]" );
-    // Stores
-    push("Store", "sb", "sb rs2, imm(rs1)", "Store low 1 byte of rs2 to memory[rs1+imm]" );
-    push("Store", "sh", "sh rs2, imm(rs1)", "Store low 2 bytes of rs2 to memory[rs1+imm]" );
-    push("Store", "sw", "sw rs2, imm(rs1)", "Store 4 bytes of rs2 to memory[rs1+imm]" );
-    // Branches
-    push("Branch", "beq",  "beq rs1, rs2, label",  "Branch if rs1==rs2. label: instruction label" );
-    push("Branch", "bne",  "bne rs1, rs2, label",  "Branch if rs1!=rs2. label: instruction label" );
-    push("Branch", "blt",  "blt rs1, rs2, label",  "Branch if rs1<rs2 (signed). label: instruction label" );
-    push("Branch", "bge",  "bge rs1, rs2, label",  "Branch if rs1>=rs2 (signed). label: instruction label" );
-    push("Branch", "bltu", "bltu rs1, rs2, label", "Branch if rs1<rs2 (unsigned). label: instruction label" );
-    push("Branch", "bgeu", "bgeu rs1, rs2, label", "Branch if rs1>=rs2 (unsigned). label: instruction label" );
-    // U-type
-    push("U", "lui",   "lui rd, imm20",  "rd = imm20 << 12 (upper 20 bits)" );
-    push("U", "auipc", "auipc rd, imm20","rd = PC + (imm20 << 12)" );
-    // Jumps
-    push("J", "jal",  "jal rd, label",      "Jump and link. rd=return addr; label: instruction label" );
-    push("I", "jalr", "jalr rd, rs1, imm",  "Jump to rs1+imm & ~1; rd=return addr" );
-    // System
-    push("SYS", "ecall", "ecall", "System call. a7 selects service; a0 holds arg/result" );
-    push("SYS", "ebreak", "ebreak", "Stop execution (alias: halt)" );
-    push("SYS", "halt",  "halt",  "Alias of ebreak" );
-    // Pseudo-instructions (assembler)
-    push("Pseudo", "nop",   "nop",               "No operation" );
-    push("Pseudo", "mv",    "mv rd, rs",         "Move rd = rs (addi rd, rs, 0)" );
-    push("Pseudo", "li",    "li rd, imm12",      "Load small immediate (12-bit) into rd" );
-    push("Pseudo", "subi",  "subi rd, rs1, imm", "rd = rs1 - imm (addi with negative)" );
-    push("Pseudo", "j",     "j label",           "Unconditional jump to label (instruction label)" );
-    push("Pseudo", "call",  "call label",        "Call subroutine (jal ra, label). label: instruction label" );
-    push("Pseudo", "jr",    "jr rs",             "Jump register (jalr x0, rs, 0)" );
-    push("Pseudo", "ret",   "ret",               "Return (jalr x0, ra, 0)" );
-    push("Pseudo", "la",    "la rd, label",      "Load address of label into rd (lui/addi). label: data or instruction label" );
-    push("Pseudo", "push",  "push rs",           "sp -= 4; store rs at 4(sp)" );
-    push("Pseudo", "pop",   "pop rd",            "load rd from 0(sp); sp += 4" );
-    push("Pseudo", "print",     "print rd",              "Print integer in rd (ecall a7=1000, a0=value)" );
-    push("Pseudo", "printStr",  "printStr label",       "Print NUL string at label without newline (data label)" );
-    push("Pseudo", "printStrLn","printStrLn label",     "Print NUL string at label and newline (data label)" );
-    push("Pseudo", "read",      "read label",            "Read line into memory at label; NUL-terminate (data label)" );
-    push("Pseudo", "readByte",  "readByte label",       "Read number (dec/0xhex) and store 1 byte at label" );
-    push("Pseudo", "readHalf",  "readHalf label",       "Read number and store 2 bytes at label (little-endian)" );
-    push("Pseudo", "readWord",  "readWord label",       "Read number and store 4 bytes at label (little-endian)" );
-    rows_all.len()
+    let flush_token = |spans: &mut Vec<Span>, token: &mut String| {
+        if token.is_empty() {
+            return;
+        }
+        let t = std::mem::take(token);
+        if let Some(style) = style_for_token(&t) {
+            spans.push(Span::styled(t, style));
+        } else {
+            spans.push(Span::raw(t));
+        }
+    };
+
+    for ch in line.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            flush_sep(&mut spans, &mut sep);
+            token.push(ch);
+        } else {
+            flush_token(&mut spans, &mut token);
+            sep.push(ch);
+        }
+    }
+    flush_token(&mut spans, &mut token);
+    flush_sep(&mut spans, &mut sep);
+
+    Line::from(spans)
+}
+
+pub(crate) fn docs_body_line_count(width: u16) -> usize {
+    build_docs_table_string(width)
+        .lines()
+        .count()
+        .saturating_sub(4)
+}
+
+pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let meta_area = chunks[0];
+    let table_area = chunks[1];
+
+    let meta_lines = vec![
+        Line::from(Span::styled(
+            "Instruction Reference • Up/Down/PgUp/PgDn scroll",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        style_table_line(
+            "Legend: rd=dest, rs1/rs2/rs=src, imm/shamt=imm, label=label • Pseudo: see Expands",
+        ),
+    ];
+    f.render_widget(Paragraph::new(meta_lines), meta_area);
+
+    if table_area.height == 0 || table_area.width == 0 {
+        return;
+    }
+
+    let table_str = build_docs_table_string(table_area.width);
+    let all_lines: Vec<&str> = table_str.lines().collect();
+
+    if all_lines.is_empty() {
+        return;
+    }
+
+    if all_lines.len() < 4 || table_area.height < 4 {
+        let lines = all_lines
+            .iter()
+            .take(table_area.height as usize)
+            .map(|l| style_table_line(l))
+            .collect::<Vec<_>>();
+        f.render_widget(Paragraph::new(lines), table_area);
+        return;
+    }
+
+    let header_lines = &all_lines[0..3];
+    let footer_line = all_lines[all_lines.len() - 1];
+    let body_lines = &all_lines[3..all_lines.len() - 1];
+
+    let viewport_h = table_area.height.saturating_sub(4) as usize;
+    if viewport_h == 0 {
+        let lines = header_lines
+            .iter()
+            .map(|l| style_table_line(l))
+            .chain(std::iter::once(style_table_line(footer_line)))
+            .collect::<Vec<_>>();
+        f.render_widget(Paragraph::new(lines), table_area);
+        return;
+    }
+
+    let max_start = body_lines.len().saturating_sub(viewport_h);
+    let start = app.docs_scroll.min(max_start);
+    let end = (start + viewport_h).min(body_lines.len());
+
+    let mut lines = Vec::with_capacity(3 + viewport_h + 1);
+    lines.extend(header_lines.iter().map(|l| style_table_line(l)));
+    lines.extend(body_lines[start..end].iter().map(|l| style_table_line(l)));
+
+    let rendered_body = end - start;
+    for _ in rendered_body..viewport_h {
+        lines.push(Line::raw(""));
+    }
+
+    lines.push(style_table_line(footer_line));
+
+    f.render_widget(Paragraph::new(lines), table_area);
 }

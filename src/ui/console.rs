@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::VecDeque;
 
 pub struct ConsoleLine {
@@ -71,4 +73,3 @@ impl Console {
         self.lines.push(ConsoleLine::default());
     }
 }
-

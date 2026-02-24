@@ -28,7 +28,7 @@ pub(crate) fn render_build_status(f: &mut Frame, area: Rect, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Build")
+                .title("Build status")
                 .border_style(Style::default().fg(build_border))
                 .border_type(BorderType::Rounded),
         );
