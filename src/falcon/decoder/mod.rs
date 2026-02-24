@@ -31,6 +31,7 @@ pub fn decode(word: u32) -> Result<Instruction, FalconError> {
 }
 
 
+#[allow(dead_code)]
 pub fn disasm(word: u32) -> String {
     match decode(word) {
         Ok(i) => match i {

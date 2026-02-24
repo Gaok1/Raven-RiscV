@@ -1,8 +1,7 @@
-use crate::ui::app::{App, EditorMode, MemRegion, Tab, Lang};
-use crate::ui::view::docs::docs_total_rows;
+use crate::ui::app::{App, EditorMode, MemRegion, Tab};
+use crate::ui::view::docs::docs_body_line_count;
 use arboard::Clipboard;
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use rfd::FileDialog as OSFileDialog;
 use std::{io, time::Instant};
 
@@ -43,27 +42,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
+    // Run tab: restart simulation (Shift+R)
+    if matches!(app.tab, Tab::Run) && matches!(key.code, KeyCode::Char('R')) {
+        app.restart_simulation();
+        return Ok(false);
+    }
+
     match app.mode {
         EditorMode::Insert => {
             // Esc: leave insert -> command (stop typing)
             if key.code == KeyCode::Esc {
                 app.mode = EditorMode::Command;
-                return Ok(false);
-            }
-
-            // Ctrl+R: Restart simulation if on Run tab; otherwise assemble
-            if ctrl && matches!(key.code, KeyCode::Char('r')) {
-                if matches!(app.tab, Tab::Run) {
-                    app.restart_simulation();
-                } else {
-                    app.assemble_and_load();
-                }
-                return Ok(false);
-            }
-
-            // Toggle language (Ctrl+L)
-            if ctrl && matches!(key.code, KeyCode::Char('l')) {
-                app.lang = match app.lang { Lang::EN => Lang::PT, Lang::PT => Lang::EN };
                 return Ok(false);
             }
 
@@ -209,22 +198,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             // Quit popup remains available
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
                 app.show_exit_popup = true;
-                return Ok(false);
-            }
-
-            // Ctrl+R: Restart simulation if on Run tab; otherwise assemble
-            if ctrl && matches!(key.code, KeyCode::Char('r')) {
-                if matches!(app.tab, Tab::Run) {
-                    app.restart_simulation();
-                } else {
-                    app.assemble_and_load();
-                }
-                return Ok(false);
-            }
-
-            // Toggle language (Ctrl+L)
-            if ctrl && matches!(key.code, KeyCode::Char('l')) {
-                app.lang = match app.lang { Lang::EN => Lang::PT, Lang::PT => Lang::EN };
                 return Ok(false);
             }
 
@@ -381,17 +354,22 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 }
 
 fn clamp_docs_scroll_keyboard(app: &mut App) {
-    // Approximate visible rows using current terminal height and docs layout
-    if let Ok((_, h)) = terminal::size() {
-        // Root layout: 3 (tabs) + min(5) main + 1 (status)
-        let docs_area_h = h.saturating_sub(4) as usize;
-        // Docs split: 1 header + body
-        let body_h = docs_area_h.saturating_sub(1);
-        // Paragraph border (2) + ASCII table overhead (4)
-        let visible_rows = body_h.saturating_sub(6);
-        let total = docs_total_rows();
-        let max_start = total.saturating_sub(visible_rows);
-        if app.docs_scroll > max_start { app.docs_scroll = max_start; }
+    // Approximate visible rows using current terminal size and Docs layout
+    if let Ok((w, h)) = terminal::size() {
+        // Root layout: 3 (tabs) + main + 1 (status)
+        let docs_area_h = h.saturating_sub(4);
+        // Docs split: 2 meta lines + table
+        let table_h = docs_area_h.saturating_sub(2);
+        // Table fixed parts: top + header + header separator + bottom
+        let viewport_h = table_h.saturating_sub(4) as usize;
+        if viewport_h == 0 {
+            app.docs_scroll = 0;
+            return;
+        }
+        let total_body = docs_body_line_count(w);
+        let max_start = total_body.saturating_sub(viewport_h);
+        if app.docs_scroll > max_start {
+            app.docs_scroll = max_start;
+        }
     }
 }
-

@@ -14,6 +14,9 @@ pub mod encoder;
 
 pub mod program;
 
+#[allow(unused_imports)]
 pub use instruction::Instruction;
-pub use memory::{Bus, Ram};
+#[allow(unused_imports)]
+pub use memory::Bus;
+pub use memory::Ram;
 pub use registers::Cpu;

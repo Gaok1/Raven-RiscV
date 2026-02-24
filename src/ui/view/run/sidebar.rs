@@ -28,7 +28,7 @@ fn register_block() -> Block<'static> {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title("Registers - s:step r:run p:pause Ctrl+R:restart")
+        .title("Registers")
 }
 
 fn register_visible_range(inner: Rect, app: &App) -> (usize, usize) {
@@ -90,7 +90,7 @@ fn memory_block() -> Block<'static> {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title("RAM Memory - s:step r:run p:pause Ctrl+R:restart")
+        .title("RAM Memory")
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
