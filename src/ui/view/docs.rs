@@ -254,7 +254,7 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let max_start = body_lines.len().saturating_sub(viewport_h);
-    let start = app.docs_scroll.min(max_start);
+    let start = app.docs.scroll.min(max_start);
     let end = (start + viewport_h).min(body_lines.len());
 
     let mut lines = Vec::with_capacity(3 + viewport_h + 1);

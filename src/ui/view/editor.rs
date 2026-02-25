@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use super::{App, Editor};
 
 pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
-    let compile_span = if let Some(msg) = &app.last_assemble_msg {
-        let color = if app.last_compile_ok == Some(true) {
+    let compile_span = if let Some(msg) = &app.editor.last_assemble_msg {
+        let color = if app.editor.last_compile_ok == Some(true) {
             Color::Green
         } else {
             Color::Red
@@ -115,27 +115,27 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let visible_h = area.height.saturating_sub(2) as usize;
-    let len = app.editor.lines.len();
+    let len = app.editor.buf.lines.len();
     let mut start = 0usize;
     if len > visible_h {
-        if app.editor.cursor_row <= visible_h / 2 {
+        if app.editor.buf.cursor_row <= visible_h / 2 {
             start = 0;
-        } else if app.editor.cursor_row >= len.saturating_sub(visible_h / 2) {
+        } else if app.editor.buf.cursor_row >= len.saturating_sub(visible_h / 2) {
             start = len.saturating_sub(visible_h);
         } else {
-            start = app.editor.cursor_row - visible_h / 2;
+            start = app.editor.buf.cursor_row - visible_h / 2;
         }
     }
     let end = min(len, start + visible_h);
 
     let num_width = end.to_string().len();
-    let labels = collect_labels(&app.editor.lines);
+    let labels = collect_labels(&app.editor.buf.lines);
     let content_w = area.width.saturating_sub(2);
     let mut rows: Vec<Line> = Vec::with_capacity(end - start);
     for i in start..end {
-        let line_str = &app.editor.lines[i];
+        let line_str = &app.editor.buf.lines[i];
         let mut line = Line::from(highlight_line(line_str));
-        if let Some(((sr, sc), (er, ec))) = app.editor.selection_range() {
+        if let Some(((sr, sc), (er, ec))) = app.editor.buf.selection_range() {
             if i >= sr && i <= er {
                 let (sel_start, sel_end) = if sr == er {
                     (sc, ec)
@@ -149,7 +149,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
                 apply_selection(&mut line, sel_start, sel_end);
             }
         }
-        if Some(i) == app.diag_line {
+        if Some(i) == app.editor.diag_line {
             let err_style = Style::default()
                 .fg(Color::Red)
                 .add_modifier(Modifier::UNDERLINED);
@@ -162,7 +162,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
             format!("{:>width$}", i + 1, width = num_width),
             Style::default().fg(Color::DarkGray),
         ));
-        let marker_style = if Some(i) == app.diag_line {
+        let marker_style = if Some(i) == app.editor.diag_line {
             Style::default().fg(Color::Red)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -170,7 +170,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(" │ ", marker_style));
         spans.extend(line.spans);
 
-        if i == app.editor.cursor_row {
+        if i == app.editor.buf.cursor_row {
             if let Some(ghost) = ghost_spans_for_line(line_str, &labels) {
                 let gutter_w = (num_width as u16).saturating_add(3);
                 let used_w = gutter_w.saturating_add(Editor::char_count(line_str) as u16);
@@ -187,7 +187,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
         .title("Editor (Risc-v ASM)");
-    if let Some(ok) = app.last_compile_ok {
+    if let Some(ok) = app.editor.last_compile_ok {
         let (txt, color) = if ok {
             ("[OK]", Color::Green)
         } else {
@@ -200,8 +200,8 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
 
     f.render_widget(para, area);
 
-    let cur_row = app.editor.cursor_row as u16;
-    let cur_col = app.editor.cursor_col as u16;
+    let cur_row = app.editor.buf.cursor_row as u16;
+    let cur_col = app.editor.buf.cursor_col as u16;
     let gutter = (num_width + 3) as u16;
     let cursor_x = area.x + 1 + gutter + cur_col;
     let cursor_y = area.y + 1 + (cur_row - start as u16);

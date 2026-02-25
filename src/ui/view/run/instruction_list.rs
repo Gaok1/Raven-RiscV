@@ -21,7 +21,7 @@ pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn instruction_block(app: &App) -> Block<'static> {
-    let border_style = if app.hover_imem_bar {
+    let border_style = if app.run.hover_imem_bar {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -35,8 +35,8 @@ fn instruction_block(app: &App) -> Block<'static> {
 }
 
 fn instruction_list_base(app: &App) -> u32 {
-    app.base_pc
-        .saturating_add((app.imem_scroll as u32).saturating_mul(4))
+    app.run.base_pc
+        .saturating_add((app.run.imem_scroll as u32).saturating_mul(4))
 }
 
 fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>> {
@@ -51,13 +51,13 @@ fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>
 }
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
-    let word = app.mem.load32(addr).unwrap_or(0);
-    let marker = if addr == app.cpu.pc { "▶" } else { " " };
-    let value = format_u32_value(word, app.fmt_mode, app.show_signed);
+    let word = app.run.mem.load32(addr).unwrap_or(0);
+    let marker = if addr == app.run.cpu.pc { "▶" } else { " " };
+    let value = format_u32_value(word, app.run.fmt_mode, app.run.show_signed);
     let disasm = disasm_word(word);
     let mut item = ListItem::new(format!("{marker} 0x{addr:08x}: {value}  {disasm}"));
 
-    if addr == app.cpu.pc {
+    if addr == app.run.cpu.pc {
         item = item.style(Style::default().bg(Color::Yellow).fg(Color::Black));
     }
 
@@ -73,7 +73,7 @@ fn render_instruction_hover(f: &mut Frame, inner: Rect, base: u32, app: &App) {
 }
 
 fn hover_highlight(inner: Rect, base: u32, app: &App) -> Option<Rect> {
-    let addr = app.hover_imem_addr?;
+    let addr = app.run.hover_imem_addr?;
     let visible_rows = inner.height.saturating_sub(2) as u32;
     let end_addr = base.saturating_add(visible_rows.saturating_mul(4));
 
@@ -91,7 +91,7 @@ fn hover_highlight(inner: Rect, base: u32, app: &App) -> Option<Rect> {
 }
 
 fn render_instruction_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
-    let style = if app.hover_imem_bar {
+    let style = if app.run.hover_imem_bar {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()

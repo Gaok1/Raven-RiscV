@@ -24,8 +24,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 let line = std::mem::take(&mut app.console.current);
                 app.console.push_input(line);
                 app.console.reading = false;
-                // Resume CPU execution after providing input
-                app.is_running = true;
+                app.run.is_running = true;
             }
             _ => {}
         }
@@ -42,7 +41,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
-    // Run tab: restart simulation (Shift+R)
     if matches!(app.tab, Tab::Run) && matches!(key.code, KeyCode::Char('R')) {
         app.restart_simulation();
         return Ok(false);
@@ -50,7 +48,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
     match app.mode {
         EditorMode::Insert => {
-            // Esc: leave insert -> command (stop typing)
             if key.code == KeyCode::Esc {
                 app.mode = EditorMode::Command;
                 return Ok(false);
@@ -62,10 +59,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     .pick_file()
                 {
                     if let Ok(content) = std::fs::read_to_string(path) {
-                        app.editor.lines = content.lines().map(|s| s.to_string()).collect();
-                        app.editor.cursor_row = 0;
-                        app.editor.cursor_col = 0;
-                        // Assemble immediately after importing a new file
+                        app.editor.buf.lines = content.lines().map(|s| s.to_string()).collect();
+                        app.editor.buf.cursor_row = 0;
+                        app.editor.buf.cursor_col = 0;
                         app.assemble_and_load();
                     }
                 }
@@ -77,13 +73,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     .set_file_name("program.fas")
                     .save_file()
                 {
-                    let _ = std::fs::write(path, app.editor.text());
+                    let _ = std::fs::write(path, app.editor.buf.text());
                 }
                 return Ok(false);
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('c')) && matches!(app.tab, Tab::Editor) {
-                if let Some(text) = app.editor.selected_text() {
+                if let Some(text) = app.editor.buf.selected_text() {
                     if let Ok(mut clip) = Clipboard::new() {
                         let _ = clip.set_text(text);
                     }
@@ -92,117 +88,82 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('z')) && matches!(app.tab, Tab::Editor) {
-                app.editor.undo();
-                app.editor_dirty = true;
-                app.last_edit_at = Some(Instant::now());
-                app.diag_line = None;
-                app.diag_msg = None;
-                app.diag_line_text = None;
-                app.last_compile_ok = None;
-                app.last_assemble_msg = None;
+                app.editor.buf.undo();
+                app.editor.dirty = true;
+                app.editor.last_edit_at = Some(Instant::now());
+                app.editor.diag_line = None;
+                app.editor.diag_msg = None;
+                app.editor.diag_line_text = None;
+                app.editor.last_compile_ok = None;
+                app.editor.last_assemble_msg = None;
                 return Ok(false);
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('a')) && matches!(app.tab, Tab::Editor) {
-                app.editor.select_all();
+                app.editor.buf.select_all();
                 return Ok(false);
             }
 
             match (key.code, app.tab) {
-                // Insert mode: everything types into editor if on Editor tab
                 (code, Tab::Editor) => match code {
                     KeyCode::Left => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.move_left();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.move_left();
                     }
                     KeyCode::Right => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.move_right();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.move_right();
                     }
                     KeyCode::Up => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.move_up();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.move_up();
                     }
                     KeyCode::Down => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.move_down();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.move_down();
                     }
                     KeyCode::Home => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.move_home();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.move_home();
                     }
                     KeyCode::End => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.move_end();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.move_end();
                     }
                     KeyCode::PageUp => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.page_up();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.page_up();
                     }
                     KeyCode::PageDown => {
-                        if shift {
-                            app.editor.start_selection();
-                        } else {
-                            app.editor.clear_selection();
-                        }
-                        app.editor.page_down();
+                        if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
+                        app.editor.buf.page_down();
                     }
-                    KeyCode::Backspace => app.editor.backspace(),
-                    KeyCode::Delete => app.editor.delete_char(),
-                    KeyCode::Enter => app.editor.enter(),
-                    KeyCode::BackTab => app.editor.shift_tab(),
-                    KeyCode::Tab => app.editor.tab(),
-                    KeyCode::Char(c) => app.editor.insert_char(c), // includes '1'/'2'
+                    KeyCode::Backspace => app.editor.buf.backspace(),
+                    KeyCode::Delete => app.editor.buf.delete_char(),
+                    KeyCode::Enter => app.editor.buf.enter(),
+                    KeyCode::BackTab => app.editor.buf.shift_tab(),
+                    KeyCode::Tab => app.editor.buf.tab(),
+                    KeyCode::Char(c) => app.editor.buf.insert_char(c),
                     _ => {}
                 },
-                // In Insert mode, other tabs ignore typing
                 _ => {}
             }
-            app.editor_dirty = true;
-            app.last_edit_at = Some(Instant::now());
-            app.diag_line = None;
-            app.diag_msg = None;
-            app.diag_line_text = None;
-            app.last_compile_ok = None;
-            app.last_assemble_msg = None;
+            app.editor.dirty = true;
+            app.editor.last_edit_at = Some(Instant::now());
+            app.editor.diag_line = None;
+            app.editor.diag_msg = None;
+            app.editor.diag_line_text = None;
+            app.editor.last_compile_ok = None;
+            app.editor.last_assemble_msg = None;
         }
         EditorMode::Command => {
-            // Quit popup remains available
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
                 app.show_exit_popup = true;
                 return Ok(false);
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('c')) && matches!(app.tab, Tab::Editor) {
-                if let Some(text) = app.editor.selected_text() {
+                if let Some(text) = app.editor.buf.selected_text() {
                     if let Ok(mut clip) = Clipboard::new() {
                         let _ = clip.set_text(text);
                     }
@@ -211,14 +172,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('z')) && matches!(app.tab, Tab::Editor) {
-                app.editor.undo();
-                app.editor_dirty = true;
-                app.last_edit_at = Some(Instant::now());
-                app.diag_line = None;
-                app.diag_msg = None;
-                app.diag_line_text = None;
-                app.last_compile_ok = None;
-                app.last_assemble_msg = None;
+                app.editor.buf.undo();
+                app.editor.dirty = true;
+                app.editor.last_edit_at = Some(Instant::now());
+                app.editor.diag_line = None;
+                app.editor.diag_msg = None;
+                app.editor.diag_line_text = None;
+                app.editor.last_compile_ok = None;
+                app.editor.last_assemble_msg = None;
                 return Ok(false);
             }
 
@@ -228,10 +189,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     .pick_file()
                 {
                     if let Ok(content) = std::fs::read_to_string(path) {
-                        app.editor.lines = content.lines().map(|s| s.to_string()).collect();
-                        app.editor.cursor_row = 0;
-                        app.editor.cursor_col = 0;
-                        // Assemble immediately after importing a new file
+                        app.editor.buf.lines = content.lines().map(|s| s.to_string()).collect();
+                        app.editor.buf.cursor_row = 0;
+                        app.editor.buf.cursor_col = 0;
                         app.assemble_and_load();
                     }
                 }
@@ -243,30 +203,27 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     .set_file_name("program.fas")
                     .save_file()
                 {
-                    let _ = std::fs::write(path, app.editor.text());
+                    let _ = std::fs::write(path, app.editor.buf.text());
                 }
                 return Ok(false);
             }
 
             match (key.code, app.tab) {
-                // Remove keyboard-based mode switching and tab switching; tabs change via mouse only
-
-                // Run controls
                 (KeyCode::Char('s'), Tab::Run) => {
-                    if !app.faulted {
+                    if !app.run.faulted {
                         app.single_step();
                     }
                 }
                 (KeyCode::Char('r'), Tab::Run) => {
-                    if !app.faulted {
-                        app.is_running = true;
+                    if !app.run.faulted {
+                        app.run.is_running = true;
                     }
                 }
                 (KeyCode::Char('p'), Tab::Run) => {
-                    app.is_running = false;
+                    app.run.is_running = false;
                 }
                 (KeyCode::Up, Tab::Run) if ctrl => {
-                    let visible = app.console_height.saturating_sub(3) as usize;
+                    let visible = app.run.console_height.saturating_sub(3) as usize;
                     let max_scroll = app.console.lines.len().saturating_sub(visible);
                     if app.console.scroll > max_scroll {
                         app.console.scroll = max_scroll;
@@ -274,77 +231,76 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.console.scroll = (app.console.scroll + 1).min(max_scroll);
                 }
                 (KeyCode::Down, Tab::Run) if ctrl => {
-                    let visible = app.console_height.saturating_sub(3) as usize;
+                    let visible = app.run.console_height.saturating_sub(3) as usize;
                     let max_scroll = app.console.lines.len().saturating_sub(visible);
                     if app.console.scroll > max_scroll {
                         app.console.scroll = max_scroll;
                     }
                     app.console.scroll = app.console.scroll.saturating_sub(1);
                 }
-                (KeyCode::Up, Tab::Run) if app.show_registers => {
+                (KeyCode::Up, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
-                    app.regs_scroll = app.regs_scroll.saturating_sub(1);
-                    if app.regs_scroll > max_scroll {
-                        app.regs_scroll = max_scroll;
+                    app.run.regs_scroll = app.run.regs_scroll.saturating_sub(1);
+                    if app.run.regs_scroll > max_scroll {
+                        app.run.regs_scroll = max_scroll;
                     }
                 }
-                (KeyCode::Down, Tab::Run) if app.show_registers => {
+                (KeyCode::Down, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
-                    if app.regs_scroll > max_scroll {
-                        app.regs_scroll = max_scroll;
+                    if app.run.regs_scroll > max_scroll {
+                        app.run.regs_scroll = max_scroll;
                     }
-                    app.regs_scroll = (app.regs_scroll + 1).min(max_scroll);
+                    app.run.regs_scroll = (app.run.regs_scroll + 1).min(max_scroll);
                 }
-                (KeyCode::PageUp, Tab::Run) if app.show_registers => {
+                (KeyCode::PageUp, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
-                    app.regs_scroll = app.regs_scroll.saturating_sub(10);
-                    if app.regs_scroll > max_scroll {
-                        app.regs_scroll = max_scroll;
+                    app.run.regs_scroll = app.run.regs_scroll.saturating_sub(10);
+                    if app.run.regs_scroll > max_scroll {
+                        app.run.regs_scroll = max_scroll;
                     }
                 }
-                (KeyCode::PageDown, Tab::Run) if app.show_registers => {
+                (KeyCode::PageDown, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
-                    if app.regs_scroll > max_scroll {
-                        app.regs_scroll = max_scroll;
+                    if app.run.regs_scroll > max_scroll {
+                        app.run.regs_scroll = max_scroll;
                     }
-                    app.regs_scroll = (app.regs_scroll + 10).min(max_scroll);
+                    app.run.regs_scroll = (app.run.regs_scroll + 10).min(max_scroll);
                 }
-                (KeyCode::Up, Tab::Run) if !app.show_registers => {
-                    app.mem_view_addr = app.mem_view_addr.saturating_sub(app.mem_view_bytes);
-                    app.mem_region = MemRegion::Custom;
+                (KeyCode::Up, Tab::Run) if !app.run.show_registers => {
+                    app.run.mem_view_addr = app.run.mem_view_addr.saturating_sub(app.run.mem_view_bytes);
+                    app.run.mem_region = MemRegion::Custom;
                 }
-                (KeyCode::Down, Tab::Run) if !app.show_registers => {
-                    let max = app.mem_size.saturating_sub(app.mem_view_bytes as usize) as u32;
-                    if app.mem_view_addr < max {
-                        app.mem_view_addr = app
-                            .mem_view_addr
-                            .saturating_add(app.mem_view_bytes)
+                (KeyCode::Down, Tab::Run) if !app.run.show_registers => {
+                    let max = app.run.mem_size.saturating_sub(app.run.mem_view_bytes as usize) as u32;
+                    if app.run.mem_view_addr < max {
+                        app.run.mem_view_addr = app.run.mem_view_addr
+                            .saturating_add(app.run.mem_view_bytes)
                             .min(max);
                     }
-                    app.mem_region = MemRegion::Custom;
+                    app.run.mem_region = MemRegion::Custom;
                 }
-                (KeyCode::PageUp, Tab::Run) if !app.show_registers => {
-                    let delta: u32 = app.mem_view_bytes * 16;
-                    app.mem_view_addr = app.mem_view_addr.saturating_sub(delta);
-                    app.mem_region = MemRegion::Custom;
+                (KeyCode::PageUp, Tab::Run) if !app.run.show_registers => {
+                    let delta: u32 = app.run.mem_view_bytes * 16;
+                    app.run.mem_view_addr = app.run.mem_view_addr.saturating_sub(delta);
+                    app.run.mem_region = MemRegion::Custom;
                 }
-                (KeyCode::PageDown, Tab::Run) if !app.show_registers => {
-                    let delta: u32 = app.mem_view_bytes * 16;
-                    let max = app.mem_size.saturating_sub(app.mem_view_bytes as usize) as u32;
-                    let new = app.mem_view_addr.saturating_add(delta);
-                    app.mem_view_addr = new.min(max);
-                    app.mem_region = MemRegion::Custom;
+                (KeyCode::PageDown, Tab::Run) if !app.run.show_registers => {
+                    let delta: u32 = app.run.mem_view_bytes * 16;
+                    let max = app.run.mem_size.saturating_sub(app.run.mem_view_bytes as usize) as u32;
+                    let new = app.run.mem_view_addr.saturating_add(delta);
+                    app.run.mem_view_addr = new.min(max);
+                    app.run.mem_region = MemRegion::Custom;
                 }
 
                 // Docs scroll
-                (KeyCode::Up, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_sub(1); clamp_docs_scroll_keyboard(app); }
-                (KeyCode::Down, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_add(1); clamp_docs_scroll_keyboard(app); }
-                (KeyCode::PageUp, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_sub(10); clamp_docs_scroll_keyboard(app); }
-                (KeyCode::PageDown, Tab::Docs) => { app.docs_scroll = app.docs_scroll.saturating_add(10); clamp_docs_scroll_keyboard(app); }
-                
-                // Editor navigation in command mode (optional)
-                (KeyCode::Up, Tab::Editor) => app.editor.move_up(),
-                (KeyCode::Down, Tab::Editor) => app.editor.move_down(),
+                (KeyCode::Up, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_sub(1); clamp_docs_scroll_keyboard(app); }
+                (KeyCode::Down, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_add(1); clamp_docs_scroll_keyboard(app); }
+                (KeyCode::PageUp, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_sub(10); clamp_docs_scroll_keyboard(app); }
+                (KeyCode::PageDown, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_add(10); clamp_docs_scroll_keyboard(app); }
+
+                // Editor navigation in command mode
+                (KeyCode::Up, Tab::Editor) => app.editor.buf.move_up(),
+                (KeyCode::Down, Tab::Editor) => app.editor.buf.move_down(),
                 _ => {}
             }
         }
@@ -354,22 +310,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 }
 
 fn clamp_docs_scroll_keyboard(app: &mut App) {
-    // Approximate visible rows using current terminal size and Docs layout
     if let Ok((w, h)) = terminal::size() {
-        // Root layout: 3 (tabs) + main + 1 (status)
         let docs_area_h = h.saturating_sub(4);
-        // Docs split: 2 meta lines + table
         let table_h = docs_area_h.saturating_sub(2);
-        // Table fixed parts: top + header + header separator + bottom
         let viewport_h = table_h.saturating_sub(4) as usize;
         if viewport_h == 0 {
-            app.docs_scroll = 0;
+            app.docs.scroll = 0;
             return;
         }
         let total_body = docs_body_line_count(w);
         let max_start = total_body.saturating_sub(viewport_h);
-        if app.docs_scroll > max_start {
-            app.docs_scroll = max_start;
+        if app.docs.scroll > max_start {
+            app.docs.scroll = max_start;
         }
     }
 }

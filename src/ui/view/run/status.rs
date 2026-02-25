@@ -35,7 +35,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         app.hover_run_button == Some(RunButton::View),
     ));
 
-    if !app.show_registers {
+    if !app.run.show_registers {
         spans.push(Span::raw("  Region "));
         spans.push(button_span(
             region_text(app),
@@ -58,7 +58,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         sign_enabled(app) && app.hover_run_button == Some(RunButton::Sign),
     ));
 
-    if !app.show_registers {
+    if !app.run.show_registers {
         spans.push(Span::raw("  Bytes "));
         spans.push(button_span(
             bytes_text(app),
@@ -82,11 +82,11 @@ fn command_line() -> Line<'static> {
 }
 
 fn view_text(app: &App) -> &'static str {
-    if app.show_registers { "REGS" } else { "RAM" }
+    if app.run.show_registers { "REGS" } else { "RAM" }
 }
 
 fn view_color(app: &App) -> Color {
-    if app.show_registers {
+    if app.run.show_registers {
         Color::Blue
     } else {
         Color::Green
@@ -94,21 +94,21 @@ fn view_color(app: &App) -> Color {
 }
 
 fn region_text(app: &App) -> &'static str {
-    match app.mem_region {
+    match app.run.mem_region {
         MemRegion::Data | MemRegion::Custom => "DATA",
         MemRegion::Stack => "STACK",
     }
 }
 
 fn region_color(app: &App) -> Color {
-    match app.mem_region {
+    match app.run.mem_region {
         MemRegion::Data | MemRegion::Custom => Color::Yellow,
         MemRegion::Stack => Color::LightBlue,
     }
 }
 
 fn format_text(app: &App) -> &'static str {
-    match app.fmt_mode {
+    match app.run.fmt_mode {
         FormatMode::Hex => "HEX",
         FormatMode::Dec => "DEC",
         FormatMode::Str => "STR",
@@ -116,7 +116,7 @@ fn format_text(app: &App) -> &'static str {
 }
 
 fn format_color(app: &App) -> Color {
-    match app.fmt_mode {
+    match app.run.fmt_mode {
         FormatMode::Hex => Color::Magenta,
         FormatMode::Dec => Color::Cyan,
         FormatMode::Str => Color::Yellow,
@@ -124,15 +124,15 @@ fn format_color(app: &App) -> Color {
 }
 
 fn sign_enabled(app: &App) -> bool {
-    matches!(app.fmt_mode, FormatMode::Dec)
+    matches!(app.run.fmt_mode, FormatMode::Dec)
 }
 
 fn sign_text(app: &App) -> &'static str {
-    if app.show_signed { "SGN" } else { "UNS" }
+    if app.run.show_signed { "SGN" } else { "UNS" }
 }
 
 fn sign_color(app: &App) -> Color {
-    match (app.show_signed, sign_enabled(app)) {
+    match (app.run.show_signed, sign_enabled(app)) {
         (true, true) => Color::LightGreen,
         (false, true) => Color::LightBlue,
         _ => Color::DarkGray,
@@ -140,7 +140,7 @@ fn sign_color(app: &App) -> Color {
 }
 
 fn bytes_text(app: &App) -> &'static str {
-    match app.mem_view_bytes {
+    match app.run.mem_view_bytes {
         4 => "4B",
         2 => "2B",
         _ => "1B",
@@ -148,11 +148,11 @@ fn bytes_text(app: &App) -> &'static str {
 }
 
 fn state_text(app: &App) -> &'static str {
-    if app.is_running { "RUN" } else { "PAUSE" }
+    if app.run.is_running { "RUN" } else { "PAUSE" }
 }
 
 fn state_color(app: &App) -> Color {
-    if app.is_running {
+    if app.run.is_running {
         Color::Green
     } else {
         Color::Red
