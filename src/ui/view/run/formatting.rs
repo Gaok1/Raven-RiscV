@@ -3,21 +3,21 @@ use crate::falcon::memory::Bus;
 use super::{App, FormatMode};
 
 pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
-    match app.mem_view_bytes {
+    match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.mem.load32(addr).unwrap_or(0),
-            app.fmt_mode,
-            app.show_signed,
+            app.run.mem.load32(addr).unwrap_or(0),
+            app.run.fmt_mode,
+            app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.mem.load16(addr).unwrap_or(0),
-            app.fmt_mode,
-            app.show_signed,
+            app.run.mem.load16(addr).unwrap_or(0),
+            app.run.fmt_mode,
+            app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.mem.load8(addr).unwrap_or(0),
-            app.fmt_mode,
-            app.show_signed,
+            app.run.mem.load8(addr).unwrap_or(0),
+            app.run.fmt_mode,
+            app.run.show_signed,
         ),
     }
 }

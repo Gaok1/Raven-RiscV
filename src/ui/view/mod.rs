@@ -28,22 +28,19 @@ pub fn ui(f: &mut Frame, app: &App) {
         ])
         .split(size);
 
-    let titles = vec!["Editor", "Run", "Docs"]
-        .into_iter()
-        .enumerate()
-        .map(|(i, t)| {
-            let mut line = Line::from(t);
-            let tab = match i {
-                0 => Tab::Editor,
-                1 => Tab::Run,
-                _ => Tab::Docs,
-            };
+    // Build tab titles from Tab::all() — adding a new tab only requires
+    // extending the Tab enum and Tab::all()/Tab::label().
+    let titles = Tab::all()
+        .iter()
+        .map(|&tab| {
+            let mut line = Line::from(tab.label());
             if Some(tab) == app.hover_tab && tab != app.tab {
                 line = line.style(Style::default().fg(Color::Black).bg(Color::Gray));
             }
             line
         })
         .collect::<Vec<_>>();
+
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title("Falcon ASM"))
         .highlight_style(
@@ -53,11 +50,7 @@ pub fn ui(f: &mut Frame, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )
         .divider(Span::styled(" │ ", Style::default().fg(Color::DarkGray)))
-        .select(match app.tab {
-            Tab::Editor => 0,
-            Tab::Run => 1,
-            Tab::Docs => 2,
-        });
+        .select(app.tab.index());
     f.render_widget(tabs, chunks[0]);
 
     match app.tab {

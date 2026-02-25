@@ -10,18 +10,18 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
         // Draw a top border line as a handle bar
         let bar = Block::default()
             .borders(Borders::TOP)
-            .border_style(if app.hover_console_bar { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::DarkGray) });
+            .border_style(if app.run.hover_console_bar { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::DarkGray) });
         f.render_widget(bar, area);
 
         // Up arrow in the middle to suggest expanding upwards
-        let arrow_style = if app.hover_console_bar { Style::default().fg(Color::Yellow) } else { Style::default() };
+        let arrow_style = if app.run.hover_console_bar { Style::default().fg(Color::Yellow) } else { Style::default() };
         let arrow_x = area.x + area.width / 2;
         let arrow_area = Rect::new(arrow_x, area.y, 1, 1);
         let arrow = Paragraph::new("▲").style(arrow_style);
         f.render_widget(arrow, arrow_area);
 
         // [CLR] button still visible on collapsed bar
-        let clear_style = if app.hover_console_clear {
+        let clear_style = if app.run.hover_console_clear {
             Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::ITALIC)
         } else {
             Style::default().fg(Color::Black).bg(Color::Red)
@@ -33,7 +33,7 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let border_style = if app.hover_console_bar {
+    let border_style = if app.run.hover_console_bar {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -78,7 +78,7 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
         .wrap(Wrap { trim: false });
     f.render_widget(para, area);
 
-    let arrow_style = if app.hover_console_bar {
+    let arrow_style = if app.run.hover_console_bar {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()
@@ -90,7 +90,7 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
     let arrow = Paragraph::new("▲").style(arrow_style);
     f.render_widget(arrow, arrow_area);
 
-    let clear_style = if app.hover_console_clear {
+    let clear_style = if app.run.hover_console_clear {
         Style::default()
             .fg(Color::Black)
             .bg(Color::LightRed)

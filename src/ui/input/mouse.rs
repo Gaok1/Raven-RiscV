@@ -18,33 +18,28 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
-    // Hover tabs
+    // Hover tabs — derived from Tab::all() so new tabs are automatically supported
     app.hover_tab = None;
     app.hover_run_button = None;
     if me.row == area.y + 1 {
         let x = me.column.saturating_sub(area.x + 1);
-        let titles: [(&str, Tab); 3] = [
-            ("Editor", Tab::Editor),
-            ("Run", Tab::Run),
-            ("Docs", Tab::Docs),
-        ];
         let divider = 3u16; // " │ "
-        // Tabs widget default padding: one space on each side
         let pad_left = 1u16;
         let pad_right = 1u16;
         let mut pos: u16 = 0;
-        for (i, (title, tab)) in titles.iter().enumerate() {
-            let w = pad_left + title.len() as u16 + pad_right;
+        for (i, &tab) in Tab::all().iter().enumerate() {
+            let label = tab.label();
+            let w = pad_left + label.len() as u16 + pad_right;
             if x >= pos && x < pos + w {
-                app.hover_tab = Some(*tab);
+                app.hover_tab = Some(tab);
                 if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                    app.tab = *tab;
+                    app.tab = tab;
                     app.mode = EditorMode::Command;
                 }
                 break;
             }
             pos += w;
-            if i + 1 < titles.len() {
+            if i + 1 < Tab::all().len() {
                 pos += divider;
             }
         }
@@ -53,18 +48,18 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     // Scrolls
     match me.kind {
         MouseEventKind::ScrollUp => match app.tab {
-            Tab::Editor => app.editor.move_up(),
+            Tab::Editor => app.editor.buf.move_up(),
             Tab::Run => handle_run_scroll(app, me, area, true),
             Tab::Docs => {
-                app.docs_scroll = app.docs_scroll.saturating_sub(1);
+                app.docs.scroll = app.docs.scroll.saturating_sub(1);
                 clamp_docs_scroll(app, area);
             }
         },
         MouseEventKind::ScrollDown => match app.tab {
-            Tab::Editor => app.editor.move_down(),
+            Tab::Editor => app.editor.buf.move_down(),
             Tab::Run => handle_run_scroll(app, me, area, false),
             Tab::Docs => {
-                app.docs_scroll = app.docs_scroll.saturating_add(1);
+                app.docs.scroll = app.docs.scroll.saturating_add(1);
                 clamp_docs_scroll(app, area);
             }
         },
@@ -93,22 +88,22 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 
         let start = {
             let visible_h = editor_area.height.saturating_sub(2) as usize;
-            let len = app.editor.lines.len();
+            let len = app.editor.buf.lines.len();
             let mut s = 0usize;
             if len > visible_h {
-                if app.editor.cursor_row <= visible_h / 2 {
+                if app.editor.buf.cursor_row <= visible_h / 2 {
                     s = 0;
-                } else if app.editor.cursor_row >= len.saturating_sub(visible_h / 2) {
+                } else if app.editor.buf.cursor_row >= len.saturating_sub(visible_h / 2) {
                     s = len.saturating_sub(visible_h);
                 } else {
-                    s = app.editor.cursor_row - visible_h / 2;
+                    s = app.editor.buf.cursor_row - visible_h / 2;
                 }
             }
             s
         };
 
         let visible_h = editor_area.height.saturating_sub(2) as usize;
-        let len = app.editor.lines.len();
+        let len = app.editor.buf.lines.len();
         let end = (start + visible_h).min(len);
         let num_width = end.to_string().len() as u16;
         let gutter = num_width + 3;
@@ -124,12 +119,12 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             MouseEventKind::Down(MouseButton::Left) => {
                 if within(me.column, me.row) {
                     let y = (me.row - (editor_area.y + 1)) as usize;
-                    let row = (start + y).min(app.editor.lines.len().saturating_sub(1));
+                    let row = (start + y).min(app.editor.buf.lines.len().saturating_sub(1));
                     let x = me.column.saturating_sub(editor_area.x + 1 + gutter) as usize;
-                    let col = x.min(Editor::char_count(&app.editor.lines[row]));
-                    app.editor.cursor_row = row;
-                    app.editor.cursor_col = col;
-                    app.editor.selection_anchor = Some((row, col));
+                    let col = x.min(Editor::char_count(&app.editor.buf.lines[row]));
+                    app.editor.buf.cursor_row = row;
+                    app.editor.buf.cursor_col = col;
+                    app.editor.buf.selection_anchor = Some((row, col));
                     if app.mode == EditorMode::Command {
                         app.mode = EditorMode::Insert;
                     }
@@ -140,17 +135,17 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             MouseEventKind::Drag(MouseButton::Left) => {
                 if within(me.column, me.row) {
                     let y = (me.row - (editor_area.y + 1)) as usize;
-                    let row = (start + y).min(app.editor.lines.len().saturating_sub(1));
+                    let row = (start + y).min(app.editor.buf.lines.len().saturating_sub(1));
                     let x = me.column.saturating_sub(editor_area.x + 1 + gutter) as usize;
-                    let col = x.min(Editor::char_count(&app.editor.lines[row]));
-                    app.editor.cursor_row = row;
-                    app.editor.cursor_col = col;
+                    let col = x.min(Editor::char_count(&app.editor.buf.lines[row]));
+                    app.editor.buf.cursor_row = row;
+                    app.editor.buf.cursor_col = col;
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if let Some((r, c)) = app.editor.selection_anchor {
-                    if r == app.editor.cursor_row && c == app.editor.cursor_col {
-                        app.editor.clear_selection();
+                if let Some((r, c)) = app.editor.buf.selection_anchor {
+                    if r == app.editor.buf.cursor_row && c == app.editor.buf.cursor_col {
+                        app.editor.buf.clear_selection();
                     }
                 }
             }
@@ -172,16 +167,16 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 start_console_drag(app, me, area);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if app.imem_drag {
+                if app.run.imem_drag {
                     handle_imem_drag(app, me, area);
                 }
-                if app.console_drag {
+                if app.run.console_drag {
                     handle_console_drag(app, me, area);
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                app.imem_drag = false;
-                app.console_drag = false;
+                app.run.imem_drag = false;
+                app.run.console_drag = false;
             }
             _ => {}
         }
@@ -196,54 +191,49 @@ fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
     if let Some(btn) = run_status_hit(app, status, me.column) {
         match btn {
             RunButton::View => {
-                app.show_registers = !app.show_registers;
+                app.run.show_registers = !app.run.show_registers;
             }
             RunButton::Format => {
-                app.fmt_mode = match app.fmt_mode {
+                app.run.fmt_mode = match app.run.fmt_mode {
                     FormatMode::Hex => FormatMode::Dec,
                     FormatMode::Dec => FormatMode::Str,
                     FormatMode::Str => FormatMode::Hex,
                 };
             }
             RunButton::Sign => {
-                // Disable sign toggle unless in decimal format
-                if matches!(app.fmt_mode, FormatMode::Dec) {
-                    app.show_signed = !app.show_signed;
+                if matches!(app.run.fmt_mode, FormatMode::Dec) {
+                    app.run.show_signed = !app.run.show_signed;
                 }
             }
             RunButton::Bytes => {
-                // Cycle byte width 4 -> 2 -> 1 -> 4
-                let next = match app.mem_view_bytes {
+                let next = match app.run.mem_view_bytes {
                     4 => 2,
                     2 => 1,
                     _ => 4,
                 };
-                app.mem_view_bytes = next;
-                // Align base address to the new byte width so regrouping
-                // always starts at proper boundaries (prevents mis-grouping
-                // after scrolling in 1-byte mode and switching back).
+                app.run.mem_view_bytes = next;
                 if next > 1 {
                     let mask = !(next as u32 - 1);
-                    app.mem_view_addr &= mask;
+                    app.run.mem_view_addr &= mask;
                 }
             }
             RunButton::Region => {
-                app.mem_region = match app.mem_region {
+                app.run.mem_region = match app.run.mem_region {
                     MemRegion::Data => {
-                        app.mem_view_addr = app.cpu.x[2];
+                        app.run.mem_view_addr = app.run.cpu.x[2];
                         MemRegion::Stack
                     }
                     _ => {
-                        app.mem_view_addr = app.data_base;
+                        app.run.mem_view_addr = app.run.data_base;
                         MemRegion::Data
                     }
                 };
             }
             RunButton::State => {
-                if app.is_running {
-                    app.is_running = false;
-                } else if !app.faulted {
-                    app.is_running = true;
+                if app.run.is_running {
+                    app.run.is_running = false;
+                } else if !app.run.faulted {
+                    app.run.is_running = true;
                 }
             }
         }
@@ -273,31 +263,31 @@ fn run_status_area(app: &App, area: Rect) -> Rect {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(root_chunks[1]);
     run_chunks[1]
 }
 
 fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
-    let view_text = if app.show_registers { "REGS" } else { "RAM" };
-    let fmt_text = match app.fmt_mode {
+    let view_text = if app.run.show_registers { "REGS" } else { "RAM" };
+    let fmt_text = match app.run.fmt_mode {
         FormatMode::Hex => "HEX",
         FormatMode::Dec => "DEC",
         FormatMode::Str => "STR",
     };
-    let sign_text = if app.show_signed { "SGN" } else { "UNS" };
-    let bytes_text = match app.mem_view_bytes {
+    let sign_text = if app.run.show_signed { "SGN" } else { "UNS" };
+    let bytes_text = match app.run.mem_view_bytes {
         4 => "4B",
         2 => "2B",
         _ => "1B",
     };
-    let region_text = match app.mem_region {
+    let region_text = match app.run.mem_region {
         MemRegion::Data => "DATA",
         MemRegion::Stack => "STACK",
-        MemRegion::Custom => "DATA", // hide ADDR option
+        MemRegion::Custom => "DATA",
     };
-    let run_text = if app.is_running { "RUN" } else { "PAUSE" };
+    let run_text = if app.run.is_running { "RUN" } else { "PAUSE" };
 
     let mut pos = status.x + 1;
     let range = |start: &mut u16, label: &str| {
@@ -312,7 +302,7 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     skip(&mut pos, "View ");
     let (view_start, view_end) = range(&mut pos, view_text);
 
-    let (region_start, region_end) = if !app.show_registers {
+    let (region_start, region_end) = if !app.run.show_registers {
         skip(&mut pos, "  Region ");
         range(&mut pos, region_text)
     } else {
@@ -325,7 +315,7 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     skip(&mut pos, "  Sign ");
     let (sign_start, sign_end) = range(&mut pos, sign_text);
 
-    let (bytes_start, bytes_end) = if !app.show_registers {
+    let (bytes_start, bytes_end) = if !app.run.show_registers {
         skip(&mut pos, "  Bytes ");
         range(&mut pos, bytes_text)
     } else {
@@ -337,18 +327,17 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
 
     if col >= view_start && col < view_end {
         Some(RunButton::View)
-    } else if !app.show_registers && col >= region_start && col < region_end {
+    } else if !app.run.show_registers && col >= region_start && col < region_end {
         Some(RunButton::Region)
     } else if col >= fmt_start && col < fmt_end {
         Some(RunButton::Format)
     } else if col >= sign_start && col < sign_end {
-        // Only allow clicking Sign when in decimal format
-        if matches!(app.fmt_mode, FormatMode::Dec) {
+        if matches!(app.run.fmt_mode, FormatMode::Dec) {
             Some(RunButton::Sign)
         } else {
             None
         }
-    } else if !app.show_registers && col >= bytes_start && col < bytes_end {
+    } else if !app.run.show_registers && col >= bytes_start && col < bytes_end {
         Some(RunButton::Bytes)
     } else if col >= state_start && col < state_end {
         Some(RunButton::State)
@@ -373,7 +362,7 @@ fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
     let main = run_chunks[2];
@@ -381,7 +370,7 @@ fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(38),
-            Constraint::Length(app.imem_width),
+            Constraint::Length(app.run.imem_width),
             Constraint::Min(46),
         ])
         .split(main)
@@ -393,48 +382,45 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
     if me.column == bar_x && me.row >= imem.y && me.row < imem.y + imem.height {
-        app.hover_imem_bar = true;
-    } else if !app.imem_drag {
-        app.hover_imem_bar = false;
+        app.run.hover_imem_bar = true;
+    } else if !app.run.imem_drag {
+        app.run.hover_imem_bar = false;
     }
 
-    // Compute inner content area of instruction memory
     let inner = Rect::new(
         imem.x + 1,
         imem.y + 1,
         imem.width.saturating_sub(2),
         imem.height.saturating_sub(2),
     );
-    // Only track hover within inner area rows
     if me.column >= inner.x
         && me.column < inner.x + inner.width
         && me.row >= inner.y
         && me.row < inner.y + inner.height
     {
-        if let Some(ref text) = app.last_ok_text {
+        if let Some(ref text) = app.editor.last_ok_text {
             let rows = inner.height.saturating_sub(2) as usize;
             let total = text.len();
             let max_scroll = total.saturating_sub(rows);
-            if app.imem_scroll > max_scroll {
-                app.imem_scroll = max_scroll;
+            if app.run.imem_scroll > max_scroll {
+                app.run.imem_scroll = max_scroll;
             }
             let row = (me.row - inner.y) as usize;
-            let idx = app.imem_scroll + row;
+            let idx = app.run.imem_scroll + row;
             if idx < total {
-                app.hover_imem_addr = Some(app.base_pc + (idx as u32) * 4);
+                app.run.hover_imem_addr = Some(app.run.base_pc + (idx as u32) * 4);
             } else {
-                app.hover_imem_addr = None;
+                app.run.hover_imem_addr = None;
             }
         } else {
-            app.hover_imem_addr = None;
+            app.run.hover_imem_addr = None;
         }
     } else {
-        app.hover_imem_addr = None;
+        app.run.hover_imem_addr = None;
     }
 }
 
 fn clamp_docs_scroll(app: &mut App, area: Rect) {
-    // Replicate the UI layout to get docs table viewport height
     let root_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -444,23 +430,20 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
         ])
         .split(area);
     let docs_area = root_chunks[1];
-    // Docs split: 2 meta lines + table
     let table_h = docs_area.height.saturating_sub(2);
-    // Table fixed parts: top + header + header separator + bottom
     let viewport_h = table_h.saturating_sub(4) as usize;
     if viewport_h == 0 {
-        app.docs_scroll = 0;
+        app.docs.scroll = 0;
         return;
     }
     let total_body = docs_body_line_count(docs_area.width);
     let max_start = total_body.saturating_sub(viewport_h);
-    if app.docs_scroll > max_start {
-        app.docs_scroll = max_start;
+    if app.docs.scroll > max_start {
+        app.docs.scroll = max_start;
     }
 }
 
 fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) {
-    // Actions line is the second content line inside the status block
     let inner_x = status_area.x + 1;
     let actions_y = status_area.y + 1 + 1;
     if me.row != actions_y {
@@ -476,7 +459,7 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     let btn_ecode = "[CODE]";
 
     x += import_label.len() as u16;
-    let ibin_start = x; let ibin_end = x + btn_ibin.len() as u16; x = ibin_end + 1; // space
+    let ibin_start = x; let ibin_end = x + btn_ibin.len() as u16; x = ibin_end + 1;
     let icode_start = x; let icode_end = x + btn_icode.len() as u16; x = icode_end;
     x += gap.len() as u16;
     x += export_label.len() as u16;
@@ -485,7 +468,6 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
 
     let col = me.column;
     if col >= ibin_start && col < ibin_end {
-        // Import BIN
         if let Some(path) = OSFileDialog::new()
             .add_filter("Binary", &["bin", "img"])
             .pick_file()
@@ -500,40 +482,37 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                     let w = u32::from_le_bytes(b);
                     lines.push(disasm_word(w));
                 }
-                app.editor.lines = lines;
-                app.editor.cursor_row = 0;
-                app.editor.cursor_col = 0;
+                app.editor.buf.lines = lines;
+                app.editor.buf.cursor_row = 0;
+                app.editor.buf.cursor_col = 0;
             }
         }
         return;
     }
     if col >= icode_start && col < icode_end {
-        // Import CODE
         if let Some(path) = OSFileDialog::new()
             .add_filter("Falcon ASM", &["fas", "asm"])
             .pick_file()
         {
             if let Ok(content) = std::fs::read_to_string(path) {
-                app.editor.lines = content.lines().map(|s| s.to_string()).collect();
-                app.editor.cursor_row = 0;
-                app.editor.cursor_col = 0;
-                // Assemble immediately after importing a new file (mouse action)
+                app.editor.buf.lines = content.lines().map(|s| s.to_string()).collect();
+                app.editor.buf.cursor_row = 0;
+                app.editor.buf.cursor_col = 0;
                 app.assemble_and_load();
             }
         }
         return;
     }
     if col >= ebin_start && col < ebin_end {
-        // Export BIN
         if let Some(path) = OSFileDialog::new()
             .add_filter("Binary", &["bin"])
             .set_file_name("program.bin")
             .save_file()
         {
-            let words = if let Some(ref t) = app.last_ok_text {
+            let words = if let Some(ref t) = app.editor.last_ok_text {
                 t.clone()
             } else {
-                match crate::falcon::asm::assemble(&app.editor.text(), app.base_pc) {
+                match crate::falcon::asm::assemble(&app.editor.buf.text(), app.run.base_pc) {
                     Ok(p) => p.text,
                     Err(e) => {
                         app.console.push_error(format!("Cannot export: assemble error at line {}: {}", e.line + 1, e.msg));
@@ -541,20 +520,19 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                     }
                 }
             };
-            let mut bytes = Vec::with_capacity(words.len()*4);
+            let mut bytes = Vec::with_capacity(words.len() * 4);
             for w in words { bytes.extend_from_slice(&w.to_le_bytes()); }
             let _ = std::fs::write(path, bytes);
         }
         return;
     }
     if col >= ecode_start && col < ecode_end {
-        // Export CODE
         if let Some(path) = OSFileDialog::new()
             .add_filter("Falcon ASM", &["fas", "asm"])
             .set_file_name("program.fas")
             .save_file()
         {
-            let _ = std::fs::write(path, app.editor.text());
+            let _ = std::fs::write(path, app.editor.buf.text());
         }
         return;
     }
@@ -565,14 +543,14 @@ fn start_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
     if me.column == bar_x && me.row >= imem.y && me.row < imem.y + imem.height {
-        app.imem_drag = true;
-        app.imem_drag_start_x = me.column;
-        app.imem_width_start = app.imem_width;
+        app.run.imem_drag = true;
+        app.run.imem_drag_start_x = me.column;
+        app.run.imem_width_start = app.run.imem_width;
     }
 }
 
 fn handle_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
-    let delta = me.column as i32 - app.imem_drag_start_x as i32;
+    let delta = me.column as i32 - app.run.imem_drag_start_x as i32;
     let root_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -588,20 +566,16 @@ fn handle_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
     let main = run_chunks[2];
     let available = main.width.saturating_sub(38 + 46);
     let max = if available < 20 { 20 } else { available } as i32;
-    let mut new_width = app.imem_width_start as i32 + delta;
-    if new_width < 20 {
-        new_width = 20;
-    }
-    if new_width > max {
-        new_width = max;
-    }
-    app.imem_width = new_width as u16;
+    let mut new_width = app.run.imem_width_start as i32 + delta;
+    if new_width < 20 { new_width = 20; }
+    if new_width > max { new_width = max; }
+    app.run.imem_width = new_width as u16;
 }
 
 fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
@@ -620,7 +594,7 @@ fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
     let console = run_chunks[3];
@@ -629,18 +603,18 @@ fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let clear_end = clear_start + 5;
     if me.row == bar_y {
         if me.column >= clear_start && me.column < clear_end {
-            app.hover_console_clear = true;
-            app.hover_console_bar = false;
+            app.run.hover_console_clear = true;
+            app.run.hover_console_bar = false;
         } else if me.column >= console.x && me.column < console.x + console.width {
-            app.hover_console_bar = true;
-            app.hover_console_clear = false;
-        } else if !app.console_drag {
-            app.hover_console_bar = false;
-            app.hover_console_clear = false;
+            app.run.hover_console_bar = true;
+            app.run.hover_console_clear = false;
+        } else if !app.run.console_drag {
+            app.run.hover_console_bar = false;
+            app.run.hover_console_clear = false;
         }
-    } else if !app.console_drag {
-        app.hover_console_bar = false;
-        app.hover_console_clear = false;
+    } else if !app.run.console_drag {
+        app.run.hover_console_bar = false;
+        app.run.hover_console_clear = false;
     }
 }
 
@@ -660,7 +634,7 @@ fn start_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
     let console = run_chunks[3];
@@ -672,9 +646,9 @@ fn start_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
         && me.column < console.x + console.width
         && !(me.column >= clear_start && me.column < clear_end)
     {
-        app.console_drag = true;
-        app.console_drag_start_y = me.row;
-        app.console_height_start = app.console_height;
+        app.run.console_drag = true;
+        app.run.console_drag_start_y = me.row;
+        app.run.console_height_start = app.run.console_height;
     }
 }
 
@@ -694,7 +668,7 @@ fn handle_console_clear(app: &mut App, me: MouseEvent, area: Rect) {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
     let console = run_chunks[3];
@@ -707,7 +681,7 @@ fn handle_console_clear(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn handle_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
-    let delta = app.console_drag_start_y as i32 - me.row as i32;
+    let delta = app.run.console_drag_start_y as i32 - me.row as i32;
     let root_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -718,14 +692,10 @@ fn handle_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
         .split(area);
     let run_area = root_chunks[1];
     let max = run_area.height.saturating_sub(3 + 4);
-    let mut new_h = app.console_height_start as i32 + delta;
-    if new_h < 1 {
-        new_h = 1;
-    }
-    if new_h as u16 > max {
-        new_h = max as i32;
-    }
-    app.console_height = new_h as u16;
+    let mut new_h = app.run.console_height_start as i32 + delta;
+    if new_h < 1 { new_h = 1; }
+    if new_h as u16 > max { new_h = max as i32; }
+    app.run.console_height = new_h as u16;
 }
 
 fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
@@ -744,7 +714,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
     let main = run_chunks[2];
@@ -752,7 +722,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
 
     if me.row >= console.y && me.row < console.y + console.height {
         let total = app.console.lines.len();
-        let visible = app.console_height.saturating_sub(3) as usize;
+        let visible = app.run.console_height.saturating_sub(3) as usize;
         let max_scroll = total.saturating_sub(visible);
         if app.console.scroll > max_scroll {
             app.console.scroll = max_scroll;
@@ -769,7 +739,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(38),
-            Constraint::Length(app.imem_width),
+            Constraint::Length(app.run.imem_width),
             Constraint::Min(46),
         ])
         .split(main);
@@ -780,53 +750,50 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         && me.row >= side.y
         && me.row < side.y + side.height
     {
-        if app.show_registers {
+        if app.run.show_registers {
             let max_scroll = max_regs_scroll(app);
-            if app.regs_scroll > max_scroll {
-                app.regs_scroll = max_scroll;
+            if app.run.regs_scroll > max_scroll {
+                app.run.regs_scroll = max_scroll;
             }
             if up {
-                app.regs_scroll = app.regs_scroll.saturating_sub(1);
+                app.run.regs_scroll = app.run.regs_scroll.saturating_sub(1);
             } else {
-                app.regs_scroll = (app.regs_scroll + 1).min(max_scroll);
+                app.run.regs_scroll = (app.run.regs_scroll + 1).min(max_scroll);
             }
         } else {
             if up {
-                app.mem_view_addr = app.mem_view_addr.saturating_sub(app.mem_view_bytes);
+                app.run.mem_view_addr = app.run.mem_view_addr.saturating_sub(app.run.mem_view_bytes);
             } else {
-                let max = app.mem_size.saturating_sub(app.mem_view_bytes as usize) as u32;
-                if app.mem_view_addr < max {
-                    app.mem_view_addr = app
-                        .mem_view_addr
-                        .saturating_add(app.mem_view_bytes)
+                let max = app.run.mem_size.saturating_sub(app.run.mem_view_bytes as usize) as u32;
+                if app.run.mem_view_addr < max {
+                    app.run.mem_view_addr = app.run.mem_view_addr
+                        .saturating_add(app.run.mem_view_bytes)
                         .min(max);
                 }
             }
-            app.mem_region = MemRegion::Custom;
+            app.run.mem_region = MemRegion::Custom;
         }
     }
 
-    // Scroll Instruction Memory when hovering its area
     if me.column >= imem.x
         && me.column < imem.x + imem.width
         && me.row >= imem.y
         && me.row < imem.y + imem.height
     {
-        // Disable IMEM scroll while program is running
-        if app.is_running {
+        if app.run.is_running {
             return;
         }
-        if let Some(ref text) = app.last_ok_text {
+        if let Some(ref text) = app.editor.last_ok_text {
             let visible = imem.height.saturating_sub(2) as usize;
             let total = text.len();
             let max_scroll = total.saturating_sub(visible);
-            if app.imem_scroll > max_scroll {
-                app.imem_scroll = max_scroll;
+            if app.run.imem_scroll > max_scroll {
+                app.run.imem_scroll = max_scroll;
             }
             if up {
-                app.imem_scroll = app.imem_scroll.saturating_sub(1);
+                app.run.imem_scroll = app.run.imem_scroll.saturating_sub(1);
             } else {
-                app.imem_scroll = (app.imem_scroll + 1).min(max_scroll);
+                app.run.imem_scroll = (app.run.imem_scroll + 1).min(max_scroll);
             }
         }
     }
@@ -835,7 +802,6 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
 fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
     let cols = run_cols(app, area);
     let imem = cols[1];
-    // Ignore clicks on the resize bar
     let bar_x = imem.x + imem.width - 1;
     if me.column == bar_x {
         return;
@@ -851,9 +817,9 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row >= inner.y
         && me.row < inner.y + inner.height
     {
-        if let Some(addr) = app.hover_imem_addr {
-            app.prev_pc = app.cpu.pc;
-            app.cpu.pc = addr;
+        if let Some(addr) = app.run.hover_imem_addr {
+            app.run.prev_pc = app.run.cpu.pc;
+            app.run.cpu.pc = addr;
         }
     }
 }

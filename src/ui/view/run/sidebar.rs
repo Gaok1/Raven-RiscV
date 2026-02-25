@@ -7,7 +7,7 @@ use super::formatting::{format_memory_value, format_u32_value};
 use super::registers::reg_name;
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    if app.show_registers {
+    if app.run.show_registers {
         render_register_table(f, area, app);
     } else {
         render_memory_view(f, area, app);
@@ -35,7 +35,7 @@ fn register_visible_range(inner: Rect, app: &App) -> (usize, usize) {
     let visible_rows = inner.height.saturating_sub(2) as usize;
     let total_rows = 33usize; // PC + x0..x31
     let max_scroll = total_rows.saturating_sub(visible_rows);
-    let start = app.regs_scroll.min(max_scroll);
+    let start = app.run.regs_scroll.min(max_scroll);
     let end = (start + visible_rows).min(total_rows);
     (start, end)
 }
@@ -62,16 +62,16 @@ fn register_entry(index: usize, app: &App) -> (String, String, bool) {
     if index == 0 {
         (
             "PC".to_string(),
-            format_u32_value(app.cpu.pc, app.fmt_mode, app.show_signed),
-            app.cpu.pc != app.prev_pc,
+            format_u32_value(app.run.cpu.pc, app.run.fmt_mode, app.run.show_signed),
+            app.run.cpu.pc != app.run.prev_pc,
         )
     } else {
         let reg_index = (index - 1) as u8;
-        let value = app.cpu.x[reg_index as usize];
+        let value = app.run.cpu.x[reg_index as usize];
         (
             format!("x{reg_index:02} ({})", reg_name(reg_index)),
-            format_u32_value(value, app.fmt_mode, app.show_signed),
-            value != app.prev_x[reg_index as usize],
+            format_u32_value(value, app.run.fmt_mode, app.run.show_signed),
+            value != app.run.prev_x[reg_index as usize],
         )
     }
 }
@@ -94,10 +94,10 @@ fn memory_block() -> Block<'static> {
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
-    let base = app.mem_view_addr;
+    let base = app.run.mem_view_addr;
     let lines = inner.height.saturating_sub(2) as u32;
-    let bytes = app.mem_view_bytes;
-    let max = app.mem_size.saturating_sub(bytes as usize) as u32;
+    let bytes = app.run.mem_view_bytes;
+    let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
 
     (0..lines)
         .map(|i| i * bytes)
@@ -109,7 +109,7 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
 
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let mut text = format!("0x{addr:08x}: {}", format_memory_value(app, addr));
-    if addr == app.cpu.x[2] {
+    if addr == app.run.cpu.x[2] {
         text.push_str("   ▶ sp");
         ListItem::new(text).style(Style::default().fg(Color::Yellow))
     } else {

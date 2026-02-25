@@ -44,8 +44,8 @@ enum DetailOrigin {
 }
 
 fn detail_context(app: &App) -> DetailContext {
-    if let Some(addr) = app.hover_imem_addr {
-        let word = app.mem.load32(addr).unwrap_or(0);
+    if let Some(addr) = app.run.hover_imem_addr {
+        let word = app.run.mem.load32(addr).unwrap_or(0);
         DetailContext {
             addr,
             word,
@@ -53,10 +53,10 @@ fn detail_context(app: &App) -> DetailContext {
             origin: DetailOrigin::Hover,
             format: detect_format(word),
         }
-    } else if imem_address_in_range(app, app.cpu.pc) {
-        let word = app.mem.load32(app.cpu.pc).unwrap_or(0);
+    } else if imem_address_in_range(app, app.run.cpu.pc) {
+        let word = app.run.mem.load32(app.run.cpu.pc).unwrap_or(0);
         DetailContext {
-            addr: app.cpu.pc,
+            addr: app.run.cpu.pc,
             word,
             disasm: disasm_word(word),
             origin: DetailOrigin::ProgramCounter,
@@ -64,7 +64,7 @@ fn detail_context(app: &App) -> DetailContext {
         }
     } else {
         DetailContext {
-            addr: app.cpu.pc,
+            addr: app.run.cpu.pc,
             word: 0,
             disasm: "<PC out of RAM>".to_string(),
             origin: DetailOrigin::ProgramCounter,

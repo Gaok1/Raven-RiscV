@@ -25,7 +25,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(app.console_height),
+            Constraint::Length(app.run.console_height),
         ])
         .split(area);
 
@@ -37,7 +37,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(38),
-            Constraint::Length(app.imem_width),
+            Constraint::Length(app.run.imem_width),
             Constraint::Min(46),
         ])
         .split(main);
