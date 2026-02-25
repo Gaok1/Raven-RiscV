@@ -5,8 +5,181 @@ use crate::falcon::instruction::Instruction;
 
 use super::errors::AsmError;
 use super::program::Program;
-use super::pseudo::{parse_la, parse_pop, parse_print, parse_print_str, parse_print_strln, parse_push, parse_read, parse_read_byte, parse_read_half, parse_read_word};
+use super::pseudo::{
+    parse_la, parse_pop, parse_print, parse_print_str, parse_print_strln, parse_push, parse_read,
+    parse_read_byte, parse_read_half, parse_read_word,
+};
 use super::utils::*;
+
+#[derive(Debug)]
+enum EquateEvalError {
+    UnknownSymbol(String),
+    InvalidExpr(String),
+}
+
+#[derive(Debug, Clone)]
+enum ExprTok {
+    Plus,
+    Minus,
+    Dot,
+    Number(i64),
+    Ident(String),
+}
+
+fn tokenize_expr(expr: &str) -> Result<Vec<ExprTok>, EquateEvalError> {
+    let mut toks = Vec::new();
+    let mut chars = expr.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            ' ' | '\t' | '\r' | '\n' | ',' => {
+                chars.next();
+            }
+            '+' => {
+                chars.next();
+                toks.push(ExprTok::Plus);
+            }
+            '-' => {
+                chars.next();
+                toks.push(ExprTok::Minus);
+            }
+            '(' | ')' | '*' | '/' | '%' | '&' | '|' | '^' | '<' | '>' | '~' => {
+                return Err(EquateEvalError::InvalidExpr(format!(
+                    "unsupported operator/paren '{c}' in expression"
+                )));
+            }
+            '.' => {
+                chars.next();
+                // Bare '.' is the location counter. If it's immediately followed by an identifier
+                // character, treat it as part of a symbol (e.g. '.L0', '.LC0').
+                let is_ident_start = matches!(chars.peek(), Some(ch) if ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '.' || *ch == '$');
+                if is_ident_start {
+                    let mut s = String::from(".");
+                    while let Some(&ch) = chars.peek() {
+                        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '$' {
+                            s.push(ch);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    toks.push(ExprTok::Ident(s));
+                } else {
+                    toks.push(ExprTok::Dot);
+                }
+            }
+            '0'..='9' => {
+                let mut s = String::new();
+                while let Some(&ch) = chars.peek() {
+                    if ch.is_ascii_hexdigit() || ch == 'x' || ch == 'X' {
+                        s.push(ch);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                let v = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                    i64::from_str_radix(hex, 16).map_err(|_| {
+                        EquateEvalError::InvalidExpr(format!("invalid hex number: {s}"))
+                    })?
+                } else {
+                    s.parse::<i64>().map_err(|_| {
+                        EquateEvalError::InvalidExpr(format!("invalid number: {s}"))
+                    })?
+                };
+                toks.push(ExprTok::Number(v));
+            }
+            _ => {
+                // identifier
+                if c.is_ascii_alphabetic() || c == '_' || c == '$' {
+                    let mut s = String::new();
+                    while let Some(&ch) = chars.peek() {
+                        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '$' {
+                            s.push(ch);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    toks.push(ExprTok::Ident(s));
+                } else {
+                    return Err(EquateEvalError::InvalidExpr(format!(
+                        "unexpected character '{c}' in expression"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(toks)
+}
+
+fn eval_expr(
+    expr: &str,
+    dot: i64,
+    labels: &HashMap<String, u32>,
+    consts: &HashMap<String, i64>,
+) -> Result<i64, EquateEvalError> {
+    let toks = tokenize_expr(expr)?;
+    if toks.is_empty() {
+        return Err(EquateEvalError::InvalidExpr("empty expression".into()));
+    }
+
+    let mut idx = 0usize;
+    let parse_signed_term = |idx: &mut usize| -> Result<i64, EquateEvalError> {
+        let mut sign = 1i64;
+        while *idx < toks.len() {
+            match toks[*idx] {
+                ExprTok::Plus => {
+                    *idx += 1;
+                }
+                ExprTok::Minus => {
+                    sign = -sign;
+                    *idx += 1;
+                }
+                _ => break,
+            }
+        }
+
+        if *idx >= toks.len() {
+            return Err(EquateEvalError::InvalidExpr(
+                "expected term after operator".into(),
+            ));
+        }
+
+        let v = match &toks[*idx] {
+            ExprTok::Dot => dot,
+            ExprTok::Number(n) => *n,
+            ExprTok::Ident(name) => {
+                if let Some(v) = consts.get(name) {
+                    *v
+                } else if let Some(v) = labels.get(name) {
+                    *v as i64
+                } else {
+                    return Err(EquateEvalError::UnknownSymbol(name.clone()));
+                }
+            }
+            ExprTok::Plus | ExprTok::Minus => unreachable!(),
+        };
+        *idx += 1;
+        Ok(sign * v)
+    };
+
+    let mut acc = parse_signed_term(&mut idx)?;
+    while idx < toks.len() {
+        let op = match toks[idx] {
+            ExprTok::Plus => 1i64,
+            ExprTok::Minus => -1i64,
+            _ => {
+                return Err(EquateEvalError::InvalidExpr(
+                    "expected '+' or '-'".into(),
+                ))
+            }
+        };
+        idx += 1;
+        let rhs = parse_signed_term(&mut idx)?;
+        acc += op * rhs;
+    }
+    Ok(acc)
+}
 
 // ---------- API ----------
 pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
@@ -14,10 +187,18 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
     let data_base = base_pc + 0x1000; // data region after code
 
     // 1st pass: symbol table
+    #[derive(Clone, Copy)]
     enum Section {
         Text,
         Data,
         Bss,
+    }
+    struct EquateDef {
+        name: String,
+        expr: String,
+        sec: Section,
+        off: u32,
+        line_no: usize,
     }
     let mut section = Section::Text;
     let mut pc_text = base_pc;
@@ -27,6 +208,7 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
     let mut data_bytes = Vec::<u8>::new();
     // Collect label defs by section and offset; resolve absolute addresses after first pass
     let mut label_defs = HashMap::<String, (Section, u32)>::new();
+    let mut equates = Vec::<EquateDef>::new();
 
     // Iterate over lines and collect labels and instructions
     for (line_no, raw) in &lines {
@@ -43,11 +225,17 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
             continue;
         }
         if let Some(rest) = raw.strip_prefix(".section") {
-            let name = rest.trim();
+            let rest = rest.trim();
+            let name = rest
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .next()
+                .unwrap_or("");
             match name {
                 ".text" | "text" => section = Section::Text,
-                ".data" | "data" => section = Section::Data,
-                ".bss" | "bss" => section = Section::Bss,
+                ".data" | "data" | ".rodata" | "rodata" | ".sdata" | "sdata" | ".srodata"
+                | "srodata" => section = Section::Data,
+                ".bss" | "bss" | ".sbss" | "sbss" => section = Section::Bss,
+                ".note.GNU-stack" => continue, // no-op for this simulator
                 "" => {
                     return Err(AsmError {
                         line: *line_no,
@@ -80,9 +268,90 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
             }
         }
 
+        let ltrim = line.trim_start();
+        if ltrim.is_empty() {
+            continue;
+        }
+
+        // Common GAS directives that are irrelevant for this simulator (accepted as no-ops).
+        if ltrim.starts_with(".globl") || ltrim.starts_with(".global") {
+            let rest = ltrim
+                .strip_prefix(".globl")
+                .or_else(|| ltrim.strip_prefix(".global"))
+                .unwrap_or("")
+                .trim();
+            if rest.is_empty() {
+                return Err(AsmError {
+                    line: *line_no,
+                    msg: "missing symbol name in .globl/.global".into(),
+                });
+            }
+            continue;
+        }
+        if ltrim.starts_with(".type")
+            || ltrim.starts_with(".size")
+            || ltrim.starts_with(".file")
+            || ltrim.starts_with(".ident")
+            || ltrim.starts_with(".option")
+            || ltrim.starts_with(".attribute")
+            || ltrim.starts_with(".cfi_")
+        {
+            continue;
+        }
+
+        // Equates / symbol assignments (e.g. `len = . - msg` or `.equ len, . - msg`)
+        let (sec, off) = match section {
+            Section::Text => (Section::Text, pc_text),
+            Section::Data => (Section::Data, pc_data),
+            Section::Bss => (Section::Bss, pc_bss),
+        };
+        if let Some(rest) = ltrim
+            .strip_prefix(".equ")
+            .or_else(|| ltrim.strip_prefix(".set"))
+        {
+            let rest = rest.trim();
+            let (name, expr) = if let Some((n, e)) = rest.split_once(',') {
+                (n.trim().to_string(), e.trim().to_string())
+            } else {
+                let mut it = rest.split_whitespace();
+                let n = it.next().unwrap_or("").trim().to_string();
+                let e = it.collect::<Vec<_>>().join(" ");
+                (n, e.trim().to_string())
+            };
+            if name.is_empty() || expr.is_empty() {
+                return Err(AsmError {
+                    line: *line_no,
+                    msg: "expected '.equ name, expr'".into(),
+                });
+            }
+            equates.push(EquateDef {
+                name,
+                expr,
+                sec,
+                off,
+                line_no: *line_no,
+            });
+            continue;
+        }
+        if !ltrim.starts_with('.') {
+            if let Some((lhs, rhs)) = ltrim.split_once('=') {
+                let name = lhs.trim();
+                let expr = rhs.trim();
+                if !name.is_empty() && !expr.is_empty() {
+                    equates.push(EquateDef {
+                        name: name.to_string(),
+                        expr: expr.to_string(),
+                        sec,
+                        off,
+                        line_no: *line_no,
+                    });
+                    continue;
+                }
+            }
+        }
+
         match section {
             Section::Text => {
-                let ltrim = line.trim_start();
                 if ltrim.starts_with("la ") {
                     items.push((pc_text, LineKind::La(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(8);
@@ -121,7 +390,30 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 }
             }
             Section::Data => {
-                if let Some(rest) = line.strip_prefix(".byte") {
+                if let Some(rest) = line.strip_prefix(".align") {
+                    let n = parse_imm(rest).ok_or_else(|| AsmError {
+                        line: *line_no,
+                        msg: format!("invalid .align: {rest}"),
+                    })?;
+                    if n <= 0 {
+                        return Err(AsmError {
+                            line: *line_no,
+                            msg: format!("alignment must be positive: {n}"),
+                        });
+                    }
+                    let n = n as u32;
+                    let mask = n - 1;
+                    let aligned = if (pc_data & mask) == 0 {
+                        pc_data
+                    } else {
+                        (pc_data + mask) & !mask
+                    };
+                    let pad = (aligned - pc_data) as usize;
+                    if pad != 0 {
+                        data_bytes.extend(std::iter::repeat(0).take(pad));
+                        pc_data = aligned;
+                    }
+                } else if let Some(rest) = line.strip_prefix(".byte") {
                     for b in rest.split(',') {
                         let v = parse_imm(b).ok_or_else(|| AsmError {
                             line: *line_no,
@@ -264,12 +556,77 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
         labels.insert(name, addr);
     }
 
+    // Resolve equates now that we know final label addresses.
+    let abs_of = |sec: Section, off: u32| -> i64 {
+        match sec {
+            Section::Text => off as i64,
+            Section::Data => (data_base + off) as i64,
+            Section::Bss => (data_base + data_size + off) as i64,
+        }
+    };
+    let mut consts = HashMap::<String, i64>::new();
+    if !equates.is_empty() {
+        let mut pending = equates;
+        // Try repeatedly to allow forward references between equates.
+        loop {
+            if pending.is_empty() {
+                break;
+            }
+            let mut next = Vec::new();
+            let mut progress = false;
+            for def in pending.into_iter() {
+                if labels.contains_key(&def.name) {
+                    return Err(AsmError {
+                        line: def.line_no,
+                        msg: format!("equate redefines existing label: {}", def.name),
+                    });
+                }
+                if consts.contains_key(&def.name) {
+                    return Err(AsmError {
+                        line: def.line_no,
+                        msg: format!("duplicate equate: {}", def.name),
+                    });
+                }
+
+                let dot = abs_of(def.sec, def.off);
+                match eval_expr(&def.expr, dot, &labels, &consts) {
+                    Ok(v) => {
+                        consts.insert(def.name, v);
+                        progress = true;
+                    }
+                    Err(EquateEvalError::UnknownSymbol(_)) => next.push(def),
+                    Err(EquateEvalError::InvalidExpr(e)) => {
+                        return Err(AsmError { line: def.line_no, msg: e })
+                    }
+                }
+            }
+
+            if next.is_empty() {
+                break;
+            }
+            if !progress {
+                // Produce a deterministic error for the first unresolved equate.
+                let def = &next[0];
+                let dot = abs_of(def.sec, def.off);
+                let msg = match eval_expr(&def.expr, dot, &labels, &consts) {
+                    Err(EquateEvalError::UnknownSymbol(sym)) => {
+                        format!("unknown symbol in equate '{}': {}", def.name, sym)
+                    }
+                    Err(EquateEvalError::InvalidExpr(e)) => e,
+                    Ok(_) => "failed to resolve equate".into(),
+                };
+                return Err(AsmError { line: def.line_no, msg });
+            }
+            pending = next;
+        }
+    }
+
     // 2nd pass: assemble
     let mut words = Vec::with_capacity(items.len());
     for (pc, kind, line_no) in items {
         match kind {
             LineKind::Instr(s) => {
-                let inst = parse_instr(&s, pc, &labels).map_err(|e| AsmError {
+                let inst = parse_instr(&s, pc, &labels, &consts).map_err(|e| AsmError {
                     line: line_no,
                     msg: e,
                 })?;
@@ -426,6 +783,7 @@ fn parse_instr(
     s: &str,
     pc: u32,
     labels: &HashMap<String, u32>,
+    consts: &HashMap<String, i64>,
 ) -> Result<Instruction, String> {
     // ex: "addi x1, x0, 10"
     let mut parts = s.split_whitespace();
@@ -436,7 +794,17 @@ fn parse_instr(
     use Instruction::*;
 
     let get_reg = |t: &str| parse_reg(t).ok_or_else(|| format!("invalid register: {t}"));
-    let get_imm = |t: &str| parse_imm(t).ok_or_else(|| format!("invalid immediate: {t}"));
+    let get_imm = |t: &str| {
+        if let Some(v) = parse_imm(t) {
+            return Ok(v);
+        }
+        if let Some(v) = consts.get(t) {
+            let v_i32 = i32::try_from(*v)
+                .map_err(|_| format!("immediate out of range for i32: {t}"))?;
+            return Ok(v_i32);
+        }
+        Err(format!("invalid immediate: {t}"))
+    };
 
     match mnemonic.as_str() {
         // ---------- Pseudo-instructions ----------

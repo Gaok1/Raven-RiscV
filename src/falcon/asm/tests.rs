@@ -192,3 +192,21 @@ fn bss_rejects_explicit_data() {
     let err = assemble(asm, 0).err().expect("expected error");
     assert!(err.msg.contains(".bss does not store explicit data"));
 }
+
+#[test]
+fn globl_directive_is_accepted_as_noop() {
+    let asm = ".text\n.globl _start\n_start: halt";
+    let prog = assemble(asm, 0).expect("assemble");
+    assert_eq!(prog.text.len(), 1);
+}
+
+#[test]
+fn equate_dot_expression_works_with_li() {
+    // len = . - msg should yield 3 for an .asciz "hi"
+    let asm = ".data\nmsg: .asciz \"hi\"\nlen = . - msg\n.text\nli a0, len\nhalt";
+    let prog = assemble(asm, 0).expect("assemble");
+    assert_eq!(prog.text.len(), 2);
+    let expected_li =
+        encode(Instruction::Addi { rd: 10, rs1: 0, imm: 3 }).expect("encode addi");
+    assert_eq!(prog.text[0], expected_li);
+}
