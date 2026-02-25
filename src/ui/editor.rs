@@ -21,11 +21,20 @@ impl Editor {
     pub fn with_sample() -> Self {
         let sample = vec![
             ".data".to_string(),
-            "arr: .byte 1,2,3,4".to_string(),
+            "    msg: .ascii \"Hello, world!\"".to_string(),
+            "    break_line: .byte 10".to_string(),
+            "    len = . - msg".to_string(),
             ".text".to_string(),
-            "  la t0, arr".to_string(),
-            "  lb t1, 0(t0)".to_string(),
-            "  ecall".to_string(),
+            ".globl _start".to_string(),
+            "_start:".to_string(),
+            "    li a0, 1".to_string(),     // fd=1 (stdout)
+            "    la a1, msg".to_string(),   // buf
+            "    li a2, len".to_string(),   // count
+            "    li a7, 64".to_string(),    // write
+            "    ecall".to_string(),
+            "    li a0, 0".to_string(),     // status
+            "    li a7, 93".to_string(),    // exit
+            "    ecall".to_string(),
         ];
         Self {
             lines: sample,
