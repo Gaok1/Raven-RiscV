@@ -116,19 +116,21 @@ pub(crate) fn check_signed(imm: i32, bits: u32, ctx: &str) -> Result<i32, String
 }
 
 pub(crate) fn check_u_imm(imm: i32, ctx: &str) -> Result<i32, String> {
-    if imm & 0xfff != 0 {
-        return Err(format!("{ctx}: immediate {imm} has non-zero lower 12 bits"));
+    // LUI/AUIPC take an **unshifted** 20-bit immediate that populates bits [31:12].
+    // The encoder/CPU model stores this immediate as the final shifted value (imm20 << 12).
+    //
+    // Accept both signed 20-bit values ([-524288..524287]) and the full unsigned
+    // 20-bit range ([0..0xFFFFF]), matching common assembler behavior.
+    let min = -(1i32 << 19);
+    let max = 0xFFFFF;
+    if imm < min || imm > max {
+        return Err(format!(
+            "{ctx}: immediate {imm} out of 20-bit range ({min}..{max})"
+        ));
     }
-    let imm64 = imm as i64;
-    let min = -(1i64 << 31);
-    let max = (1i64 << 31) - (1i64 << 12);
-    if imm64 < min || imm64 > max {
-        Err(format!(
-            "{ctx}: immediate {imm} out of 20-bit signed range ({min}..{max})"
-        ))
-    } else {
-        Ok(imm)
-    }
+
+    let imm20 = (imm as u32) & 0xFFFFF;
+    Ok((imm20 << 12) as i32)
 }
 
 // beq/bne/... and jal: token can be a number or label
@@ -182,4 +184,3 @@ pub(crate) fn store_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
     let (imm, rs1) = parse_memop(&ops[1])?;
     Ok((rs2, imm, rs1))
 }
-

@@ -1,5 +1,5 @@
 use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
-use crate::ui::app::{App, CacheScope, CacheSubtab, EditorMode, MemRegion, Tab};
+use crate::ui::app::{App, CacheScope, CacheSubtab, EditorMode, MemRegion, RunSpeed, Tab};
 use crate::ui::view::docs::docs_body_line_count;
 use arboard::Clipboard;
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
@@ -274,12 +274,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.run.is_running = true;
                     }
                 }
-                (KeyCode::Char('p'), Tab::Run) => {
+                // Pause/resume — blocked in Instant mode while running (use R to restart)
+                (KeyCode::Char('p'), Tab::Run)
+                    if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
+                {
                     if app.run.is_running {
                         app.run.is_running = false;
                     } else if !app.run.faulted {
                         app.run.is_running = true;
                     }
+                }
+                // Cycle speed: 1x → 2x → 4x → GO → 1x (locked while running in Instant)
+                (KeyCode::Char('f'), Tab::Run)
+                    if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
+                {
+                    app.run.speed = app.run.speed.cycle();
                 }
                 (KeyCode::Up, Tab::Run) if ctrl => {
                     let visible = app.run.console_height.saturating_sub(3) as usize;
@@ -402,9 +411,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         }
                         KeyCode::Char(c) if field.is_numeric() && c.is_ascii_digit() => {
                             app.cache.edit_buf.push(c);
+                            app.cache.config_error = None;
+                            app.cache.config_status = None;
                         }
                         KeyCode::Backspace if field.is_numeric() => {
                             app.cache.edit_buf.pop();
+                            app.cache.config_error = None;
+                            app.cache.config_status = None;
                         }
                         _ => {}
                     }

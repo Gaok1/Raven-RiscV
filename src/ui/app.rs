@@ -153,6 +153,39 @@ pub(super) enum FormatMode {
     Str,
 }
 
+/// Execution speed setting.
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub(super) enum RunSpeed {
+    /// ~12 steps/sec — slow, instruction-by-instruction
+    X1,
+    /// ~50 steps/sec — faster but still watchable
+    X2,
+    /// ~400 steps/sec — fast, visual blur
+    X4,
+    /// Time-budgeted bulk (8 ms/frame) — effectively instant
+    Instant,
+}
+
+impl RunSpeed {
+    /// Cycle to the next speed level (wraps around).
+    pub(super) fn cycle(self) -> Self {
+        match self {
+            Self::X1 => Self::X2,
+            Self::X2 => Self::X4,
+            Self::X4 => Self::Instant,
+            Self::Instant => Self::X1,
+        }
+    }
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::X1 => "1x",
+            Self::X2 => "2x",
+            Self::X4 => "4x",
+            Self::Instant => "GO",
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(super) enum RunButton {
     View,
@@ -161,6 +194,7 @@ pub(super) enum RunButton {
     Bytes,
     Region,
     State,
+    Speed,
 }
 
 // ── State per tab ──────────────────────────────────────────────────────────────
@@ -227,6 +261,7 @@ pub(super) struct RunState {
     pub(super) last_step_time: Instant,
     pub(super) step_interval: Duration,
     pub(super) faulted: bool,
+    pub(super) speed: RunSpeed,
 }
 
 pub(super) struct DocsState {
@@ -315,6 +350,7 @@ impl App {
                 last_step_time: Instant::now(),
                 step_interval: Duration::from_millis(80),
                 faulted: false,
+                speed: RunSpeed::X1,
             },
             docs: DocsState { scroll: 0 },
             cache: CacheState {
@@ -579,6 +615,8 @@ impl App {
     /// Commit the current numeric edit_buf into pending_icache/pending_dcache.
     pub(super) fn commit_cache_edit(&mut self) {
         if let Some((is_icache, field)) = self.cache.edit_field {
+            self.cache.config_error = None;
+            self.cache.config_status = None;
             if field.is_numeric() {
                 let s = self.cache.edit_buf.trim().to_string();
                 let cfg = if is_icache { &mut self.cache.pending_icache } else { &mut self.cache.pending_dcache };
@@ -597,6 +635,8 @@ impl App {
     /// Cycle an enum-typed config field (forward=true → next option).
     pub(super) fn cycle_cache_field(&mut self, is_icache: bool, field: ConfigField, forward: bool) {
         use crate::falcon::cache::{ReplacementPolicy, WriteAllocPolicy, WritePolicy};
+        self.cache.config_error = None;
+        self.cache.config_status = None;
         let cfg = if is_icache { &mut self.cache.pending_icache } else { &mut self.cache.pending_dcache };
         match field {
             ConfigField::Replacement => {
@@ -650,11 +690,39 @@ impl App {
     }
 
     fn tick(&mut self) {
-        if self.run.is_running && self.run.last_step_time.elapsed() >= self.run.step_interval {
-            self.single_step();
-            self.run.last_step_time = Instant::now();
-        }
         if self.run.is_running {
+            match self.run.speed {
+                RunSpeed::X1 => {
+                    if self.run.last_step_time.elapsed() >= self.run.step_interval {
+                        self.single_step();
+                        self.run.last_step_time = Instant::now();
+                    }
+                }
+                RunSpeed::X2 => {
+                    if self.run.last_step_time.elapsed() >= Duration::from_millis(20) {
+                        self.single_step();
+                        self.run.last_step_time = Instant::now();
+                    }
+                }
+                RunSpeed::X4 => {
+                    // Multiple steps per tick for high throughput (~400 steps/sec at 100 ticks/sec)
+                    for _ in 0..4 {
+                        if !self.run.is_running { break; }
+                        self.single_step();
+                    }
+                }
+                RunSpeed::Instant => {
+                    // Spend up to 8 ms executing per tick — leaves UI responsive at 60 fps
+                    let budget = Duration::from_millis(8);
+                    let start = Instant::now();
+                    while self.run.is_running && start.elapsed() < budget {
+                        self.single_step();
+                    }
+                }
+            }
+        }
+        // Scroll instruction list to follow PC (skipped in Instant to avoid pointless churn)
+        if self.run.is_running && !matches!(self.run.speed, RunSpeed::Instant) {
             if self.run.cpu.pc >= self.run.base_pc {
                 let pc_idx = ((self.run.cpu.pc - self.run.base_pc) / 4) as usize;
                 self.run.imem_scroll = pc_idx.saturating_sub(2);

@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
-use super::{App, FormatMode, MemRegion, RunButton};
+use super::{App, FormatMode, MemRegion, RunButton, RunSpeed};
 
 pub(super) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     let border_color = if app.hover_run_button.is_some() {
@@ -22,7 +22,7 @@ pub(super) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn status_lines(app: &App) -> Vec<Line<'static>> {
-    vec![Line::from(status_spans(app)), command_line()]
+    vec![Line::from(status_spans(app)), command_line(app)]
 }
 
 fn status_spans(app: &App) -> Vec<Span<'static>> {
@@ -67,6 +67,13 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         ));
     }
 
+    spans.push(Span::raw("  Speed "));
+    spans.push(button_span(
+        speed_text(app),
+        speed_color(app),
+        app.hover_run_button == Some(RunButton::Speed),
+    ));
+
     spans.push(Span::raw("  State "));
     spans.push(button_span(
         state_text(app),
@@ -77,8 +84,15 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
     spans
 }
 
-fn command_line() -> Line<'static> {
-    Line::from("Commands: s=step  r=run  p=pause/resume  R=restart  Up/Down/PgUp/PgDn scroll")
+fn command_line(app: &App) -> Line<'static> {
+    if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
+        Line::from(Span::styled(
+            "Running at full speed... press R to restart or wait for completion",
+            Style::default().fg(Color::Yellow),
+        ))
+    } else {
+        Line::from("Commands: s=step  r=run  p=pause/resume  R=restart  f=speed  Up/Down scroll")
+    }
 }
 
 fn view_text(app: &App) -> &'static str {
@@ -144,6 +158,23 @@ fn bytes_text(app: &App) -> &'static str {
         4 => "4B",
         2 => "2B",
         _ => "1B",
+    }
+}
+
+fn speed_text(app: &App) -> &'static str {
+    app.run.speed.label()
+}
+
+fn speed_color(app: &App) -> Color {
+    // Locked (instant+running): dim gray so user sees it's unavailable
+    if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
+        return Color::DarkGray;
+    }
+    match app.run.speed {
+        RunSpeed::X1 => Color::Blue,
+        RunSpeed::X2 => Color::Cyan,
+        RunSpeed::X4 => Color::Yellow,
+        RunSpeed::Instant => Color::Magenta,
     }
 }
 

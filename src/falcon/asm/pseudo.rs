@@ -21,21 +21,19 @@ pub(crate) fn parse_la(
         .get(&ops[1])
         .ok_or_else(|| format!("label not found: {}", ops[1]))? as i32;
 
-    // Split the address into a high part (aligned to 12 bits) and a low part.
-    // The `lui` instruction loads the upper 20 bits already shifted, therefore
-    // we need to shift the high part before generating the opcode.
-    let hi = ((addr + 0x800) >> 12) << 12; // aligned high part
-    let lo = addr - hi; // 12-bit low part
-    let lo_signed = if lo & 0x800 != 0 { lo - 0x1000 } else { lo };
-    let hi = check_u_imm(hi, "la")?;
-    let lo_signed = check_signed(lo_signed, 12, "la")?;
+    // Split the address into a high U-immediate (imm20) and a signed low 12-bit immediate.
+    // Use rounding (+0x800) so the low part fits a signed 12-bit ADDI.
+    let hi20 = (addr + 0x800) >> 12;
+    let hi = check_u_imm(hi20, "la")?;
+    let lo = addr - hi;
+    let lo = check_signed(lo, 12, "la")?;
 
     Ok((
         Instruction::Lui { rd, imm: hi },
         Instruction::Addi {
             rd,
             rs1: rd,
-            imm: lo_signed,
+            imm: lo,
         },
     ))
 }

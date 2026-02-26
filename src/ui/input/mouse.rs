@@ -1,5 +1,5 @@
 use crate::ui::{
-    app::{App, CacheScope, CacheSubtab, ConfigField, EditorMode, FormatMode, MemRegion, RunButton, Tab},
+    app::{App, CacheScope, CacheSubtab, ConfigField, EditorMode, FormatMode, MemRegion, RunButton, RunSpeed, Tab},
     editor::Editor,
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -255,7 +255,17 @@ fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
                     }
                 };
             }
+            RunButton::Speed => {
+                // Locked while running in Instant mode
+                if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) {
+                    app.run.speed = app.run.speed.cycle();
+                }
+            }
             RunButton::State => {
+                // Pause/resume blocked while running in Instant mode
+                if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
+                    return;
+                }
                 if app.run.is_running {
                     app.run.is_running = false;
                 } else if !app.run.faulted {
@@ -348,6 +358,10 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
         (0, 0)
     };
 
+    let speed_text = app.run.speed.label();
+    skip(&mut pos, "  Speed ");
+    let (speed_start, speed_end) = range(&mut pos, speed_text);
+
     skip(&mut pos, "  State ");
     let (state_start, state_end) = range(&mut pos, run_text);
 
@@ -365,6 +379,8 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
         }
     } else if !app.run.show_registers && col >= bytes_start && col < bytes_end {
         Some(RunButton::Bytes)
+    } else if col >= speed_start && col < speed_end {
+        Some(RunButton::Speed)
     } else if col >= state_start && col < state_end {
         Some(RunButton::State)
     } else {
@@ -1057,6 +1073,8 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
                     let initial = app.cache_field_value_str(is_icache, field);
                     app.cache.edit_field = Some((is_icache, field));
                     app.cache.edit_buf = initial;
+                    app.cache.config_error = None;
+                    app.cache.config_status = None;
                 } else {
                     // Cycle enum on click; keep field selected for keyboard cycling
                     app.cycle_cache_field(is_icache, field, true);
@@ -1131,9 +1149,13 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
             use crate::falcon::cache::cache_presets;
             if let Some(idx) = apply_preset(content_area.x, half_w) {
                 app.cache.pending_icache = cache_presets(true)[idx].clone();
+                app.cache.config_error = None;
+                app.cache.config_status = None;
             }
             if let Some(idx) = apply_preset(content_area.x + half_w, half_w) {
                 app.cache.pending_dcache = cache_presets(false)[idx].clone();
+                app.cache.config_error = None;
+                app.cache.config_status = None;
             }
         }
     }

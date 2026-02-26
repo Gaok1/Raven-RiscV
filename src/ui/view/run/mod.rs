@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 
 use super::components::{render_build_status, render_console};
 pub(super) use super::{App, MemRegion, RunButton};
-pub(super) use crate::ui::app::FormatMode;
+pub(super) use crate::ui::app::{FormatMode, RunSpeed};
 
 mod formatting;
 mod instruction_details;

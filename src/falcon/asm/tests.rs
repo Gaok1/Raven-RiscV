@@ -20,6 +20,50 @@ fn la_generates_lui_addi_pair() {
 }
 
 #[test]
+fn la_handles_negative_low_part() {
+    // Force a label address with low bits >= 0x800 so the ADDI low part becomes negative.
+    // With a data base of 0x1000, adding a 2048-byte pad yields 0x1800.
+    let asm = ".data\npad: .space 2048\ntarget: .word 0\n.text\nla t0, target";
+    let prog = assemble(asm, 0).expect("assemble");
+
+    assert_eq!(prog.text.len(), 2);
+
+    let expected_lui = encode(Instruction::Lui { rd: 5, imm: 0x2000 }).expect("encode lui");
+    let expected_addi =
+        encode(Instruction::Addi { rd: 5, rs1: 5, imm: -2048 }).expect("encode addi");
+
+    assert_eq!(prog.text[0], expected_lui);
+    assert_eq!(prog.text[1], expected_addi);
+}
+
+#[test]
+fn lui_imm20_is_unshifted() {
+    // ISA semantics: rd = imm20 << 12
+    let prog = assemble(".text\nlui t0, 0x1", 0).expect("assemble");
+    assert_eq!(prog.text.len(), 1);
+
+    let expected = encode(Instruction::Lui { rd: 5, imm: 0x1000 }).expect("encode lui");
+    assert_eq!(prog.text[0], expected);
+}
+
+#[test]
+fn auipc_imm20_is_unshifted() {
+    // ISA semantics: rd = pc + (imm20 << 12)
+    let prog = assemble(".text\nauipc t0, 0x1", 0).expect("assemble");
+    assert_eq!(prog.text.len(), 1);
+
+    let expected = encode(Instruction::Auipc { rd: 5, imm: 0x1000 }).expect("encode auipc");
+    assert_eq!(prog.text[0], expected);
+}
+
+#[test]
+fn lui_immediate_range_error() {
+    let asm = ".text\nlui t0, 0x100000";
+    let err = assemble(asm, 0).err().expect("expected error");
+    assert!(err.msg.contains("20-bit"));
+}
+
+#[test]
 fn call_expands_to_jal_ra() {
     // Simple program with a call to a local label
     let asm = ".text\ncall func\nfunc: halt";
