@@ -469,6 +469,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     }
                     _ => {}
                 },
+                (KeyCode::Left, Tab::Cache) => {
+                    if matches!(app.cache.subtab, CacheSubtab::View) {
+                        app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+                    }
+                }
+                (KeyCode::Right, Tab::Cache) => {
+                    if matches!(app.cache.subtab, CacheSubtab::View) {
+                        app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+                    }
+                }
 
                 // Editor navigation in command mode
                 (KeyCode::Up, Tab::Editor) => app.editor.buf.move_up(),

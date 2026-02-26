@@ -14,7 +14,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::falcon::cache::{CacheLineView, CacheSetView, ReplacementPolicy};
@@ -77,7 +77,7 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
         }
     };
     let scroll = app.cache.view_scroll.min(num_sets.saturating_sub(1));
-    let scroll_hint = format!("↑↓  {}/{} sets", scroll + 1, num_sets);
+    let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
 
     // Build styled line so key symbols match the colors used in the matrix
     let line = Line::from(vec![
@@ -183,33 +183,49 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let tag_bits = 32u32.saturating_sub(cfg.offset_bits() + cfg.index_bits());
     let tag_hex_w = ((tag_bits + 3) / 4) as usize;
 
-    // Heights: header(1) + set rows (rest)
-    let header_h: u16 = 1;
-    let rows_h = inner.height.saturating_sub(header_h);
-
     // Column widths
     let set_col_w: usize = 5; // " NNN "
     let sep_w: usize = 1;     // "|"
-    let total_way_space = (inner.width as usize)
-        .saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
-    let way_col_w = (total_way_space / ways.max(1)).max(12);
 
     // How many data bytes fit in each way cell
     // Fixed overhead: "V D  T:XXXXXX  " + policy width
     let policy_w = match policy {
-        ReplacementPolicy::Lfu   => 6, // "f:9999"
-        ReplacementPolicy::Clock => 4, // ">R" or "> " etc.
+        ReplacementPolicy::Lfu    => 6, // "f:9999"
+        ReplacementPolicy::Clock  => 4, // ">R" or "> " etc.
         ReplacementPolicy::Random => 2,
-        _ => 4,                        // "r:NN"
+        _                         => 4, // "r:NN"
     };
     let cell_overhead = tag_hex_w + 8 + policy_w + 2;
+
+    // way_col_w: prefer fitting the screen, but guarantee a useful minimum so
+    // that content is always readable and horizontal scrolling becomes possible.
+    let total_way_space = (inner.width as usize)
+        .saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
+    let ideal_way_col_w = total_way_space / ways.max(1);
+    let min_way_col_w = (cell_overhead + 2).max(28); // at least readable
+    let way_col_w = ideal_way_col_w.max(min_way_col_w);
+
     let bytes_to_show = if way_col_w > cell_overhead {
         ((way_col_w - cell_overhead) / 3).min(cfg.line_size).min(8)
     } else {
         0
     };
 
-    // Clamp scroll
+    // Total logical content width (may exceed inner.width for large associativity)
+    let total_content_w =
+        set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
+
+    // Horizontal scroll (clamp to valid range)
+    let max_h_scroll = total_content_w.saturating_sub(inner.width as usize);
+    let h_scroll = app.cache.view_h_scroll.min(max_h_scroll) as u16;
+    let need_h_scrollbar = max_h_scroll > 0;
+
+    // Heights: header(1) + optional scrollbar(1) + set rows (rest)
+    let header_h: u16 = 1;
+    let scrollbar_h: u16 = if need_h_scrollbar { 1 } else { 0 };
+    let rows_h = inner.height.saturating_sub(header_h + scrollbar_h);
+
+    // Clamp vertical scroll
     let max_scroll = num_sets.saturating_sub(rows_h as usize);
     let scroll = app.cache.view_scroll.min(max_scroll);
 
@@ -232,7 +248,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
             }
         }
         f.render_widget(
-            Paragraph::new(Line::from(spans)),
+            Paragraph::new(Line::from(spans)).scroll((0, h_scroll)),
             Rect::new(inner.x, inner.y, inner.width, 1),
         );
     }
@@ -277,8 +293,23 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         }
 
         f.render_widget(
-            Paragraph::new(Line::from(spans)),
+            Paragraph::new(Line::from(spans)).scroll((0, h_scroll)),
             Rect::new(inner.x, y, inner.width, 1),
+        );
+    }
+
+    // ── Horizontal scrollbar ─────────────────────────────────────────────────
+    if need_h_scrollbar {
+        let sb_y = inner.y + inner.height - 1;
+        let sb_area = Rect::new(inner.x, sb_y, inner.width, 1);
+        let mut sb_state = ScrollbarState::new(max_h_scroll)
+            .position(h_scroll as usize);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
+                .begin_symbol(Some("◄"))
+                .end_symbol(Some("►")),
+            sb_area,
+            &mut sb_state,
         );
     }
 }

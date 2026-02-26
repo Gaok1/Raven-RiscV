@@ -81,6 +81,20 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 clamp_docs_scroll(app, area);
             }
         },
+        MouseEventKind::ScrollLeft => {
+            if matches!(app.tab, Tab::Cache)
+                && matches!(app.cache.subtab, CacheSubtab::View)
+            {
+                app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+            }
+        }
+        MouseEventKind::ScrollRight => {
+            if matches!(app.tab, Tab::Cache)
+                && matches!(app.cache.subtab, CacheSubtab::View)
+            {
+                app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+            }
+        }
         _ => {}
     }
 
