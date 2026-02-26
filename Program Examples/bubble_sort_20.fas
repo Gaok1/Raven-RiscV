@@ -1,14 +1,15 @@
 .data
-arr: .word 5, 1, 4, 2, 3
+arr: .word 20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10
 msg: .asciz "Sorted values:"
+nl:  .byte 10, 0
 
 .text
     # Print header
-    printString msg
+    printStrLn msg
 
     # Setup base pointer and length
     la t0, arr      # base address of arr
-    li t4, 5        # n = 5
+    li t4, 20       # n = 20
     li t1, 0        # i = 0
 
 outer:
@@ -39,8 +40,11 @@ print_loop:
     add  t3, t0, t3
     lw   a0, 0(t3)
     print a0
+    printStr nl
     addi t2, t2, 1
     blt  t2, t4, print_loop
 
-    halt
+    li a0, 0
+    li a7, 93      # exit
+    ecall
 

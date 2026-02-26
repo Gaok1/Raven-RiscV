@@ -14,7 +14,9 @@ len_loop:
     j   len_loop
 
 done:
-    printString prefix
+    printStr prefix
     print s0
-    halt
+    li a0, 0
+    li a7, 93      # exit
+    ecall
 

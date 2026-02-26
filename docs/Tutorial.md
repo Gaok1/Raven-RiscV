@@ -193,7 +193,9 @@ print s2
 printStr is
 print s0
 
-halt
+li a0, 0
+li a7, 93      # syscall: exit
+ecall
 
 
 calculate:

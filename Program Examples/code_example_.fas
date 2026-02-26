@@ -1,0 +1,12 @@
+
+
+.data
+data: .word 50,20
+
+.text
+
+la t0,data
+lw t0, 0(t0)
+lw t1,4(t0)
+nop 
+nop

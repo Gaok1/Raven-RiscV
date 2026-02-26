@@ -78,3 +78,133 @@ Use **Small / Medium / Large** para carregar rapidamente presets.
 - `sets = size / (line_size * associativity)` é potência de 2
 
 Obs.: write policies só fazem diferença no **D-cache** (o I-cache é somente leitura).
+
+## Referência de configuração (.fcache)
+
+O Falcon consegue **importar/exportar** configurações de cache como um arquivo texto simples com pares `chave=valor`.
+
+- Na aba **Cache**: `Ctrl+L` importa um `.fcache` e `Ctrl+E` exporta a configuração pendente.
+- Linhas começando com `#` são comentários.
+- As chaves/valores de enum são **case-sensitive** e precisam bater exatamente com os nomes abaixo.
+
+O arquivo sempre tem duas configs:
+
+- `icache.*` — cache de instruções (só leitura; políticas de escrita são ignoradas)
+- `dcache.*` — cache de dados
+
+Ao importar, o Falcon exige **todas as chaves** nas duas configs; se faltar algo, aparece um erro do tipo `Missing icache.<chave>` / `Missing dcache.<chave>`.
+
+### Campos (o que significa cada termo)
+
+Campos numéricos são inteiros em base 10 (então `1024` é válido; `0x400` não é).
+
+- `size` (bytes)
+  - Capacidade total do cache em bytes.
+  - Aumentar `size` geralmente reduz **capacity misses** (cabe mais linha dentro do cache).
+- `line_size` (bytes)
+  - Quantos bytes existem em cada linha (bloco) do cache.
+  - Neste simulador, um miss carrega a **linha inteira** da RAM, então `line_size` maior costuma ajudar em **localidade espacial** (acesso sequencial), mas pode desperdiçar tráfego em acesso aleatório.
+- `associativity` (ways)
+  - Quantas linhas cada set possui (1 = mapeamento direto; maior = por conjuntos; `sets=1` = totalmente associativo).
+  - Aumentar associatividade geralmente reduz **conflict misses**, mas deixa o cache “mais caro”/complexo (no mundo real).
+- `replacement` (enum)
+  - Como escolher a vítima quando um set está cheio e um miss precisa instalar uma nova linha.
+  - Valores aceitos: `Lru`, `Fifo`, `Random`, `Lfu`, `Clock`, `Mru`
+    - `Lru`: remove a menos recentemente usada (bom default)
+    - `Fifo`: remove a mais antiga instalada
+    - `Random`: escolhe pseudo-aleatoriamente
+    - `Lfu`: remove a menos frequentemente usada
+    - `Clock`: algoritmo do relógio / segunda chance (aproxima LRU)
+    - `Mru`: remove a mais recentemente usada (pode ser bom em “scans”)
+- `write_policy` (apenas D-cache; enum)
+  - O que acontece quando a CPU faz stores.
+  - Valores aceitos: `WriteBack`, `WriteThrough`
+    - `WriteThrough`: todo store escreve na RAM imediatamente (então `RAM W` tende a ser alto).
+    - `WriteBack`: store atualiza a linha do cache e marca como **dirty**; a RAM só é atualizada depois, num eviction (então `RAM W` pode ficar bem menor até acontecer writeback).
+- `write_alloc` (apenas D-cache; enum)
+  - O que acontece em um **miss de store**.
+  - Valores aceitos: `WriteAllocate`, `NoWriteAllocate`
+    - `WriteAllocate` (write-allocate): no miss de store, o cache aloca/carrega a linha e então faz a escrita na linha.
+    - `NoWriteAllocate` (write-around): no miss de store, não aloca linha (a escrita vai direto para a RAM).
+- `hit_latency` (ciclos)
+  - Custo em ciclos somado nas estatísticas quando há **hit**.
+  - Alimenta as métricas `Cycles`, `Avg` e `CPI`.
+- `miss_penalty` (ciclos)
+  - Custo extra em ciclos somado quando há **miss** (a CPU “espera” a RAM).
+  - Um setup didático comum é `hit_latency=1` e `miss_penalty=50` (hit=1 ciclo, miss≈51 ciclos).
+
+### Lógica de mapeamento (tag / index / offset)
+
+Aqui fica o “por que tem conflito?” de verdade.
+
+Dado:
+
+- `sets = size / (line_size * associativity)`
+- `offset_bits = log2(line_size)`
+- `index_bits = log2(sets)`
+
+Um endereço é dividido assim:
+
+```
+[   tag   |   index   |  offset  ]
+```
+
+- `offset` escolhe o byte *dentro* da linha
+- `index` escolhe o set
+- `tag` identifica qual linha está instalada naquele set/way
+
+Dois endereços entram em **conflito** se tiverem o mesmo `index` e tags diferentes (competem pelo mesmo set).
+
+Truque útil:
+
+- `stride_mesmo_set = sets * line_size` bytes
+
+Os endereços `A` e `A + stride_mesmo_set` caem no **mesmo set** (tag diferente). É exatamente isso que `cache_conflict.fas` demonstra com a config padrão.
+
+### Exemplo completo (padrão 1 KB, 16 B, 2-way)
+
+Config padrão do D-cache (o preset embutido é bem próximo disso):
+
+```
+dcache.size=1024
+dcache.line_size=16
+dcache.associativity=2
+```
+
+Calculando:
+
+- `bytes_por_set = line_size * associativity = 16 * 2 = 32 B`
+- `sets = size / bytes_por_set = 1024 / 32 = 32` (potência de 2: OK)
+- `offset_bits = log2(16) = 4`
+- `index_bits = log2(32) = 5`
+- `stride_mesmo_set = sets * line_size = 32 * 16 = 512 B`
+
+Ou seja: endereços separados por 512 bytes brigam pelo mesmo set (ótimo para provocar conflito em aula).
+
+### Regras de validação (explicadas)
+
+A UI exige algumas regras para o mapeamento acima ficar simples e bem “hardware-like”:
+
+- `line_size` precisa ser potência de 2 e `>= 4`
+  - assim `offset_bits = log2(line_size)` é inteiro e as linhas ficam naturalmente alinhadas
+- `size` precisa ser múltiplo de `(line_size * associativity)`
+  - assim `sets` é inteiro (não existe “meio set”)
+- `sets` precisa ser potência de 2
+  - assim o índice pode ser calculado por máscara (`index = (addr >> offset_bits) & (sets - 1)`)
+
+Se uma configuração pendente quebrar alguma regra, o botão **Apply** mostra o erro e não aplica.
+
+## Arquivos de exemplo
+
+Programas prontos para explorar o cache ficam em `Program Examples/`:
+
+- `cache_locality.fas` — varredura de array pequeno vs grande (sequencial vs stride), com pausas para você dar Reset nas stats entre fases.
+- `cache_conflict.fas` — padrão com 2 vs 3 linhas no mesmo set para mostrar conflict misses em cache por conjuntos.
+- `cache_write_policy.fas` — loop de stores para comparar `WriteBack` vs `WriteThrough` e `NoWriteAllocate`.
+
+Configs prontas para importar (`.fcache`):
+
+- `cache_direct_mapped_1kb.fcache`
+- `cache_large_4kb_4way.fcache`
+- `cache_write_through.fcache`
+- `cache_no_write_allocate.fcache`

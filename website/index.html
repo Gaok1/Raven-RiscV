@@ -293,7 +293,9 @@
         <span class="hl-pseudo">li</span>   <span class="hl-reg">s0</span>, <span class="hl-num">0</span>
         <span class="hl-pseudo">ret</span>
 <span class="hl-label">end:</span>
-    <span class="hl-instr">halt</span></pre>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">93</span>      <span class="hl-comment">; syscall: exit</span>
+    <span class="hl-instr">ecall</span></pre>
             </div>
             <div class="example-info">
               <h4>Recursive Fibonacci</h4>
@@ -310,18 +312,19 @@
           <div class="tab-panel" data-panel="bubble">
             <div class="code-pane">
               <div class="code-header">
-                <span class="code-filename">bubble_sort_5.fas</span>
+                <span class="code-filename">bubble_sort_20.fas</span>
                 <span class="code-lang">RISC-V Assembly</span>
               </div>
               <pre class="hlcode"><span class="hl-dir">.data</span>
-<span class="hl-label">arr:</span>  <span class="hl-dir">.word</span> <span class="hl-num">5, 1, 4, 2, 3</span>
+<span class="hl-label">arr:</span>  <span class="hl-dir">.word</span> <span class="hl-num">20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10</span>
 <span class="hl-label">msg:</span>  <span class="hl-dir">.asciz</span> <span class="hl-str">"Sorted values:"</span>
+<span class="hl-label">nl:</span>   <span class="hl-dir">.byte</span> <span class="hl-num">10, 0</span>
 
 <span class="hl-dir">.text</span>
-    <span class="hl-pseudo">printString</span> msg
+    <span class="hl-pseudo">printStrLn</span> msg
 
     <span class="hl-pseudo">la</span>   <span class="hl-reg">t0</span>, arr      <span class="hl-comment">; base address</span>
-    <span class="hl-pseudo">li</span>   <span class="hl-reg">t4</span>, <span class="hl-num">5</span>        <span class="hl-comment">; n = 5</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t4</span>, <span class="hl-num">20</span>       <span class="hl-comment">; n = 20</span>
     <span class="hl-pseudo">li</span>   <span class="hl-reg">t1</span>, <span class="hl-num">0</span>        <span class="hl-comment">; i = 0</span>
 
 <span class="hl-label">outer:</span>
@@ -344,11 +347,23 @@
     <span class="hl-instr">addi</span> <span class="hl-reg">t1</span>, <span class="hl-reg">t1</span>, <span class="hl-num">1</span>
     <span class="hl-instr">blt</span>  <span class="hl-reg">t1</span>, <span class="hl-reg">t4</span>, outer
 
-    <span class="hl-instr">halt</span></pre>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t2</span>, <span class="hl-num">0</span>
+<span class="hl-label">print_loop:</span>
+    <span class="hl-instr">slli</span> <span class="hl-reg">t3</span>, <span class="hl-reg">t2</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t3</span>, <span class="hl-reg">t0</span>, <span class="hl-reg">t3</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)
+    <span class="hl-pseudo">print</span> <span class="hl-reg">a0</span>
+    <span class="hl-pseudo">printStr</span> nl
+    <span class="hl-instr">addi</span> <span class="hl-reg">t2</span>, <span class="hl-reg">t2</span>, <span class="hl-num">1</span>
+    <span class="hl-instr">blt</span>  <span class="hl-reg">t2</span>, <span class="hl-reg">t4</span>, print_loop
+
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">93</span>      <span class="hl-comment">; syscall: exit</span>
+    <span class="hl-instr">ecall</span></pre>
             </div>
-            <div class="example-info">
-              <h4>Bubble Sort</h4>
-              <p>Classic bubble sort over a 5-element integer array stored in <code>.data</code>. Shows pointer arithmetic, memory loads/stores, and nested loop control with branches.</p>
+              <div class="example-info">
+                <h4>Bubble Sort</h4>
+              <p>Classic bubble sort over a 20-element integer array stored in <code>.data</code>. Shows pointer arithmetic, memory loads/stores, nested loops, and printing results.</p>
               <ul class="example-highlights">
                 <li>Static data with <code>.word</code> directive</li>
                 <li>Pointer arithmetic (<code>slli</code> + <code>add</code>)</li>
@@ -368,18 +383,19 @@
 <span class="hl-label">message:</span> <span class="hl-dir">.asciz</span> <span class="hl-str">"Hello world"</span>
 
 <span class="hl-dir">.text</span>
-  <span class="hl-pseudo">la</span>  <span class="hl-reg">t0</span>, message
-  <span class="hl-pseudo">printString</span> <span class="hl-reg">t0</span>
-  <span class="hl-instr">nop</span></pre>
+  <span class="hl-pseudo">printStrLn</span> message
+  <span class="hl-pseudo">li</span>  <span class="hl-reg">a0</span>, <span class="hl-num">0</span>
+  <span class="hl-pseudo">li</span>  <span class="hl-reg">a7</span>, <span class="hl-num">93</span>      <span class="hl-comment">; syscall: exit</span>
+  <span class="hl-instr">ecall</span></pre>
             </div>
             <div class="example-info">
               <h4>Hello World</h4>
-              <p>The simplest Falcon program — defines a null-terminated string in <code>.data</code>, loads its address with <code>la</code>, and prints it with the <code>printString</code> pseudo-instruction.</p>
+              <p>The simplest Falcon program — defines a null-terminated string in <code>.data</code>, prints it with <code>printStrLn</code>, and exits via Linux-style <code>exit(93)</code>.</p>
               <ul class="example-highlights">
                 <li>Data section with <code>.asciz</code></li>
-                <li>Address load with <code>la</code></li>
-                <li><code>printString</code> pseudo-instruction</li>
-                <li>Expands to real <code>ecall</code> under the hood</li>
+                <li><code>printStrLn</code> pseudo-instruction</li>
+                <li>Linux ABI: <code>exit(93)</code></li>
+                <li><code>ecall</code> under the hood</li>
               </ul>
             </div>
           </div>
@@ -387,7 +403,7 @@
           <div class="tab-panel" data-panel="syscall">
             <div class="code-pane">
               <div class="code-header">
-                <span class="code-filename">io_echo.fas</span>
+                <span class="code-filename">syscall_echo_linux.fas</span>
                 <span class="code-lang">RISC-V Assembly</span>
               </div>
               <pre class="hlcode"><span class="hl-dir">.data</span>

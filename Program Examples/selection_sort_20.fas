@@ -1,0 +1,71 @@
+.data
+arr: .word 12, 7, 25, 9, 13, 5, 1, 44, 3, 18, 2, 29, 8, 21, 6, 10, 17, 14, 4, 11
+msg: .asciz "Selection sort (20 elementos):"
+nl:  .byte 10, 0
+
+.text
+    printStrLn msg
+
+    la t0, arr
+    li t4, 20       # n
+    li t1, 0        # i
+
+outer:
+    mv   t2, t1     # min_idx = i
+    addi t3, t1, 1  # j = i + 1
+
+inner:
+    bge  t3, t4, after_inner
+
+    slli t5, t3, 2
+    add  t5, t0, t5
+    lw   s0, 0(t5)  # arr[j]
+
+    slli t6, t2, 2
+    add  t6, t0, t6
+    lw   s1, 0(t6)  # arr[min_idx]
+
+    blt  s0, s1, update_min
+    j    next_j
+
+update_min:
+    mv   t2, t3
+
+next_j:
+    addi t3, t3, 1
+    j    inner
+
+after_inner:
+    beq  t2, t1, no_swap
+
+    # swap arr[i] <-> arr[min_idx]
+    slli t5, t1, 2
+    add  t5, t0, t5
+    lw   s0, 0(t5)  # val_i
+
+    slli t6, t2, 2
+    add  t6, t0, t6
+    lw   s1, 0(t6)  # val_min
+
+    sw   s1, 0(t5)
+    sw   s0, 0(t6)
+
+no_swap:
+    addi t1, t1, 1
+    blt  t1, t4, outer
+
+    # Print sorted array (one per line)
+    li   t3, 0
+print_loop:
+    slli t5, t3, 2
+    add  t5, t0, t5
+    lw   t6, 0(t5)
+    print t6
+    printStr nl
+    addi t3, t3, 1
+    blt  t3, t4, print_loop
+
+    li a0, 0
+    li a7, 93      # exit
+    ecall
+

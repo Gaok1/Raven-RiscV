@@ -1,0 +1,30 @@
+.data
+title:    .asciz "CACHE: Write policy (D-cache)"
+msg1:     .asciz "Experimente importar configs .fcache (write-through / no-write-allocate) e comparar RAM W / hit%."
+howto:    .asciz "Reset em Cache -> Stats e aperte Enter para rodar o loop de stores."
+done:     .asciz "Fim."
+wait_buf: .space 64
+
+.align 16
+buf:      .space 64
+
+.text
+    printStrLn title
+    printStrLn msg1
+    printStrLn howto
+    read wait_buf
+
+    la   t0, buf
+    li   t1, 0
+    li   t2, 40000          # iterations
+store_loop:
+    sw   t1, 0(t0)          # escreve sempre no mesmo endereÃ§o
+    addi t1, t1, 1
+    addi t2, t2, -1
+    bne  t2, zero, store_loop
+
+    printStrLn done
+    li a0, 0
+    li a7, 93               # exit
+    ecall
+

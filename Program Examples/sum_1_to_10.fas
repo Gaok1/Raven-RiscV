@@ -3,7 +3,7 @@ msg: .asciz "Sum 1..10: "
 
 .text
     # print label
-    printString msg
+    printStr msg
     # sum = 0, i = 1, n = 10
     li s0, 0
     li t0, 1
@@ -15,5 +15,7 @@ loop:
     blt  t0, t2, loop
     # print result
     print s0
-    halt
+    li a0, 0
+    li a7, 93      # exit
+    ecall
 

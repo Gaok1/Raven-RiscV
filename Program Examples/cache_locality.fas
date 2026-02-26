@@ -1,0 +1,167 @@
+.data
+title:          .asciz "CACHE: Localidade (D-cache)"
+phase1:         .asciz "FASE 1: Array pequeno (cabe no D-cache)."
+phase2:         .asciz "FASE 2: Array grande, acesso sequencial (capacidade > cache)."
+phase3:         .asciz "FASE 3: Array grande, stride = 16B (1 acesso por linha)."
+howto_reset:    .asciz "Na aba Cache -> Stats, use [Reset] e depois aperte Enter aqui."
+sum_prefix:     .asciz "Soma (ignore o valor): "
+done:           .asciz "Fim."
+
+wait_buf:       .space 64
+
+.align 16
+small:          .space 256      # 64 words  (256 B)  -> tende a caber no D-cache default (1 KB)
+.align 16
+large:          .space 4096     # 1024 words (4 KB)  -> maior que o D-cache default
+
+.text
+    # Preenche os arrays com valores simples (para o acesso não ser trivial).
+    la a0, small
+    li a1, 64
+    call fill_seq
+    la a0, large
+    li a1, 1024
+    call fill_seq
+
+    printStrLn title
+
+    # --- Fase 1: pequeno (warm + medir hits) ---
+    printStrLn phase1
+    printStrLn howto_reset
+    read wait_buf
+
+    # Warm-up (carrega linhas no cache)
+    la a0, small
+    li a1, 64
+    li a2, 1
+    call scan_seq
+
+    # Medição: com cache "quente", após Reset de stats o hit% tende a ~100%
+    printStrLn howto_reset
+    read wait_buf
+
+    la a0, small
+    li a1, 64
+    li a2, 200
+    call scan_seq
+    printStr sum_prefix
+    print s0
+
+    # --- Fase 2: grande, sequencial ---
+    printStrLn phase2
+    printStrLn howto_reset
+    read wait_buf
+
+    la a0, large
+    li a1, 1024
+    li a2, 40
+    call scan_seq
+    printStr sum_prefix
+    print s0
+
+    # --- Fase 3: grande, stride 16B (pouca localidade espacial) ---
+    printStrLn phase3
+    printStrLn howto_reset
+    read wait_buf
+
+    la a0, large
+    li a1, 4096     # total bytes
+    li a2, 16       # stride bytes
+    li a3, 80       # passes
+    call scan_stride
+    printStr sum_prefix
+    print s0
+
+    printStrLn done
+    li a0, 0
+    li a7, 93        # exit
+    ecall
+
+
+# fill_seq(a0=base, a1=count_words)
+fill_seq:
+    push ra
+    push s1
+    push s2
+
+    mv   s1, a0
+    mv   s2, a1
+    li   t0, 0
+fill_loop:
+    slli t1, t0, 2
+    add  t1, s1, t1
+    sw   t0, 0(t1)
+    addi t0, t0, 1
+    blt  t0, s2, fill_loop
+
+    pop  s2
+    pop  s1
+    pop  ra
+    ret
+
+
+# scan_seq(a0=base, a1=count_words, a2=passes) -> s0 = soma
+scan_seq:
+    push ra
+    push s1
+    push s2
+    push s3
+
+    mv   s1, a0
+    mv   s2, a1
+    mv   s3, a2
+    li   s0, 0
+
+pass_loop:
+    li   t0, 0
+scan_loop:
+    slli t1, t0, 2
+    add  t1, s1, t1
+    lw   t2, 0(t1)
+    add  s0, s0, t2
+    addi t0, t0, 1
+    blt  t0, s2, scan_loop
+
+    addi s3, s3, -1
+    bne  s3, zero, pass_loop
+
+    pop  s3
+    pop  s2
+    pop  s1
+    pop  ra
+    ret
+
+
+# scan_stride(a0=base, a1=total_bytes, a2=stride_bytes, a3=passes) -> s0 = soma
+scan_stride:
+    push ra
+    push s1
+    push s2
+    push s3
+    push s4
+
+    mv   s1, a0
+    mv   s2, a1
+    mv   s3, a2
+    mv   s4, a3
+    li   s0, 0
+
+stride_pass:
+    mv   t0, s1
+    add  t1, s1, s2    # end = base + total_bytes
+stride_loop:
+    lw   t2, 0(t0)
+    add  s0, s0, t2
+    add  t0, t0, s3
+    blt  t0, t1, stride_loop
+
+    addi s4, s4, -1
+    bne  s4, zero, stride_pass
+
+    pop  s4
+    pop  s3
+    pop  s2
+    pop  s1
+    pop  ra
+    ret
+
