@@ -160,7 +160,7 @@ A aba **Cache** ajuda a visualizar (e ajustar) um modelo simples de **I-cache + 
 Controles:
 
 * **Reset** zera as estatísticas
-* **Pause/Resume** congela apenas a coleta do histórico do gráfico (contadores continuam atualizando)
+* **Pause/Resume** pausa/retoma a simulação (as estatísticas do cache param de atualizar enquanto estiver pausado)
 * Escopo para focar em I-cache, D-cache ou ambos
 
 ### Cache → Config

@@ -67,14 +67,14 @@ fn render_fields(
     pending: &CacheConfig, current: &CacheConfig,
     active: Option<ConfigField>, hovered: Option<ConfigField>, edit_buf: &str,
 ) {
-    let num_sets = if pending.is_valid_config() { pending.num_sets() } else { 0 };
+    let validation = pending.validate();
 
-    let valid_mark = |ok: bool| if ok { "" } else { " ✗" };
-    let bytes_per_set = pending.line_size.checked_mul(pending.associativity).unwrap_or(0);
-    let size_ok = pending.size > 0
-        && bytes_per_set > 0
-        && pending.size >= bytes_per_set
-        && pending.size % bytes_per_set == 0;
+    // Per-field validity marks (✗ only for the directly responsible field)
+    let line_ok = pending.line_size >= 4 && pending.line_size.is_power_of_two();
+    let assoc_ok = pending.associativity >= 1;
+    let size_ok = pending.size > 0 && validation.is_ok();
+
+    let mark = |ok: bool| if ok { "" } else { " ✗" };
     // Yellow = pending change from active config, White = same
     let cs = |same: bool| -> Style {
         if !same { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::White) }
@@ -113,24 +113,32 @@ fn render_fields(
         item
     };
 
-    let items: Vec<ListItem> = vec![
-        field_item(ConfigField::Size, "  Size:          ",
-            format!("{} B{}", pending.size, valid_mark(size_ok)),
-            cs(pending.size == current.size)),
-        field_item(ConfigField::LineSize, "  Line Size:     ",
-            format!("{} B{}", pending.line_size, valid_mark(pending.line_size >= 4 && pending.line_size.is_power_of_two())),
-            cs(pending.line_size == current.line_size)),
-        field_item(ConfigField::Associativity, "  Associativity: ",
-            format!("{}-way", pending.associativity),
-            cs(pending.associativity == current.associativity)),
-        // Sets is read-only
-        ListItem::new(Line::from(vec![
+    // Sets row: show computed value or the specific validation error
+    let sets_item = match &validation {
+        Ok(()) => ListItem::new(Line::from(vec![
             Span::styled("  Sets:          ", Style::default().fg(Color::Gray)),
             Span::styled(
-                format!("{} {}", num_sets, if pending.is_valid_config() { "" } else { "(invalid)" }),
-                Style::default().fg(if pending.is_valid_config() { Color::DarkGray } else { Color::Red }),
+                format!("{}", pending.num_sets()),
+                Style::default().fg(Color::DarkGray),
             ),
         ])),
+        Err(msg) => ListItem::new(Line::from(vec![
+            Span::styled("  Sets:          ", Style::default().fg(Color::Gray)),
+            Span::styled(format!("✗ {msg}"), Style::default().fg(Color::Red)),
+        ])),
+    };
+
+    let items: Vec<ListItem> = vec![
+        field_item(ConfigField::Size, "  Size:          ",
+            format!("{} B{}", pending.size, mark(size_ok)),
+            cs(pending.size == current.size)),
+        field_item(ConfigField::LineSize, "  Line Size:     ",
+            format!("{} B{}", pending.line_size, mark(line_ok)),
+            cs(pending.line_size == current.line_size)),
+        field_item(ConfigField::Associativity, "  Associativity: ",
+            format!("{}-way{}", pending.associativity, mark(assoc_ok)),
+            cs(pending.associativity == current.associativity)),
+        sets_item,
         field_item(ConfigField::Replacement, "  Replacement:   ",
             replacement_label(pending.replacement).to_string(),
             cs(pending.replacement == current.replacement)),
@@ -151,7 +159,7 @@ fn render_fields(
             if active.is_some() {
                 "  Enter=confirm  Esc=cancel  ◄►=cycle  Tab/↑↓=move"
             } else {
-                "  Click field to edit  ◄►=cycle enum  (yellow=pending)"
+                "  Click/edit  ◄►=cycle  Ctrl+E=export  Ctrl+L=import"
             },
             Style::default().fg(Color::DarkGray),
         ))),
@@ -198,9 +206,9 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let line = if let Some(ref err) = app.cache.config_error {
-        Line::from(vec![
-            Span::styled(format!(" Error: {err}"), Style::default().fg(Color::Red)),
-        ])
+        Line::from(Span::styled(format!(" ✗ {err}"), Style::default().fg(Color::Red)))
+    } else if let Some(ref status) = app.cache.config_status {
+        Line::from(Span::styled(format!(" ✓ {status}"), Style::default().fg(Color::Green)))
     } else {
         Line::from(vec![
             Span::raw(" "),

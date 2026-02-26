@@ -78,25 +78,53 @@ impl CacheConfig {
     pub fn line_base(&self, addr: u32) -> u32 {
         addr & !(self.line_size as u32 - 1)
     }
-    pub fn is_valid_config(&self) -> bool {
-        if self.size == 0 || self.line_size < 4 || self.associativity == 0 {
-            return false;
+    /// Returns Ok(()) if the config is usable, or an Err with a human-readable reason.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.size == 0 {
+            return Err("Size must be > 0".to_string());
+        }
+        if self.line_size < 4 {
+            return Err(format!("Line size must be ≥ 4 B (got {})", self.line_size));
+        }
+        if self.associativity == 0 {
+            return Err("Associativity must be ≥ 1".to_string());
         }
         if !self.line_size.is_power_of_two() {
-            return false;
+            return Err(format!(
+                "Line size {} is not a power of 2 (try {})",
+                self.line_size,
+                self.line_size.next_power_of_two()
+            ));
         }
         let bytes_per_set = match self.line_size.checked_mul(self.associativity) {
             Some(v) => v,
-            None => return false,
+            None => return Err("assoc × line_size overflows usize".to_string()),
         };
-        if bytes_per_set == 0 || bytes_per_set > self.size {
-            return false;
+        if bytes_per_set > self.size {
+            return Err(format!(
+                "assoc({}) × line({}) = {} B > size({} B): need ≥ 1 set",
+                self.associativity, self.line_size, bytes_per_set, self.size
+            ));
         }
         if self.size % bytes_per_set != 0 {
-            return false;
+            return Err(format!(
+                "size({}) not divisible by assoc({}) × line({})",
+                self.size, self.associativity, self.line_size
+            ));
         }
         let sets = self.size / bytes_per_set;
-        sets.is_power_of_two()
+        if !sets.is_power_of_two() {
+            let next = sets.next_power_of_two();
+            return Err(format!(
+                "{sets} sets is not a power of 2 (try size={})",
+                bytes_per_set * next
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn is_valid_config(&self) -> bool {
+        self.validate().is_ok()
     }
 }
 
@@ -480,6 +508,56 @@ impl Cache {
     }
 }
 
+// ── UI introspection structs ─────────────────────────────────────────────────
+
+/// Snapshot of a single cache line for UI display (no stats side-effects).
+pub struct CacheLineView {
+    pub valid: bool,
+    pub dirty: bool,
+    pub tag: u32,
+    pub data: Vec<u8>,
+    pub freq: u64,      // LFU frequency counter
+    pub ref_bit: bool,  // Clock reference bit
+}
+
+/// Snapshot of a single cache set for UI display.
+pub struct CacheSetView {
+    pub lines: Vec<CacheLineView>,
+    /// LRU order: index 0 = MRU (most recent), last = LRU (eviction candidate).
+    pub lru_order: Vec<usize>,
+    /// FIFO order: index 0 = newest, last = oldest (eviction candidate).
+    pub fifo_order: Vec<usize>,
+    /// Clock algorithm sweep position (next line to inspect on eviction).
+    pub clock_hand: usize,
+}
+
+impl Cache {
+    /// Returns a read-only snapshot of all sets for UI rendering.
+    /// Does not touch stats or any mutable state.
+    pub fn view(&self) -> Vec<CacheSetView> {
+        self.sets
+            .iter()
+            .map(|set| CacheSetView {
+                lines: set
+                    .lines
+                    .iter()
+                    .map(|l| CacheLineView {
+                        valid: l.valid,
+                        dirty: l.dirty,
+                        tag: l.tag,
+                        data: l.data.clone(),
+                        freq: l.freq,
+                        ref_bit: l.ref_bit,
+                    })
+                    .collect(),
+                lru_order: set.lru_order.iter().copied().collect(),
+                fifo_order: set.fifo_order.iter().copied().collect(),
+                clock_hand: set.clock_hand,
+            })
+            .collect()
+    }
+}
+
 // ── Presets ──────────────────────────────────────────────────────────────────
 
 /// Returns [Small, Medium, Large] preset configs for I-cache or D-cache.
@@ -734,3 +812,126 @@ mod tests {
             "writeback should write exactly line_size bytes to RAM");
     }
 }
+
+    // ── Tipos de associatividade ──────────────────────────────────────────────
+
+    fn cfg(size: usize, line_size: usize, assoc: usize) -> CacheConfig {
+        CacheConfig {
+            size, line_size, associativity: assoc,
+            replacement: ReplacementPolicy::Lru,
+            write_policy: WritePolicy::WriteBack,
+            write_alloc: WriteAllocPolicy::WriteAllocate,
+            hit_latency: 1, miss_penalty: 10,
+        }
+    }
+
+    // Mapeamento direto: assoc=1, cada endereço tem exatamente 1 posição na cache
+    #[test]
+    fn direct_mapped_is_valid_and_decomposes_correctly() {
+        // size=1024, line=16, assoc=1 → 64 sets, 1 way each
+        let c = cfg(1024, 16, 1);
+        assert!(c.is_valid_config());
+        assert_eq!(c.num_sets(), 64);
+        assert_eq!(c.associativity, 1);
+        assert_eq!(c.offset_bits(), 4);  // 16 = 2^4
+        assert_eq!(c.index_bits(),  6);  // 64 = 2^6
+        // tag = bits [31:10], index = bits [9:4], offset = bits [3:0]
+        let addr = 0b_1010_1010__10_1010_10__1010u32;
+        //                       ^ tag              ^ index  ^ offset
+        assert_eq!(c.addr_offset(addr), (addr & 0xF) as usize);
+        assert_eq!(c.addr_index(addr),  ((addr >> 4) & 0x3F) as usize);
+        assert_eq!(c.addr_tag(addr),    addr >> 10);
+    }
+
+    // Mapeamento direto: conflito forçado → só 1 way, miss garantido ao acessar
+    // dois endereços que mapeiam para o mesmo set
+    #[test]
+    fn direct_mapped_conflict_causes_eviction() {
+        // 1 set, 1 way, 16-byte line
+        let c = cfg(16, 16, 1);
+        assert!(c.is_valid_config());
+        assert_eq!(c.num_sets(), 1);   // degenerou em fully-assoc com 1 line — OK
+        assert_eq!(c.associativity, 1);
+
+        // Com size=64, line=16, assoc=1 → 4 sets, 1 way
+        let c2 = cfg(64, 16, 1);
+        assert!(c2.is_valid_config());
+        assert_eq!(c2.num_sets(), 4);
+        // addr=0x00 e addr=0x40 mapeiam para set 0 (índice = bits[5:4] = 00)
+        assert_eq!(c2.addr_index(0x00), 0);
+        assert_eq!(c2.addr_index(0x40), 0); // conflict: mesmo set, tag diferente
+        assert_ne!(c2.addr_tag(0x00), c2.addr_tag(0x40));
+
+        let mut ctrl = CacheController::new(CacheConfig::default(), c2.clone(), 256);
+        ctrl.dcache_read8(0x00).unwrap(); // miss → instala tag 0x00 em set 0
+        assert_eq!(ctrl.dcache.stats.misses, 1);
+        ctrl.dcache_read8(0x00).unwrap(); // hit
+        assert_eq!(ctrl.dcache.stats.hits,   1);
+        ctrl.dcache_read8(0x40).unwrap(); // miss → conflito, evicta tag 0x00
+        assert_eq!(ctrl.dcache.stats.misses, 2);
+        assert_eq!(ctrl.dcache.stats.evictions, 1);
+        ctrl.dcache_read8(0x00).unwrap(); // miss novamente (foi evictado)
+        assert_eq!(ctrl.dcache.stats.misses, 3);
+    }
+
+    // Totalmente associativo: assoc = size/line_size → num_sets = 1
+    // Nenhum conflito possível (só capacidade e linha que limitam)
+    #[test]
+    fn fully_associative_no_conflict_misses() {
+        // size=64, line=16, assoc=4 → 1 set, 4 ways
+        let c = cfg(64, 16, 4);
+        assert!(c.is_valid_config());
+        assert_eq!(c.num_sets(), 1);        // 1 único set
+        assert_eq!(c.associativity, 4);
+        assert_eq!(c.index_bits(),  0);     // nenhum bit de índice
+        assert_eq!(c.offset_bits(), 4);
+        // Com 1 set: addr_index é sempre 0 para qualquer endereço
+        assert_eq!(c.addr_index(0x000), 0);
+        assert_eq!(c.addr_index(0x040), 0);
+        assert_eq!(c.addr_index(0x080), 0);
+        assert_eq!(c.addr_index(0xFFF), 0);
+
+        let mut ctrl = CacheController::new(CacheConfig::default(), c, 256);
+        // 4 acessos a linhas diferentes → 4 cold misses mas nenhum conflito
+        ctrl.dcache_read8(0x00).unwrap(); // miss (way 0)
+        ctrl.dcache_read8(0x10).unwrap(); // miss (way 1)
+        ctrl.dcache_read8(0x20).unwrap(); // miss (way 2)
+        ctrl.dcache_read8(0x30).unwrap(); // miss (way 3) — cache cheia
+        assert_eq!(ctrl.dcache.stats.misses,    4);
+        assert_eq!(ctrl.dcache.stats.evictions, 0); // nenhuma evicção ainda
+        // Re-acessar qualquer um deles → hit (sem conflito)
+        ctrl.dcache_read8(0x00).unwrap();
+        ctrl.dcache_read8(0x10).unwrap();
+        ctrl.dcache_read8(0x20).unwrap();
+        ctrl.dcache_read8(0x30).unwrap();
+        assert_eq!(ctrl.dcache.stats.hits, 4);
+    }
+
+    // Associativo por conjuntos: assoc>1 e sets>1 — comportamento intermediário
+    #[test]
+    fn set_associative_tolerates_limited_conflicts() {
+        // size=128, line=16, assoc=2 → 4 sets, 2 ways cada
+        let c = cfg(128, 16, 2);
+        assert!(c.is_valid_config());
+        assert_eq!(c.num_sets(), 4);
+        assert_eq!(c.associativity, 2);
+        assert_eq!(c.index_bits(),  2); // 4 = 2^2
+        assert_eq!(c.offset_bits(), 4);
+
+        // addr=0x00 e addr=0x40 mapeiam para o mesmo set (set 0)
+        assert_eq!(c.addr_index(0x00), 0);
+        assert_eq!(c.addr_index(0x40), 0);
+        // Com 2 ways, os dois cabem SEM evicção
+        let mut ctrl = CacheController::new(CacheConfig::default(), c, 512);
+        ctrl.dcache_read8(0x00).unwrap(); // miss → way 0 do set 0
+        ctrl.dcache_read8(0x40).unwrap(); // miss → way 1 do set 0 (ainda cabe)
+        assert_eq!(ctrl.dcache.stats.misses,    2);
+        assert_eq!(ctrl.dcache.stats.evictions, 0); // 2-way tolera 2 conflitos
+        // Hit em ambos
+        ctrl.dcache_read8(0x00).unwrap();
+        ctrl.dcache_read8(0x40).unwrap();
+        assert_eq!(ctrl.dcache.stats.hits, 2);
+        // Terceiro endereço no mesmo set → evicção (cache 2-way está cheia)
+        ctrl.dcache_read8(0x80).unwrap(); // miss → evicta LRU
+        assert_eq!(ctrl.dcache.stats.evictions, 1);
+    }

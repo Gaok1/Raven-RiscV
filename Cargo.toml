@@ -24,3 +24,10 @@ codegen-units = 1    # better perform
 panic = "abort"      # less overhead
 debug = false
 incremental = false
+
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+arboard = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3", default-features = false }

@@ -150,7 +150,7 @@ The Cache tab helps you visualize (and tweak) a simple I-cache + D-cache model.
 Controls:
 
 - **Reset** clears cache stats
-- **Pause/Resume** freezes only the history chart collection (counters keep updating)
+- **Pause/Resume** pauses/resumes the simulation (cache stats stop updating while paused)
 - Scope toggles let you focus on I-cache, D-cache, or both
 
 ### Cache → Config

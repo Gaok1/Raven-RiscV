@@ -49,6 +49,7 @@ impl Tab {
 pub(super) enum CacheSubtab {
     Stats,
     Config,
+    View,
 }
 
 /// Editable field in the Config subtab.
@@ -104,12 +105,13 @@ pub(super) enum CacheScope {
 
 pub(super) struct CacheState {
     pub(super) subtab: CacheSubtab,
-    pub(super) paused: bool,
     pub(super) scope: CacheScope,
     pub(super) stats_scroll: usize,
     // Hover flags
     pub(super) hover_subtab_stats: bool,
     pub(super) hover_subtab_config: bool,
+    pub(super) hover_subtab_view: bool,
+    pub(super) view_scroll: usize,
     pub(super) hover_reset: bool,
     pub(super) hover_pause: bool,
     pub(super) hover_scope_i: bool,
@@ -123,8 +125,9 @@ pub(super) struct CacheState {
     // Config form (pending values before Apply)
     pub(super) pending_icache: CacheConfig,
     pub(super) pending_dcache: CacheConfig,
-    // Validation errors
+    // Validation errors and status messages
     pub(super) config_error: Option<String>,
+    pub(super) config_status: Option<String>,
     // Inline field editing: (is_icache, field) + text buffer for numeric fields
     pub(super) edit_field: Option<(bool, ConfigField)>,
     pub(super) edit_buf: String,
@@ -316,11 +319,12 @@ impl App {
             docs: DocsState { scroll: 0 },
             cache: CacheState {
                 subtab: CacheSubtab::Stats,
-                paused: false,
                 scope: CacheScope::Both,
                 stats_scroll: 0,
                 hover_subtab_stats: false,
                 hover_subtab_config: false,
+                hover_subtab_view: false,
+                view_scroll: 0,
                 hover_reset: false,
                 hover_pause: false,
                 hover_scope_i: false,
@@ -334,6 +338,7 @@ impl App {
                 pending_icache: CacheConfig::default(),
                 pending_dcache: CacheConfig::default(),
                 config_error: None,
+                config_status: None,
                 edit_field: None,
                 edit_buf: String::new(),
             },
@@ -687,9 +692,7 @@ impl App {
                 false
             }
         };
-        if !self.cache.paused {
-            self.run.mem.snapshot_stats();
-        }
+        self.run.mem.snapshot_stats();
         if !alive {
             self.run.is_running = false;
             if !self.console.reading {

@@ -10,21 +10,21 @@ use ratatui::{
 
 use crate::ui::app::{App, CacheScope};
 
+// Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
+
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),  // metric gauges (4 lines per cache + border)
-            Constraint::Min(8),     // chart
-            Constraint::Length(8),  // miss-by-PC table
-            Constraint::Length(3),  // controls
+            Constraint::Length(8), // metric gauges (4 lines per cache + border)
+            Constraint::Min(8),    // chart
+            Constraint::Length(8), // miss-by-PC table
         ])
         .split(area);
 
     render_metrics(f, layout[0], app);
     render_chart(f, layout[1], app);
     render_miss_table(f, layout[2], app);
-    render_controls(f, layout[3], app);
 }
 
 fn render_metrics(f: &mut Frame, area: Rect, app: &App) {
@@ -192,17 +192,13 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let x_max = i_data
-        .last()
-        .or(d_data.last())
-        .map(|(x, _)| *x)
-        .unwrap_or(1.0)
-        .max(1.0);
-
     let scope = app.cache.scope;
 
     let mut datasets = Vec::new();
-    if matches!(scope, CacheScope::ICache | CacheScope::Both) && !i_data.is_empty() {
+    let show_i = matches!(scope, CacheScope::ICache | CacheScope::Both) && !i_data.is_empty();
+    let show_d = matches!(scope, CacheScope::DCache | CacheScope::Both) && !d_data.is_empty();
+
+    if show_i {
         datasets.push(
             Dataset::default()
                 .name("I-Cache")
@@ -212,7 +208,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
                 .data(&i_data),
         );
     }
-    if matches!(scope, CacheScope::DCache | CacheScope::Both) && !d_data.is_empty() {
+    if show_d {
         datasets.push(
             Dataset::default()
                 .name("D-Cache")
@@ -223,15 +219,42 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
         );
     }
 
+    // Use a rolling X window instead of always starting at 0 — otherwise after ~MAX_HISTORY
+    // samples the chart "squeezes" into the right edge as x_max grows.
+    let mut x_min = None::<f64>;
+    let mut x_max = None::<f64>;
+    for series in [
+        (show_i, i_data.first(), i_data.last()),
+        (show_d, d_data.first(), d_data.last()),
+    ] {
+        let (enabled, first, last) = series;
+        if !enabled {
+            continue;
+        }
+        if let Some((x, _)) = first {
+            x_min = Some(x_min.map_or(*x, |m| m.min(*x)));
+        }
+        if let Some((x, _)) = last {
+            x_max = Some(x_max.map_or(*x, |m| m.max(*x)));
+        }
+    }
+
+    let x_min = x_min.unwrap_or(0.0);
+    let mut x_max = x_max.unwrap_or(x_min + 1.0);
+    if x_max <= x_min {
+        x_max = x_min + 1.0;
+    }
+    let x_mid = (x_min + x_max) / 2.0;
+
     let chart = Chart::new(datasets)
         .x_axis(
             Axis::default()
                 .style(Style::default().fg(Color::DarkGray))
-                .bounds([0.0, x_max])
+                .bounds([x_min, x_max])
                 .labels(vec![
-                    Span::raw("0"),
-                    Span::raw(format!("{:.0}", x_max / 2.0)),
-                    Span::raw(format!("{:.0}", x_max)),
+                    Span::raw(format!("{x_min:.0}")),
+                    Span::raw(format!("{x_mid:.0}")),
+                    Span::raw(format!("{x_max:.0}")),
                 ]),
         )
         .y_axis(
@@ -290,55 +313,6 @@ fn render_miss_table(f: &mut Frame, area: Rect, app: &App) {
     }
 
     f.render_widget(List::new(items), inner);
-}
-
-fn render_controls(f: &mut Frame, area: Rect, app: &App) {
-    let reset_style = if app.cache.hover_reset {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::Black).bg(Color::Red)
-    };
-    let pause_style = if app.cache.hover_pause {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
-    } else if app.cache.paused {
-        Style::default().fg(Color::Black).bg(Color::Green)
-    } else {
-        Style::default().fg(Color::Black).bg(Color::Blue)
-    };
-    let scope_i_style = scope_btn_style(matches!(app.cache.scope, CacheScope::ICache), app.cache.hover_scope_i);
-    let scope_d_style = scope_btn_style(matches!(app.cache.scope, CacheScope::DCache), app.cache.hover_scope_d);
-    let scope_both_style = scope_btn_style(matches!(app.cache.scope, CacheScope::Both), app.cache.hover_scope_both);
-
-    let pause_label = if app.cache.paused { "[Resume]" } else { "[Pause]" };
-    let line = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("[Reset]", reset_style),
-        Span::raw("  "),
-        Span::styled(pause_label, pause_style),
-        Span::raw("    View: "),
-        Span::styled("[I-Cache]", scope_i_style),
-        Span::raw(" "),
-        Span::styled("[D-Cache]", scope_d_style),
-        Span::raw(" "),
-        Span::styled("[Both]", scope_both_style),
-        Span::raw("   (r=reset p=pause)"),
-    ]);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    f.render_widget(Paragraph::new(line), inner);
-}
-
-fn scope_btn_style(active: bool, hovered: bool) -> Style {
-    if active {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
-    } else if hovered {
-        Style::default().fg(Color::Black).bg(Color::Gray)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    }
 }
 
 fn fmt_bytes(bytes: u64) -> String {

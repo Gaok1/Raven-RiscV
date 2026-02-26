@@ -38,7 +38,7 @@ A tabela mostra quais **PCs de fetch** causaram misses no I-cache (ordenado por 
 ### Controles
 
 - **Reset** (`r`) — zera as estatísticas do cache (incluindo `miss_pcs` e `ram_write_bytes`).
-- **Pause/Resume** (`p`) — congela apenas a coleta do **histórico do gráfico**; os contadores continuam atualizando.
+- **Pause/Resume** (`p`) — pausa/retoma a simulação (as estatísticas do cache param de atualizar enquanto estiver pausado).
 - **View scope** — exibir I-cache, D-cache ou ambos.
 
 ### O que entra em “RAM W”?
@@ -78,4 +78,3 @@ Use **Small / Medium / Large** para carregar rapidamente presets.
 - `sets = size / (line_size * associativity)` é potência de 2
 
 Obs.: write policies só fazem diferença no **D-cache** (o I-cache é somente leitura).
-

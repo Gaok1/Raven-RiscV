@@ -50,9 +50,15 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         MouseEventKind::ScrollUp => match app.tab {
             Tab::Editor => app.editor.buf.move_up(),
             Tab::Run => handle_run_scroll(app, me, area, true),
-            Tab::Cache => {
-                app.cache.stats_scroll = app.cache.stats_scroll.saturating_sub(1);
-            }
+            Tab::Cache => match app.cache.subtab {
+                CacheSubtab::Stats => {
+                    app.cache.stats_scroll = app.cache.stats_scroll.saturating_sub(1);
+                }
+                CacheSubtab::View => {
+                    app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
+                }
+                _ => {}
+            },
             Tab::Docs => {
                 app.docs.scroll = app.docs.scroll.saturating_sub(1);
                 clamp_docs_scroll(app, area);
@@ -61,9 +67,15 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.buf.move_down(),
             Tab::Run => handle_run_scroll(app, me, area, false),
-            Tab::Cache => {
-                app.cache.stats_scroll = app.cache.stats_scroll.saturating_add(1);
-            }
+            Tab::Cache => match app.cache.subtab {
+                CacheSubtab::Stats => {
+                    app.cache.stats_scroll = app.cache.stats_scroll.saturating_add(1);
+                }
+                CacheSubtab::View => {
+                    app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
+                }
+                _ => {}
+            },
             Tab::Docs => {
                 app.docs.scroll = app.docs.scroll.saturating_add(1);
                 clamp_docs_scroll(app, area);
@@ -880,24 +892,30 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
 
 // ── Cache tab mouse handlers ─────────────────────────────────────────────────
 
-fn cache_content_area(area: Rect) -> (Rect, Rect) {
+/// Returns (subtab_header, content, controls_bar).
+fn cache_content_area(area: Rect) -> (Rect, Rect, Rect) {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(1)])
         .split(area);
-    let header_and_content = Layout::default()
+    let parts = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(3), // subtab header
+            Constraint::Min(0),    // content
+            Constraint::Length(3), // shared controls bar
+        ])
         .split(root[1]);
-    (header_and_content[0], header_and_content[1])
+    (parts[0], parts[1], parts[2])
 }
 
 fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
-    let (header_area, content_area) = cache_content_area(area);
+    let (header_area, content_area, controls_area) = cache_content_area(area);
 
     // Reset all hover flags
     app.cache.hover_subtab_stats = false;
     app.cache.hover_subtab_config = false;
+    app.cache.hover_subtab_view = false;
     app.cache.hover_reset = false;
     app.cache.hover_pause = false;
     app.cache.hover_scope_i = false;
@@ -918,28 +936,28 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     );
     if me.row == inner_header.y && me.column >= inner_header.x {
         let x = me.column - inner_header.x;
-        // " Stats " starts at 1, Config at 10
+        // New order: " Stats " (x 1..8) | " View " (x 10..16) | " Config " (x 18..26)
         if x >= 1 && x < 8 {
             app.cache.hover_subtab_stats = true;
-        } else if x >= 10 && x < 18 {
+        } else if x >= 10 && x < 16 {
+            app.cache.hover_subtab_view = true;
+        } else if x >= 18 && x < 26 {
             app.cache.hover_subtab_config = true;
         }
     }
 
-    // Controls in Stats subtab (last 3 rows of content)
-    if matches!(app.cache.subtab, CacheSubtab::Stats) {
-        // controls row is at content_area.y + content_area.height - 3
-        let ctrl_y = content_area.y + content_area.height.saturating_sub(3) + 1;
-        if me.row == ctrl_y {
-            let x = me.column.saturating_sub(content_area.x + 1);
-            // " [Reset]  [Pause]    View: [I-Cache] [D-Cache] [Both] ..."
-            // [Reset] at x=1..7, [Pause/Resume] at x=10..17/19, etc.
-            if x >= 1 && x < 8 { app.cache.hover_reset = true; }
-            else if x >= 10 && x < 18 { app.cache.hover_pause = true; }
-            else if x >= 25 && x < 35 { app.cache.hover_scope_i = true; }
-            else if x >= 36 && x < 46 { app.cache.hover_scope_d = true; }
-            else if x >= 47 && x < 54 { app.cache.hover_scope_both = true; }
-        }
+    // Shared controls bar — active for all subtabs
+    // Inner y = controls_area.y + 1 (inside block border)
+    let ctrl_y = controls_area.y + 1;
+    if me.row == ctrl_y {
+        let x = me.column.saturating_sub(controls_area.x + 1);
+        // " [Reset]  [Pause]    View: [I-Cache] [D-Cache] [Both]  ..."
+        // [Reset]=1..8  [Pause/Resume]=10..18  [I-Cache]=27..36  [D-Cache]=37..46  [Both]=47..53
+        if x >= 1 && x < 8 { app.cache.hover_reset = true; }
+        else if x >= 10 && x < 18 { app.cache.hover_pause = true; }
+        else if x >= 27 && x < 36 { app.cache.hover_scope_i = true; }
+        else if x >= 37 && x < 46 { app.cache.hover_scope_d = true; }
+        else if x >= 47 && x < 53 { app.cache.hover_scope_both = true; }
     }
 
     // Config panel controls
@@ -988,9 +1006,9 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
-    let (header_area, content_area) = cache_content_area(area);
+    let (header_area, content_area, controls_area) = cache_content_area(area);
 
-    // Subtab header clicks
+    // Subtab header clicks — new order: Stats | View | Config
     let inner_header = Rect::new(
         header_area.x + 1,
         header_area.y + 1,
@@ -999,21 +1017,27 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     );
     if me.row == inner_header.y && me.column >= inner_header.x {
         let x = me.column - inner_header.x;
-        if x >= 1 && x < 8 { app.cache.subtab = CacheSubtab::Stats; return; }
-        if x >= 10 && x < 18 { app.cache.subtab = CacheSubtab::Config; return; }
+        if x >= 1  && x < 8  { app.cache.subtab = CacheSubtab::Stats;  return; }
+        if x >= 10 && x < 16 { app.cache.subtab = CacheSubtab::View;   return; }
+        if x >= 18 && x < 26 { app.cache.subtab = CacheSubtab::Config; return; }
     }
 
-    // Stats controls
-    if matches!(app.cache.subtab, CacheSubtab::Stats) {
-        let ctrl_y = content_area.y + content_area.height.saturating_sub(3) + 1;
-        if me.row == ctrl_y {
-            let x = me.column.saturating_sub(content_area.x + 1);
-            if x >= 1 && x < 8 { app.run.mem.reset_stats(); return; }
-            if x >= 10 && x < 18 { app.cache.paused = !app.cache.paused; return; }
-            if x >= 25 && x < 35 { app.cache.scope = CacheScope::ICache; return; }
-            if x >= 36 && x < 46 { app.cache.scope = CacheScope::DCache; return; }
-            if x >= 47 && x < 54 { app.cache.scope = CacheScope::Both; return; }
+    // Shared controls bar — available in all subtabs
+    let ctrl_y = controls_area.y + 1;
+    if me.row == ctrl_y {
+        let x = me.column.saturating_sub(controls_area.x + 1);
+        if x >= 1 && x < 8 { app.run.mem.reset_stats(); return; }
+        if x >= 10 && x < 18 {
+            if app.run.is_running {
+                app.run.is_running = false;
+            } else if !app.run.faulted {
+                app.run.is_running = true;
+            }
+            return;
         }
+        if x >= 27 && x < 36 { app.cache.scope = CacheScope::ICache; return; }
+        if x >= 37 && x < 46 { app.cache.scope = CacheScope::DCache; return; }
+        if x >= 47 && x < 53 { app.cache.scope = CacheScope::Both;   return; }
     }
 
     // Config controls
@@ -1055,11 +1079,16 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
                 // Apply + Reset Stats
                 let icfg = app.cache.pending_icache.clone();
                 let dcfg = app.cache.pending_dcache.clone();
-                if !icfg.is_valid_config() || !dcfg.is_valid_config() {
-                    app.cache.config_error = Some("Invalid config: check size/line_size/assoc (line_size pow2 >=4; sets pow2)".to_string());
+                if let Err(msg) = icfg.validate() {
+                    app.cache.config_error = Some(format!("I-Cache: {msg}"));
+                    return;
+                }
+                if let Err(msg) = dcfg.validate() {
+                    app.cache.config_error = Some(format!("D-Cache: {msg}"));
                     return;
                 }
                 app.cache.config_error = None;
+                app.cache.config_status = Some("Config applied (stats reset).".to_string());
                 app.run.mem.apply_config(icfg, dcfg);
                 return;
             }
@@ -1067,11 +1096,16 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
                 // Apply Keep History
                 let icfg = app.cache.pending_icache.clone();
                 let dcfg = app.cache.pending_dcache.clone();
-                if !icfg.is_valid_config() || !dcfg.is_valid_config() {
-                    app.cache.config_error = Some("Invalid config: check size/line_size/assoc (line_size pow2 >=4; sets pow2)".to_string());
+                if let Err(msg) = icfg.validate() {
+                    app.cache.config_error = Some(format!("I-Cache: {msg}"));
+                    return;
+                }
+                if let Err(msg) = dcfg.validate() {
+                    app.cache.config_error = Some(format!("D-Cache: {msg}"));
                     return;
                 }
                 app.cache.config_error = None;
+                app.cache.config_status = Some("Config applied (history kept).".to_string());
                 let old_istats = std::mem::take(&mut app.run.mem.icache.stats);
                 let old_dstats = std::mem::take(&mut app.run.mem.dcache.stats);
                 app.run.mem.apply_config(icfg, dcfg);

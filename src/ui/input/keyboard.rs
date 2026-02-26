@@ -1,9 +1,10 @@
-use crate::ui::app::{App, CacheSubtab, EditorMode, MemRegion, Tab};
+use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
+use crate::ui::app::{App, CacheScope, CacheSubtab, EditorMode, MemRegion, Tab};
 use crate::ui::view::docs::docs_body_line_count;
 use arboard::Clipboard;
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use rfd::FileDialog as OSFileDialog;
-use std::{io, time::Instant};
+use std::{collections::HashMap, io, time::Instant};
 
 
 use super::max_regs_scroll;
@@ -208,6 +209,60 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
+            // Cache config export/import (Ctrl+E / Ctrl+L) — available on Cache tab
+            if ctrl && matches!(key.code, KeyCode::Char('e')) && matches!(app.tab, Tab::Cache) {
+                let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache);
+                if let Some(path) = OSFileDialog::new()
+                    .add_filter("Cache Config", &["fcache"])
+                    .set_file_name("cache.fcache")
+                    .save_file()
+                {
+                    match std::fs::write(&path, &text) {
+                        Ok(()) => {
+                            app.cache.config_error = None;
+                            app.cache.config_status = Some(format!(
+                                "Exported to {}",
+                                path.file_name().unwrap_or_default().to_string_lossy()
+                            ));
+                        }
+                        Err(e) => {
+                            app.cache.config_status = None;
+                            app.cache.config_error = Some(format!("Export failed: {e}"));
+                        }
+                    }
+                }
+                return Ok(false);
+            }
+            if ctrl && matches!(key.code, KeyCode::Char('l')) && matches!(app.tab, Tab::Cache) {
+                if let Some(path) = OSFileDialog::new()
+                    .add_filter("Cache Config", &["fcache"])
+                    .pick_file()
+                {
+                    match std::fs::read_to_string(&path) {
+                        Ok(text) => match parse_cache_configs(&text) {
+                            Ok((icfg, dcfg)) => {
+                                app.cache.pending_icache = icfg;
+                                app.cache.pending_dcache = dcfg;
+                                app.cache.config_error = None;
+                                app.cache.config_status = Some(format!(
+                                    "Imported from {}",
+                                    path.file_name().unwrap_or_default().to_string_lossy()
+                                ));
+                            }
+                            Err(msg) => {
+                                app.cache.config_status = None;
+                                app.cache.config_error = Some(format!("Import failed: {msg}"));
+                            }
+                        },
+                        Err(e) => {
+                            app.cache.config_status = None;
+                            app.cache.config_error = Some(format!("Import failed: {e}"));
+                        }
+                    }
+                }
+                return Ok(false);
+            }
+
             match (key.code, app.tab) {
                 (KeyCode::Char('s'), Tab::Run) => {
                     if !app.run.faulted {
@@ -220,7 +275,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     }
                 }
                 (KeyCode::Char('p'), Tab::Run) => {
-                    app.run.is_running = false;
+                    if app.run.is_running {
+                        app.run.is_running = false;
+                    } else if !app.run.faulted {
+                        app.run.is_running = true;
+                    }
                 }
                 (KeyCode::Up, Tab::Run) if ctrl => {
                     let visible = app.run.console_height.saturating_sub(3) as usize;
@@ -351,9 +410,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     }
                 }
                 // Cache tab — normal (no active edit)
+                // Tab cycles: Stats → View → Config → Stats
                 (KeyCode::Tab, Tab::Cache) => {
                     app.cache.subtab = match app.cache.subtab {
-                        CacheSubtab::Stats => CacheSubtab::Config,
+                        CacheSubtab::Stats  => CacheSubtab::View,
+                        CacheSubtab::View   => CacheSubtab::Config,
                         CacheSubtab::Config => CacheSubtab::Stats,
                     };
                 }
@@ -361,14 +422,40 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.run.mem.reset_stats();
                 }
                 (KeyCode::Char('p'), Tab::Cache) => {
-                    app.cache.paused = !app.cache.paused;
+                    if app.run.is_running {
+                        app.run.is_running = false;
+                    } else if !app.run.faulted {
+                        app.run.is_running = true;
+                    }
                 }
-                (KeyCode::Up, Tab::Cache) => {
-                    app.cache.stats_scroll = app.cache.stats_scroll.saturating_sub(1);
+                // Scope shortcuts — work in Stats and View (not Config, where letters edit fields)
+                (KeyCode::Char('i'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    app.cache.scope = CacheScope::ICache;
                 }
-                (KeyCode::Down, Tab::Cache) => {
-                    app.cache.stats_scroll = app.cache.stats_scroll.saturating_add(1);
+                (KeyCode::Char('d'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    app.cache.scope = CacheScope::DCache;
                 }
+                (KeyCode::Char('b'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    app.cache.scope = CacheScope::Both;
+                }
+                (KeyCode::Up, Tab::Cache) => match app.cache.subtab {
+                    CacheSubtab::Stats => {
+                        app.cache.stats_scroll = app.cache.stats_scroll.saturating_sub(1);
+                    }
+                    CacheSubtab::View => {
+                        app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
+                    }
+                    _ => {}
+                },
+                (KeyCode::Down, Tab::Cache) => match app.cache.subtab {
+                    CacheSubtab::Stats => {
+                        app.cache.stats_scroll = app.cache.stats_scroll.saturating_add(1);
+                    }
+                    CacheSubtab::View => {
+                        app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
+                    }
+                    _ => {}
+                },
 
                 // Editor navigation in command mode
                 (KeyCode::Up, Tab::Editor) => app.editor.buf.move_up(),
@@ -396,4 +483,82 @@ fn clamp_docs_scroll_keyboard(app: &mut App) {
             app.docs.scroll = max_start;
         }
     }
+}
+
+// ── Cache config serialization ────────────────────────────────────────────────
+
+fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig) -> String {
+    let mut s = String::from("# FALCON-ASM Cache Config v1\n");
+    for (prefix, cfg) in [("icache", icfg), ("dcache", dcfg)] {
+        s.push_str(&format!("{prefix}.size={}\n", cfg.size));
+        s.push_str(&format!("{prefix}.line_size={}\n", cfg.line_size));
+        s.push_str(&format!("{prefix}.associativity={}\n", cfg.associativity));
+        s.push_str(&format!("{prefix}.replacement={:?}\n", cfg.replacement));
+        s.push_str(&format!("{prefix}.write_policy={:?}\n", cfg.write_policy));
+        s.push_str(&format!("{prefix}.write_alloc={:?}\n", cfg.write_alloc));
+        s.push_str(&format!("{prefix}.hit_latency={}\n", cfg.hit_latency));
+        s.push_str(&format!("{prefix}.miss_penalty={}\n", cfg.miss_penalty));
+    }
+    s
+}
+
+fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig), String> {
+    let mut map: HashMap<String, String> = HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            map.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+    let icfg = parse_single_config(&map, "icache")?;
+    let dcfg = parse_single_config(&map, "dcache")?;
+    Ok((icfg, dcfg))
+}
+
+fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<CacheConfig, String> {
+    let get = |key: &str| -> Result<&str, String> {
+        map.get(&format!("{prefix}.{key}"))
+            .map(|s| s.as_str())
+            .ok_or_else(|| format!("Missing {prefix}.{key}"))
+    };
+    let get_usize = |key: &str| -> Result<usize, String> {
+        get(key)?.parse::<usize>().map_err(|_| format!("Invalid {prefix}.{key}: expected integer"))
+    };
+    let get_u64 = |key: &str| -> Result<u64, String> {
+        get(key)?.parse::<u64>().map_err(|_| format!("Invalid {prefix}.{key}: expected integer"))
+    };
+
+    let replacement = match get("replacement")? {
+        "Lru" => ReplacementPolicy::Lru,
+        "Mru" => ReplacementPolicy::Mru,
+        "Fifo" => ReplacementPolicy::Fifo,
+        "Random" => ReplacementPolicy::Random,
+        "Lfu" => ReplacementPolicy::Lfu,
+        "Clock" => ReplacementPolicy::Clock,
+        other => return Err(format!("Unknown replacement policy: {other}")),
+    };
+    let write_policy = match get("write_policy")? {
+        "WriteThrough" => WritePolicy::WriteThrough,
+        "WriteBack" => WritePolicy::WriteBack,
+        other => return Err(format!("Unknown write_policy: {other}")),
+    };
+    let write_alloc = match get("write_alloc")? {
+        "WriteAllocate" => WriteAllocPolicy::WriteAllocate,
+        "NoWriteAllocate" => WriteAllocPolicy::NoWriteAllocate,
+        other => return Err(format!("Unknown write_alloc: {other}")),
+    };
+
+    Ok(CacheConfig {
+        size: get_usize("size")?,
+        line_size: get_usize("line_size")?,
+        associativity: get_usize("associativity")?,
+        replacement,
+        write_policy,
+        write_alloc,
+        hit_latency: get_u64("hit_latency")?,
+        miss_penalty: get_u64("miss_penalty")?,
+    })
 }

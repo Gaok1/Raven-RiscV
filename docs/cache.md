@@ -38,7 +38,7 @@ The table shows which **fetch PCs** caused I-cache misses (sorted by miss count)
 ### Controls
 
 - **Reset** (`r`) — clears cache stats (including `miss_pcs` and `ram_write_bytes`).
-- **Pause/Resume** (`p`) — freezes only the **history chart** collection; counters continue to update.
+- **Pause/Resume** (`p`) — pauses/resumes the simulation (cache stats stop updating while paused).
 - **View scope** — show I-cache, D-cache, or both.
 
 ### What counts as “RAM W”?
@@ -78,4 +78,3 @@ Use **Small / Medium / Large** to quickly load preset configurations.
 - `sets = size / (line_size * associativity)` is a power of two
 
 Note: write policies are only meaningful for the **D-cache** (the I-cache is read-only).
-
