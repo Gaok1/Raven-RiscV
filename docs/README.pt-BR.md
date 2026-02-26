@@ -16,6 +16,7 @@ está abrindo o RISC-V pela primeira vez.
 - **Núcleo legível** – CPU, memória e decodificador foram escritos para você acompanhar linha a linha.
 - **Assembler integrado** – monte segmentos `.text`, `.data` e `.bss` com diretivas como `.byte`, `.word`, `.ascii`, `.space`
   e um conjunto de pseudoinstruções (`la`, `call`, `ret`, `push`, `pop`, `printStr`, `printStrLn`, `read`, entre outras).
+- **Simulação de cache** – modelo configurável de I-cache + D-cache com métricas ao vivo (hit rate, MPKI, tráfego de RAM) e “Top Miss PCs”.
 - **Facilidades de syscall** – basta definir `a7` e chamar `ecall` para imprimir valores, strings, ler entradas do usuário ou
   encerrar o programa.
 - **Cobertura RV32I + M** – aritmética, loads/stores, desvios, saltos, multiplicação, divisão e mensagens amigáveis para
@@ -52,6 +53,7 @@ zero_bytes(&mut mem, bss_base, prog.bss_size)?;
 
 - Siga o passo a passo do [tutorial em português](Tutorial-pt.md) para montar e executar seus primeiros programas.
 - Consulte os layouts de instrução e as pseudoinstruções detalhadas no [`format.pt-BR.md`](format.pt-BR.md).
+- Veja o guia de simulação/configuração de cache em [`cache.pt-BR.md`](cache.pt-BR.md).
 - Explore o diretório `Program Examples/` para ver programas que exercitam syscalls, aritmética e controle de fluxo.
 
 ## Contribuições e próximos passos

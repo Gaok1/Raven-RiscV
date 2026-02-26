@@ -8,6 +8,22 @@ pub trait Bus {
     fn store8(&mut self, addr: u32, val: u8) -> Result<(), FalconError>;
     fn store16(&mut self, addr: u32, val: u16) -> Result<(), FalconError>;
     fn store32(&mut self, addr: u32, val: u32) -> Result<(), FalconError>;
+
+    /// Instruction fetch — override to route through I-cache.
+    fn fetch32(&mut self, addr: u32) -> Result<u32, FalconError> {
+        self.load32(addr)
+    }
+
+    /// D-cache tracked data reads — override to route through D-cache.
+    fn dcache_read8(&mut self, addr: u32) -> Result<u8, FalconError> {
+        self.load8(addr)
+    }
+    fn dcache_read16(&mut self, addr: u32) -> Result<u16, FalconError> {
+        self.load16(addr)
+    }
+    fn dcache_read32(&mut self, addr: u32) -> Result<u32, FalconError> {
+        self.load32(addr)
+    }
 }
 
 pub struct Ram { data: Vec<u8> }

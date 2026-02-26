@@ -10,7 +10,7 @@ pub fn step<B: Bus>(
     console: &mut Console,
 ) -> Result<bool, FalconError> {
     let pc = cpu.pc;
-    let word = mem.load32(pc)?;
+    let word = mem.fetch32(pc)?;
     let instr = match crate::falcon::decoder::decode(word) {
         Ok(i) => i,
         Err(e) => {
@@ -283,23 +283,23 @@ fn exec_loads<B: Bus>(
     match instr {
         Instruction::Lb { rd, rs1, imm } => {
             let a = cpu.read(rs1).wrapping_add(imm as u32);
-            cpu.write(rd, (mem.load8(a)? as i8 as i32) as u32);
+            cpu.write(rd, (mem.dcache_read8(a)? as i8 as i32) as u32);
         }
         Instruction::Lh { rd, rs1, imm } => {
             let a = cpu.read(rs1).wrapping_add(imm as u32);
-            cpu.write(rd, (mem.load16(a)? as i16 as i32) as u32);
+            cpu.write(rd, (mem.dcache_read16(a)? as i16 as i32) as u32);
         }
         Instruction::Lw { rd, rs1, imm } => {
             let a = cpu.read(rs1).wrapping_add(imm as u32);
-            cpu.write(rd, mem.load32(a)?);
+            cpu.write(rd, mem.dcache_read32(a)?);
         }
         Instruction::Lbu { rd, rs1, imm } => {
             let a = cpu.read(rs1).wrapping_add(imm as u32);
-            cpu.write(rd, mem.load8(a)? as u32);
+            cpu.write(rd, mem.dcache_read8(a)? as u32);
         }
         Instruction::Lhu { rd, rs1, imm } => {
             let a = cpu.read(rs1).wrapping_add(imm as u32);
-            cpu.write(rd, mem.load16(a)? as u32);
+            cpu.write(rd, mem.dcache_read16(a)? as u32);
         }
         _ => unreachable!(),
     }

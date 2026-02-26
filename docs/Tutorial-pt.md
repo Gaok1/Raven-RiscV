@@ -15,6 +15,8 @@ A interface do FALCON é organizada em **abas**, que representam as principais e
 
 1. **Editor** - escrita e montagem do código.
 2. **Run (Simulação)** - execução passo a passo e visualização da memória e dos registradores.
+3. **Cache** - métricas de cache e ajuste de configuração
+4. **Docs** - referência de instruções
 ---
 
 ## **3. Aba: Editor de Texto**
@@ -145,7 +147,29 @@ Com a simulação pausada, pressione **'S'** para pular para a próxima instruç
 ![WindowsTerminal\_0kLnfl2qIZ](https://github.com/user-attachments/assets/cc246d26-2d22-46b5-82c1-af72e73a3148)
 
 
-## **5. Executando IO**
+## **5. Aba: Cache (Simulação)**
+
+A aba **Cache** ajuda a visualizar (e ajustar) um modelo simples de **I-cache + D-cache**.
+
+### Cache → Stats
+
+* Gauge de **hit rate** e um **gráfico de histórico**
+* Métricas derivadas como **miss rate**, **line fills**, **avg cycles/access** e **RAM R/W bytes**
+* **Top Miss PCs (I-Cache)**: quais PCs de fetch mais causam misses no I-cache
+
+Controles:
+
+* **Reset** zera as estatísticas
+* **Pause/Resume** congela apenas a coleta do histórico do gráfico (contadores continuam atualizando)
+* Escopo para focar em I-cache, D-cache ou ambos
+
+### Cache → Config
+
+Você pode editar parâmetros (size, line size, associativity) e policies, e aplicar em runtime.
+
+Para mais detalhes, veja [`cache.pt-BR.md`](cache.pt-BR.md).
+
+## **6. Executando IO**
 O FALCON-ASM foi projetado para ser intuitivo e direto, sem perder a fidelidade ao comportamento real da arquitetura RISC-V.
 Para reduzir o boilerplate e tornar o código mais legível, a plataforma inclui um conjunto de pseudo-instruções que simplificam operações comuns — especialmente de entrada e saída (I/O) e de manipulação da pilha (STACK).
 
