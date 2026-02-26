@@ -12,10 +12,12 @@ mod editor;
 mod run;
 mod components;
 pub mod disasm;
+mod cache;
 
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};
 use run::render_run;
+use cache::render_cache;
 
 pub fn ui(f: &mut Frame, app: &App) {
     let size = f.area();
@@ -63,6 +65,7 @@ pub fn ui(f: &mut Frame, app: &App) {
             render_editor(f, editor_chunks[1], app);
         }
         Tab::Run => render_run(f, chunks[1], app),
+        Tab::Cache => render_cache(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
     }
 

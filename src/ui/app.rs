@@ -4,7 +4,8 @@ use super::{
     input::{handle_key, handle_mouse},
     view::ui,
 };
-use crate::falcon::{self, Cpu, Ram};
+use crate::falcon::{self, Cpu, CacheController};
+use crate::falcon::cache::CacheConfig;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -19,18 +20,20 @@ use std::{
 pub(super) enum Tab {
     Editor,
     Run,
+    Cache,
     Docs,
 }
 
 impl Tab {
     pub(super) fn all() -> &'static [Tab] {
-        &[Tab::Editor, Tab::Run, Tab::Docs]
+        &[Tab::Editor, Tab::Run, Tab::Cache, Tab::Docs]
     }
 
     pub(super) fn label(self) -> &'static str {
         match self {
             Tab::Editor => "Editor",
             Tab::Run => "Run",
+            Tab::Cache => "Cache",
             Tab::Docs => "Docs",
         }
     }
@@ -38,6 +41,93 @@ impl Tab {
     pub(super) fn index(self) -> usize {
         Self::all().iter().position(|t| *t == self).unwrap_or(0)
     }
+}
+
+// ── Cache tab state ─────────────────────────────────────────────────────────
+
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub(super) enum CacheSubtab {
+    Stats,
+    Config,
+}
+
+/// Editable field in the Config subtab.
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub(super) enum ConfigField {
+    Size, LineSize, Associativity,
+    Replacement, WritePolicy, WriteAlloc,
+    HitLatency, MissPenalty,
+}
+
+impl ConfigField {
+    pub(super) fn is_numeric(self) -> bool {
+        matches!(self, Self::Size | Self::LineSize | Self::Associativity | Self::HitLatency | Self::MissPenalty)
+    }
+    pub(super) fn all_editable() -> &'static [ConfigField] {
+        &[Self::Size, Self::LineSize, Self::Associativity, Self::Replacement,
+          Self::WritePolicy, Self::WriteAlloc, Self::HitLatency, Self::MissPenalty]
+    }
+    /// Row index in the rendered fields list (3 = Sets which is read-only, skip it)
+    pub(super) fn list_row(self) -> usize {
+        match self {
+            Self::Size => 0, Self::LineSize => 1, Self::Associativity => 2,
+            Self::Replacement => 4, Self::WritePolicy => 5, Self::WriteAlloc => 6,
+            Self::HitLatency => 7, Self::MissPenalty => 8,
+        }
+    }
+    pub(super) fn from_list_row(row: usize) -> Option<Self> {
+        match row {
+            0 => Some(Self::Size), 1 => Some(Self::LineSize), 2 => Some(Self::Associativity),
+            3 => None, // Sets is read-only
+            4 => Some(Self::Replacement), 5 => Some(Self::WritePolicy), 6 => Some(Self::WriteAlloc),
+            7 => Some(Self::HitLatency), 8 => Some(Self::MissPenalty),
+            _ => None,
+        }
+    }
+    pub(super) fn next(self) -> Self {
+        let a = Self::all_editable();
+        a[(a.iter().position(|&f| f == self).unwrap_or(0) + 1) % a.len()]
+    }
+    pub(super) fn prev(self) -> Self {
+        let a = Self::all_editable();
+        let i = a.iter().position(|&f| f == self).unwrap_or(0);
+        a[i.checked_sub(1).unwrap_or(a.len() - 1)]
+    }
+}
+
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub(super) enum CacheScope {
+    ICache,
+    DCache,
+    Both,
+}
+
+pub(super) struct CacheState {
+    pub(super) subtab: CacheSubtab,
+    pub(super) paused: bool,
+    pub(super) scope: CacheScope,
+    pub(super) stats_scroll: usize,
+    // Hover flags
+    pub(super) hover_subtab_stats: bool,
+    pub(super) hover_subtab_config: bool,
+    pub(super) hover_reset: bool,
+    pub(super) hover_pause: bool,
+    pub(super) hover_scope_i: bool,
+    pub(super) hover_scope_d: bool,
+    pub(super) hover_scope_both: bool,
+    pub(super) hover_apply: bool,
+    pub(super) hover_apply_keep: bool,
+    pub(super) hover_preset_i: Option<usize>,
+    pub(super) hover_preset_d: Option<usize>,
+    pub(super) hover_config_field: Option<(bool, ConfigField)>,
+    // Config form (pending values before Apply)
+    pub(super) pending_icache: CacheConfig,
+    pub(super) pending_dcache: CacheConfig,
+    // Validation errors
+    pub(super) config_error: Option<String>,
+    // Inline field editing: (is_icache, field) + text buffer for numeric fields
+    pub(super) edit_field: Option<(bool, ConfigField)>,
+    pub(super) edit_buf: String,
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -96,7 +186,7 @@ pub(super) struct RunState {
     pub(super) cpu: Cpu,
     pub(super) prev_x: [u32; 32],
     pub(super) prev_pc: u32,
-    pub(super) mem: Ram,
+    pub(super) mem: CacheController,
     pub(super) mem_size: usize,
     pub(super) base_pc: u32,
     pub(super) data_base: u32,
@@ -149,6 +239,7 @@ pub struct App {
     pub(super) editor: EditorState,
     pub(super) run: RunState,
     pub(super) docs: DocsState,
+    pub(super) cache: CacheState,
 
     pub(super) show_exit_popup: bool,
     pub(super) should_quit: bool,
@@ -194,7 +285,7 @@ impl App {
                 prev_x: [0; 32],
                 prev_pc: base_pc,
                 mem_size,
-                mem: Ram::new(mem_size),
+                mem: CacheController::new(CacheConfig::default(), CacheConfig::default(), mem_size),
                 base_pc,
                 data_base,
                 mem_view_addr: data_base,
@@ -223,6 +314,29 @@ impl App {
                 faulted: false,
             },
             docs: DocsState { scroll: 0 },
+            cache: CacheState {
+                subtab: CacheSubtab::Stats,
+                paused: false,
+                scope: CacheScope::Both,
+                stats_scroll: 0,
+                hover_subtab_stats: false,
+                hover_subtab_config: false,
+                hover_reset: false,
+                hover_pause: false,
+                hover_scope_i: false,
+                hover_scope_d: false,
+                hover_scope_both: false,
+                hover_apply: false,
+                hover_apply_keep: false,
+                hover_preset_i: None,
+                hover_preset_d: None,
+                hover_config_field: None,
+                pending_icache: CacheConfig::default(),
+                pending_dcache: CacheConfig::default(),
+                config_error: None,
+                edit_field: None,
+                edit_buf: String::new(),
+            },
             show_exit_popup: false,
             should_quit: false,
             mouse_x: 0,
@@ -243,24 +357,29 @@ impl App {
         self.run.cpu.pc = self.run.base_pc;
         self.run.prev_pc = self.run.cpu.pc;
         self.run.cpu.write(2, self.run.mem_size as u32 - 4);
-        self.run.mem = Ram::new(self.run.mem_size);
+        self.run.mem = CacheController::new(
+            self.cache.pending_icache.clone(),
+            self.cache.pending_dcache.clone(),
+            self.run.mem_size,
+        );
         self.run.faulted = false;
 
         match assemble(&self.editor.buf.text(), self.run.base_pc) {
             Ok(prog) => {
-                if let Err(e) = load_words(&mut self.run.mem, self.run.base_pc, &prog.text) {
+                // Write directly to RAM (bypass cache) so invalidate() won't discard data
+                if let Err(e) = load_words(&mut self.run.mem.ram, self.run.base_pc, &prog.text) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
-                if let Err(e) = load_bytes(&mut self.run.mem, prog.data_base, &prog.data) {
+                if let Err(e) = load_bytes(&mut self.run.mem.ram, prog.data_base, &prog.data) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
                 let bss_base = prog.data_base.saturating_add(prog.data.len() as u32);
                 if prog.bss_size > 0 {
-                    if let Err(e) = zero_bytes(&mut self.run.mem, bss_base, prog.bss_size) {
+                    if let Err(e) = zero_bytes(&mut self.run.mem.ram, bss_base, prog.bss_size) {
                         self.console.push_error(e.to_string());
                         self.run.faulted = true;
                         return;
@@ -270,6 +389,10 @@ impl App {
                 self.run.data_base = prog.data_base;
                 self.run.mem_view_addr = prog.data_base;
                 self.run.mem_region = MemRegion::Data;
+                // Invalidate & reset stats so execution starts from cold cache
+                self.run.mem.icache.invalidate();
+                self.run.mem.dcache.invalidate();
+                self.run.mem.reset_stats();
 
                 self.editor.last_ok_text = Some(prog.text.clone());
                 self.editor.last_ok_data = Some(prog.data.clone());
@@ -347,15 +470,20 @@ impl App {
             self.run.cpu.pc = self.run.base_pc;
             self.run.prev_pc = self.run.cpu.pc;
             self.run.cpu.write(2, self.run.mem_size as u32 - 4);
-            self.run.mem = Ram::new(self.run.mem_size);
+            self.run.mem = CacheController::new(
+                self.cache.pending_icache.clone(),
+                self.cache.pending_dcache.clone(),
+                self.run.mem_size,
+            );
             self.run.faulted = false;
 
-            if let Err(e) = load_words(&mut self.run.mem, self.run.base_pc, text) {
+            // Write directly to RAM (bypass cache) so invalidate() won't discard data
+            if let Err(e) = load_words(&mut self.run.mem.ram, self.run.base_pc, text) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
             }
-            if let Err(e) = load_bytes(&mut self.run.mem, data_base, data) {
+            if let Err(e) = load_bytes(&mut self.run.mem.ram, data_base, data) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
@@ -363,7 +491,7 @@ impl App {
             if let Some(bss) = self.editor.last_ok_bss_size {
                 if bss > 0 {
                     let bss_base = data_base.saturating_add(data.len() as u32);
-                    if let Err(e) = zero_bytes(&mut self.run.mem, bss_base, bss) {
+                    if let Err(e) = zero_bytes(&mut self.run.mem.ram, bss_base, bss) {
                         self.console.push_error(e.to_string());
                         self.run.faulted = true;
                         return;
@@ -374,6 +502,9 @@ impl App {
             self.run.data_base = data_base;
             self.run.mem_view_addr = data_base;
             self.run.mem_region = MemRegion::Data;
+            self.run.mem.icache.invalidate();
+            self.run.mem.dcache.invalidate();
+            self.run.mem.reset_stats();
 
             let bss_sz = self.editor.last_ok_bss_size.unwrap_or(0);
             self.editor.last_assemble_msg = Some(format!(
@@ -401,14 +532,22 @@ impl App {
         self.run.cpu.pc = self.run.base_pc;
         self.run.prev_pc = self.run.cpu.pc;
         self.run.cpu.write(2, self.run.mem_size as u32 - 4);
-        self.run.mem = Ram::new(self.run.mem_size);
+        self.run.mem = CacheController::new(
+            self.cache.pending_icache.clone(),
+            self.cache.pending_dcache.clone(),
+            self.run.mem_size,
+        );
         self.run.faulted = false;
 
-        if let Err(e) = load_bytes(&mut self.run.mem, self.run.base_pc, bytes) {
+        // Write directly to RAM (bypass cache) so invalidate() won't discard data
+        if let Err(e) = load_bytes(&mut self.run.mem.ram, self.run.base_pc, bytes) {
             self.console.push_error(e.to_string());
             self.run.faulted = true;
             return;
         }
+        self.run.mem.icache.invalidate();
+        self.run.mem.dcache.invalidate();
+        self.run.mem.reset_stats();
 
         let mut words = Vec::new();
         for chunk in bytes.chunks(4) {
@@ -430,6 +569,79 @@ impl App {
         self.editor.diag_line_text = None;
         self.run.imem_scroll = 0;
         self.run.hover_imem_addr = None;
+    }
+
+    /// Commit the current numeric edit_buf into pending_icache/pending_dcache.
+    pub(super) fn commit_cache_edit(&mut self) {
+        if let Some((is_icache, field)) = self.cache.edit_field {
+            if field.is_numeric() {
+                let s = self.cache.edit_buf.trim().to_string();
+                let cfg = if is_icache { &mut self.cache.pending_icache } else { &mut self.cache.pending_dcache };
+                match field {
+                    ConfigField::Size => { if let Ok(v) = s.parse::<usize>() { cfg.size = v; } }
+                    ConfigField::LineSize => { if let Ok(v) = s.parse::<usize>() { cfg.line_size = v; } }
+                    ConfigField::Associativity => { if let Ok(v) = s.parse::<usize>() { cfg.associativity = v.max(1); } }
+                    ConfigField::HitLatency => { if let Ok(v) = s.parse::<u64>() { cfg.hit_latency = v.max(1); } }
+                    ConfigField::MissPenalty => { if let Ok(v) = s.parse::<u64>() { cfg.miss_penalty = v; } }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Cycle an enum-typed config field (forward=true → next option).
+    pub(super) fn cycle_cache_field(&mut self, is_icache: bool, field: ConfigField, forward: bool) {
+        use crate::falcon::cache::{ReplacementPolicy, WriteAllocPolicy, WritePolicy};
+        let cfg = if is_icache { &mut self.cache.pending_icache } else { &mut self.cache.pending_dcache };
+        match field {
+            ConfigField::Replacement => {
+                cfg.replacement = if forward {
+                    match cfg.replacement {
+                        ReplacementPolicy::Lru => ReplacementPolicy::Mru,
+                        ReplacementPolicy::Mru => ReplacementPolicy::Fifo,
+                        ReplacementPolicy::Fifo => ReplacementPolicy::Random,
+                        ReplacementPolicy::Random => ReplacementPolicy::Lfu,
+                        ReplacementPolicy::Lfu => ReplacementPolicy::Clock,
+                        ReplacementPolicy::Clock => ReplacementPolicy::Lru,
+                    }
+                } else {
+                    match cfg.replacement {
+                        ReplacementPolicy::Lru => ReplacementPolicy::Clock,
+                        ReplacementPolicy::Mru => ReplacementPolicy::Lru,
+                        ReplacementPolicy::Fifo => ReplacementPolicy::Mru,
+                        ReplacementPolicy::Random => ReplacementPolicy::Fifo,
+                        ReplacementPolicy::Lfu => ReplacementPolicy::Random,
+                        ReplacementPolicy::Clock => ReplacementPolicy::Lfu,
+                    }
+                };
+            }
+            ConfigField::WritePolicy => {
+                cfg.write_policy = match cfg.write_policy {
+                    WritePolicy::WriteThrough => WritePolicy::WriteBack,
+                    WritePolicy::WriteBack => WritePolicy::WriteThrough,
+                };
+            }
+            ConfigField::WriteAlloc => {
+                cfg.write_alloc = match cfg.write_alloc {
+                    WriteAllocPolicy::WriteAllocate => WriteAllocPolicy::NoWriteAllocate,
+                    WriteAllocPolicy::NoWriteAllocate => WriteAllocPolicy::WriteAllocate,
+                };
+            }
+            _ => {}
+        }
+    }
+
+    /// Current pending config field value as string (for populating edit_buf).
+    pub(super) fn cache_field_value_str(&self, is_icache: bool, field: ConfigField) -> String {
+        let cfg = if is_icache { &self.cache.pending_icache } else { &self.cache.pending_dcache };
+        match field {
+            ConfigField::Size => cfg.size.to_string(),
+            ConfigField::LineSize => cfg.line_size.to_string(),
+            ConfigField::Associativity => cfg.associativity.to_string(),
+            ConfigField::HitLatency => cfg.hit_latency.to_string(),
+            ConfigField::MissPenalty => cfg.miss_penalty.to_string(),
+            _ => String::new(),
+        }
     }
 
     fn tick(&mut self) {
@@ -475,6 +687,9 @@ impl App {
                 false
             }
         };
+        if !self.cache.paused {
+            self.run.mem.snapshot_stats();
+        }
         if !alive {
             self.run.is_running = false;
             if !self.console.reading {

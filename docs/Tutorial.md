@@ -14,6 +14,8 @@ The interface is organized into tabs that mirror the development flow:
 
 1. Editor — write and assemble code
 2. Run (Simulation) — step execution; view memory and registers
+3. Cache — inspect cache stats and tune cache configuration
+4. Docs — instruction reference
 
 ---
 
@@ -135,7 +137,31 @@ To inspect programs in detail, you can advance the PC manually. With the simulat
 
 ---
 
-## 5. Performing I/O
+## 5. Tab: Cache (Simulation)
+
+The Cache tab helps you visualize (and tweak) a simple I-cache + D-cache model.
+
+### Cache → Stats
+
+- Live **hit rate** gauges and a **history chart**
+- Extra derived metrics such as **miss rate**, **line fills**, **avg cycles/access**, and **RAM R/W bytes**
+- **Top Miss PCs (I-Cache)**: which fetch PCs are responsible for most I-cache misses
+
+Controls:
+
+- **Reset** clears cache stats
+- **Pause/Resume** freezes only the history chart collection (counters keep updating)
+- Scope toggles let you focus on I-cache, D-cache, or both
+
+### Cache → Config
+
+You can edit cache parameters (size, line size, associativity) and policies, then apply them at runtime.
+
+For full details, see [`cache.md`](cache.md).
+
+---
+
+## 6. Performing I/O
 
 FALCON-ASM aims to be straightforward while remaining faithful to RISC‑V behavior. To reduce boilerplate and keep code readable, it provides pseudo‑instructions for common tasks — especially I/O and stack handling.
 
@@ -185,4 +211,3 @@ calculate:
 Execution example:
 
 ![WindowsTerminal_e0XEHNKWAu](https://github.com/user-attachments/assets/f9b87e26-bc89-4a14-88cb-4b46bf8aed64)
-

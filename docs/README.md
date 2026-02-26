@@ -16,6 +16,7 @@ you are opening RISC-V for the very first time.
 - **Readable core** – the CPU, memory, and instruction decoder are written to be followed line by line.
 - **Integrated assembler** – assemble `.text`, `.data`, and `.bss` segments (with directives like `.byte`, `.word`, `.ascii`,
   `.space`) and common pseudo-instructions (`la`, `call`, `ret`, `push`, `pop`, `printStr`, `printStrLn`, `read`, and more).
+- **Cache simulation** – a configurable I-cache + D-cache model with live stats (hit rate, MPKI, RAM traffic) and “Top Miss PCs”.
 - **Syscall helpers** – set `a7` and call `ecall` to print values or strings, read user input, or halt the program.
 - **RV32I + M coverage** – arithmetic, loads/stores, branches, jumps, multiplication, division, and a friendly error model for
   unsupported instructions.
@@ -51,6 +52,7 @@ zero_bytes(&mut mem, bss_base, prog.bss_size)?;
 
 - Follow the step-by-step walkthrough in the English [tutorial](Tutorial.md) to assemble and run your first programs.
 - Dive into instruction formats, bit layouts, and pseudo-instructions in the English [`format.md`](format.md).
+- Explore the cache simulator (stats + configuration) in [`cache.md`](cache.md).
 - Browse the `Program Examples/` directory for sample projects that exercise syscalls, arithmetic, and control flow.
 
 ## Contributing and roadmap

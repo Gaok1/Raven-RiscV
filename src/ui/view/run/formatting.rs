@@ -1,21 +1,21 @@
-use crate::falcon::memory::Bus;
-
 use super::{App, FormatMode};
 
 pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
+    // Use effective_read* which returns dirty D-cache values if present,
+    // so write-back stores are visible in the RUN tab memory view.
     match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.run.mem.load32(addr).unwrap_or(0),
+            app.run.mem.effective_read32(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.run.mem.load16(addr).unwrap_or(0),
+            app.run.mem.effective_read16(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.run.mem.load8(addr).unwrap_or(0),
+            app.run.mem.effective_read8(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),

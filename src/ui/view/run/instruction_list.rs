@@ -1,4 +1,3 @@
-use crate::falcon::memory::Bus;
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
@@ -51,7 +50,7 @@ fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>
 }
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
-    let word = app.run.mem.load32(addr).unwrap_or(0);
+    let word = app.run.mem.peek32(addr).unwrap_or(0);
     let marker = if addr == app.run.cpu.pc { "▶" } else { " " };
     let value = format_u32_value(word, app.run.fmt_mode, app.run.show_signed);
     let disasm = disasm_word(word);

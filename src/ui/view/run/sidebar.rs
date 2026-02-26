@@ -90,7 +90,7 @@ fn memory_block() -> Block<'static> {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title("RAM Memory")
+        .title("Memory  ● = dirty cache")
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -108,10 +108,15 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
 }
 
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
-    let mut text = format!("0x{addr:08x}: {}", format_memory_value(app, addr));
+    let is_dirty = app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
+    let indicator = if is_dirty { "● " } else { "  " };
+    let value = format_memory_value(app, addr);
+    let text = format!("{indicator}0x{addr:08x}: {value}");
     if addr == app.run.cpu.x[2] {
-        text.push_str("   ▶ sp");
-        ListItem::new(text).style(Style::default().fg(Color::Yellow))
+        // Stack pointer row — always yellow
+        ListItem::new(format!("{text}   ▶ sp")).style(Style::default().fg(Color::Yellow))
+    } else if is_dirty {
+        ListItem::new(text).style(Style::default().fg(Color::Magenta))
     } else {
         ListItem::new(text)
     }
