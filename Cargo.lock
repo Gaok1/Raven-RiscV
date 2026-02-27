@@ -617,6 +617,7 @@ dependencies = [
  "crossterm 0.29.0",
  "ratatui",
  "rfd",
+ "signal-hook",
  "thiserror",
 ]
 
