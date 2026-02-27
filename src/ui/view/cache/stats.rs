@@ -13,6 +13,17 @@ use crate::ui::app::{App, CacheScope};
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
 
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
+    if app.cache.selected_level == 0 {
+        render_l1_stats(f, area, app);
+    } else {
+        let idx = app.cache.selected_level - 1;
+        if idx < app.run.mem.extra_levels.len() {
+            render_unified_stats(f, area, app, idx);
+        }
+    }
+}
+
+fn render_l1_stats(f: &mut Frame, area: Rect, app: &App) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -27,6 +38,21 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
     render_program_summary(f, layout[1], app);
     render_chart(f, layout[2], app);
     render_miss_table(f, layout[3], app);
+}
+
+fn render_unified_stats(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(11), // metric block
+            Constraint::Length(1),  // program summary line
+            Constraint::Min(8),     // hit rate chart
+        ])
+        .split(area);
+
+    render_unified_metrics(f, layout[0], app, extra_idx);
+    render_program_summary(f, layout[1], app);
+    render_unified_chart(f, layout[2], app, extra_idx);
 }
 
 fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
@@ -349,6 +375,156 @@ fn render_miss_table(f: &mut Frame, area: Rect, app: &App) {
     }
 
     f.render_widget(List::new(items), inner);
+}
+
+fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
+    let cache = &app.run.mem.extra_levels[extra_idx];
+    let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
+    let label = format!("{level_name} (Unified)");
+    let stats = &cache.stats;
+    let cfg = &cache.config;
+    let instructions = app.run.mem.instruction_count;
+
+    let hit_rate = stats.hit_rate();
+    let hit_color = if hit_rate >= 90.0 { Color::Green } else if hit_rate >= 70.0 { Color::Yellow } else { Color::Red };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(label, Style::default().fg(Color::Cyan).bold()));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.height == 0 { return; }
+
+    // Line 1: Hit rate gauge
+    let gauge_area = Rect::new(inner.x, inner.y, inner.width, 1);
+    let hit_u8 = hit_rate.clamp(0.0, 100.0) as u16;
+    f.render_widget(
+        Gauge::default()
+            .gauge_style(Style::default().fg(hit_color))
+            .percent(hit_u8)
+            .label(format!("Hit {hit_rate:.1}%")),
+        gauge_area,
+    );
+    if inner.height < 2 { return; }
+
+    let hits = stats.hits;
+    let misses = stats.misses;
+    let total = stats.total_accesses();
+    let miss_rate = if total == 0 { 0.0 } else { 100.0 - hit_rate };
+    let mpki = stats.mpki(instructions);
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!("H:{hits}  M:{misses}  MR:{miss_rate:.1}%  MPKI:{mpki:.1}"),
+            Style::default().fg(Color::Gray),
+        )),
+        Rect::new(inner.x, inner.y + 1, inner.width, 1),
+    );
+    if inner.height < 3 { return; }
+
+    let fills = if cfg.is_valid_config() && cfg.line_size > 0 {
+        stats.bytes_loaded / cfg.line_size as u64
+    } else { 0 };
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!("Acc:{total}  Evict:{}  WB:{}  Fills:{fills}", stats.evictions, stats.writebacks),
+            Style::default().fg(Color::DarkGray),
+        )),
+        Rect::new(inner.x, inner.y + 2, inner.width, 1),
+    );
+    if inner.height < 4 { return; }
+
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!("RAM R:{}  RAM W:{}", fmt_bytes(stats.bytes_loaded), fmt_bytes(stats.ram_write_bytes)),
+            Style::default().fg(Color::Cyan),
+        )),
+        Rect::new(inner.x, inner.y + 3, inner.width, 1),
+    );
+    if inner.height < 5 { return; }
+
+    let cycles = stats.total_cycles;
+    let avg = if total == 0 { 0.0_f64 } else { cycles as f64 / total as f64 };
+    let cpi_contrib = if instructions == 0 { 0.0_f64 } else { cycles as f64 / instructions as f64 };
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!("Cycles:{cycles}  Avg:{avg:.2}c/a  CPI:{cpi_contrib:.2}"),
+            Style::default().fg(Color::Magenta),
+        )),
+        Rect::new(inner.x, inner.y + 4, inner.width, 1),
+    );
+    if inner.height < 6 { return; }
+
+    let hit_cyc  = cfg.tag_search_cycles();
+    let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc"),
+            Style::default().fg(Color::DarkGray),
+        )),
+        Rect::new(inner.x, inner.y + 5, inner.width, 1),
+    );
+}
+
+fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title("Hit Rate History (%)");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.height < 3 || inner.width < 10 { return; }
+
+    let data: Vec<(f64, f64)> = app.run.mem.extra_levels[extra_idx]
+        .stats.history.iter().cloned().collect();
+
+    if data.is_empty() {
+        f.render_widget(
+            Paragraph::new("No data yet — run the program to collect cache statistics.")
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center),
+            inner,
+        );
+        return;
+    }
+
+    let x_min = data.first().map(|(x, _)| *x).unwrap_or(0.0);
+    let mut x_max = data.last().map(|(x, _)| *x).unwrap_or(x_min + 1.0);
+    if x_max <= x_min { x_max = x_min + 1.0; }
+    let x_mid = (x_min + x_max) / 2.0;
+
+    let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
+    let datasets = vec![
+        Dataset::default()
+            .name(level_name)
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(Color::Cyan))
+            .data(&data),
+    ];
+
+    let chart = Chart::new(datasets)
+        .x_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([x_min, x_max])
+                .labels(vec![
+                    Span::raw(format!("{x_min:.0}")),
+                    Span::raw(format!("{x_mid:.0}")),
+                    Span::raw(format!("{x_max:.0}")),
+                ]),
+        )
+        .y_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::DarkGray))
+                .bounds([0.0, 100.0])
+                .labels(vec![Span::raw("0%"), Span::raw("50%"), Span::raw("100%")]),
+        );
+    f.render_widget(chart, inner);
 }
 
 fn fmt_bytes(bytes: u64) -> String {

@@ -5,17 +5,22 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 
-use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
+use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
 use crate::ui::app::{App, ConfigField};
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    render_cache_config_panel(f, cols[0], app, true);
-    render_cache_config_panel(f, cols[1], app, false);
+    if app.cache.selected_level == 0 {
+        // L1: two-column layout (I-Cache | D-Cache) — unchanged
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        render_cache_config_panel(f, cols[0], app, true);
+        render_cache_config_panel(f, cols[1], app, false);
+    } else {
+        // L2+: single-column unified config
+        render_unified_config(f, area, app, app.cache.selected_level - 1);
+    }
 }
 
 fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool) {
@@ -60,6 +65,59 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
     if icache {
         render_apply_row(f, layout[2], app);
     }
+}
+
+fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
+    let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
+    let label = format!("{level_name} Config (Unified)");
+
+    let pending = if extra_idx < app.cache.extra_pending.len() {
+        &app.cache.extra_pending[extra_idx]
+    } else {
+        return;
+    };
+    let current = if extra_idx < app.run.mem.extra_levels.len() {
+        &app.run.mem.extra_levels[extra_idx].config
+    } else {
+        pending
+    };
+
+    // For L2+, edit_field is_icache is ignored (always "false" column)
+    let (active_field, edit_buf) = match app.cache.edit_field {
+        Some((_, field)) => (Some(field), app.cache.edit_buf.as_str()),
+        _ => (None, ""),
+    };
+    let hovered_field = app.cache.hover_config_field.map(|(_, f)| f);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(label, Style::default().fg(Color::Cyan).bold()));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    // Centered single column (max 60 wide)
+    let col_w = inner.width.min(60);
+    let col_x = inner.x + (inner.width.saturating_sub(col_w)) / 2;
+    let col_area = Rect::new(col_x, inner.y, col_w, inner.height);
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3), // presets
+            Constraint::Length(3), // apply + error
+        ])
+        .split(col_area);
+
+    render_fields(f, layout[0], pending, current, active_field, hovered_field, edit_buf);
+    render_unified_presets(f, layout[1], app, extra_idx);
+    render_apply_row(f, layout[2], app);
 }
 
 fn render_fields(
@@ -190,6 +248,30 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         Span::styled("[Medium]", med_s),
         Span::raw(" "),
         Span::styled("[Large]", large_s),
+    ]);
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    f.render_widget(Paragraph::new(line), inner);
+}
+
+fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usize) {
+    // hover_preset_d is reused for unified presets
+    let hovered = app.cache.hover_preset_d;
+    let small_s = preset_btn_style(hovered == Some(0));
+    let med_s   = preset_btn_style(hovered == Some(1));
+    let large_s = preset_btn_style(hovered == Some(2));
+
+    let presets = extra_level_presets();
+    let line = Line::from(vec![
+        Span::raw(" Presets: "),
+        Span::styled(format!("[Small {}KB]", presets[0].size / 1024), small_s),
+        Span::raw(" "),
+        Span::styled(format!("[Med {}KB]",   presets[1].size / 1024), med_s),
+        Span::raw(" "),
+        Span::styled(format!("[Large {}KB]", presets[2].size / 1024), large_s),
     ]);
     let block = Block::default()
         .borders(Borders::TOP)

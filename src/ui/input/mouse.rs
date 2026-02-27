@@ -449,11 +449,11 @@ fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
 fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let cols = run_cols(app, area);
 
-    // Sidebar resize bar (right edge of col[0])
+    // Sidebar resize bar (right edge of col[0]) — full height hit area
     let sidebar = cols[0];
     let sbar_x = sidebar.x + sidebar.width.saturating_sub(1);
     if !app.run.sidebar_collapsed && me.column == sbar_x
-        && me.row >= sidebar.y && me.row < sidebar.y + sidebar.height
+        && me.row >= area.y && me.row < area.y + area.height
     {
         app.run.hover_sidebar_bar = true;
     } else if !app.run.sidebar_drag {
@@ -463,7 +463,7 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
     if !app.run.imem_collapsed && me.column == bar_x
-        && me.row >= imem.y && me.row < imem.y + imem.height
+        && me.row >= area.y && me.row < area.y + area.height
     {
         app.run.hover_imem_bar = true;
     } else if !app.run.imem_drag {
@@ -513,7 +513,7 @@ fn start_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let cols = run_cols(app, area);
     let sidebar = cols[0];
     let bar_x = sidebar.x + sidebar.width.saturating_sub(1);
-    if me.column == bar_x && me.row >= sidebar.y && me.row < sidebar.y + sidebar.height {
+    if me.column == bar_x && me.row >= area.y && me.row < area.y + area.height {
         app.run.sidebar_drag = true;
         app.run.sidebar_drag_start_x = me.column;
         app.run.sidebar_width_start = app.run.sidebar_width;
@@ -674,7 +674,7 @@ fn start_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let cols = run_cols(app, area);
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
-    if me.column == bar_x && me.row >= imem.y && me.row < imem.y + imem.height {
+    if me.column == bar_x && me.row >= area.y && me.row < area.y + area.height {
         app.run.imem_drag = true;
         app.run.imem_drag_start_x = me.column;
         app.run.imem_width_start = app.run.imem_width;
@@ -982,8 +982,8 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
 
 // ── Cache tab mouse handlers ─────────────────────────────────────────────────
 
-/// Returns (subtab_header, content, controls_bar).
-fn cache_content_area(area: Rect) -> (Rect, Rect, Rect) {
+/// Returns (level_selector, subtab_header, content, controls_bar).
+fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect) {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(1)])
@@ -991,16 +991,17 @@ fn cache_content_area(area: Rect) -> (Rect, Rect, Rect) {
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(1), // level selector bar
             Constraint::Length(3), // subtab header
             Constraint::Min(0),    // content
             Constraint::Length(3), // shared controls bar
         ])
         .split(root[1]);
-    (parts[0], parts[1], parts[2])
+    (parts[0], parts[1], parts[2], parts[3])
 }
 
 fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
-    let (header_area, content_area, controls_area) = cache_content_area(area);
+    let (level_area, header_area, content_area, controls_area) = cache_content_area(area);
 
     // Reset all hover flags
     app.cache.hover_subtab_stats = false;
@@ -1016,6 +1017,14 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_preset_i = None;
     app.cache.hover_preset_d = None;
     app.cache.hover_config_field = None;
+    for h in app.cache.hover_level.iter_mut() { *h = false; }
+    app.cache.hover_add_level = false;
+    app.cache.hover_remove_level = false;
+
+    // Level selector bar
+    if me.row == level_area.y {
+        update_level_selector_hover(app, me, level_area);
+    }
 
     // Header row (subtab buttons)
     let inner_header = Rect::new(
@@ -1026,7 +1035,7 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     );
     if me.row == inner_header.y && me.column >= inner_header.x {
         let x = me.column - inner_header.x;
-        // New order: " Stats " (x 1..8) | " View " (x 10..16) | " Config " (x 18..26)
+        // " Stats " (x 1..8) | " View " (x 10..16) | " Config " (x 18..26)
         if x >= 1 && x < 8 {
             app.cache.hover_subtab_stats = true;
         } else if x >= 10 && x < 16 {
@@ -1037,7 +1046,6 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Shared controls bar — active for all subtabs
-    // Inner y = controls_area.y + 1 (inside block border)
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
@@ -1052,53 +1060,120 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
 
     // Config panel controls
     if matches!(app.cache.subtab, CacheSubtab::Config) {
-        let half_w = content_area.width / 2;
+        let selected = app.cache.selected_level;
 
-        // Field hover (highlight editable rows so it's obvious they're interactive)
-        let fields_y0 = content_area.y + 1;
-        let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
-        if me.row >= fields_y0 && me.row < fields_y1 {
-            let row_idx = (me.row - fields_y0) as usize;
-            if let Some(field) = ConfigField::from_list_row(row_idx) {
-                let is_icache = me.column < content_area.x + half_w;
-                app.cache.hover_config_field = Some((is_icache, field));
+        if selected == 0 {
+            // L1 two-column layout
+            let half_w = content_area.width / 2;
+
+            let fields_y0 = content_area.y + 1;
+            let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
+            if me.row >= fields_y0 && me.row < fields_y1 {
+                let row_idx = (me.row - fields_y0) as usize;
+                if let Some(field) = ConfigField::from_list_row(row_idx) {
+                    let is_icache = me.column < content_area.x + half_w;
+                    app.cache.hover_config_field = Some((is_icache, field));
+                }
             }
-        }
 
-        // Apply buttons: inside layout[2] which has Borders::TOP
-        // layout[2].y = content_area.y + content_area.height - 4  →  inner.y = -3
-        let apply_y = content_area.y + content_area.height.saturating_sub(3);
-        if me.row == apply_y {
-            let x = me.column.saturating_sub(content_area.x + 1);
-            if x >= 1 && x < 22 { app.cache.hover_apply = true; }
-            else if x >= 24 && x < 43 { app.cache.hover_apply_keep = true; }
-        }
+            let apply_y = content_area.y + content_area.height.saturating_sub(3);
+            if me.row == apply_y {
+                let x = me.column.saturating_sub(content_area.x + 1);
+                if x >= 1 && x < 22 { app.cache.hover_apply = true; }
+                else if x >= 24 && x < 43 { app.cache.hover_apply_keep = true; }
+            }
 
-        // Preset buttons: inside layout[1] which has Borders::TOP
-        // layout[1].y = content_area.y + content_area.height - 7  →  inner.y = -6
-        let preset_y = content_area.y + content_area.height.saturating_sub(6);
-        if me.row == preset_y {
-            let col_x = me.column;
-            let check_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
-                if col_x < panel_x || col_x >= panel_x + panel_w { return None; }
-                let x = col_x - panel_x;
-                // " Presets: [Small] [Medium] [Large]"
-                //            10      17        25
-                if x >= 10 && x < 17 { Some(0) }
-                else if x >= 18 && x < 26 { Some(1) }
-                else if x >= 27 && x < 34 { Some(2) }
-                else { None }
-            };
-            app.cache.hover_preset_i = check_preset(content_area.x, half_w);
-            app.cache.hover_preset_d = check_preset(content_area.x + half_w, half_w);
+            let preset_y = content_area.y + content_area.height.saturating_sub(6);
+            if me.row == preset_y {
+                let col_x = me.column;
+                let check_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
+                    if col_x < panel_x || col_x >= panel_x + panel_w { return None; }
+                    let x = col_x - panel_x;
+                    if x >= 10 && x < 17 { Some(0) }
+                    else if x >= 18 && x < 26 { Some(1) }
+                    else if x >= 27 && x < 34 { Some(2) }
+                    else { None }
+                };
+                app.cache.hover_preset_i = check_preset(content_area.x, half_w);
+                app.cache.hover_preset_d = check_preset(content_area.x + half_w, half_w);
+            }
+        } else {
+            // L2+ single-column unified layout (centered, max 60 wide)
+            let col_w = content_area.width.min(60);
+            let col_x = content_area.x + (content_area.width.saturating_sub(col_w)) / 2;
+            let col_area = Rect::new(col_x, content_area.y, col_w, content_area.height);
+
+            let fields_y0 = col_area.y + 1;
+            let fields_y1 = col_area.y + col_area.height.saturating_sub(7);
+            if me.row >= fields_y0 && me.row < fields_y1 {
+                let row_idx = (me.row - fields_y0) as usize;
+                if let Some(field) = ConfigField::from_list_row(row_idx) {
+                    if me.column >= col_area.x && me.column < col_area.x + col_area.width {
+                        app.cache.hover_config_field = Some((false, field));
+                    }
+                }
+            }
+
+            let apply_y = col_area.y + col_area.height.saturating_sub(3);
+            if me.row == apply_y {
+                let x = me.column.saturating_sub(col_area.x + 1);
+                if x >= 1 && x < 22 { app.cache.hover_apply = true; }
+                else if x >= 24 && x < 43 { app.cache.hover_apply_keep = true; }
+            }
+
+            let preset_y = col_area.y + col_area.height.saturating_sub(6);
+            if me.row == preset_y && me.column >= col_area.x && me.column < col_area.x + col_area.width {
+                let x = me.column - col_area.x;
+                // " Presets: [Small NKB] [Med NKB] [Large NKB]"
+                // Approximate positions (labels vary); use same offsets as render_unified_presets
+                if x >= 10 && x < 22 { app.cache.hover_preset_d = Some(0); }
+                else if x >= 23 && x < 33 { app.cache.hover_preset_d = Some(1); }
+                else if x >= 34 && x < 47 { app.cache.hover_preset_d = Some(2); }
+            }
         }
     }
 }
 
-fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
-    let (header_area, content_area, controls_area) = cache_content_area(area);
+/// Update hover state for the level selector bar (row = level_area.y).
+fn update_level_selector_hover(app: &mut App, me: MouseEvent, level_area: Rect) {
+    let mut x = me.column.saturating_sub(level_area.x + 1); // relative x
+    // " [ L1 ] [ L2 ] ... [+ Add] [- Remove]   ..."
+    // Each level button: "[ LN ]" = 6 chars, " " separator
+    let num_levels = 1 + app.cache.extra_pending.len(); // L1 + extras
+    for i in 0..num_levels {
+        let btn_w: u16 = 6; // "[ L1 ]"
+        if x < btn_w {
+            if i < app.cache.hover_level.len() {
+                app.cache.hover_level[i] = true;
+            }
+            return;
+        }
+        x = x.saturating_sub(btn_w + 1); // skip button + " "
+    }
+    // "  " gap before [+ Add]
+    x = x.saturating_sub(2);
+    let add_w: u16 = 7; // "[+ Add]"
+    if x < add_w {
+        app.cache.hover_add_level = true;
+        return;
+    }
+    x = x.saturating_sub(add_w + 1);
+    let rem_w: u16 = 10; // "[- Remove]"
+    if x < rem_w && !app.cache.extra_pending.is_empty() {
+        app.cache.hover_remove_level = true;
+    }
+}
 
-    // Subtab header clicks — new order: Stats | View | Config
+fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let (level_area, header_area, content_area, controls_area) = cache_content_area(area);
+
+    // Level selector bar clicks
+    if me.row == level_area.y {
+        handle_level_selector_click(app, me, level_area);
+        return;
+    }
+
+    // Subtab header clicks — Stats | View | Config
     let inner_header = Rect::new(
         header_area.x + 1,
         header_area.y + 1,
@@ -1125,118 +1200,233 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
             }
             return;
         }
-        if x >= 27 && x < 36 { app.cache.scope = CacheScope::ICache; return; }
-        if x >= 37 && x < 46 { app.cache.scope = CacheScope::DCache; return; }
-        if x >= 47 && x < 53 { app.cache.scope = CacheScope::Both;   return; }
+        if app.cache.selected_level == 0 {
+            if x >= 27 && x < 36 { app.cache.scope = CacheScope::ICache; return; }
+            if x >= 37 && x < 46 { app.cache.scope = CacheScope::DCache; return; }
+            if x >= 47 && x < 53 { app.cache.scope = CacheScope::Both;   return; }
+        }
     }
 
     // Config controls
     if matches!(app.cache.subtab, CacheSubtab::Config) {
-        let half_w = content_area.width / 2;
+        let selected = app.cache.selected_level;
 
-        // Field clicks — rows start at content_area.y + 1 (inside panel border)
-        // Fields end just before presets (layout[1] at content_area.height - 7)
-        let fields_y0 = content_area.y + 1;
-        let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
-        if me.row >= fields_y0 && me.row < fields_y1 {
-            let row_idx = (me.row - fields_y0) as usize;
-            if let Some(field) = ConfigField::from_list_row(row_idx) {
-                let is_icache = me.column < content_area.x + half_w;
-                if field.is_numeric() {
-                    // Start text editing, populate edit_buf with current value
-                    let initial = app.cache_field_value_str(is_icache, field);
-                    app.cache.edit_field = Some((is_icache, field));
-                    app.cache.edit_buf = initial;
-                    app.cache.config_error = None;
-                    app.cache.config_status = None;
-                } else {
-                    // Cycle enum on click; keep field selected for keyboard cycling
-                    app.cycle_cache_field(is_icache, field, true);
-                    app.cache.edit_field = Some((is_icache, field));
-                    app.cache.edit_buf.clear();
-                }
-                return;
-            }
+        if selected == 0 {
+            handle_l1_config_click(app, me, content_area);
+        } else {
+            handle_unified_config_click(app, me, content_area, selected - 1);
         }
+    }
+}
 
-        // Clicking Apply/Preset clears any active field edit
-        app.cache.edit_field = None;
-        app.cache.edit_buf.clear();
-
-        // Apply buttons
-        let apply_y = content_area.y + content_area.height.saturating_sub(3);
-        if me.row == apply_y {
-            let x = me.column.saturating_sub(content_area.x + 1);
-            if x >= 1 && x < 22 {
-                // Apply + Reset Stats
-                let icfg = app.cache.pending_icache.clone();
-                let dcfg = app.cache.pending_dcache.clone();
-                if let Err(msg) = icfg.validate() {
-                    app.cache.config_error = Some(format!("I-Cache: {msg}"));
-                    return;
-                }
-                if let Err(msg) = dcfg.validate() {
-                    app.cache.config_error = Some(format!("D-Cache: {msg}"));
-                    return;
-                }
-                app.cache.config_error = None;
-                app.cache.config_status = Some("Config applied (stats reset).".to_string());
-                app.run.mem.apply_config(icfg, dcfg);
-                app.cache.view_scroll = 0;
-                app.cache.stats_scroll = 0;
-                return;
-            }
-            if x >= 24 && x < 43 {
-                // Apply Keep History
-                let icfg = app.cache.pending_icache.clone();
-                let dcfg = app.cache.pending_dcache.clone();
-                if let Err(msg) = icfg.validate() {
-                    app.cache.config_error = Some(format!("I-Cache: {msg}"));
-                    return;
-                }
-                if let Err(msg) = dcfg.validate() {
-                    app.cache.config_error = Some(format!("D-Cache: {msg}"));
-                    return;
-                }
-                app.cache.config_error = None;
-                app.cache.config_status = Some("Config applied (history kept).".to_string());
-                let old_istats = std::mem::take(&mut app.run.mem.icache.stats);
-                let old_dstats = std::mem::take(&mut app.run.mem.dcache.stats);
-                app.run.mem.apply_config(icfg, dcfg);
-                // Restore history but reset counters
-                app.run.mem.icache.stats.history = old_istats.history;
-                app.run.mem.dcache.stats.history = old_dstats.history;
-                app.cache.view_scroll = 0;
-                app.cache.stats_scroll = 0;
-                return;
-            }
+fn handle_level_selector_click(app: &mut App, me: MouseEvent, level_area: Rect) {
+    let mut x = me.column.saturating_sub(level_area.x + 1);
+    let num_levels = 1 + app.cache.extra_pending.len();
+    for i in 0..num_levels {
+        let btn_w: u16 = 6;
+        if x < btn_w {
+            app.cache.selected_level = i;
+            return;
         }
+        x = x.saturating_sub(btn_w + 1);
+    }
+    x = x.saturating_sub(2); // "  " gap
+    let add_w: u16 = 7;
+    if x < add_w {
+        app.add_cache_level();
+        return;
+    }
+    x = x.saturating_sub(add_w + 1);
+    let rem_w: u16 = 10;
+    if x < rem_w && !app.cache.extra_pending.is_empty() {
+        app.remove_last_cache_level();
+    }
+}
 
-        // Presets
-        let preset_y = content_area.y + content_area.height.saturating_sub(6);
-        if me.row == preset_y {
-            let col_x = me.column;
-            let apply_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
-                if col_x < panel_x || col_x >= panel_x + panel_w { return None; }
-                let x = col_x - panel_x;
-                if x >= 10 && x < 17 { Some(0) }
-                else if x >= 18 && x < 26 { Some(1) }
-                else if x >= 27 && x < 34 { Some(2) }
-                else { None }
-            };
-            use crate::falcon::cache::cache_presets;
-            if let Some(idx) = apply_preset(content_area.x, half_w) {
-                app.cache.pending_icache = cache_presets(true)[idx].clone();
+fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
+    let half_w = content_area.width / 2;
+
+    let fields_y0 = content_area.y + 1;
+    let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
+    if me.row >= fields_y0 && me.row < fields_y1 {
+        let row_idx = (me.row - fields_y0) as usize;
+        if let Some(field) = ConfigField::from_list_row(row_idx) {
+            let is_icache = me.column < content_area.x + half_w;
+            if field.is_numeric() {
+                let initial = app.cache_field_value_str(is_icache, field);
+                app.cache.edit_field = Some((is_icache, field));
+                app.cache.edit_buf = initial;
                 app.cache.config_error = None;
                 app.cache.config_status = None;
+            } else {
+                app.cycle_cache_field(is_icache, field, true);
+                app.cache.edit_field = Some((is_icache, field));
+                app.cache.edit_buf.clear();
             }
-            if let Some(idx) = apply_preset(content_area.x + half_w, half_w) {
-                app.cache.pending_dcache = cache_presets(false)[idx].clone();
+            return;
+        }
+    }
+
+    app.cache.edit_field = None;
+    app.cache.edit_buf.clear();
+
+    let apply_y = content_area.y + content_area.height.saturating_sub(3);
+    if me.row == apply_y {
+        let x = me.column.saturating_sub(content_area.x + 1);
+        if x >= 1 && x < 22 {
+            apply_l1_config(app, false);
+            return;
+        }
+        if x >= 24 && x < 43 {
+            apply_l1_config(app, true);
+            return;
+        }
+    }
+
+    let preset_y = content_area.y + content_area.height.saturating_sub(6);
+    if me.row == preset_y {
+        let col_x = me.column;
+        let apply_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
+            if col_x < panel_x || col_x >= panel_x + panel_w { return None; }
+            let x = col_x - panel_x;
+            if x >= 10 && x < 17 { Some(0) }
+            else if x >= 18 && x < 26 { Some(1) }
+            else if x >= 27 && x < 34 { Some(2) }
+            else { None }
+        };
+        use crate::falcon::cache::cache_presets;
+        if let Some(idx) = apply_preset(content_area.x, half_w) {
+            app.cache.pending_icache = cache_presets(true)[idx].clone();
+            app.cache.config_error = None;
+            app.cache.config_status = None;
+        }
+        if let Some(idx) = apply_preset(content_area.x + half_w, half_w) {
+            app.cache.pending_dcache = cache_presets(false)[idx].clone();
+            app.cache.config_error = None;
+            app.cache.config_status = None;
+        }
+    }
+}
+
+fn apply_l1_config(app: &mut App, keep_history: bool) {
+    let icfg = app.cache.pending_icache.clone();
+    let dcfg = app.cache.pending_dcache.clone();
+    if let Err(msg) = icfg.validate() {
+        app.cache.config_error = Some(format!("I-Cache: {msg}"));
+        return;
+    }
+    if let Err(msg) = dcfg.validate() {
+        app.cache.config_error = Some(format!("D-Cache: {msg}"));
+        return;
+    }
+    app.cache.config_error = None;
+    let extra = app.cache.extra_pending.clone();
+    if keep_history {
+        app.cache.config_status = Some("Config applied (history kept).".to_string());
+        let old_istats = std::mem::take(&mut app.run.mem.icache.stats);
+        let old_dstats = std::mem::take(&mut app.run.mem.dcache.stats);
+        app.run.mem.apply_config(icfg, dcfg, extra);
+        app.run.mem.icache.stats.history = old_istats.history;
+        app.run.mem.dcache.stats.history = old_dstats.history;
+    } else {
+        app.cache.config_status = Some("Config applied (stats reset).".to_string());
+        app.run.mem.apply_config(icfg, dcfg, extra);
+    }
+    app.cache.view_scroll = 0;
+    app.cache.stats_scroll = 0;
+}
+
+fn handle_unified_config_click(app: &mut App, me: MouseEvent, content_area: Rect, extra_idx: usize) {
+    let col_w = content_area.width.min(60);
+    let col_x = content_area.x + (content_area.width.saturating_sub(col_w)) / 2;
+    let col_area = Rect::new(col_x, content_area.y, col_w, content_area.height);
+
+    let fields_y0 = col_area.y + 1;
+    let fields_y1 = col_area.y + col_area.height.saturating_sub(7);
+    if me.row >= fields_y0 && me.row < fields_y1
+        && me.column >= col_area.x && me.column < col_area.x + col_area.width
+    {
+        let row_idx = (me.row - fields_y0) as usize;
+        if let Some(field) = ConfigField::from_list_row(row_idx) {
+            if field.is_numeric() {
+                let initial = app.cache_field_value_str(false, field);
+                app.cache.edit_field = Some((false, field));
+                app.cache.edit_buf = initial;
+                app.cache.config_error = None;
+                app.cache.config_status = None;
+            } else {
+                app.cycle_cache_field(false, field, true);
+                app.cache.edit_field = Some((false, field));
+                app.cache.edit_buf.clear();
+            }
+            return;
+        }
+    }
+
+    app.cache.edit_field = None;
+    app.cache.edit_buf.clear();
+
+    // Apply buttons
+    let apply_y = col_area.y + col_area.height.saturating_sub(3);
+    if me.row == apply_y {
+        let x = me.column.saturating_sub(col_area.x + 1);
+        if x >= 1 && x < 22 {
+            apply_extra_config(app, extra_idx, false);
+            return;
+        }
+        if x >= 24 && x < 43 {
+            apply_extra_config(app, extra_idx, true);
+            return;
+        }
+    }
+
+    // Presets
+    let preset_y = col_area.y + col_area.height.saturating_sub(6);
+    if me.row == preset_y && me.column >= col_area.x && me.column < col_area.x + col_area.width {
+        let x = me.column - col_area.x;
+        use crate::falcon::cache::extra_level_presets;
+        let presets = extra_level_presets();
+        let idx = if x >= 10 && x < 22 { Some(0) }
+            else if x >= 23 && x < 33 { Some(1) }
+            else if x >= 34 && x < 47 { Some(2) }
+            else { None };
+        if let Some(i) = idx {
+            if extra_idx < app.cache.extra_pending.len() {
+                app.cache.extra_pending[extra_idx] = presets[i].clone();
                 app.cache.config_error = None;
                 app.cache.config_status = None;
             }
         }
     }
+}
+
+fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
+    if extra_idx >= app.cache.extra_pending.len() { return; }
+    let cfg = app.cache.extra_pending[extra_idx].clone();
+    if let Err(msg) = cfg.validate() {
+        app.cache.config_error = Some(format!("L{} Cache: {msg}", extra_idx + 2));
+        return;
+    }
+    app.cache.config_error = None;
+    if keep_history {
+        app.cache.config_status = Some("Config applied (history kept).".to_string());
+        let old_stats = if extra_idx < app.run.mem.extra_levels.len() {
+            Some(std::mem::take(&mut app.run.mem.extra_levels[extra_idx].stats))
+        } else { None };
+        if extra_idx < app.run.mem.extra_levels.len() {
+            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
+            if let Some(s) = old_stats {
+                app.run.mem.extra_levels[extra_idx].stats.history = s.history;
+            }
+        }
+    } else {
+        app.cache.config_status = Some("Config applied (stats reset).".to_string());
+        if extra_idx < app.run.mem.extra_levels.len() {
+            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
+        }
+    }
+    app.cache.view_scroll = 0;
+    app.cache.stats_scroll = 0;
 }
 
 
