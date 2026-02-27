@@ -114,6 +114,11 @@ pub(super) struct CacheState {
     pub(super) subtab: CacheSubtab,
     pub(super) scope: CacheScope,
     pub(super) stats_scroll: usize,
+    // Level selector
+    pub(super) selected_level: usize,        // 0 = L1, 1 = L2, …
+    pub(super) hover_level: Vec<bool>,        // one per level (L1 + extra)
+    pub(super) hover_add_level: bool,
+    pub(super) hover_remove_level: bool,
     // Hover flags
     pub(super) hover_subtab_stats: bool,
     pub(super) hover_subtab_config: bool,
@@ -133,10 +138,12 @@ pub(super) struct CacheState {
     // Config form (pending values before Apply)
     pub(super) pending_icache: CacheConfig,
     pub(super) pending_dcache: CacheConfig,
+    pub(super) extra_pending: Vec<CacheConfig>,  // L2, L3, … pending configs
     // Validation errors and status messages
     pub(super) config_error: Option<String>,
     pub(super) config_status: Option<String>,
     // Inline field editing: (is_icache, field) + text buffer for numeric fields
+    // For L2+: is_icache is ignored (unified), treated as false
     pub(super) edit_field: Option<(bool, ConfigField)>,
     pub(super) edit_buf: String,
 }
@@ -346,7 +353,7 @@ impl App {
                 prev_x: [0; 32],
                 prev_pc: base_pc,
                 mem_size,
-                mem: CacheController::new(CacheConfig::default(), CacheConfig::default(), mem_size),
+                mem: CacheController::new(CacheConfig::default(), CacheConfig::default(), vec![], mem_size),
                 base_pc,
                 data_base,
                 mem_view_addr: data_base,
@@ -388,6 +395,10 @@ impl App {
                 subtab: CacheSubtab::Stats,
                 scope: CacheScope::Both,
                 stats_scroll: 0,
+                selected_level: 0,
+                hover_level: vec![false],
+                hover_add_level: false,
+                hover_remove_level: false,
                 hover_subtab_stats: false,
                 hover_subtab_config: false,
                 hover_subtab_view: false,
@@ -405,6 +416,7 @@ impl App {
                 hover_config_field: None,
                 pending_icache: CacheConfig::default(),
                 pending_dcache: CacheConfig::default(),
+                extra_pending: vec![],
                 config_error: None,
                 config_status: None,
                 edit_field: None,
@@ -434,6 +446,7 @@ impl App {
         self.run.mem = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
+            self.cache.extra_pending.clone(),
             self.run.mem_size,
         );
         self.run.faulted = false;
@@ -464,8 +477,7 @@ impl App {
                 self.run.mem_view_addr = prog.data_base;
                 self.run.mem_region = MemRegion::Data;
                 // Invalidate & reset stats so execution starts from cold cache
-                self.run.mem.icache.invalidate();
-                self.run.mem.dcache.invalidate();
+                self.run.mem.invalidate_all();
                 self.run.mem.reset_stats();
 
                 self.editor.last_ok_text = Some(prog.text.clone());
@@ -547,6 +559,7 @@ impl App {
             self.run.mem = CacheController::new(
                 self.cache.pending_icache.clone(),
                 self.cache.pending_dcache.clone(),
+                self.cache.extra_pending.clone(),
                 self.run.mem_size,
             );
             self.run.faulted = false;
@@ -576,8 +589,7 @@ impl App {
             self.run.data_base = data_base;
             self.run.mem_view_addr = data_base;
             self.run.mem_region = MemRegion::Data;
-            self.run.mem.icache.invalidate();
-            self.run.mem.dcache.invalidate();
+            self.run.mem.invalidate_all();
             self.run.mem.reset_stats();
 
             let bss_sz = self.editor.last_ok_bss_size.unwrap_or(0);
@@ -609,6 +621,7 @@ impl App {
         self.run.mem = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
+            self.cache.extra_pending.clone(),
             self.run.mem_size,
         );
         self.run.faulted = false;
@@ -652,8 +665,7 @@ impl App {
                 return;
             }
         }
-        self.run.mem.icache.invalidate();
-        self.run.mem.dcache.invalidate();
+        self.run.mem.invalidate_all();
         self.run.mem.reset_stats();
 
         // Build instruction word list from text section only (not data).
@@ -681,14 +693,14 @@ impl App {
         self.run.hover_imem_addr = None;
     }
 
-    /// Commit the current numeric edit_buf into pending_icache/pending_dcache.
+    /// Commit the current numeric edit_buf into pending config for the selected level.
     pub(super) fn commit_cache_edit(&mut self) {
         if let Some((is_icache, field)) = self.cache.edit_field {
             self.cache.config_error = None;
             self.cache.config_status = None;
             if field.is_numeric() {
                 let s = self.cache.edit_buf.trim().to_string();
-                let cfg = if is_icache { &mut self.cache.pending_icache } else { &mut self.cache.pending_dcache };
+                let cfg = self.selected_level_pending_cfg_mut(is_icache);
                 match field {
                     ConfigField::Size => { if let Ok(v) = s.parse::<usize>() { cfg.size = v; } }
                     ConfigField::LineSize => { if let Ok(v) = s.parse::<usize>() { cfg.line_size = v; } }
@@ -708,7 +720,7 @@ impl App {
         use crate::falcon::cache::{ReplacementPolicy, WriteAllocPolicy, WritePolicy};
         self.cache.config_error = None;
         self.cache.config_status = None;
-        let cfg = if is_icache { &mut self.cache.pending_icache } else { &mut self.cache.pending_dcache };
+        let cfg = self.selected_level_pending_cfg_mut(is_icache);
         match field {
             ConfigField::Replacement => {
                 cfg.replacement = if forward {
@@ -749,7 +761,7 @@ impl App {
 
     /// Current pending config field value as string (for populating edit_buf).
     pub(super) fn cache_field_value_str(&self, is_icache: bool, field: ConfigField) -> String {
-        let cfg = if is_icache { &self.cache.pending_icache } else { &self.cache.pending_dcache };
+        let cfg = self.selected_level_pending_cfg(is_icache);
         match field {
             ConfigField::Size => cfg.size.to_string(),
             ConfigField::LineSize => cfg.line_size.to_string(),
@@ -759,6 +771,58 @@ impl App {
             ConfigField::AssocPenalty => cfg.assoc_penalty.to_string(),
             ConfigField::TransferWidth => cfg.transfer_width.to_string(),
             _ => String::new(),
+        }
+    }
+
+    /// Get the pending config for the selected cache level (immutable).
+    /// Level 0 = L1 (is_icache selects I or D); Level 1+ = L2+ (is_icache ignored).
+    pub(super) fn selected_level_pending_cfg(&self, is_icache: bool) -> &CacheConfig {
+        let level = self.cache.selected_level;
+        if level == 0 {
+            if is_icache { &self.cache.pending_icache } else { &self.cache.pending_dcache }
+        } else if level - 1 < self.cache.extra_pending.len() {
+            &self.cache.extra_pending[level - 1]
+        } else {
+            &self.cache.pending_dcache // fallback
+        }
+    }
+
+    /// Get the pending config for the selected cache level (mutable).
+    pub(super) fn selected_level_pending_cfg_mut(&mut self, is_icache: bool) -> &mut CacheConfig {
+        let level = self.cache.selected_level;
+        if level == 0 {
+            if is_icache { &mut self.cache.pending_icache } else { &mut self.cache.pending_dcache }
+        } else if level - 1 < self.cache.extra_pending.len() {
+            &mut self.cache.extra_pending[level - 1]
+        } else {
+            &mut self.cache.pending_dcache // fallback
+        }
+    }
+
+    /// Add a new extra cache level (L2, L3, …).
+    pub(super) fn add_cache_level(&mut self) {
+        use crate::falcon::cache::extra_level_presets;
+        let cfg = extra_level_presets()[0].clone(); // Small L2 default
+        self.cache.extra_pending.push(cfg.clone());
+        self.run.mem.add_extra_level(cfg);
+        // Select the newly added level
+        self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
+        // Grow hover_level vec
+        self.cache.hover_level.push(false);
+    }
+
+    /// Remove the last extra cache level.
+    pub(super) fn remove_last_cache_level(&mut self) {
+        if !self.cache.extra_pending.is_empty() {
+            self.cache.extra_pending.pop();
+            self.run.mem.remove_extra_level();
+            let max_level = self.cache.extra_pending.len();
+            if self.cache.selected_level > max_level {
+                self.cache.selected_level = max_level;
+            }
+            if !self.cache.hover_level.is_empty() {
+                self.cache.hover_level.pop();
+            }
         }
     }
 

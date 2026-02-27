@@ -1,4 +1,4 @@
-use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
+use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
 use crate::ui::app::{App, CacheScope, CacheSubtab, EditorMode, MemRegion, RunSpeed, Tab};
 use crate::ui::view::docs::docs_body_line_count;
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
@@ -210,7 +210,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             // Cache config export/import (Ctrl+E / Ctrl+L) — available on Cache tab
             if ctrl && matches!(key.code, KeyCode::Char('e')) && matches!(app.tab, Tab::Cache) {
-                let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache);
+                let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending);
                 if let Some(path) = OSFileDialog::new()
                     .add_filter("Cache Config", &["fcache"])
                     .set_file_name("cache.fcache")
@@ -239,9 +239,23 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 {
                     match std::fs::read_to_string(&path) {
                         Ok(text) => match parse_cache_configs(&text) {
-                            Ok((icfg, dcfg)) => {
+                            Ok((icfg, dcfg, extra)) => {
                                 app.cache.pending_icache = icfg;
                                 app.cache.pending_dcache = dcfg;
+                                // Sync extra_pending and live extra_levels
+                                let n_extra = extra.len();
+                                app.cache.extra_pending = extra;
+                                // Rebuild live extra levels to match
+                                app.run.mem.extra_levels.clear();
+                                for cfg in &app.cache.extra_pending {
+                                    app.run.mem.extra_levels.push(crate::falcon::cache::Cache::new(cfg.clone()));
+                                }
+                                // Resize hover_level vec
+                                app.cache.hover_level = vec![false; n_extra + 1];
+                                // Clamp selected_level
+                                if app.cache.selected_level > n_extra {
+                                    app.cache.selected_level = n_extra;
+                                }
                                 app.cache.config_error = None;
                                 app.cache.config_status = Some(format!(
                                     "Imported from {}",
@@ -430,6 +444,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         CacheSubtab::Config => CacheSubtab::Stats,
                     };
                 }
+                // Cache level add/remove
+                (KeyCode::Char('+'), Tab::Cache) | (KeyCode::Char('='), Tab::Cache) => {
+                    app.add_cache_level();
+                }
+                (KeyCode::Char('-'), Tab::Cache) | (KeyCode::Char('_'), Tab::Cache) => {
+                    app.remove_last_cache_level();
+                }
                 (KeyCode::Char('r'), Tab::Cache) => {
                     app.run.mem.reset_stats();
                 }
@@ -509,24 +530,37 @@ fn clamp_docs_scroll_keyboard(app: &mut App) {
 
 // ── Cache config serialization ────────────────────────────────────────────────
 
-fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig) -> String {
-    let mut s = String::from("# FALCON-ASM Cache Config v1\n");
-    for (prefix, cfg) in [("icache", icfg), ("dcache", dcfg)] {
-        s.push_str(&format!("{prefix}.size={}\n", cfg.size));
-        s.push_str(&format!("{prefix}.line_size={}\n", cfg.line_size));
-        s.push_str(&format!("{prefix}.associativity={}\n", cfg.associativity));
-        s.push_str(&format!("{prefix}.replacement={:?}\n", cfg.replacement));
-        s.push_str(&format!("{prefix}.write_policy={:?}\n", cfg.write_policy));
-        s.push_str(&format!("{prefix}.write_alloc={:?}\n", cfg.write_alloc));
-        s.push_str(&format!("{prefix}.hit_latency={}\n", cfg.hit_latency));
-        s.push_str(&format!("{prefix}.miss_penalty={}\n", cfg.miss_penalty));
-        s.push_str(&format!("{prefix}.assoc_penalty={}\n", cfg.assoc_penalty));
-        s.push_str(&format!("{prefix}.transfer_width={}\n", cfg.transfer_width));
+fn serialize_one_config(s: &mut String, prefix: &str, cfg: &CacheConfig) {
+    s.push_str(&format!("{prefix}.size={}\n", cfg.size));
+    s.push_str(&format!("{prefix}.line_size={}\n", cfg.line_size));
+    s.push_str(&format!("{prefix}.associativity={}\n", cfg.associativity));
+    s.push_str(&format!("{prefix}.replacement={:?}\n", cfg.replacement));
+    s.push_str(&format!("{prefix}.write_policy={:?}\n", cfg.write_policy));
+    s.push_str(&format!("{prefix}.write_alloc={:?}\n", cfg.write_alloc));
+    s.push_str(&format!("{prefix}.hit_latency={}\n", cfg.hit_latency));
+    s.push_str(&format!("{prefix}.miss_penalty={}\n", cfg.miss_penalty));
+    s.push_str(&format!("{prefix}.assoc_penalty={}\n", cfg.assoc_penalty));
+    s.push_str(&format!("{prefix}.transfer_width={}\n", cfg.transfer_width));
+}
+
+fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig]) -> String {
+    let mut s = String::from("# FALCON-ASM Cache Config v2\n");
+    s.push_str(&format!("levels={}\n", extra.len()));
+    serialize_one_config(&mut s, "icache", icfg);
+    serialize_one_config(&mut s, "dcache", dcfg);
+    for (i, cfg) in extra.iter().enumerate() {
+        let prefix = level_prefix(i);
+        serialize_one_config(&mut s, &prefix, cfg);
     }
     s
 }
 
-fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig), String> {
+/// Returns prefix like "l2", "l3", etc. for extra_level index i (0-based → L2, L3, …)
+fn level_prefix(i: usize) -> String {
+    format!("l{}", i + 2)
+}
+
+fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -539,7 +573,25 @@ fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig), String>
     }
     let icfg = parse_single_config(&map, "icache")?;
     let dcfg = parse_single_config(&map, "dcache")?;
-    Ok((icfg, dcfg))
+
+    // Read number of extra levels (v2 format); default 0 for v1
+    let n_extra: usize = map.get("levels")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let mut extra = Vec::with_capacity(n_extra);
+    let presets = extra_level_presets();
+    for i in 0..n_extra {
+        let prefix = level_prefix(i);
+        // If prefix keys are present, parse them; otherwise use a default preset
+        if map.contains_key(&format!("{prefix}.size")) {
+            extra.push(parse_single_config(&map, &prefix)?);
+        } else {
+            extra.push(presets[1].clone()); // medium preset as fallback
+        }
+    }
+
+    Ok((icfg, dcfg, extra))
 }
 
 fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<CacheConfig, String> {
