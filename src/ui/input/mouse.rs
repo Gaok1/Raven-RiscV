@@ -565,19 +565,37 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
             .set_file_name("program.bin")
             .save_file()
         {
-            let words = if let Some(ref t) = app.editor.last_ok_text {
-                t.clone()
-            } else {
-                match crate::falcon::asm::assemble(&app.editor.buf.text(), app.run.base_pc) {
-                    Ok(p) => p.text,
+            // Use cached result when available; otherwise re-assemble.
+            let (words, data, data_base, bss_size) = match (
+                app.editor.last_ok_text.as_ref(),
+                app.editor.last_ok_data.as_ref(),
+                app.editor.last_ok_data_base,
+                app.editor.last_ok_bss_size,
+            ) {
+                (Some(t), Some(d), Some(db), bss) => (t.clone(), d.clone(), db, bss.unwrap_or(0)),
+                _ => match crate::falcon::asm::assemble(&app.editor.buf.text(), app.run.base_pc) {
+                    Ok(p) => (p.text, p.data, p.data_base, p.bss_size),
                     Err(e) => {
                         app.console.push_error(format!("Cannot export: assemble error at line {}: {}", e.line + 1, e.msg));
                         return;
                     }
-                }
+                },
             };
-            let mut bytes = Vec::with_capacity(words.len() * 4);
-            for w in words { bytes.extend_from_slice(&w.to_le_bytes()); }
+            // Flat binary: .text | zero-padding | .data | .bss zeros
+            // Layout mirrors what load_binary expects when loaded at base_pc.
+            let text_end = (words.len() * 4) as u32;
+            let data_offset = data_base.saturating_sub(app.run.base_pc);
+            let mut bytes: Vec<u8> = Vec::new();
+            for w in &words {
+                bytes.extend_from_slice(&w.to_le_bytes());
+            }
+            if !data.is_empty() || bss_size > 0 {
+                if data_offset > text_end {
+                    bytes.extend(std::iter::repeat(0u8).take((data_offset - text_end) as usize));
+                }
+                bytes.extend_from_slice(&data);
+                bytes.extend(std::iter::repeat(0u8).take(bss_size as usize));
+            }
             let _ = std::fs::write(path, bytes);
         }
         return;
