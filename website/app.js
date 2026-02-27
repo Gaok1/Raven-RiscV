@@ -8,6 +8,41 @@ window.addEventListener('scroll', () => {
   nav.classList.toggle('scrolled', window.scrollY > 20);
 }, { passive: true });
 
+// ── Hamburger menu ─────────────────────────────────────────
+const hamburger = document.getElementById('navHamburger');
+const navMobile  = document.getElementById('navMobile');
+
+if (hamburger && navMobile) {
+  hamburger.addEventListener('click', () => {
+    const open = navMobile.classList.toggle('open');
+    hamburger.classList.toggle('open', open);
+    hamburger.setAttribute('aria-expanded', open);
+    navMobile.setAttribute('aria-hidden', !open);
+  });
+
+  // Close when any link inside is tapped
+  navMobile.querySelectorAll('a').forEach(link => {
+    link.addEventListener('click', () => {
+      navMobile.classList.remove('open');
+      hamburger.classList.remove('open');
+      hamburger.setAttribute('aria-expanded', false);
+      navMobile.setAttribute('aria-hidden', true);
+    });
+  });
+
+  // Close on outside click / scroll
+  document.addEventListener('click', (e) => {
+    if (navMobile.classList.contains('open') &&
+        !navMobile.contains(e.target) &&
+        !hamburger.contains(e.target)) {
+      navMobile.classList.remove('open');
+      hamburger.classList.remove('open');
+      hamburger.setAttribute('aria-expanded', false);
+      navMobile.setAttribute('aria-hidden', true);
+    }
+  });
+}
+
 // ── Tabs ───────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {

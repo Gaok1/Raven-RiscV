@@ -17,8 +17,12 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
-use crate::falcon::cache::{CacheLineView, CacheSetView, ReplacementPolicy};
+use crate::falcon::cache::{CacheConfig, CacheLineView, CacheSetView, ReplacementPolicy};
+use crate::falcon::memory::Bus;
 use crate::ui::app::{App, CacheScope};
+
+const DIRTY_COLOR: Color = Color::Rgb(180, 100, 255);
+const DIRTY_ADDR_COLOR: Color = Color::Rgb(110, 70, 160);
 
 pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
     // Split: matrix area(s) + 1-line legend bar
@@ -93,8 +97,12 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(".", Style::default().fg(Color::DarkGray)),
         Span::styled("=inv", Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
-        Span::styled("D", Style::default().fg(Color::Yellow).bold()),
-        Span::styled("=dirty", Style::default().fg(Color::DarkGray)),
+        Span::styled("D", Style::default().fg(DIRTY_COLOR).bold()),
+        Span::styled("=dirty ", Style::default().fg(Color::DarkGray)),
+        Span::styled("@addr", Style::default().fg(DIRTY_COLOR)),
+        Span::styled("=RAM base  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("XX→YY", Style::default().fg(DIRTY_ADDR_COLOR)),
+        Span::styled("=cache→stale", Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
         Span::styled(policy_hint, Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
@@ -281,15 +289,29 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         ];
 
         for w in 0..ways {
+            let stale: Option<Vec<u8>> = if !icache && set.lines[w].valid && set.lines[w].dirty {
+                let ob = cfg.offset_bits();
+                let ib = cfg.index_bits();
+                let base = (set.lines[w].tag << (ob + ib)) | ((set_idx as u32) << ob);
+                Some((0..cfg.line_size)
+                    .map(|i| app.run.mem.ram.load8(base + i as u32).unwrap_or(0))
+                    .collect())
+            } else {
+                None
+            };
+
             let cell = build_cell(
                 &set.lines[w],
                 set,
                 w,
                 !icache,
                 policy,
+                cfg,
+                set_idx,
                 tag_hex_w,
                 bytes_to_show,
                 way_col_w,
+                stale.as_deref(),
             );
             spans.extend(cell);
             if w + 1 < ways {
@@ -327,9 +349,12 @@ fn build_cell(
     way: usize,
     is_dcache: bool,
     policy: ReplacementPolicy,
+    cfg: &CacheConfig,
+    set_idx: usize,
     tag_hex_w: usize,
     bytes_to_show: usize,
     cell_width: usize,
+    stale: Option<&[u8]>,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -339,45 +364,75 @@ fn build_cell(
         return spans;
     }
 
+    let is_dirty_dcache = is_dcache && line.dirty;
+
     // Valid
     spans.push(Span::styled("V", Style::default().fg(Color::Green).bold()));
     spans.push(Span::raw(" "));
 
     // Dirty (I-cache lines are never dirty — show dim dash)
-    if is_dcache && line.dirty {
-        spans.push(Span::styled("D", Style::default().fg(Color::Yellow).bold()));
+    if is_dirty_dcache {
+        spans.push(Span::styled("D", Style::default().fg(DIRTY_COLOR).bold()));
     } else {
         spans.push(Span::styled("-", Style::default().fg(Color::DarkGray)));
     }
     spans.push(Span::raw("  "));
 
-    // Tag — highlight MRU line for policies that track recency
+    // Tag — for dirty D-cache show the RAM base address; otherwise show tag
     let is_mru = matches!(
         policy,
         ReplacementPolicy::Lru | ReplacementPolicy::Mru | ReplacementPolicy::Lfu
     ) && set.lru_order.first() == Some(&way);
 
-    let tag_str = format!("T:{:0>width$X}", line.tag, width = tag_hex_w);
-    let tag_style = if is_mru {
-        Style::default().fg(Color::Cyan).bold()
+    if is_dirty_dcache {
+        let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
+            | ((set_idx as u32) << cfg.offset_bits());
+        let addr_str = format!("@{base:08X}");
+        spans.push(Span::styled(addr_str, Style::default().fg(DIRTY_COLOR).bold()));
     } else {
-        Style::default().fg(Color::White)
-    };
-    spans.push(Span::styled(tag_str, tag_style));
+        let tag_str = format!("T:{:0>width$X}", line.tag, width = tag_hex_w);
+        let tag_style = if is_mru {
+            Style::default().fg(Color::Cyan).bold()
+        } else {
+            Style::default().fg(Color::White)
+        };
+        spans.push(Span::styled(tag_str, tag_style));
+    }
 
-    // Data bytes
+    // Data bytes — purple for dirty D-cache, normal otherwise
     if bytes_to_show > 0 {
         spans.push(Span::raw("  "));
-        for i in 0..bytes_to_show.min(line.data.len()) {
+        let n = bytes_to_show.min(line.data.len());
+        for i in 0..n {
             let b = line.data[i];
-            let byte_style = if b == 0 {
+            let byte_style = if is_dirty_dcache {
+                Style::default().fg(DIRTY_COLOR)
+            } else if b == 0 {
                 Style::default().fg(Color::DarkGray)
             } else {
                 Style::default().fg(Color::White)
             };
             spans.push(Span::styled(format!("{b:02X}"), byte_style));
-            if i + 1 < bytes_to_show {
+            if i + 1 < n {
                 spans.push(Span::raw(" "));
+            }
+        }
+
+        // For dirty D-cache lines, also show stale RAM bytes
+        if is_dirty_dcache {
+            if let Some(stale_bytes) = stale {
+                spans.push(Span::styled("→", Style::default().fg(DIRTY_ADDR_COLOR)));
+                let sn = bytes_to_show.min(stale_bytes.len());
+                for i in 0..sn {
+                    let b = stale_bytes[i];
+                    spans.push(Span::styled(
+                        format!("{b:02X}"),
+                        Style::default().fg(DIRTY_ADDR_COLOR),
+                    ));
+                    if i + 1 < sn {
+                        spans.push(Span::raw(" "));
+                    }
+                }
             }
         }
     }

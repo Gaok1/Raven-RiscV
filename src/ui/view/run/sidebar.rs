@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Row, Table};
 
 use super::App;
-use super::formatting::{format_memory_value, format_u32_value};
+use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
@@ -90,7 +90,7 @@ fn memory_block() -> Block<'static> {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title("Memory  ● = dirty cache")
+        .title("Memory  ● = dirty cache (cache → RAM stale)")
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -107,17 +107,40 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
         .collect()
 }
 
+const PURPLE: Color = Color::Rgb(180, 100, 255);
+const STALE_COLOR: Color = Color::Rgb(110, 70, 160);
+
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let is_dirty = app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
-    let indicator = if is_dirty { "● " } else { "  " };
-    let value = format_memory_value(app, addr);
-    let text = format!("{indicator}0x{addr:08x}: {value}");
-    if addr == app.run.cpu.x[2] {
-        // Stack pointer row — always yellow
-        ListItem::new(format!("{text}   ▶ sp")).style(Style::default().fg(Color::Yellow))
-    } else if is_dirty {
-        ListItem::new(text).style(Style::default().fg(Color::Magenta))
-    } else {
-        ListItem::new(text)
+    let is_sp = addr == app.run.cpu.x[2];
+
+    if !is_dirty {
+        let text = format!("  0x{addr:08x}: {}", format_memory_value(app, addr));
+        return if is_sp {
+            ListItem::new(format!("{text}   ▶ sp")).style(Style::default().fg(Color::Yellow))
+        } else {
+            ListItem::new(text)
+        };
     }
+
+    // Dirty cache line — compose a styled line:
+    //   ● 0xaddr: CACHE_VAL  ← RAM: STALE_VAL   [▶ sp]
+    let cache_val = format_memory_value(app, addr);
+    let stale_val = format_stale_value(app, addr);
+    let sp_suffix = if is_sp { "   ▶ sp" } else { "" };
+
+    let line = ratatui::text::Line::from(vec![
+        ratatui::text::Span::styled("● ", Style::default().fg(PURPLE).bold()),
+        ratatui::text::Span::styled(
+            format!("0x{addr:08x}: "),
+            Style::default().fg(PURPLE),
+        ),
+        ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()),
+        ratatui::text::Span::styled(
+            format!("  ← RAM: {stale_val}{sp_suffix}"),
+            Style::default().fg(STALE_COLOR),
+        ),
+    ]);
+
+    ListItem::new(line)
 }
