@@ -1,7 +1,7 @@
 name: CI
 
 # Roda em todo push/PR para verificar compilação.
-# Em push na main: também empacota e atualiza a release "latest" (rolling).
+# Em push na main: empacota binários e cria uma nova release vX.Y.Z+1.
 
 on:
   push:
@@ -62,7 +62,7 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      # Só empacota quando for push na main (para a release rolling)
+      # Só empacota quando for push na main
       - name: Package (Windows)
         if: github.ref == 'refs/heads/main' && runner.os == 'Windows'
         shell: pwsh
@@ -82,15 +82,20 @@ jobs:
           if-no-files-found: error
 
   # ────────────────────────────────────────────────────────
-  # 2. Rolling release "latest" (só em push na main)
+  # 2. Auto-versioned release (só em push na main)
+  #    Lê a última tag vX.Y.Z, incrementa Z e cria nova release
   # ────────────────────────────────────────────────────────
-  rolling-release:
-    name: Update rolling release
+  versioned-release:
+    name: Create versioned release
     runs-on: ubuntu-latest
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # precisa de todas as tags
+
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
@@ -100,29 +105,50 @@ jobs:
       - name: SHA256 checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
 
-      # Remove a release "latest" anterior (tag + assets) para recriar limpa
-      - name: Remove old "latest" release
-        run: gh release delete latest --yes --cleanup-tag || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute next tag
+        id: next_tag
+        run: |
+          # Pega a última tag vX.Y.Z (ignora "latest" e outras)
+          LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+                     --sort=-version:refname | head -n1)
 
-      - name: Publish rolling "latest" release
+          if [ -z "$LATEST" ]; then
+            NEXT="v0.0.1"
+          else
+            # Extrai major, minor, patch
+            IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+            PATCH=$((PATCH + 1))
+            NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Next release tag: $NEXT"
+
+      - name: Create and push tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.next_tag.outputs.tag }}"
+          git push origin "${{ steps.next_tag.outputs.tag }}"
+
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: "Latest Build"
-          prerelease: true
-          make_latest: false
+          tag_name: ${{ steps.next_tag.outputs.tag }}
+          name: "${{ steps.next_tag.outputs.tag }}"
+          prerelease: false
+          make_latest: true
           files: dist/*
+          generate_release_notes: false
           body: |
-            Automated build from [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            Build automático a partir de [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
 
             > ${{ github.event.head_commit.message }}
 
             | Platform | Arquivo |
             |---|---|
             | Windows x64 | `falconasm-windows-x86_64.zip` |
-            | Linux x64 (musl estático) | `falconasm-linux-x86_64.tar.gz` |
+            | Linux x64 | `falconasm-linux-x86_64.tar.gz` |
             | macOS x64 | `falconasm-macos-x86_64.tar.gz` |
             | macOS ARM64 (Apple Silicon) | `falconasm-macos-aarch64.tar.gz` |
 
