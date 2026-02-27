@@ -24,13 +24,11 @@ debug = false
 incremental = false
 
 
-# Windows / macOS: rfd usa dialogs nativos do OS; arboard usa APIs nativas
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 rfd     = "0.15"
 arboard = "3"
 
-# Linux: rfd usa XDG portal (zbus = pure Rust, sem GTK3, compatível com musl)
-#        arboard sem features padrão (sem X11/Wayland obrigatório)
+# Linux: arboard sem X11/Wayland obrigatório (usa o que estiver disponível)
 [target.'cfg(target_os = "linux")'.dependencies]
-rfd     = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
-arboard = { version = "3",    default-features = false }
+rfd     = "0.15"
+arboard = { version = "3", default-features = false }
