@@ -32,3 +32,7 @@ arboard = "3"
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd     = "0.15"
 arboard = { version = "3", default-features = false }
+
+# SIGINT handling no Unix (WSL2 envia SIGINT mesmo em raw-mode via ConPTY)
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
