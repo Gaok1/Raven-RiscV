@@ -201,12 +201,17 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         match me.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 handle_run_status_click(app, me, area);
+                handle_panel_title_click(app, me, area);
+                start_sidebar_drag(app, me, area);
                 start_imem_drag(app, me, area);
                 handle_imem_click(app, me, area);
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                if app.run.sidebar_drag {
+                    handle_sidebar_drag(app, me, area);
+                }
                 if app.run.imem_drag {
                     handle_imem_drag(app, me, area);
                 }
@@ -215,6 +220,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                app.run.sidebar_drag = false;
                 app.run.imem_drag = false;
                 app.run.console_drag = false;
             }
@@ -311,7 +317,7 @@ fn run_status_area(app: &App, area: Rect) -> Rect {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
@@ -402,7 +408,7 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     }
 }
 
-fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
+fn run_main_area(app: &App, area: Rect) -> Rect {
     let root_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -416,18 +422,25 @@ fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
-    let main = run_chunks[2];
+    run_chunks[2]
+}
+
+fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
+    let main = run_main_area(app, area);
+    let sidebar_w = if app.run.sidebar_collapsed { 3 } else { app.run.sidebar_width };
+    let imem_w    = if app.run.imem_collapsed    { 3 } else { app.run.imem_width    };
+    let details_min = if app.run.details_collapsed { 3 } else { 40 };
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(38),
-            Constraint::Length(app.run.imem_width),
-            Constraint::Min(46),
+            Constraint::Length(sidebar_w),
+            Constraint::Length(imem_w),
+            Constraint::Min(details_min),
         ])
         .split(main)
         .to_vec()
@@ -435,12 +448,31 @@ fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
 
 fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let cols = run_cols(app, area);
+
+    // Sidebar resize bar (right edge of col[0])
+    let sidebar = cols[0];
+    let sbar_x = sidebar.x + sidebar.width.saturating_sub(1);
+    if !app.run.sidebar_collapsed && me.column == sbar_x
+        && me.row >= sidebar.y && me.row < sidebar.y + sidebar.height
+    {
+        app.run.hover_sidebar_bar = true;
+    } else if !app.run.sidebar_drag {
+        app.run.hover_sidebar_bar = false;
+    }
+
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
-    if me.column == bar_x && me.row >= imem.y && me.row < imem.y + imem.height {
+    if !app.run.imem_collapsed && me.column == bar_x
+        && me.row >= imem.y && me.row < imem.y + imem.height
+    {
         app.run.hover_imem_bar = true;
     } else if !app.run.imem_drag {
         app.run.hover_imem_bar = false;
+    }
+
+    if app.run.imem_collapsed {
+        app.run.hover_imem_addr = None;
+        return;
     }
 
     let inner = Rect::new(
@@ -455,7 +487,7 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row < inner.y + inner.height
     {
         if let Some(ref text) = app.editor.last_ok_text {
-            let rows = inner.height.saturating_sub(2) as usize;
+            let rows = inner.height as usize;
             let total = text.len();
             let max_scroll = total.saturating_sub(rows);
             if app.run.imem_scroll > max_scroll {
@@ -473,6 +505,34 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
         }
     } else {
         app.run.hover_imem_addr = None;
+    }
+}
+
+fn start_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
+    if app.run.sidebar_collapsed { return; }
+    let cols = run_cols(app, area);
+    let sidebar = cols[0];
+    let bar_x = sidebar.x + sidebar.width.saturating_sub(1);
+    if me.column == bar_x && me.row >= sidebar.y && me.row < sidebar.y + sidebar.height {
+        app.run.sidebar_drag = true;
+        app.run.sidebar_drag_start_x = me.column;
+        app.run.sidebar_width_start = app.run.sidebar_width;
+    }
+}
+
+fn handle_panel_title_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let cols = run_cols(app, area);
+    // Click on top border row of a panel toggles collapse
+    for (i, col) in cols.iter().enumerate() {
+        if me.row == col.y && me.column >= col.x && me.column < col.x + col.width {
+            match i {
+                0 => app.run.sidebar_collapsed = !app.run.sidebar_collapsed,
+                1 => app.run.imem_collapsed    = !app.run.imem_collapsed,
+                2 => app.run.details_collapsed = !app.run.details_collapsed,
+                _ => {}
+            }
+            return;
+        }
     }
 }
 
@@ -610,6 +670,7 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
 }
 
 fn start_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
+    if app.run.imem_collapsed { return; }
     let cols = run_cols(app, area);
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
@@ -622,31 +683,22 @@ fn start_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
 
 fn handle_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let delta = me.column as i32 - app.run.imem_drag_start_x as i32;
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
-    let run_area = root_chunks[1];
-    let run_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(4),
-            Constraint::Min(0),
-            Constraint::Length(app.run.console_height),
-        ])
-        .split(run_area);
-    let main = run_chunks[2];
-    let available = main.width.saturating_sub(38 + 46);
-    let max = if available < 20 { 20 } else { available } as i32;
-    let mut new_width = app.run.imem_width_start as i32 + delta;
-    if new_width < 20 { new_width = 20; }
-    if new_width > max { new_width = max; }
+    let main = run_main_area(app, area);
+    let sidebar_w = if app.run.sidebar_collapsed { 3 } else { app.run.sidebar_width };
+    let available = main.width.saturating_sub(sidebar_w + 40);
+    let max = (available as i32).max(20);
+    let new_width = (app.run.imem_width_start as i32 + delta).clamp(20, max);
     app.run.imem_width = new_width as u16;
+}
+
+fn handle_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
+    let delta = me.column as i32 - app.run.sidebar_drag_start_x as i32;
+    let main = run_main_area(app, area);
+    let imem_w = if app.run.imem_collapsed { 3 } else { app.run.imem_width };
+    let available = main.width.saturating_sub(imem_w + 40);
+    let max = (available as i32).max(20);
+    let new_width = (app.run.sidebar_width_start as i32 + delta).clamp(20, max);
+    app.run.sidebar_width = new_width as u16;
 }
 
 fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
@@ -663,7 +715,7 @@ fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
@@ -703,7 +755,7 @@ fn start_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
@@ -737,7 +789,7 @@ fn handle_console_clear(app: &mut App, me: MouseEvent, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
@@ -762,7 +814,7 @@ fn handle_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
         ])
         .split(area);
     let run_area = root_chunks[1];
-    let max = run_area.height.saturating_sub(3 + 4);
+    let max = run_area.height.saturating_sub(3 + 5);
     let mut new_h = app.run.console_height_start as i32 + delta;
     if new_h < 1 { new_h = 1; }
     if new_h as u16 > max { new_h = max as i32; }
@@ -783,12 +835,12 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
-    let main = run_chunks[2];
+    let _main = run_chunks[2];
     let console = run_chunks[3];
 
     if me.row >= console.y && me.row < console.y + console.height {
@@ -806,14 +858,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         return;
     }
 
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(38),
-            Constraint::Length(app.run.imem_width),
-            Constraint::Min(46),
-        ])
-        .split(main);
+    let cols = run_cols(app, area);
     let side = cols[0];
     let imem = cols[1];
     if me.column >= side.x
@@ -1193,3 +1238,8 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 }
+
+
+
+
+

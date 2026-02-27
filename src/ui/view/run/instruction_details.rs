@@ -7,20 +7,30 @@ use super::App;
 use super::memory::imem_address_in_range;
 use super::registers::reg_name;
 
+// ── Public entry point ───────────────────────────────────────────────────────
+
 pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
+    if area.width < 4 || area.height < 4 {
+        return;
+    }
+    let ctx = detail_context(app);
+
+    // Split into 3 sections: header (3 lines + border), field map (4 lines + border), rest
+    let header_h = 5u16;
+    let map_h    = 6u16;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),
-            Constraint::Length(6),
+            Constraint::Length(header_h),
+            Constraint::Length(map_h),
             Constraint::Min(4),
         ])
         .split(area);
 
-    let context = detail_context(app);
-    render_detail_header(f, chunks[0], &context);
-    render_bit_fields(f, chunks[1], context.word, context.format);
-    render_field_values(f, chunks[2], context.word, context.format);
+    render_header(f, chunks[0], &ctx);
+    render_field_map(f, chunks[1], ctx.word, ctx.format);
+    render_decoded(f, chunks[2], ctx.word, ctx.format, &ctx.disasm);
 }
 
 pub(super) fn disasm_word(word: u32) -> String {
@@ -30,78 +40,369 @@ pub(super) fn disasm_word(word: u32) -> String {
     }
 }
 
-struct DetailContext {
-    addr: u32,
-    word: u32,
-    disasm: String,
-    origin: DetailOrigin,
-    format: EncFormat,
-}
+// ── Context ──────────────────────────────────────────────────────────────────
 
-enum DetailOrigin {
-    Hover,
-    ProgramCounter,
+struct DetailContext {
+    addr:   u32,
+    word:   u32,
+    disasm: String,
+    origin: &'static str,
+    format: EncFormat,
 }
 
 fn detail_context(app: &App) -> DetailContext {
     if let Some(addr) = app.run.hover_imem_addr {
         let word = app.run.mem.load32(addr).unwrap_or(0);
-        DetailContext {
-            addr,
-            word,
-            disasm: disasm_word(word),
-            origin: DetailOrigin::Hover,
-            format: detect_format(word),
-        }
+        DetailContext { addr, word, disasm: disasm_word(word), origin: "hover", format: detect_format(word) }
     } else if imem_address_in_range(app, app.run.cpu.pc) {
         let word = app.run.mem.load32(app.run.cpu.pc).unwrap_or(0);
-        DetailContext {
-            addr: app.run.cpu.pc,
-            word,
-            disasm: disasm_word(word),
-            origin: DetailOrigin::ProgramCounter,
-            format: detect_format(word),
-        }
+        DetailContext { addr: app.run.cpu.pc, word, disasm: disasm_word(word), origin: "PC", format: detect_format(word) }
     } else {
-        DetailContext {
-            addr: app.run.cpu.pc,
-            word: 0,
-            disasm: "<PC out of RAM>".to_string(),
-            origin: DetailOrigin::ProgramCounter,
-            format: detect_format(0),
+        DetailContext { addr: app.run.cpu.pc, word: 0, disasm: "<PC out of RAM>".into(), origin: "PC", format: detect_format(0) }
+    }
+}
+
+// ── Section 1 : Header ───────────────────────────────────────────────────────
+
+fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext) {
+    let fmt_name = ctx.format.name();
+    let title = format!("Instruction  [{fmt_name}]");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(title, Style::default().fg(Color::White)))
+        .title_alignment(Alignment::Left);
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let origin_span = Span::styled(
+        format!(" @ 0x{:08x} ({})", ctx.addr, ctx.origin),
+        Style::default().fg(Color::DarkGray),
+    );
+    let word_span = Span::styled(
+        format!("0x{:08x}", ctx.word),
+        Style::default().fg(Color::Rgb(120, 180, 255)),
+    );
+    let disasm_span = Span::styled(
+        ctx.disasm.clone(),
+        Style::default().fg(Color::Yellow).bold(),
+    );
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("▶ ", Style::default().fg(Color::Green)),
+            disasm_span,
+            origin_span,
+        ]),
+        Line::from(vec![
+            Span::styled("  word  ", Style::default().fg(Color::DarkGray)),
+            word_span,
+            Span::styled(
+                format!("  ({:032b})", ctx.word),
+                Style::default().fg(Color::Rgb(80, 80, 100)),
+            ),
+        ]),
+    ];
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Section 2 : Field map ────────────────────────────────────────────────────
+
+fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
+    let segs = format.segments();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled("Field Map", Style::default().fg(Color::DarkGray)));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Row 1 — bit position markers
+    let pos_line = bit_position_line(&segs);
+    // Row 2 — colored label blocks (▮▮… label)
+    let label_line = label_line(&segs);
+    // Row 3 — actual bit values
+    let bits_line = bits_line(word, &segs);
+
+    let lines = vec![pos_line, label_line, bits_line];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn bit_position_line(segs: &[Seg]) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut bit = 31i32;
+    for seg in segs {
+        let w = seg.width as usize;
+        let hi = bit;
+        let lo = bit - w as i32 + 1;
+        let marker = if w == 1 {
+            format!("{hi:<w$}", w = w)
+        } else {
+            format!("{hi:<w$}", w = (w / 2).max(1))
+        };
+        let padded = format!("{marker:<w$} ", w = w);
+        spans.push(Span::styled(padded, Style::default().fg(Color::Rgb(80, 80, 100))));
+        bit = lo - 1;
+    }
+    Line::from(spans)
+}
+
+fn label_line(segs: &[Seg]) -> Line<'static> {
+    segs.iter().map(|s| {
+        let w = s.width as usize;
+        let bar = "▮".repeat(w.min(2));
+        let lbl = if s.label.len() + 1 + bar.len() <= w + 2 {
+            format!("{bar} {:<w$} ", s.label, w = w.saturating_sub(bar.len() + 1))
+        } else {
+            // Truncate label to fit
+            let avail = w.saturating_sub(bar.len() + 1);
+            format!("{bar} {:.avail$} ", s.label, avail = avail)
+        };
+        Span::styled(lbl, Style::default().fg(s.color))
+    }).collect::<Vec<_>>().into()
+}
+
+fn bits_line(word: u32, segs: &[Seg]) -> Line<'static> {
+    let bit_str = format!("{word:032b}");
+    let mut spans = Vec::new();
+    let mut idx = 0usize;
+    for (i, seg) in segs.iter().enumerate() {
+        let end = idx + seg.width as usize;
+        let slice = &bit_str[idx..end];
+        let padded = if i + 1 < segs.len() {
+            format!("{slice:<w$} ", w = seg.width as usize)
+        } else {
+            slice.to_string()
+        };
+        spans.push(Span::styled(padded, Style::default().fg(seg.color).bold()));
+        idx = end;
+    }
+    Line::from(spans)
+}
+
+// ── Section 3 : Decoded fields + description ─────────────────────────────────
+
+fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disasm: &str) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled("Decoded", Style::default().fg(Color::DarkGray)));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    push_fields(&mut lines, word, format);
+    // blank separator
+    lines.push(Line::from(""));
+    // Semantic description
+    push_description(&mut lines, word, format, disasm);
+
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+}
+
+fn kv(key: &'static str, val: String, val_color: Color) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{key:<10}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(val, Style::default().fg(val_color)),
+    ])
+}
+
+fn reg_kv(key: &'static str, reg: u8) -> Line<'static> {
+    kv(key, format!("x{reg} ({})", reg_name(reg)), Color::LightGreen)
+}
+
+fn imm_kv(key: &'static str, v: i32) -> Line<'static> {
+    kv(key, format!("{v}  (0x{v:x})"), Color::Rgb(120, 180, 255))
+}
+
+fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
+    match format {
+        EncFormat::R => {
+            let funct7 = (word >> 25) & 0x7f;
+            let rs2    = ((word >> 20) & 0x1f) as u8;
+            let rs1    = ((word >> 15) & 0x1f) as u8;
+            let funct3 = (word >> 12) & 0x7;
+            let rd     = ((word >> 7) & 0x1f) as u8;
+            lines.push(reg_kv("rd", rd));
+            lines.push(reg_kv("rs1", rs1));
+            lines.push(reg_kv("rs2", rs2));
+            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+            lines.push(kv("funct7", format!("0x{funct7:02x}"), Color::Red));
+        }
+        EncFormat::I => {
+            let imm    = (((word >> 20) as i32) << 20) >> 20;
+            let rs1    = ((word >> 15) & 0x1f) as u8;
+            let funct3 = (word >> 12) & 0x7;
+            let rd     = ((word >> 7) & 0x1f) as u8;
+            lines.push(reg_kv("rd", rd));
+            lines.push(reg_kv("rs1", rs1));
+            lines.push(imm_kv("imm", imm));
+            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+            if matches!(funct3, 0x1 | 0x5) {
+                let shamt  = (word >> 20) & 0x1f;
+                let funct7 = (word >> 25) & 0x7f;
+                lines.push(kv("shamt", format!("{shamt}"), Color::LightRed));
+                lines.push(kv("funct7", format!("0x{funct7:02x}"), Color::Red));
+            }
+        }
+        EncFormat::S => {
+            let imm_lo = (word >> 7) & 0x1f;
+            let funct3 = (word >> 12) & 0x7;
+            let rs1    = ((word >> 15) & 0x1f) as u8;
+            let rs2    = ((word >> 20) & 0x1f) as u8;
+            let imm_hi = (word >> 25) & 0x7f;
+            let imm    = (((((imm_hi << 5) | imm_lo) as i32) << 20) >> 20) as i32;
+            lines.push(reg_kv("rs1 (base)", rs1));
+            lines.push(reg_kv("rs2 (src)", rs2));
+            lines.push(imm_kv("offset", imm));
+            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+        }
+        EncFormat::B => {
+            let b12    = (word >> 31) & 1;
+            let b10_5  = (word >> 25) & 0x3f;
+            let rs2    = ((word >> 20) & 0x1f) as u8;
+            let rs1    = ((word >> 15) & 0x1f) as u8;
+            let funct3 = (word >> 12) & 0x7;
+            let b4_1   = (word >> 8) & 0xf;
+            let b11    = (word >> 7) & 1;
+            let imm    = (((((b12 << 12) | (b11 << 11) | (b10_5 << 5) | (b4_1 << 1)) as i32) << 19) >> 19) as i32;
+            lines.push(reg_kv("rs1", rs1));
+            lines.push(reg_kv("rs2", rs2));
+            lines.push(imm_kv("offset", imm));
+            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+        }
+        EncFormat::U => {
+            let rd  = ((word >> 7) & 0x1f) as u8;
+            let imm = ((word & 0xfffff000) as i32) >> 12;
+            lines.push(reg_kv("rd", rd));
+            lines.push(imm_kv("imm[31:12]", imm));
+        }
+        EncFormat::J => {
+            let b20    = (word >> 31) & 1;
+            let b10_1  = (word >> 21) & 0x3ff;
+            let b11    = (word >> 20) & 1;
+            let b19_12 = (word >> 12) & 0xff;
+            let rd     = ((word >> 7) & 0x1f) as u8;
+            let imm    = (((((b20 << 20) | (b19_12 << 12) | (b11 << 11) | (b10_1 << 1)) as i32) << 11) >> 11) as i32;
+            lines.push(reg_kv("rd", rd));
+            lines.push(imm_kv("offset", imm));
         }
     }
 }
 
-fn render_detail_header(f: &mut Frame, area: Rect, context: &DetailContext) {
-    let suffix = match context.origin {
-        DetailOrigin::Hover => " (hover)",
-        DetailOrigin::ProgramCounter => " (PC)",
+fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncFormat, disasm: &str) {
+    let opcode = word & 0x7f;
+    let funct3 = (word >> 12) & 0x7;
+    let funct7 = (word >> 25) & 0x7f;
+
+    let desc: &str = match opcode {
+        0x33 => match (funct3, funct7) {
+            (0x0, 0x00) => "rd ← rs1 + rs2",
+            (0x0, 0x20) => "rd ← rs1 − rs2",
+            (0x7, 0x00) => "rd ← rs1 & rs2",
+            (0x6, 0x00) => "rd ← rs1 | rs2",
+            (0x4, 0x00) => "rd ← rs1 ^ rs2",
+            (0x1, 0x00) => "rd ← rs1 << (rs2 & 31)",
+            (0x5, 0x00) => "rd ← rs1 >> (rs2 & 31)  [logical]",
+            (0x5, 0x20) => "rd ← rs1 >> (rs2 & 31)  [arithmetic]",
+            (0x2, 0x00) => "rd ← (rs1 < rs2) ? 1 : 0  [signed]",
+            (0x3, 0x00) => "rd ← (rs1 < rs2) ? 1 : 0  [unsigned]",
+            (0x0, 0x01) => "rd ← rs1 × rs2  [lower 32 bits]",
+            (0x1, 0x01) => "rd ← (rs1 × rs2) >> 32  [signed×signed]",
+            (0x2, 0x01) => "rd ← (rs1 × rs2) >> 32  [signed×unsigned]",
+            (0x3, 0x01) => "rd ← (rs1 × rs2) >> 32  [unsigned×unsigned]",
+            (0x4, 0x01) => "rd ← rs1 ÷ rs2  [signed]",
+            (0x5, 0x01) => "rd ← rs1 ÷ rs2  [unsigned]",
+            (0x6, 0x01) => "rd ← rs1 mod rs2  [signed]",
+            (0x7, 0x01) => "rd ← rs1 mod rs2  [unsigned]",
+            _ => "R-type ALU operation",
+        },
+        0x13 => match funct3 {
+            0x0 => "rd ← rs1 + imm  (addi; imm=0 → nop/mv)",
+            0x7 => "rd ← rs1 & imm",
+            0x6 => "rd ← rs1 | imm",
+            0x4 => "rd ← rs1 ^ imm",
+            0x2 => "rd ← (rs1 < imm) ? 1 : 0  [signed]",
+            0x3 => "rd ← (rs1 < imm) ? 1 : 0  [unsigned]",
+            0x1 => "rd ← rs1 << shamt",
+            0x5 if funct7 == 0 => "rd ← rs1 >> shamt  [logical]",
+            0x5              => "rd ← rs1 >> shamt  [arithmetic]",
+            _ => "I-type ALU immediate",
+        },
+        0x03 => match funct3 {
+            0x0 => "rd ← sign_ext(MEM8[rs1+imm])",
+            0x1 => "rd ← sign_ext(MEM16[rs1+imm])",
+            0x2 => "rd ← MEM32[rs1+imm]",
+            0x4 => "rd ← zero_ext(MEM8[rs1+imm])",
+            0x5 => "rd ← zero_ext(MEM16[rs1+imm])",
+            _   => "Load from memory",
+        },
+        0x23 => match funct3 {
+            0x0 => "MEM8[rs1+imm]  ← rs2[7:0]",
+            0x1 => "MEM16[rs1+imm] ← rs2[15:0]",
+            0x2 => "MEM32[rs1+imm] ← rs2",
+            _   => "Store to memory",
+        },
+        0x63 => match funct3 {
+            0x0 => "if rs1 == rs2  → PC += offset",
+            0x1 => "if rs1 != rs2  → PC += offset",
+            0x4 => "if rs1 <  rs2  → PC += offset  [signed]",
+            0x5 => "if rs1 >= rs2  → PC += offset  [signed]",
+            0x6 => "if rs1 <  rs2  → PC += offset  [unsigned]",
+            0x7 => "if rs1 >= rs2  → PC += offset  [unsigned]",
+            _   => "Conditional branch",
+        },
+        0x37 => "rd ← imm << 12  (upper 20 bits immediate)",
+        0x17 => "rd ← PC + (imm << 12)  (PC-relative upper imm)",
+        0x6f => "rd ← PC+4 ;  PC += offset  (jump and link)",
+        0x67 => "rd ← PC+4 ;  PC ← (rs1+imm) & ~1  (jump register)",
+        0x73 => match word {
+            0x00000073 => "Transfer control to execution environment (syscall)",
+            0x00100073 => "Breakpoint / halt",
+            _          => "System instruction",
+        },
+        _ => "",
     };
 
-    let lines = vec![
-        Line::from(format!("Addr = 0x{:08x}{suffix}", context.addr)),
-        Line::from(format!("Word = 0x{:08x}", context.word)),
-        Line::from(format!("Instr = {}", context.disasm)),
-    ];
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .border_type(BorderType::Rounded)
-        .title("Instruction Details");
-
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    if !desc.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("⟹  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(desc.to_string(), Style::default().fg(Color::White)),
+        ]));
+    } else if !disasm.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("⟹  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(disasm.to_string(), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
 }
 
+// ── Format detection + segments ──────────────────────────────────────────────
+
 #[derive(Copy, Clone)]
-enum EncFormat {
-    R,
-    I,
-    S,
-    B,
-    U,
-    J,
+enum EncFormat { R, I, S, B, U, J }
+
+impl EncFormat {
+    fn name(self) -> &'static str {
+        match self {
+            EncFormat::R => "R-type",
+            EncFormat::I => "I-type",
+            EncFormat::S => "S-type",
+            EncFormat::B => "B-type",
+            EncFormat::U => "U-type",
+            EncFormat::J => "J-type",
+        }
+    }
+    fn segments(self) -> Vec<Seg> {
+        seg_list(self)
+    }
 }
 
 fn detect_format(word: u32) -> EncFormat {
@@ -115,488 +416,112 @@ fn detect_format(word: u32) -> EncFormat {
     }
 }
 
-fn render_bit_fields(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
-    let (title, segments) = bit_segments(format);
-    let labels = segment_labels(&segments);
-    let bits = segment_bits(word, &segments);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .border_type(BorderType::Rounded)
-        .title(title);
-
-    let lines = vec![Line::from(labels), Line::from(bits)];
-    let para = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
-    f.render_widget(para, area);
-}
-
-struct Segment {
+struct Seg {
     label: &'static str,
     width: u8,
     color: Color,
 }
 
-fn bit_segments(format: EncFormat) -> (&'static str, Vec<Segment>) {
-    use EncFormat::*;
+fn seg_list(format: EncFormat) -> Vec<Seg> {
+    macro_rules! s {
+        ($l:expr, $w:expr, $c:expr) => { Seg { label: $l, width: $w, color: $c } };
+    }
+    use Color::*;
     match format {
-        R => (
-            "Field map (R-type)",
-            vec![
-                Segment {
-                    label: "funct7",
-                    width: 7,
-                    color: Color::Red,
-                },
-                Segment {
-                    label: "rs2",
-                    width: 5,
-                    color: Color::LightRed,
-                },
-                Segment {
-                    label: "rs1",
-                    width: 5,
-                    color: Color::LightMagenta,
-                },
-                Segment {
-                    label: "funct3",
-                    width: 3,
-                    color: Color::Yellow,
-                },
-                Segment {
-                    label: "rd",
-                    width: 5,
-                    color: Color::LightGreen,
-                },
-                Segment {
-                    label: "opcode",
-                    width: 7,
-                    color: Color::Cyan,
-                },
-            ],
-        ),
-        I => (
-            "Field map (I-type)",
-            vec![
-                Segment {
-                    label: "imm[11:0]",
-                    width: 12,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "rs1",
-                    width: 5,
-                    color: Color::LightMagenta,
-                },
-                Segment {
-                    label: "funct3",
-                    width: 3,
-                    color: Color::Yellow,
-                },
-                Segment {
-                    label: "rd",
-                    width: 5,
-                    color: Color::LightGreen,
-                },
-                Segment {
-                    label: "opcode",
-                    width: 7,
-                    color: Color::Cyan,
-                },
-            ],
-        ),
-        S => (
-            "Field map (S-type)",
-            vec![
-                Segment {
-                    label: "imm[11:5]",
-                    width: 7,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "rs2",
-                    width: 5,
-                    color: Color::LightRed,
-                },
-                Segment {
-                    label: "rs1",
-                    width: 5,
-                    color: Color::LightMagenta,
-                },
-                Segment {
-                    label: "funct3",
-                    width: 3,
-                    color: Color::Yellow,
-                },
-                Segment {
-                    label: "imm[4:0]",
-                    width: 5,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "opcode",
-                    width: 7,
-                    color: Color::Cyan,
-                },
-            ],
-        ),
-        B => (
-            "Field map (B-type)",
-            vec![
-                Segment {
-                    label: "imm[12]",
-                    width: 1,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "imm[10:5]",
-                    width: 6,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "rs2",
-                    width: 5,
-                    color: Color::LightRed,
-                },
-                Segment {
-                    label: "rs1",
-                    width: 5,
-                    color: Color::LightMagenta,
-                },
-                Segment {
-                    label: "funct3",
-                    width: 3,
-                    color: Color::Yellow,
-                },
-                Segment {
-                    label: "imm[4:1]",
-                    width: 4,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "imm[11]",
-                    width: 1,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "opcode",
-                    width: 7,
-                    color: Color::Cyan,
-                },
-            ],
-        ),
-        U => (
-            "Field map (U-type)",
-            vec![
-                Segment {
-                    label: "imm[31:12]",
-                    width: 20,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "rd",
-                    width: 5,
-                    color: Color::LightGreen,
-                },
-                Segment {
-                    label: "opcode",
-                    width: 7,
-                    color: Color::Cyan,
-                },
-            ],
-        ),
-        J => (
-            "Field map (J-type)",
-            vec![
-                Segment {
-                    label: "imm[20]",
-                    width: 1,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "imm[10:1]",
-                    width: 10,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "imm[11]",
-                    width: 1,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "imm[19:12]",
-                    width: 8,
-                    color: Color::Blue,
-                },
-                Segment {
-                    label: "rd",
-                    width: 5,
-                    color: Color::LightGreen,
-                },
-                Segment {
-                    label: "opcode",
-                    width: 7,
-                    color: Color::Cyan,
-                },
-            ],
-        ),
+        EncFormat::R => vec![
+            s!("funct7", 7, Red), s!("rs2", 5, LightRed), s!("rs1", 5, LightMagenta),
+            s!("fn3", 3, Yellow), s!("rd", 5, LightGreen), s!("opcode", 7, Cyan),
+        ],
+        EncFormat::I => vec![
+            s!("imm[11:0]", 12, Blue), s!("rs1", 5, LightMagenta),
+            s!("fn3", 3, Yellow), s!("rd", 5, LightGreen), s!("opcode", 7, Cyan),
+        ],
+        EncFormat::S => vec![
+            s!("imm[11:5]", 7, Blue), s!("rs2", 5, LightRed), s!("rs1", 5, LightMagenta),
+            s!("fn3", 3, Yellow), s!("imm[4:0]", 5, Blue), s!("opcode", 7, Cyan),
+        ],
+        EncFormat::B => vec![
+            s!("i12", 1, Blue), s!("i10:5", 6, Blue), s!("rs2", 5, LightRed),
+            s!("rs1", 5, LightMagenta), s!("fn3", 3, Yellow),
+            s!("i4:1", 4, Blue), s!("i11", 1, Blue), s!("opcode", 7, Cyan),
+        ],
+        EncFormat::U => vec![
+            s!("imm[31:12]", 20, Blue), s!("rd", 5, LightGreen), s!("opcode", 7, Cyan),
+        ],
+        EncFormat::J => vec![
+            s!("i20", 1, Blue), s!("i10:1", 10, Blue), s!("i11", 1, Blue),
+            s!("i19:12", 8, Blue), s!("rd", 5, LightGreen), s!("opcode", 7, Cyan),
+        ],
     }
 }
 
-fn segment_labels(segments: &[Segment]) -> Vec<Span<'static>> {
-    segments
-        .iter()
-        .map(|segment| {
-            let bar = "▮".repeat(segment.width.max(1) as usize);
-            Span::styled(
-                format!("{bar} {} ", segment.label),
-                Style::default().fg(segment.color),
-            )
-        })
-        .collect()
-}
-
-fn segment_bits(word: u32, segments: &[Segment]) -> Vec<Span<'static>> {
-    let bit_string = format!("{:032b}", word);
-    let mut spans = Vec::new();
-    let mut index = 0usize;
-
-    for (i, segment) in segments.iter().enumerate() {
-        let end = index + segment.width as usize;
-        let slice = &bit_string[index..end];
-        spans.push(Span::styled(
-            slice.to_string(),
-            Style::default().fg(segment.color),
-        ));
-        if i + 1 < segments.len() {
-            spans.push(Span::raw(" "));
-        }
-        index = end;
-    }
-
-    spans
-}
-
-fn render_field_values(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .border_type(BorderType::Rounded)
-        .title("Parsed fields");
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let mut lines = Vec::new();
-    match format {
-        EncFormat::R => push_r_fields(&mut lines, word),
-        EncFormat::I => push_i_fields(&mut lines, word),
-        EncFormat::S => push_s_fields(&mut lines, word),
-        EncFormat::B => push_b_fields(&mut lines, word),
-        EncFormat::U => push_u_fields(&mut lines, word),
-        EncFormat::J => push_j_fields(&mut lines, word),
-    }
-
-    let para = Paragraph::new(lines).wrap(Wrap { trim: true });
-    f.render_widget(para, inner);
-}
-
-fn push_r_fields(lines: &mut Vec<Line<'static>>, word: u32) {
-    let funct7 = (word >> 25) & 0x7f;
-    let rs2 = (word >> 20) & 0x1f;
-    let rs1 = (word >> 15) & 0x1f;
-    let funct3 = (word >> 12) & 0x7;
-    let rd = (word >> 7) & 0x1f;
-    let opcode = word & 0x7f;
-    lines.push(Line::from(format!(
-        "funct7={:#04x}  rs2={}  rs1={}  funct3={:#03x}  rd={}  opcode={:#04x}",
-        funct7, rs2, rs1, funct3, rd, opcode
-    )));
-}
-
-fn push_i_fields(lines: &mut Vec<Line<'static>>, word: u32) {
-    let imm = (((word >> 20) as i32) << 20) >> 20;
-    let rs1 = (word >> 15) & 0x1f;
-    let funct3 = (word >> 12) & 0x7;
-    let rd = (word >> 7) & 0x1f;
-    let opcode = word & 0x7f;
-    lines.push(Line::from(format!(
-        "imm={}  rs1={}  funct3={:#03x}  rd={}  opcode={:#04x}",
-        imm, rs1, funct3, rd, opcode
-    )));
-    if matches!(funct3, 0x1 | 0x5) {
-        let shamt = (word >> 20) & 0x1f;
-        let funct7 = (word >> 25) & 0x7f;
-        lines.push(Line::from(format!(
-            "(shift) funct7={:#04x} shamt={} rs1={} rd={}",
-            funct7, shamt, rs1, rd
-        )));
-    }
-}
-
-fn push_s_fields(lines: &mut Vec<Line<'static>>, word: u32) {
-    let imm_4_0 = (word >> 7) & 0x1f;
-    let funct3 = (word >> 12) & 0x7;
-    let rs1 = (word >> 15) & 0x1f;
-    let rs2 = (word >> 20) & 0x1f;
-    let imm_11_5 = (word >> 25) & 0x7f;
-    let opcode = word & 0x7f;
-    let imm = (((((imm_11_5 << 5) | imm_4_0) as i32) << 20) >> 20) as i32;
-    lines.push(Line::from(format!(
-        "imm[11:5]={:#04x} imm[4:0]={:#03x} => imm={}  rs2={} rs1={} funct3={:#03x} opcode={:#04x}",
-        imm_11_5, imm_4_0, imm, rs2, rs1, funct3, opcode
-    )));
-}
-
-fn push_b_fields(lines: &mut Vec<Line<'static>>, word: u32) {
-    let b12 = (word >> 31) & 0x1;
-    let b10_5 = (word >> 25) & 0x3f;
-    let rs2 = (word >> 20) & 0x1f;
-    let rs1 = (word >> 15) & 0x1f;
-    let funct3 = (word >> 12) & 0x7;
-    let b4_1 = (word >> 8) & 0xf;
-    let b11 = (word >> 7) & 0x1;
-    let opcode = word & 0x7f;
-    let imm =
-        (((((b12 << 12) | (b11 << 11) | (b10_5 << 5) | (b4_1 << 1)) as i32) << 19) >> 19) as i32;
-    lines.push(Line::from(format!(
-        "b12={} b11={} b10:5={:#04x} b4:1={:#03x} => imm={}  rs2={} rs1={} f3={:#03x} opc={:#04x}",
-        b12, b11, b10_5, b4_1, imm, rs2, rs1, funct3, opcode
-    )));
-}
-
-fn push_u_fields(lines: &mut Vec<Line<'static>>, word: u32) {
-    let rd = (word >> 7) & 0x1f;
-    let opcode = word & 0x7f;
-    let imm = (word & 0xfffff000) as i32;
-    lines.push(Line::from(format!(
-        "imm[31:12]={:#07x} => imm={}  rd={} opc={:#04x}",
-        imm >> 12,
-        imm,
-        rd,
-        opcode
-    )));
-}
-
-fn push_j_fields(lines: &mut Vec<Line<'static>>, word: u32) {
-    let b20 = (word >> 31) & 1;
-    let b10_1 = (word >> 21) & 0x3ff;
-    let b11 = (word >> 20) & 1;
-    let b19_12 = (word >> 12) & 0xff;
-    let rd = (word >> 7) & 0x1f;
-    let opcode = word & 0x7f;
-    let imm =
-        (((((b20 << 20) | (b19_12 << 12) | (b11 << 11) | (b10_1 << 1)) as i32) << 11) >> 11) as i32;
-    lines.push(Line::from(format!(
-        "b20={} b19:12={:#04x} b11={} b10:1={:#05x} => imm={} rd={} opc={:#04x}",
-        b20, b19_12, b11, b10_1, imm, rd, opcode
-    )));
-}
+// ── Disassembly pretty-printer ────────────────────────────────────────────────
 
 fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
     use falcon::instruction::Instruction::*;
-
     match *instruction {
-        Add { rd, rs1, rs2 } => format_reg3("add", rd, rs1, rs2),
-        Sub { rd, rs1, rs2 } => format_reg3("sub", rd, rs1, rs2),
-        And { rd, rs1, rs2 } => format_reg3("and", rd, rs1, rs2),
-        Or { rd, rs1, rs2 } => format_reg3("or", rd, rs1, rs2),
-        Xor { rd, rs1, rs2 } => format_reg3("xor", rd, rs1, rs2),
-        Sll { rd, rs1, rs2 } => format_reg3("sll", rd, rs1, rs2),
-        Srl { rd, rs1, rs2 } => format_reg3("srl", rd, rs1, rs2),
-        Sra { rd, rs1, rs2 } => format_reg3("sra", rd, rs1, rs2),
-        Slt { rd, rs1, rs2 } => format_reg3("slt", rd, rs1, rs2),
-        Sltu { rd, rs1, rs2 } => format_reg3("sltu", rd, rs1, rs2),
-        Mul { rd, rs1, rs2 } => format_reg3("mul", rd, rs1, rs2),
-        Mulh { rd, rs1, rs2 } => format_reg3("mulh", rd, rs1, rs2),
-        Mulhsu { rd, rs1, rs2 } => format_reg3("mulhsu", rd, rs1, rs2),
-        Mulhu { rd, rs1, rs2 } => format_reg3("mulhu", rd, rs1, rs2),
-        Div { rd, rs1, rs2 } => format_reg3("div", rd, rs1, rs2),
-        Divu { rd, rs1, rs2 } => format_reg3("divu", rd, rs1, rs2),
-        Rem { rd, rs1, rs2 } => format_reg3("rem", rd, rs1, rs2),
-        Remu { rd, rs1, rs2 } => format_reg3("remu", rd, rs1, rs2),
-        Addi { rd, rs1, imm } => format_reg_imm("addi", rd, rs1, imm),
-        Andi { rd, rs1, imm } => format_reg_imm("andi", rd, rs1, imm),
-        Ori { rd, rs1, imm } => format_reg_imm("ori", rd, rs1, imm),
-        Xori { rd, rs1, imm } => format_reg_imm("xori", rd, rs1, imm),
-        Slti { rd, rs1, imm } => format_reg_imm("slti", rd, rs1, imm),
-        Sltiu { rd, rs1, imm } => format_reg_imm("sltiu", rd, rs1, imm),
-        Slli { rd, rs1, shamt } => format_reg_imm("slli", rd, rs1, shamt as i32),
-        Srli { rd, rs1, shamt } => format_reg_imm("srli", rd, rs1, shamt as i32),
-        Srai { rd, rs1, shamt } => format_reg_imm("srai", rd, rs1, shamt as i32),
-        Lb { rd, rs1, imm } => format_load("lb", rd, rs1, imm),
-        Lh { rd, rs1, imm } => format_load("lh", rd, rs1, imm),
-        Lw { rd, rs1, imm } => format_load("lw", rd, rs1, imm),
-        Lbu { rd, rs1, imm } => format_load("lbu", rd, rs1, imm),
-        Lhu { rd, rs1, imm } => format_load("lhu", rd, rs1, imm),
-        Sb { rs2, rs1, imm } => format_store("sb", rs2, rs1, imm),
-        Sh { rs2, rs1, imm } => format_store("sh", rs2, rs1, imm),
-        Sw { rs2, rs1, imm } => format_store("sw", rs2, rs1, imm),
-        Beq { rs1, rs2, imm } => format_branch("beq", rs1, rs2, imm),
-        Bne { rs1, rs2, imm } => format_branch("bne", rs1, rs2, imm),
-        Blt { rs1, rs2, imm } => format_branch("blt", rs1, rs2, imm),
-        Bge { rs1, rs2, imm } => format_branch("bge", rs1, rs2, imm),
-        Bltu { rs1, rs2, imm } => format_branch("bltu", rs1, rs2, imm),
-        Bgeu { rs1, rs2, imm } => format_branch("bgeu", rs1, rs2, imm),
-        Lui { rd, imm } => format_single_reg_imm("lui", rd, imm),
-        Auipc { rd, imm } => format_single_reg_imm("auipc", rd, imm),
-        Jal { rd, imm } => format_single_reg_imm("jal", rd, imm),
-        Jalr { rd, rs1, imm } => format_reg_imm("jalr", rd, rs1, imm),
-        Ecall => "ecall".to_string(),
-        Ebreak | Halt => "ebreak".to_string(),
+        Add{rd,rs1,rs2}    => fmt3("add",  rd, rs1, rs2),
+        Sub{rd,rs1,rs2}    => fmt3("sub",  rd, rs1, rs2),
+        And{rd,rs1,rs2}    => fmt3("and",  rd, rs1, rs2),
+        Or{rd,rs1,rs2}     => fmt3("or",   rd, rs1, rs2),
+        Xor{rd,rs1,rs2}    => fmt3("xor",  rd, rs1, rs2),
+        Sll{rd,rs1,rs2}    => fmt3("sll",  rd, rs1, rs2),
+        Srl{rd,rs1,rs2}    => fmt3("srl",  rd, rs1, rs2),
+        Sra{rd,rs1,rs2}    => fmt3("sra",  rd, rs1, rs2),
+        Slt{rd,rs1,rs2}    => fmt3("slt",  rd, rs1, rs2),
+        Sltu{rd,rs1,rs2}   => fmt3("sltu", rd, rs1, rs2),
+        Mul{rd,rs1,rs2}    => fmt3("mul",  rd, rs1, rs2),
+        Mulh{rd,rs1,rs2}   => fmt3("mulh", rd, rs1, rs2),
+        Mulhsu{rd,rs1,rs2} => fmt3("mulhsu",rd,rs1, rs2),
+        Mulhu{rd,rs1,rs2}  => fmt3("mulhu",rd, rs1, rs2),
+        Div{rd,rs1,rs2}    => fmt3("div",  rd, rs1, rs2),
+        Divu{rd,rs1,rs2}   => fmt3("divu", rd, rs1, rs2),
+        Rem{rd,rs1,rs2}    => fmt3("rem",  rd, rs1, rs2),
+        Remu{rd,rs1,rs2}   => fmt3("remu", rd, rs1, rs2),
+        Addi{rd,rs1,imm}   => fmt_ri("addi",  rd, rs1, imm),
+        Andi{rd,rs1,imm}   => fmt_ri("andi",  rd, rs1, imm),
+        Ori{rd,rs1,imm}    => fmt_ri("ori",   rd, rs1, imm),
+        Xori{rd,rs1,imm}   => fmt_ri("xori",  rd, rs1, imm),
+        Slti{rd,rs1,imm}   => fmt_ri("slti",  rd, rs1, imm),
+        Sltiu{rd,rs1,imm}  => fmt_ri("sltiu", rd, rs1, imm),
+        Slli{rd,rs1,shamt} => fmt_ri("slli",  rd, rs1, shamt as i32),
+        Srli{rd,rs1,shamt} => fmt_ri("srli",  rd, rs1, shamt as i32),
+        Srai{rd,rs1,shamt} => fmt_ri("srai",  rd, rs1, shamt as i32),
+        Lb{rd,rs1,imm}     => fmt_load("lb",  rd, rs1, imm),
+        Lh{rd,rs1,imm}     => fmt_load("lh",  rd, rs1, imm),
+        Lw{rd,rs1,imm}     => fmt_load("lw",  rd, rs1, imm),
+        Lbu{rd,rs1,imm}    => fmt_load("lbu", rd, rs1, imm),
+        Lhu{rd,rs1,imm}    => fmt_load("lhu", rd, rs1, imm),
+        Sb{rs2,rs1,imm}    => fmt_store("sb", rs2, rs1, imm),
+        Sh{rs2,rs1,imm}    => fmt_store("sh", rs2, rs1, imm),
+        Sw{rs2,rs1,imm}    => fmt_store("sw", rs2, rs1, imm),
+        Beq{rs1,rs2,imm}   => fmt_br("beq",  rs1, rs2, imm),
+        Bne{rs1,rs2,imm}   => fmt_br("bne",  rs1, rs2, imm),
+        Blt{rs1,rs2,imm}   => fmt_br("blt",  rs1, rs2, imm),
+        Bge{rs1,rs2,imm}   => fmt_br("bge",  rs1, rs2, imm),
+        Bltu{rs1,rs2,imm}  => fmt_br("bltu", rs1, rs2, imm),
+        Bgeu{rs1,rs2,imm}  => fmt_br("bgeu", rs1, rs2, imm),
+        Lui{rd,imm}        => format!("{:<5} {}, {}", "lui",   reg_name(rd), imm),
+        Auipc{rd,imm}      => format!("{:<5} {}, {}", "auipc", reg_name(rd), imm),
+        Jal{rd,imm}        => format!("{:<5} {}, {}", "jal",   reg_name(rd), imm),
+        Jalr{rd,rs1,imm}   => fmt_ri("jalr", rd, rs1, imm),
+        Ecall              => "ecall".into(),
+        Ebreak | Halt      => "ebreak".into(),
     }
 }
 
-fn format_reg3(mnemonic: &str, rd: u8, rs1: u8, rs2: u8) -> String {
-    format!(
-        "{:<4} {}, {}, {}",
-        mnemonic,
-        reg_name(rd),
-        reg_name(rs1),
-        reg_name(rs2)
-    )
+fn fmt3(m: &str, rd: u8, rs1: u8, rs2: u8) -> String {
+    format!("{m:<5} {}, {}, {}", reg_name(rd), reg_name(rs1), reg_name(rs2))
 }
-
-fn format_reg_imm(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> String {
-    format!(
-        "{:<4} {}, {}, {}",
-        mnemonic,
-        reg_name(rd),
-        reg_name(rs1),
-        imm
-    )
+fn fmt_ri(m: &str, rd: u8, rs1: u8, imm: i32) -> String {
+    format!("{m:<5} {}, {}, {imm}", reg_name(rd), reg_name(rs1))
 }
-
-fn format_load(mnemonic: &str, rd: u8, rs1: u8, imm: i32) -> String {
-    format!(
-        "{:<4} {}, {}({})",
-        mnemonic,
-        reg_name(rd),
-        imm,
-        reg_name(rs1)
-    )
+fn fmt_load(m: &str, rd: u8, rs1: u8, imm: i32) -> String {
+    format!("{m:<5} {}, {imm}({})", reg_name(rd), reg_name(rs1))
 }
-
-fn format_store(mnemonic: &str, rs2: u8, rs1: u8, imm: i32) -> String {
-    format!(
-        "{:<4} {}, {}({})",
-        mnemonic,
-        reg_name(rs2),
-        imm,
-        reg_name(rs1)
-    )
+fn fmt_store(m: &str, rs2: u8, rs1: u8, imm: i32) -> String {
+    format!("{m:<5} {}, {imm}({})", reg_name(rs2), reg_name(rs1))
 }
-
-fn format_branch(mnemonic: &str, rs1: u8, rs2: u8, imm: i32) -> String {
-    format!(
-        "{:<4} {}, {}, {}",
-        mnemonic,
-        reg_name(rs1),
-        reg_name(rs2),
-        imm
-    )
-}
-
-fn format_single_reg_imm(mnemonic: &str, rd: u8, imm: i32) -> String {
-    format!("{:<4} {}, {}", mnemonic, reg_name(rd), imm)
+fn fmt_br(m: &str, rs1: u8, rs2: u8, imm: i32) -> String {
+    format!("{m:<5} {}, {}, {imm}", reg_name(rs1), reg_name(rs2))
 }
