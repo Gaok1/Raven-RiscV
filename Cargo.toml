@@ -6,8 +6,6 @@ edition = "2024"
 [dependencies]
 ratatui = { version = "0.28", features = ["all-widgets"] }
 crossterm = "0.29"
-rfd = "0.15"
-arboard = "3"
 thiserror = "1"
 comfy-table = "7"
 
@@ -26,8 +24,13 @@ debug = false
 incremental = false
 
 
+# Windows / macOS: rfd usa dialogs nativos do OS; arboard usa APIs nativas
 [target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd     = "0.15"
 arboard = "3"
 
+# Linux: rfd usa XDG portal (zbus = pure Rust, sem GTK3, compatível com musl)
+#        arboard sem features padrão (sem X11/Wayland obrigatório)
 [target.'cfg(target_os = "linux")'.dependencies]
-arboard = { version = "3", default-features = false }
+rfd     = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+arboard = { version = "3",    default-features = false }
