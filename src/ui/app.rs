@@ -242,7 +242,15 @@ pub(super) struct RunState {
     pub(super) fmt_mode: FormatMode,
     pub(super) show_signed: bool,
 
-    // Instruction memory panel (resizable)
+    // Sidebar panel (resizable + collapsible)
+    pub(super) sidebar_width: u16,
+    pub(super) hover_sidebar_bar: bool,
+    pub(super) sidebar_drag: bool,
+    pub(super) sidebar_drag_start_x: u16,
+    pub(super) sidebar_width_start: u16,
+    pub(super) sidebar_collapsed: bool,
+
+    // Instruction memory panel (resizable + collapsible)
     pub(super) imem_width: u16,
     pub(super) hover_imem_bar: bool,
     pub(super) imem_drag: bool,
@@ -250,6 +258,10 @@ pub(super) struct RunState {
     pub(super) imem_width_start: u16,
     pub(super) imem_scroll: usize,
     pub(super) hover_imem_addr: Option<u32>,
+    pub(super) imem_collapsed: bool,
+
+    // Details panel (collapsible)
+    pub(super) details_collapsed: bool,
 
     // Console panel (resizable)
     pub(super) console_height: u16,
@@ -336,6 +348,12 @@ impl App {
                 show_registers: true,
                 fmt_mode: FormatMode::Hex,
                 show_signed: false,
+                sidebar_width: 38,
+                hover_sidebar_bar: false,
+                sidebar_drag: false,
+                sidebar_drag_start_x: 0,
+                sidebar_width_start: 38,
+                sidebar_collapsed: false,
                 imem_width: 38,
                 hover_imem_bar: false,
                 imem_drag: false,
@@ -343,6 +361,8 @@ impl App {
                 imem_width_start: 38,
                 imem_scroll: 0,
                 hover_imem_addr: None,
+                imem_collapsed: false,
+                details_collapsed: false,
                 console_height: 5,
                 hover_console_bar: false,
                 hover_console_clear: false,
