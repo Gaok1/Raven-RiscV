@@ -69,11 +69,16 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
 
     // Scroll indicator (use the cache with more sets as reference)
     let num_sets = match scope {
+        CacheScope::ICache => {
+            if icfg.is_valid_config() { icfg.num_sets() } else { 0 }
+        }
         CacheScope::DCache => {
             if dcfg.is_valid_config() { dcfg.num_sets() } else { 0 }
         }
-        _ => {
-            if icfg.is_valid_config() { icfg.num_sets() } else { 0 }
+        CacheScope::Both => {
+            let i = if icfg.is_valid_config() { icfg.num_sets() } else { 0 };
+            let d = if dcfg.is_valid_config() { dcfg.num_sets() } else { 0 };
+            i.max(d)
         }
     };
     let scroll = app.cache.view_scroll.min(num_sets.saturating_sub(1));
@@ -280,7 +285,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
                 &set.lines[w],
                 set,
                 w,
-                icache,
+                !icache,
                 policy,
                 tag_hex_w,
                 bytes_to_show,

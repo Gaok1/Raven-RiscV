@@ -1122,6 +1122,8 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
                 app.cache.config_error = None;
                 app.cache.config_status = Some("Config applied (stats reset).".to_string());
                 app.run.mem.apply_config(icfg, dcfg);
+                app.cache.view_scroll = 0;
+                app.cache.stats_scroll = 0;
                 return;
             }
             if x >= 24 && x < 43 {
@@ -1144,6 +1146,8 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
                 // Restore history but reset counters
                 app.run.mem.icache.stats.history = old_istats.history;
                 app.run.mem.dcache.stats.history = old_dstats.history;
+                app.cache.view_scroll = 0;
+                app.cache.stats_scroll = 0;
                 return;
             }
         }

@@ -781,7 +781,7 @@ impl App {
 
 pub fn run(terminal: &mut DefaultTerminal, mut app: App) -> io::Result<()> {
     execute!(terminal.backend_mut(), EnableMouseCapture)?;
-    let last_draw = Instant::now();
+    let mut last_draw = Instant::now();
     loop {
         if event::poll(Duration::from_millis(10))? {
             match event::read()? {
@@ -807,6 +807,7 @@ pub fn run(terminal: &mut DefaultTerminal, mut app: App) -> io::Result<()> {
         app.tick();
         if last_draw.elapsed() >= Duration::from_millis(16) {
             terminal.draw(|f| ui(f, &app))?;
+            last_draw = Instant::now();
         }
     }
     execute!(terminal.backend_mut(), DisableMouseCapture)?;

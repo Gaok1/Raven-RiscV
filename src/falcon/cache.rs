@@ -424,6 +424,7 @@ impl Cache {
     }
 
     /// Read byte via I-cache (read-only, no dirty evictions). Charges cycles.
+    #[allow(dead_code)]
     pub fn read_byte_ro(&mut self, addr: u32, ram: &Ram) -> Result<u8, FalconError> {
         if !self.config.is_valid_config() {
             return ram.load8(addr);
@@ -521,6 +522,214 @@ impl Cache {
                     } else {
                         ram.store8(addr, val)?;
                         self.stats.ram_write_bytes += 1; // WB + no-alloc miss: goes straight to RAM
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Read 32-bit word via I-cache (read-only) — single tag lookup (correct stats for `fetch32`).
+    pub fn read_word_ro(&mut self, addr: u32, ram: &Ram) -> Result<u32, FalconError> {
+        if !self.config.is_valid_config() {
+            return ram.load32(addr);
+        }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        let offset = self.config.addr_offset(addr);
+
+        if let Some(way) = self.sets[idx].lookup(tag) {
+            self.stats.hits += 1;
+            self.stats.total_cycles += self.config.tag_search_cycles();
+            self.sets[idx].touch(way, self.config.replacement);
+            let d = &self.sets[idx].lines[way].data;
+            return Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]));
+        }
+        self.stats.misses += 1;
+        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
+        self.allocate_ro(addr, ram)?;
+        let way = self.sets[idx].lookup(tag).unwrap();
+        let d = &self.sets[idx].lines[way].data;
+        Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]))
+    }
+
+    /// Read 16-bit halfword via D-cache — single tag lookup (correct stats for `lh`/`lhu`).
+    pub fn read_halfword_rw(&mut self, addr: u32, ram: &mut Ram) -> Result<u16, FalconError> {
+        if !self.config.is_valid_config() {
+            return ram.load16(addr);
+        }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        let offset = self.config.addr_offset(addr);
+
+        if let Some(way) = self.sets[idx].lookup(tag) {
+            self.stats.hits += 1;
+            self.stats.total_cycles += self.config.tag_search_cycles();
+            self.sets[idx].touch(way, self.config.replacement);
+            let d = &self.sets[idx].lines[way].data;
+            return Ok(u16::from_le_bytes([d[offset], d[offset + 1]]));
+        }
+        self.stats.misses += 1;
+        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
+        self.allocate_rw(addr, ram)?;
+        let way = self.sets[idx].lookup(tag).unwrap();
+        let d = &self.sets[idx].lines[way].data;
+        Ok(u16::from_le_bytes([d[offset], d[offset + 1]]))
+    }
+
+    /// Read 32-bit word via D-cache — single tag lookup (correct stats for `lw`).
+    pub fn read_word_rw(&mut self, addr: u32, ram: &mut Ram) -> Result<u32, FalconError> {
+        if !self.config.is_valid_config() {
+            return ram.load32(addr);
+        }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        let offset = self.config.addr_offset(addr);
+
+        if let Some(way) = self.sets[idx].lookup(tag) {
+            self.stats.hits += 1;
+            self.stats.total_cycles += self.config.tag_search_cycles();
+            self.sets[idx].touch(way, self.config.replacement);
+            let d = &self.sets[idx].lines[way].data;
+            return Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]));
+        }
+        self.stats.misses += 1;
+        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
+        self.allocate_rw(addr, ram)?;
+        let way = self.sets[idx].lookup(tag).unwrap();
+        let d = &self.sets[idx].lines[way].data;
+        Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]))
+    }
+
+    /// Write 16-bit halfword via D-cache — single tag lookup (correct stats for `sh`).
+    pub fn write_halfword(&mut self, addr: u32, val: u16, ram: &mut Ram) -> Result<(), FalconError> {
+        if !self.config.is_valid_config() {
+            return ram.store16(addr, val);
+        }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        let offset = self.config.addr_offset(addr);
+        let hit_way = self.sets[idx].lookup(tag);
+        let [b0, b1] = val.to_le_bytes();
+
+        match self.config.write_policy {
+            WritePolicy::WriteThrough => {
+                ram.store16(addr, val)?;
+                self.stats.ram_write_bytes += 2;
+                self.stats.bytes_stored += 2;
+                if let Some(way) = hit_way {
+                    self.stats.hits += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
+                    self.sets[idx].lines[way].data[offset] = b0;
+                    self.sets[idx].lines[way].data[offset + 1] = b1;
+                    self.sets[idx].touch(way, self.config.replacement);
+                } else {
+                    self.stats.misses += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
+                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
+                        self.allocate_rw(addr, ram)?;
+                        self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles();
+                        if let Some(way) = self.sets[idx].lookup(tag) {
+                            self.sets[idx].lines[way].data[offset] = b0;
+                            self.sets[idx].lines[way].data[offset + 1] = b1;
+                        }
+                    }
+                }
+            }
+            WritePolicy::WriteBack => {
+                self.stats.bytes_stored += 2;
+                if let Some(way) = hit_way {
+                    self.stats.hits += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles();
+                    self.sets[idx].lines[way].data[offset] = b0;
+                    self.sets[idx].lines[way].data[offset + 1] = b1;
+                    self.sets[idx].lines[way].dirty = true;
+                    self.sets[idx].touch(way, self.config.replacement);
+                } else {
+                    self.stats.misses += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
+                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
+                        self.allocate_rw(addr, ram)?;
+                        if let Some(way) = self.sets[idx].lookup(tag) {
+                            self.sets[idx].lines[way].data[offset] = b0;
+                            self.sets[idx].lines[way].data[offset + 1] = b1;
+                            self.sets[idx].lines[way].dirty = true;
+                        }
+                    } else {
+                        ram.store16(addr, val)?;
+                        self.stats.ram_write_bytes += 2;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Write 32-bit word via D-cache — single tag lookup (correct stats for `sw`).
+    pub fn write_word(&mut self, addr: u32, val: u32, ram: &mut Ram) -> Result<(), FalconError> {
+        if !self.config.is_valid_config() {
+            return ram.store32(addr, val);
+        }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        let offset = self.config.addr_offset(addr);
+        let hit_way = self.sets[idx].lookup(tag);
+        let [b0, b1, b2, b3] = val.to_le_bytes();
+
+        match self.config.write_policy {
+            WritePolicy::WriteThrough => {
+                ram.store32(addr, val)?;
+                self.stats.ram_write_bytes += 4;
+                self.stats.bytes_stored += 4;
+                if let Some(way) = hit_way {
+                    self.stats.hits += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
+                    self.sets[idx].lines[way].data[offset] = b0;
+                    self.sets[idx].lines[way].data[offset + 1] = b1;
+                    self.sets[idx].lines[way].data[offset + 2] = b2;
+                    self.sets[idx].lines[way].data[offset + 3] = b3;
+                    self.sets[idx].touch(way, self.config.replacement);
+                } else {
+                    self.stats.misses += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
+                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
+                        self.allocate_rw(addr, ram)?;
+                        self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles();
+                        if let Some(way) = self.sets[idx].lookup(tag) {
+                            self.sets[idx].lines[way].data[offset] = b0;
+                            self.sets[idx].lines[way].data[offset + 1] = b1;
+                            self.sets[idx].lines[way].data[offset + 2] = b2;
+                            self.sets[idx].lines[way].data[offset + 3] = b3;
+                        }
+                    }
+                }
+            }
+            WritePolicy::WriteBack => {
+                self.stats.bytes_stored += 4;
+                if let Some(way) = hit_way {
+                    self.stats.hits += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles();
+                    self.sets[idx].lines[way].data[offset] = b0;
+                    self.sets[idx].lines[way].data[offset + 1] = b1;
+                    self.sets[idx].lines[way].data[offset + 2] = b2;
+                    self.sets[idx].lines[way].data[offset + 3] = b3;
+                    self.sets[idx].lines[way].dirty = true;
+                    self.sets[idx].touch(way, self.config.replacement);
+                } else {
+                    self.stats.misses += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
+                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
+                        self.allocate_rw(addr, ram)?;
+                        if let Some(way) = self.sets[idx].lookup(tag) {
+                            self.sets[idx].lines[way].data[offset] = b0;
+                            self.sets[idx].lines[way].data[offset + 1] = b1;
+                            self.sets[idx].lines[way].data[offset + 2] = b2;
+                            self.sets[idx].lines[way].data[offset + 3] = b3;
+                            self.sets[idx].lines[way].dirty = true;
+                        }
+                    } else {
+                        ram.store32(addr, val)?;
+                        self.stats.ram_write_bytes += 4;
                     }
                 }
             }
@@ -716,48 +925,33 @@ impl Bus for CacheController {
         self.dcache.write_byte(addr, val, &mut self.ram)
     }
     fn store16(&mut self, addr: u32, val: u16) -> Result<(), FalconError> {
-        let [b0, b1] = val.to_le_bytes();
-        self.dcache.write_byte(addr, b0, &mut self.ram)?;
-        self.dcache.write_byte(addr + 1, b1, &mut self.ram)
+        self.dcache.write_halfword(addr, val, &mut self.ram)
     }
     fn store32(&mut self, addr: u32, val: u32) -> Result<(), FalconError> {
-        let [b0, b1, b2, b3] = val.to_le_bytes();
-        self.dcache.write_byte(addr, b0, &mut self.ram)?;
-        self.dcache.write_byte(addr + 1, b1, &mut self.ram)?;
-        self.dcache.write_byte(addr + 2, b2, &mut self.ram)?;
-        self.dcache.write_byte(addr + 3, b3, &mut self.ram)
+        self.dcache.write_word(addr, val, &mut self.ram)
     }
 
-    // I-cache tracked fetch (override default)
+    // I-cache tracked fetch — single word lookup (1 hit/miss per instruction, correct CPI)
     fn fetch32(&mut self, addr: u32) -> Result<u32, FalconError> {
         let misses_before = self.icache.stats.misses;
-        let b0 = self.icache.read_byte_ro(addr, &self.ram)?;
-        let b1 = self.icache.read_byte_ro(addr + 1, &self.ram)?;
-        let b2 = self.icache.read_byte_ro(addr + 2, &self.ram)?;
-        let b3 = self.icache.read_byte_ro(addr + 3, &self.ram)?;
+        let word = self.icache.read_word_ro(addr, &self.ram)?;
         let delta = self.icache.stats.misses - misses_before;
         if delta > 0 {
             *self.icache.stats.miss_pcs.entry(addr).or_insert(0) += delta;
         }
         self.instruction_count += 1;
-        Ok(u32::from_le_bytes([b0, b1, b2, b3]))
+        Ok(word)
     }
 
-    // D-cache tracked reads (override default)
+    // D-cache tracked reads — single lookup per access (correct hit/miss/cycle counts)
     fn dcache_read8(&mut self, addr: u32) -> Result<u8, FalconError> {
         self.dcache.read_byte_rw(addr, &mut self.ram)
     }
     fn dcache_read16(&mut self, addr: u32) -> Result<u16, FalconError> {
-        let lo = self.dcache.read_byte_rw(addr, &mut self.ram)?;
-        let hi = self.dcache.read_byte_rw(addr + 1, &mut self.ram)?;
-        Ok(u16::from_le_bytes([lo, hi]))
+        self.dcache.read_halfword_rw(addr, &mut self.ram)
     }
     fn dcache_read32(&mut self, addr: u32) -> Result<u32, FalconError> {
-        let b0 = self.dcache.read_byte_rw(addr, &mut self.ram)?;
-        let b1 = self.dcache.read_byte_rw(addr + 1, &mut self.ram)?;
-        let b2 = self.dcache.read_byte_rw(addr + 2, &mut self.ram)?;
-        let b3 = self.dcache.read_byte_rw(addr + 3, &mut self.ram)?;
-        Ok(u32::from_le_bytes([b0, b1, b2, b3]))
+        self.dcache.read_word_rw(addr, &mut self.ram)
     }
 }
 
@@ -843,7 +1037,6 @@ mod tests {
         assert_eq!(ctrl.dcache.stats.ram_write_bytes, 16,
             "writeback should write exactly line_size bytes to RAM");
     }
-}
 
     // ── Tipos de associatividade ──────────────────────────────────────────────
 
@@ -968,3 +1161,4 @@ mod tests {
         ctrl.dcache_read8(0x80).unwrap(); // miss → evicta LRU
         assert_eq!(ctrl.dcache.stats.evictions, 1);
     }
+}
