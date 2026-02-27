@@ -154,6 +154,12 @@ fn render_fields(
         field_item(ConfigField::MissPenalty, "  Miss Penalty:  ",
             format!("{} cyc", pending.miss_penalty),
             cs(pending.miss_penalty == current.miss_penalty)),
+        field_item(ConfigField::AssocPenalty, "  Assoc Penalty: ",
+            format!("{} cyc/way", pending.assoc_penalty),
+            cs(pending.assoc_penalty == current.assoc_penalty)),
+        field_item(ConfigField::TransferWidth, "  Transfer Width:",
+            format!("{} B", pending.transfer_width),
+            cs(pending.transfer_width == current.transfer_width)),
         ListItem::new(Line::raw("")),
         ListItem::new(Line::from(Span::styled(
             if active.is_some() {

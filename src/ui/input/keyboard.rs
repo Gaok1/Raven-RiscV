@@ -521,6 +521,8 @@ fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig) -> String {
         s.push_str(&format!("{prefix}.write_alloc={:?}\n", cfg.write_alloc));
         s.push_str(&format!("{prefix}.hit_latency={}\n", cfg.hit_latency));
         s.push_str(&format!("{prefix}.miss_penalty={}\n", cfg.miss_penalty));
+        s.push_str(&format!("{prefix}.assoc_penalty={}\n", cfg.assoc_penalty));
+        s.push_str(&format!("{prefix}.transfer_width={}\n", cfg.transfer_width));
     }
     s
 }
@@ -574,6 +576,11 @@ fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<Ca
         other => return Err(format!("Unknown write_alloc: {other}")),
     };
 
+    let assoc_penalty = map.get(&format!("{prefix}.assoc_penalty"))
+        .and_then(|v| v.parse::<u64>().ok()).unwrap_or(1);
+    let transfer_width = map.get(&format!("{prefix}.transfer_width"))
+        .and_then(|v| v.parse::<u32>().ok()).unwrap_or(8).max(1);
+
     Ok(CacheConfig {
         size: get_usize("size")?,
         line_size: get_usize("line_size")?,
@@ -583,5 +590,7 @@ fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<Ca
         write_alloc,
         hit_latency: get_u64("hit_latency")?,
         miss_penalty: get_u64("miss_penalty")?,
+        assoc_penalty,
+        transfer_width,
     })
 }

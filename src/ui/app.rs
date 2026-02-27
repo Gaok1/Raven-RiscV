@@ -57,16 +57,17 @@ pub(super) enum CacheSubtab {
 pub(super) enum ConfigField {
     Size, LineSize, Associativity,
     Replacement, WritePolicy, WriteAlloc,
-    HitLatency, MissPenalty,
+    HitLatency, MissPenalty, AssocPenalty, TransferWidth,
 }
 
 impl ConfigField {
     pub(super) fn is_numeric(self) -> bool {
-        matches!(self, Self::Size | Self::LineSize | Self::Associativity | Self::HitLatency | Self::MissPenalty)
+        matches!(self, Self::Size | Self::LineSize | Self::Associativity | Self::HitLatency | Self::MissPenalty | Self::AssocPenalty | Self::TransferWidth)
     }
     pub(super) fn all_editable() -> &'static [ConfigField] {
         &[Self::Size, Self::LineSize, Self::Associativity, Self::Replacement,
-          Self::WritePolicy, Self::WriteAlloc, Self::HitLatency, Self::MissPenalty]
+          Self::WritePolicy, Self::WriteAlloc, Self::HitLatency, Self::MissPenalty,
+          Self::AssocPenalty, Self::TransferWidth]
     }
     /// Row index in the rendered fields list (3 = Sets which is read-only, skip it)
     pub(super) fn list_row(self) -> usize {
@@ -74,6 +75,7 @@ impl ConfigField {
             Self::Size => 0, Self::LineSize => 1, Self::Associativity => 2,
             Self::Replacement => 4, Self::WritePolicy => 5, Self::WriteAlloc => 6,
             Self::HitLatency => 7, Self::MissPenalty => 8,
+            Self::AssocPenalty => 9, Self::TransferWidth => 10,
         }
     }
     pub(super) fn from_list_row(row: usize) -> Option<Self> {
@@ -82,6 +84,7 @@ impl ConfigField {
             3 => None, // Sets is read-only
             4 => Some(Self::Replacement), 5 => Some(Self::WritePolicy), 6 => Some(Self::WriteAlloc),
             7 => Some(Self::HitLatency), 8 => Some(Self::MissPenalty),
+            9 => Some(Self::AssocPenalty), 10 => Some(Self::TransferWidth),
             _ => None,
         }
     }
@@ -628,6 +631,8 @@ impl App {
                     ConfigField::Associativity => { if let Ok(v) = s.parse::<usize>() { cfg.associativity = v.max(1); } }
                     ConfigField::HitLatency => { if let Ok(v) = s.parse::<u64>() { cfg.hit_latency = v.max(1); } }
                     ConfigField::MissPenalty => { if let Ok(v) = s.parse::<u64>() { cfg.miss_penalty = v; } }
+                    ConfigField::AssocPenalty => { if let Ok(v) = s.parse::<u64>() { cfg.assoc_penalty = v; } }
+                    ConfigField::TransferWidth => { if let Ok(v) = s.parse::<u32>() { cfg.transfer_width = v.max(1); } }
                     _ => {}
                 }
             }
@@ -687,6 +692,8 @@ impl App {
             ConfigField::Associativity => cfg.associativity.to_string(),
             ConfigField::HitLatency => cfg.hit_latency.to_string(),
             ConfigField::MissPenalty => cfg.miss_penalty.to_string(),
+            ConfigField::AssocPenalty => cfg.assoc_penalty.to_string(),
+            ConfigField::TransferWidth => cfg.transfer_width.to_string(),
             _ => String::new(),
         }
     }

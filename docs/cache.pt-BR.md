@@ -1,402 +1,258 @@
 # Simulação de cache
 
-O Falcon inclui um simulador simples de **I-cache + D-cache**, com estatísticas ao vivo e uma UI interativa para configuração.
+O Falcon inclui um simulador de **I-cache + D-cache** integrado. Enquanto seu programa roda, você pode acompanhar o cache se preenchendo, observar hits e misses em tempo real e experimentar configurações diferentes para entender seus trade-offs.
 
-Abra a aba **Cache** para acessar três subtabs:
+Abra a aba **Cache** para ver três subtabs:
 
-- **Stats** — inspecionar hit rate, padrões de miss, tráfego de RAM e custo em ciclos.
-- **View** — visualizar o conteúdo interno das linhas (sets × ways) em tempo real. Use ↑↓ para rolar verticalmente e ←→ (ou scroll horizontal do touchpad) para rolar horizontalmente quando houver muitas ways.
-- **Config** — ajustar tamanho/linha/associatividade e policies.
-
----
-
-## O que é uma cache? (conceito geral)
-
-Uma **cache** é uma memória pequena e rápida que guarda cópias de dados recentemente acessados da RAM (lenta). Quando o processador acessa um endereço:
-
-- **Hit** — o dado está na cache → acesso rápido (custo = `hit_latency` ciclos)
-- **Miss** — o dado não está na cache → a linha inteira é buscada da RAM → acesso lento (custo = `hit_latency + miss_penalty` ciclos)
-
-A eficiência da cache depende do **princípio de localidade**:
-- **Temporal**: se acessei o endereço X agora, provavelmente vou acessar X de novo em breve.
-- **Espacial**: se acessei X, provavelmente vou acessar X+4, X+8, … em breve.
+- **Stats** — hit rate, contagem de misses, tráfego de RAM e custo em ciclos para cada cache.
+- **View** — mapa ao vivo de todos os slots do cache: quais endereços estão armazenados, quais linhas estão sujas e o que a política de substituição está fazendo.
+- **Config** — ajustar tamanho, tamanho de linha, associatividade, política de escrita e parâmetros de latência.
 
 ---
 
-## Lógica de mapeamento (tag / index / offset)
+## O que é uma cache?
 
-Esta é a parte fundamental de qualquer cache de hardware.
+Uma **cache** é uma memória pequena e rápida entre o processador e a RAM. Em vez de ir até a RAM (lenta) a cada acesso, o processador verifica a cache primeiro.
 
-### Decomposição do endereço
+- **Hit** — o dado já está na cache → rápido (poucos ciclos)
+- **Miss** — o dado não está → o processador carrega uma **linha inteira** da RAM → lento (dezenas de ciclos)
 
-Todo endereço de 32 bits é dividido em três campos:
+A cache funciona porque programas tendem a reutilizar dados:
 
-```
- 31                 ...        offset+index   offset    0
-┌──────────────────────────────┬─────────────┬──────────┐
-│             TAG              │    INDEX    │  OFFSET  │
-└──────────────────────────────┴─────────────┴──────────┘
-```
+- **Localidade temporal** — se você leu um endereço agora, provavelmente vai lê-lo de novo em breve.
+- **Localidade espacial** — se você leu o endereço X, provavelmente vai ler X+4, X+8, … em breve (eles compartilham a mesma linha de cache).
 
-Dados os parâmetros da cache:
+Execute `cache_locality.fas` com a configuração padrão para ver os dois efeitos ao vivo.
 
-```
-sets        = size / (line_size × associativity)
-offset_bits = log₂(line_size)
-index_bits  = log₂(sets)
-tag_bits    = 32 - offset_bits - index_bits
-```
+---
 
-- **OFFSET** (bits `[offset_bits-1 : 0]`) — escolhe o **byte dentro da linha**. Se `line_size=8` → offset_bits=3 → bits [2:0].
-- **INDEX** (bits `[offset_bits+index_bits-1 : offset_bits]`) — seleciona **qual set** da cache. Se `sets=4` → index_bits=2 → bits [4:3].
-- **TAG** (bits `[31 : offset_bits+index_bits]`) — identifica **qual bloco de memória** está naquele set/way.
+## Como a cache é organizada
 
-### Exemplo com números reais
+### Sets, ways e linhas
 
-Config: `size=32, line_size=8, associativity=1`
+A cache é dividida em **sets**, cada um com **N ways** (slots). Quando o processador acessa um endereço:
+
+1. O endereço seleciona um **set** específico (um pequeno grupo de slots).
+2. Todos os N ways daquele set são verificados simultaneamente.
+3. **Hit** — encontrado. **Miss** — não encontrado: um slot é liberado (eviction) e a nova linha é carregada da RAM.
 
 ```
-sets        = 32 / (8 × 1) = 4
-offset_bits = log₂(8) = 3  →  bits [2:0]
-index_bits  = log₂(4) = 2  →  bits [4:3]
-tag_bits    = 32 - 3 - 2   = 27 → bits [31:5]
+Endereço → [ tag | índice do set | offset ]
+                        ↓
+              Set 5 → Way 0 | Way 1 | Way 2 | Way 3
+                      verificar os 4 slots ao mesmo tempo
 ```
 
-Endereço `0x1000` = `0001 0000 0000 0000` em binário:
+- **Offset** — qual byte dentro da linha (depende do tamanho da linha).
+- **Índice do set** — em qual grupo de slots procurar (depende do número de sets).
+- **Tag** — identifica de qual região da memória a linha veio.
 
-```
-TAG    = 0x1000 >> 5 = 0x80   (bits 31..5)
-INDEX  = (0x1000 >> 3) & 0x3  = 0  → Set 0
-OFFSET = 0x1000 & 0x7         = 0  → byte 0 dentro da linha
-```
+Você pode ver a tag (`T:XXXX`) e os bytes de dados de cada slot ao vivo na subtab **View**.
 
-A **linha carregada** cobre os endereços `0x1000–0x1007` (todos os bytes com o mesmo TAG+INDEX).
+### Tamanho da linha
 
-### Dois endereços entram em conflito quando...
+Um miss carrega uma **linha inteira** — não só o byte pedido. É aí que entra a localidade espacial: se seu código lê um array sequencialmente, o primeiro elemento causa um miss, mas os próximos vêm de graça da mesma linha.
 
-...têm o mesmo INDEX mas tags diferentes. Isso significa que ambos querem o **mesmo set**, mas carregam dados de regiões distintas da memória.
+- **Linha maior** → melhor para acesso sequencial; desperdiça largura de banda para acesso aleatório.
 
-```
-stride_mesmo_set = sets × line_size
-```
+### Número de sets
 
-Os endereços `A` e `A + stride_mesmo_set` sempre caem no mesmo set. Com `size=32, line_size=8, assoc=1`: stride = 4 × 8 = **32 bytes**. Ou seja, `0x0000` e `0x0020` são rivais no mesmo set.
+Mais sets → menos endereços competem pelo mesmo slot → menos **conflict misses**. Alterar o Tamanho total (mantendo Tamanho de Linha e Associatividade constantes) muda o número de sets.
 
 ---
 
 ## Tipos de associatividade
 
-A **associatividade** define quantas linhas (ways) existem em cada set, e portanto como o hardware resolve conflitos.
+**Associatividade** é o número de ways por set — quantas linhas podem coexistir no mesmo set.
 
-### 1. Mapeamento direto (`associativity = 1`)
+### Mapeamento direto (1-way)
 
-Cada set tem **exatamente 1 way**. Cada endereço mapeia para exatamente um slot na cache. Dois endereços com o mesmo INDEX sempre se expulsam.
-
-```
-Endereço A   → [ Set 2 | Way 0 ]  ← única opção
-Endereço B   → [ Set 2 | Way 0 ]  ← mesma opção! → miss garantido se A e B são acessados alternadamente
-```
-
-**Prós:** hardware simples, barato, acesso de 1 ciclo (sem comparar tags de múltiplas ways).
-**Contras:** sofredor de **conflict misses** — dois endereços rivais se expulsam infinitamente, mesmo que a cache tenha capacidade livre em outros sets.
-
-Experimente com `cache_conflict.fas` e `cache_direct_mapped_1kb.fcache`.
-
-### 2. Mapeamento por conjuntos (`associativity = N`, com N > 1)
-
-Cada set tem **N ways**. O hardware testa todos os N tags em paralelo. Um novo endereço pode entrar em qualquer das N ways vagas — a política de substituição escolhe a vítima quando o set está cheio.
+Cada endereço tem **exatamente um slot**. Se dois endereços caem no mesmo set, eles ficam se expulsando.
 
 ```
-Endereço A   → [ Set 2 | Way 0 ✓ ]   ← A entra na way 0
-Endereço B   → [ Set 2 | Way 1 ✓ ]   ← B entra na way 1 → sem conflito!
-Endereço C   → [ Set 2 | ? ]         ← set cheio → eviction por política (LRU, FIFO…)
+addr 0x0000 → set 0, way 0  (única opção)
+addr 0x0400 → set 0, way 0  (mesmo slot! → conflito)
 ```
 
-**Prós:** elimina a maioria dos conflict misses.
-**Contras:** hardware mais complexo (compara N tags, precisa de política de substituição).
+Hardware simples, mas vulnerável a **conflict misses**. Experimente com `cache_conflict.fas` + `cache_direct_mapped_1kb.fcache`.
 
-Valores típicos: 2-way, 4-way, 8-way. Use `cache_large_4kb_4way.fcache` para experimentar.
+### Mapeamento por conjuntos (N-way, N > 1)
 
-### 3. Totalmente associativo (`associativity = sets` → `sets = 1`)
-
-Há **um único set** com todas as ways. Qualquer linha pode ir para qualquer lugar. Sem INDEX — o hardware compara o endereço com **todos** os tags em paralelo.
+Cada set tem N slots. Uma nova linha ocupa qualquer slot livre; só quando o set está cheio a política de substituição escolhe uma vítima.
 
 ```
-sets = size / (line_size × associativity) = 1   →   index_bits = 0
+addr 0x0000 → set 0, way 0  ✓
+addr 0x0400 → set 0, way 1  ✓  (sem conflito!)
+addr 0x0800 → set 0, ?      → set cheio → eviction
 ```
 
-**Prós:** sem conflict misses.
-**Contras:** circuito de comparação muito grande para caches grandes; usado principalmente em TLBs e caches pequenas especiais.
+Mais ways → menos conflict misses, um pouco mais de trabalho por acesso. Use `cache_large_4kb_4way.fcache` para experimentar.
 
-Para simular no Falcon: configure `associativity` igual ao número de linhas (`size / line_size`), e o simulador terá `sets=1`.
+### Totalmente associativo
+
+Quando a Associatividade é igual ao número total de linhas, há apenas um set e qualquer linha pode ir para qualquer lugar. Sem conflict misses, mas caro demais para caches grandes — usado principalmente em caches pequenas especiais.
 
 ---
 
 ## Tipos de miss
 
-| Tipo | Também chamado | Quando ocorre |
-|------|---------------|---------------|
-| **Cold miss** | Compulsory miss | Primeira vez que um endereço é acessado (a linha nunca foi carregada) |
-| **Capacity miss** | — | A cache é pequena demais para o working set; linhas são evictadas antes de serem reutilizadas |
-| **Conflict miss** | Interference miss | Dois endereços rivais (mesmo INDEX) se expulsam repetidamente, mesmo com capacidade livre em outros sets |
-
-**Como identificar no simulador:**
-- Cold misses: execute o programa uma vez; os primeiros acessos a cada linha sempre geram miss.
-- Capacity misses: aumente `size` e veja se o miss rate cai significativamente.
-- Conflict misses: aumente `associativity` (mantendo `size`) e veja se o miss rate cai.
+| Tipo | Quando ocorre | Como investigar |
+|------|---------------|-----------------|
+| **Cold miss** | Primeiro acesso a qualquer endereço — a linha nunca foi carregada | Sempre ocorre no início do programa; inevitável |
+| **Capacity miss** | O working set é maior que a cache; linhas são evictadas antes de serem reutilizadas | Aumente o **Tamanho** — se o miss rate cair, a capacidade era o gargalo |
+| **Conflict miss** | Dois endereços no mesmo set ficam se expulsando | Aumente a **Associatividade** (mesmo Tamanho) — se o miss rate cair, conflitos eram o problema |
 
 ---
 
-## Políticas de substituição (`replacement`)
+## Políticas de substituição
 
-Quando um set está cheio e ocorre um miss, o hardware precisa **escolher uma vítima** (uma linha para expulsar). As políticas disponíveis são:
+Quando um set está cheio e ocorre um miss, o hardware precisa escolher uma vítima para expulsar. Políticas disponíveis:
 
-| Política | Estratégia | Uso típico |
-|----------|-----------|-----------|
-| `Lru` | Remove a **menos recentemente usada** (Least Recently Used) | Default em CPUs modernas |
-| `Fifo` | Remove a **mais antiga instalada** (First In, First Out) | Mais simples que LRU |
-| `Random` | Escolhe **pseudo-aleatoriamente** | Fácil de implementar em hardware |
-| `Lfu` | Remove a **menos frequentemente usada** (Least Frequently Used) | Bom quando frequência é previsível |
-| `Clock` | Aproxima LRU com um "ref bit" por linha; varre em círculo | Usado em OSes para TLB/page eviction |
-| `Mru` | Remove a **mais recentemente usada** | Útil em varreduras sequenciais (scan) |
+| Política | Expulsa... | Observações |
+|----------|-----------|-------------|
+| **LRU** | A menos recentemente usada | Padrão na maioria das CPUs; geralmente a melhor escolha |
+| **FIFO** | A linha instalada há mais tempo | Mais simples que LRU; desempenho similar |
+| **LFU** | A menos frequentemente acessada | Boa quando a frequência de acesso é estável |
+| **Clock** | Uma linha não usada recentemente (aproxima LRU) | Usado em substituição de páginas de SO |
+| **MRU** | A mais recentemente usada | Surpreendentemente boa para varreduras sequenciais grandes |
+| **Random** | Uma linha aleatória | Hardware simples; desempenho médio razoável |
 
-**LRU** é geralmente o mais eficiente para padrões de acesso típicos. **MRU** pode surpreender: numa varredura sequencial grande, a linha mais recente é a que menos vai ser reutilizada.
+### Lendo a subtab View
 
-Na **View** do Falcon, cada linha exibe metadados da política:
-- `r:0` = posição mais recente (LRU/FIFO) ou a ser evictada (MRU)
-- `f:N` = frequência de acesso (LFU)
-- `>R` = ponteiro do relógio + ref bit setado (Clock)
+Cada slot mostra um pequeno indicador que revela o que a política de substituição está "pensando." As cores fazem o trabalho principal: **ciano** = slot está seguro, **vermelho** = slot será o próximo a ser expulso.
+
+| Política | Indicador | O que significa |
+|----------|-----------|-----------------|
+| **LRU** | `r:N` | Rank de recência — 0 = acabou de ser usado **(ciano, seguro)**, maior = mais antigo **(vermelho, evict next)** |
+| **FIFO** | `r:N` | Ordem de chegada — 0 = mais novo **(ciano, seguro)**, maior = mais antigo **(vermelho, evict next)** |
+| **MRU** | `r:N` | Rank de recência, mas invertido — 0 = acabou de ser usado **(vermelho, será expulso!)**, maior = mais antigo **(ciano, seguro)** |
+| **LFU** | `f:N` | Contagem de acessos — o slot com a **menor contagem fica vermelho** (evict next) |
+| **Clock** | `>` / `R` | `>` = ponteiro do relógio está aqui; `R` = usado recentemente (protegido); `>` sem `R` = será expulso |
+| **Random** | `??` | Sem ordenação — vítima escolhida aleatoriamente |
 
 ---
 
-## Políticas de escrita (`write_policy` e `write_alloc`)
+## Políticas de escrita (apenas D-cache)
 
-Essas configurações só afetam o **D-cache** (o I-cache é somente leitura).
+Essas configurações controlam o que acontece quando a CPU executa uma instrução de **store**.
 
-### Write-Back vs Write-Through
+### Write-Back (padrão)
 
-O que acontece quando a CPU executa um **store** (escrita)?
+O store atualiza **apenas a linha de cache**; a linha fica marcada como **dirty** (indicada pelo `D` amarelo na subtab View). A RAM só é atualizada quando essa linha dirty for eventualmente evictada.
 
-#### Write-Through
+- Muito menos tráfego na RAM quando a mesma variável é escrita várias vezes.
+- Observe os sinalizadores `D` na View e o contador `WB` em Stats.
 
-A escrita vai **simultaneamente** para a cache E para a RAM.
+### Write-Through
 
-```
-CPU: sw t0, 0(t1)
-  → cache[set][way].data atualizado
-  → RAM[endereço] atualizado  ← imediatamente
-```
+Cada store atualiza **tanto a cache quanto a RAM** imediatamente. Nenhuma linha fica dirty.
 
-**RAM W** sobe a cada store. Simples de implementar, mas gera tráfego intenso na RAM.
-
-#### Write-Back
-
-A escrita vai **apenas para a cache**; a linha fica marcada como **dirty (D)**. A RAM só é atualizada quando a linha dirty for evictada.
-
-```
-CPU: sw t0, 0(t1)
-  → cache[set][way].data atualizado
-  → linha marcada dirty (D = amarelo na View)
-  → RAM intacta por enquanto
-
-  ... mais tarde, em eviction:
-  → linha dirty escrita na RAM (writeback)
-  → RAM W sobe apenas agora
-```
-
-**Prós:** muito menos tráfego na RAM enquanto há localidade temporal.
-**Contras:** complexidade de hardware (precisa rastrear dirty bits).
+- Mais fácil de raciocinar, mas `RAM W` cresce a cada store.
+- Use `cache_write_policy.fas` para comparar `RAM W` entre os dois modos.
 
 ### Write-Allocate vs No-Write-Allocate
 
-O que acontece quando um store causa **miss**?
+O que acontece quando um **store causa miss** (a linha alvo não está na cache)?
 
-#### Write-Allocate (write-allocate)
+- **Write-Allocate** — carrega a linha na cache primeiro, depois escreve. Melhor quando o mesmo endereço será lido ou escrito novamente.
+- **No-Write-Allocate** — escreve diretamente na RAM, sem passar pela cache. Bom para streams de escrita que não serão relidos.
 
-No miss de store: aloca a linha na cache (faz um line fill da RAM), depois atualiza a linha.
-
-```
-CPU: sw t0, 0(t1)  ← miss no endereço X
-  → carrega linha contendo X da RAM para a cache  (line fill)
-  → atualiza o byte em cache
-  → (write-back: marca dirty; write-through: escreve na RAM também)
-```
-
-**Vantagem:** se a CPU escrever naquele mesmo endereço mais tarde → hit.
-**Combinação típica:** `WriteBack + WriteAllocate`.
-
-#### No-Write-Allocate (write-around)
-
-No miss de store: **não** aloca linha na cache; escreve direto na RAM.
-
-```
-CPU: sw t0, 0(t1)  ← miss no endereço X
-  → RAM[X] atualizado diretamente
-  → cache não muda
-```
-
-**Vantagem:** não polui a cache com dados que provavelmente não serão lidos.
-**Combinação típica:** `WriteThrough + NoWriteAllocate`.
-
-### Combinações comuns
-
-| `write_policy`  | `write_alloc`     | Comportamento                                              |
-|-----------------|-------------------|------------------------------------------------------------|
-| WriteBack       | WriteAllocate     | Padrão moderno; minimiza RAM W; ideal para loops de leitura+escrita |
-| WriteThrough    | NoWriteAllocate   | Simples; alto RAM W; cache limpa (sem dirty lines)         |
-| WriteThrough    | WriteAllocate     | Incomum; fill na cache + escrita na RAM em cada store      |
-| WriteBack       | NoWriteAllocate   | Incomum; útil em streams de escrita sem releitura          |
-
-Experimente com `cache_write_policy.fas` e os arquivos `.fcache` correspondentes para ver o impacto no `RAM W` e nos contadores de writeback.
+Combinações comuns: **Write-Back + Write-Allocate** (padrão moderno) ou **Write-Through + No-Write-Allocate**.
 
 ---
 
-## Cache → Stats
+## Subtab Stats
 
-### Métricas (por cache)
+### Métricas por cache
 
-- Gauge **Hit%** — `hits / (hits + misses)`.
-- **H / M / MR / MPKI**
-  - `H`: hits (contagem)
-  - `M`: misses (contagem)
-  - `MR`: miss rate (%)
-  - `MPKI`: misses por 1000 instruções (`misses / instruções × 1000`)
-- **Acc / Evict / WB / Fills**
-  - `Acc`: acessos totais (`hits + misses`)
-  - `Evict`: evictions (contagem)
-  - `WB`: writebacks (apenas D-cache)
-  - `Fills`: line fills (derivado de `bytes_loaded / line_size`)
-- **RAM R / RAM W**
-  - `RAM R`: bytes lidos da RAM por line fills (`bytes_loaded`)
-  - `RAM W`: bytes realmente escritos na RAM (`ram_write_bytes`)
-- **CPU Stores** (apenas D-cache) — bytes escritos pela CPU via stores (`bytes_stored`).
-- **Cycles / Avg / CPI**
-  - `Cycles`: custo acumulado em ciclos de acessos ao cache
-  - `Avg`: média de ciclos por acesso (`cycles / acessos`)
-  - `CPI`: ciclos por instrução (`cycles / instruções`) — "contribuição de CPI" deste cache
+| Display | Significado |
+|---------|-------------|
+| Gauge Hit% | Fração dos acessos que encontraram o dado na cache |
+| `H` / `M` | Contagem de hits / Contagem de misses |
+| `MR` | Miss rate (%) |
+| `MPKI` | Misses por 1000 instruções — quanto menor, melhor |
+| `Acc` | Total de acessos |
+| `Evict` | Linhas removidas para abrir espaço |
+| `WB` | Writebacks: linhas dirty gravadas na RAM na eviction (apenas D-cache) |
+| `Fills` | Linhas carregadas da RAM (uma por miss) |
+| `RAM R` | Total de bytes lidos da RAM (fills de linha) |
+| `RAM W` | Total de bytes escritos na RAM (stores write-through + evictions dirty) |
+| `CPU Stores` | Bytes escritos por instruções store (apenas D-cache) |
+| `Cycles` | Total de ciclos gastos em operações de cache |
+| `Avg` | Média de ciclos por acesso |
+| `CPI` | Contribuição deste cache ao CPI geral |
+| `Cost model` | Custo de hit e miss com a configuração atual |
 
-### Top Miss PCs (I-Cache)
+### Barra de resumo do programa
 
-A tabela mostra quais **PCs de fetch** causaram misses no I-cache (ordenado por contagem). Use Up/Down (ou a roda do mouse) para rolar.
+Mostra os totais de **ambas** as caches: ciclos totais, CPI geral, contagem de instruções e as contribuições individuais de I-cache e D-cache.
+
+### Top Miss PCs
+
+Lista quais endereços de instrução causaram mais misses no I-cache. Use ↑↓ para rolar.
 
 ### Controles
 
-- **Reset** (`r`) — zera as estatísticas do cache (incluindo `miss_pcs` e `ram_write_bytes`).
-- **Pause/Resume** (`p`) — pausa/retoma a simulação (as estatísticas do cache param de atualizar enquanto estiver pausado).
-- **View scope** (`i`/`d`/`b`) — exibir I-cache, D-cache ou ambos.
-
-### O que entra em "RAM W"?
-
-`RAM W` conta **bytes escritos na RAM**, incluindo:
-
-- stores em write-through
-- writebacks de linhas dirty (write-back) em evictions
-- misses de store em write-back + no-write-allocate que escrevem direto na RAM
-
-Bytes "dirty" ainda dentro de uma linha de write-back **não** contam até serem escritos de volta.
+- `r` — **Reset** todos os contadores e histórico.
+- `p` — **Pausar / Retomar** a simulação.
+- `i` / `d` / `b` — Alternar a visão: só I-cache, só D-cache ou **A**mbos.
 
 ---
 
-## Cache → Config
+## Subtab Config
 
-A subtab Config mostra um painel para o **I-cache** e outro para o **D-cache**.
+### Como editar
 
-### Edição
+- **Clique em um número** para começar a editar; digite dígitos, `Backspace` para corrigir, `Enter` para confirmar, `Esc` para cancelar.
+- **Setas ◄ ►** (ou teclas Left/Right) alternam as opções em campos de política.
+- `Tab` / `↑` / `↓` navegam entre campos durante a edição.
+- Valores em **amarelo** indicam mudanças pendentes ainda não aplicadas à cache ativa.
 
-- Clique num **campo numérico**, digite números, `Backspace` apaga, `Enter` confirma, `Esc` cancela.
-- Em **enums**, clique para alternar ou use `◄/►` (Left/Right).
-- Use `Tab` / `↑` / `↓` para navegar entre campos enquanto edita.
-- Valores em amarelo indicam mudanças **pendentes** (diferentes da config ativa).
+### Campos
+
+| Campo | O que controla |
+|-------|----------------|
+| Size | Capacidade total em bytes — maior → menos capacity misses |
+| Line Size | Bytes por linha de cache — maior → melhor localidade espacial para acesso sequencial; desperdiça largura de banda para acesso aleatório. Deve ser potência de 2 e ≥ 4 |
+| Associativity | Ways por set — 1 = mapeamento direto; maior → menos conflict misses |
+| Replacement | Qual linha expulsar quando o set está cheio |
+| Write Policy | Write-Back ou Write-Through (apenas D-cache) |
+| Write Alloc | O que fazer num store miss: alocar na cache ou escrever direto na RAM (apenas D-cache) |
+| Hit Latency | Ciclos para um hit de cache — aumente para modelar caches mais lentas |
+| Miss Penalty | Ciclos extras esperando pela RAM num miss — faixa típica: 50–200 |
+| Assoc Penalty | Ciclos extras por way adicional (custo de verificar mais tags) — padrão: 1 |
+| Transfer Width | Largura do barramento de dados em bytes — mais largo = menos ciclos para transferir uma linha — padrão: 8 B |
 
 ### Presets
 
-Use **Small / Medium / Large** para carregar rapidamente presets.
+**Small / Medium / Large** carregam configurações pré-construídas — bons pontos de partida para experimentos.
 
 ### Apply
 
-- **Apply + Reset Stats** — recria os caches com a config pendente e zera stats/histórico.
-- **Apply Keep History** — recria os caches mas mantém o **histórico do gráfico** (contadores zeram).
+- **Apply + Reset Stats** — ativa a configuração e zera todos os contadores. Use para comparações antes/depois limpas.
+- **Apply Keep History** — ativa a configuração mas mantém o gráfico de hit rate para sobreposição.
 
-### Regras de validação (obrigatórias)
+### Validação
 
-- `line_size` é potência de 2 e `>= 4`
-- `size` é múltiplo de `(line_size * associativity)`
-- `sets = size / (line_size * associativity)` é potência de 2
-
-Obs.: write policies só fazem diferença no **D-cache** (o I-cache é somente leitura).
-
-### Regras de validação (explicadas)
-
-A UI exige essas regras para que o mapeamento tag/index/offset fique simples e "hardware-like":
-
-- `line_size` potência de 2 → `offset_bits = log₂(line_size)` é inteiro; linhas naturalmente alinhadas
-- `size` múltiplo de `(line_size × associativity)` → `sets` é inteiro (sem "meio set")
-- `sets` potência de 2 → o índice pode ser calculado por máscara: `index = (addr >> offset_bits) & (sets - 1)`
-
-Se uma configuração pendente quebrar alguma regra, o botão **Apply** mostra o erro e não aplica.
+O tamanho de linha deve ser potência de 2, e o tamanho total deve ser divisível em um número inteiro de sets. Se uma configuração pendente for inválida, o Apply mostra uma explicação do que precisa mudar.
 
 ---
 
-## Referência de configuração (.fcache)
+## Salvar e carregar configurações (.fcache)
 
-O Falcon consegue **importar/exportar** configurações de cache como um arquivo texto simples com pares `chave=valor`.
-
-- Na aba **Cache**: `Ctrl+L` importa um `.fcache` e `Ctrl+E` exporta a configuração pendente.
-- Linhas começando com `#` são comentários.
-- As chaves/valores de enum são **case-sensitive** e precisam bater exatamente com os nomes abaixo.
-
-O arquivo sempre tem duas configs:
-
-- `icache.*` — cache de instruções (só leitura; políticas de escrita são ignoradas)
-- `dcache.*` — cache de dados
-
-Ao importar, o Falcon exige **todas as chaves** nas duas configs; se faltar algo, aparece um erro do tipo `Missing icache.<chave>` / `Missing dcache.<chave>`.
-
-### Campos (o que significa cada termo)
-
-Campos numéricos são inteiros em base 10 (então `1024` é válido; `0x400` não é).
-
-- `size` (bytes) — capacidade total do cache em bytes. Aumentar `size` geralmente reduz **capacity misses**.
-- `line_size` (bytes) — quantos bytes em cada linha (bloco). Linha maior ajuda em **localidade espacial** (acesso sequencial), mas pode desperdiçar tráfego em acesso aleatório.
-- `associativity` (ways) — número de ways por set. 1 = mapeamento direto; `sets=1` = totalmente associativo. Aumentar associatividade reduz **conflict misses**.
-- `replacement` (enum) — política de substituição. Valores: `Lru`, `Fifo`, `Random`, `Lfu`, `Clock`, `Mru`.
-- `write_policy` (apenas D-cache) — `WriteBack` ou `WriteThrough`. Veja seção acima.
-- `write_alloc` (apenas D-cache) — `WriteAllocate` ou `NoWriteAllocate`. Veja seção acima.
-- `hit_latency` (ciclos) — custo em ciclos num hit. Alimenta `Cycles`, `Avg` e `CPI`.
-- `miss_penalty` (ciclos) — custo extra em ciclos num miss. Um setup didático comum: `hit_latency=1`, `miss_penalty=50`.
-
-### Exemplo completo (padrão 1 KB, 16 B, 2-way)
-
-```
-dcache.size=1024
-dcache.line_size=16
-dcache.associativity=2
-```
-
-Calculando:
-
-```
-bytes_por_set = line_size × associativity = 16 × 2 = 32 B
-sets          = size / bytes_por_set = 1024 / 32 = 32
-offset_bits   = log₂(16) = 4
-index_bits    = log₂(32) = 5
-tag_bits      = 32 - 4 - 5 = 23
-stride_mesmo_set = sets × line_size = 32 × 16 = 512 B
-```
-
-Endereços separados por 512 bytes brigam pelo mesmo set — ótimo para provocar conflict misses em aula.
+Use **Ctrl+E** (exportar) e **Ctrl+L** (importar) na aba Cache. O formato é texto simples `chave=valor` — você pode abrir e editar em qualquer editor de texto.
 
 ---
 
-## Arquivos de exemplo
+## Programas de exemplo
 
-Programas prontos para explorar o cache ficam em `Program Examples/`:
+Todos os exemplos estão em `Program Examples/`:
 
-- `cache_locality.fas` — varredura de array pequeno vs grande (sequencial vs stride), com pausas para você dar Reset nas stats entre fases.
-- `cache_conflict.fas` — padrão com 2 vs 3 linhas no mesmo set para mostrar conflict misses em cache por conjuntos.
-- `cache_write_policy.fas` — loop de stores para comparar `WriteBack` vs `WriteThrough` e `NoWriteAllocate`.
+- `cache_locality.fas` — acesso sequencial vs com stride; observe o hit rate mudar conforme o padrão de acesso varia.
+- `cache_conflict.fas` — dois endereços no mesmo set que se expulsam mesmo com capacidade livre em outros sets.
+- `cache_write_policy.fas` — loop com muitos stores; compare Write-Back vs Write-Through observando o `RAM W`.
 
-Configs prontas para importar (`.fcache`):
+Configs prontas para importar:
 
 - `cache_direct_mapped_1kb.fcache`
 - `cache_large_4kb_4way.fcache`

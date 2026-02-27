@@ -102,23 +102,23 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
 /// Full policy hint (for single-scope display).
 fn policy_hint_str(p: ReplacementPolicy) -> String {
     match p {
-        ReplacementPolicy::Lru   => "r:0=MRU  r:last=EVICT".into(),
-        ReplacementPolicy::Mru   => "r:0=EVICT!  r:last=safe".into(),
-        ReplacementPolicy::Fifo  => "r:0=newest  r:last=EVICT".into(),
-        ReplacementPolicy::Lfu   => "f:N  (min freq → evict)".into(),
-        ReplacementPolicy::Clock => "> =clock  R=ref(safe)  >+noR=EVICT".into(),
-        ReplacementPolicy::Random => "random eviction".into(),
+        ReplacementPolicy::Lru   => "r:N = recency rank  (cyan 0=just used / red N=evict next)".into(),
+        ReplacementPolicy::Mru   => "r:N = recency rank  (red 0=just used=EVICT / cyan N=safe)".into(),
+        ReplacementPolicy::Fifo  => "r:N = arrival order  (cyan 0=newest / red N=oldest=evict next)".into(),
+        ReplacementPolicy::Lfu   => "f:N = access count  (red=fewest accesses=evict next)".into(),
+        ReplacementPolicy::Clock => "> = clock pointer  R = recently used (protected)  > no R = evict next".into(),
+        ReplacementPolicy::Random => "random eviction — no priority ordering".into(),
     }
 }
 
 /// Short policy hint used when showing both caches side by side with different policies.
 fn policy_hint_short(p: ReplacementPolicy) -> &'static str {
     match p {
-        ReplacementPolicy::Lru   => "LRU(r:0=MRU)",
-        ReplacementPolicy::Mru   => "MRU(r:0=evict)",
-        ReplacementPolicy::Fifo  => "FIFO(r:0=new)",
-        ReplacementPolicy::Lfu   => "LFU(f:min=evict)",
-        ReplacementPolicy::Clock => "Clock(>=hand R=ref)",
+        ReplacementPolicy::Lru   => "LRU  r:N recency  cyan=safe  red=evict",
+        ReplacementPolicy::Mru   => "MRU  r:N recency  red=just-used=EVICT",
+        ReplacementPolicy::Fifo  => "FIFO  r:N order  cyan=newest  red=evict",
+        ReplacementPolicy::Lfu   => "LFU  f:N=count  red=fewest=evict",
+        ReplacementPolicy::Clock => "Clock  >=pointer  R=protected",
         ReplacementPolicy::Random => "Random",
     }
 }

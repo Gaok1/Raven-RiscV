@@ -22,7 +22,21 @@ pub(super) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn status_lines(app: &App) -> Vec<Line<'static>> {
-    vec![Line::from(status_spans(app)), command_line(app)]
+    vec![Line::from(status_spans(app)), cycle_line(app), command_line(app)]
+}
+
+fn cycle_line(app: &App) -> Line<'static> {
+    let total = app.run.mem.total_program_cycles();
+    let cpi   = app.run.mem.overall_cpi();
+    let instr = app.run.mem.instruction_count;
+    Line::from(vec![
+        Span::styled("\u{23f1} ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("Cycles:{total}"), Style::default().fg(Color::Cyan)),
+        Span::raw("  "),
+        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(Color::Magenta)),
+        Span::raw("  "),
+        Span::styled(format!("Instrs:{instr}"), Style::default().fg(Color::DarkGray)),
+    ])
 }
 
 fn status_spans(app: &App) -> Vec<Span<'static>> {

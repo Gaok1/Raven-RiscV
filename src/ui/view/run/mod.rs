@@ -23,7 +23,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])

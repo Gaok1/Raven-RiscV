@@ -16,15 +16,38 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8), // metric gauges (4 lines per cache + border)
+            Constraint::Length(9), // metric gauges (4 lines per cache + border)
+            Constraint::Length(1), // program summary line
             Constraint::Min(8),    // chart
             Constraint::Length(8), // miss-by-PC table
         ])
         .split(area);
 
     render_metrics(f, layout[0], app);
-    render_chart(f, layout[1], app);
-    render_miss_table(f, layout[2], app);
+    render_program_summary(f, layout[1], app);
+    render_chart(f, layout[2], app);
+    render_miss_table(f, layout[3], app);
+}
+
+fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
+    let total = app.run.mem.total_program_cycles();
+    let cpi   = app.run.mem.overall_cpi();
+    let instr = app.run.mem.instruction_count;
+    let i_cyc = app.run.mem.icache.stats.total_cycles;
+    let d_cyc = app.run.mem.dcache.stats.total_cycles;
+    let line = Line::from(vec![
+        Span::styled(" Program total \u{2014} ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("Cycles:{total}"), Style::default().fg(Color::Cyan)),
+        Span::raw("  "),
+        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(Color::Magenta)),
+        Span::raw("  "),
+        Span::styled(format!("Instrs:{instr}"), Style::default().fg(Color::DarkGray)),
+        Span::raw("  "),
+        Span::styled(format!("I$:{i_cyc}"), Style::default().fg(Color::Cyan)),
+        Span::raw(" + "),
+        Span::styled(format!("D$:{d_cyc}"), Style::default().fg(Color::Green)),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
 }
 
 fn render_metrics(f: &mut Frame, area: Rect, app: &App) {
@@ -165,6 +188,19 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     f.render_widget(
         Paragraph::new(Span::styled(line6, Style::default().fg(Color::Magenta))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
+    );
+
+    if inner.height < 7 {
+        return;
+    }
+
+    // Line 7: cost model summary
+    let hit_cyc  = cfg.tag_search_cycles();
+    let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
+    let line7 = format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc");
+    f.render_widget(
+        Paragraph::new(Span::styled(line7, Style::default().fg(Color::DarkGray))),
+        Rect::new(inner.x, inner.y + 6, inner.width, 1),
     );
 }
 

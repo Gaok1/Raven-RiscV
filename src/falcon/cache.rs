@@ -53,6 +53,10 @@ pub struct CacheConfig {
     pub hit_latency: u64,
     /// Extra cycles added on a cache miss (stall waiting for RAM)
     pub miss_penalty: u64,
+    /// Extra cycles per additional way beyond the first during tag search
+    pub assoc_penalty: u64,
+    /// Bus width in bytes; transfer cost = ceil(line_size / transfer_width)
+    pub transfer_width: u32,
 }
 
 impl CacheConfig {
@@ -126,6 +130,17 @@ impl CacheConfig {
     pub fn is_valid_config(&self) -> bool {
         self.validate().is_ok()
     }
+
+    /// Cycles consumed for a tag lookup: hit_latency + (ways-1) * assoc_penalty
+    pub fn tag_search_cycles(&self) -> u64 {
+        self.hit_latency + (self.associativity as u64).saturating_sub(1) * self.assoc_penalty
+    }
+
+    /// Cycles to transfer one cache line over the bus: ceil(line_size / transfer_width)
+    pub fn line_transfer_cycles(&self) -> u64 {
+        let w = self.transfer_width.max(1) as u64;
+        ((self.line_size as u64) + w - 1) / w
+    }
 }
 
 impl Default for CacheConfig {
@@ -139,6 +154,8 @@ impl Default for CacheConfig {
             write_alloc: WriteAllocPolicy::WriteAllocate,
             hit_latency: 1,
             miss_penalty: 50,
+            assoc_penalty: 1,
+            transfer_width: 8,
         }
     }
 }
@@ -392,6 +409,7 @@ impl Cache {
                     self.stats.ram_write_bytes += 1;
                 }
                 self.stats.writebacks += 1;
+                self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles(); // dirty eviction cost
             }
         }
 
@@ -416,12 +434,12 @@ impl Cache {
 
         if let Some(way) = self.sets[idx].lookup(tag) {
             self.stats.hits += 1;
-            self.stats.total_cycles += self.config.hit_latency;
+            self.stats.total_cycles += self.config.tag_search_cycles();
             self.sets[idx].touch(way, self.config.replacement);
             return Ok(self.sets[idx].lines[way].data[offset]);
         }
         self.stats.misses += 1;
-        self.stats.total_cycles += self.config.hit_latency + self.config.miss_penalty;
+        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
         self.allocate_ro(addr, ram)?;
         let way = self.sets[idx].lookup(tag).unwrap();
         Ok(self.sets[idx].lines[way].data[offset])
@@ -438,12 +456,12 @@ impl Cache {
 
         if let Some(way) = self.sets[idx].lookup(tag) {
             self.stats.hits += 1;
-            self.stats.total_cycles += self.config.hit_latency;
+            self.stats.total_cycles += self.config.tag_search_cycles();
             self.sets[idx].touch(way, self.config.replacement);
             return Ok(self.sets[idx].lines[way].data[offset]);
         }
         self.stats.misses += 1;
-        self.stats.total_cycles += self.config.hit_latency + self.config.miss_penalty;
+        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
         self.allocate_rw(addr, ram)?;
         let way = self.sets[idx].lookup(tag).unwrap();
         Ok(self.sets[idx].lines[way].data[offset])
@@ -466,14 +484,17 @@ impl Cache {
                 self.stats.bytes_stored += 1;
                 if let Some(way) = hit_way {
                     self.stats.hits += 1;
-                    self.stats.total_cycles += self.config.hit_latency;
+                    // tag_search (cache lookup) + miss_penalty (write-through RAM write)
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
                     self.sets[idx].lines[way].data[offset] = val;
                     self.sets[idx].touch(way, self.config.replacement);
                 } else {
                     self.stats.misses += 1;
-                    self.stats.total_cycles += self.config.miss_penalty;
+                    // tag_search (tag lookup) + miss_penalty (RAM write)
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
                     if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
                         self.allocate_rw(addr, ram)?;
+                        self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles(); // fill extra
                         if let Some(way) = self.sets[idx].lookup(tag) {
                             self.sets[idx].lines[way].data[offset] = val;
                         }
@@ -484,13 +505,13 @@ impl Cache {
                 self.stats.bytes_stored += 1;
                 if let Some(way) = hit_way {
                     self.stats.hits += 1;
-                    self.stats.total_cycles += self.config.hit_latency;
+                    self.stats.total_cycles += self.config.tag_search_cycles();
                     self.sets[idx].lines[way].data[offset] = val;
                     self.sets[idx].lines[way].dirty = true;
                     self.sets[idx].touch(way, self.config.replacement);
                 } else {
                     self.stats.misses += 1;
-                    self.stats.total_cycles += self.config.hit_latency + self.config.miss_penalty;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
                     if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
                         self.allocate_rw(addr, ram)?;
                         if let Some(way) = self.sets[idx].lookup(tag) {
@@ -564,15 +585,15 @@ impl Cache {
 pub fn cache_presets(icache: bool) -> [CacheConfig; 3] {
     if icache {
         [
-            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50 },
-            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50 },
-            CacheConfig { size: 4096, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50 },
+            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 4096, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
         ]
     } else {
         [
-            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100 },
-            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100 },
-            CacheConfig { size: 8192, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100 },
+            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 8192, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
         ]
     }
 }
@@ -629,6 +650,15 @@ impl CacheController {
         self.icache = Cache::new(icfg);
         self.dcache = Cache::new(dcfg);
         self.reset_stats();
+    }
+
+    pub fn total_program_cycles(&self) -> u64 {
+        self.icache.stats.total_cycles + self.dcache.stats.total_cycles
+    }
+
+    pub fn overall_cpi(&self) -> f64 {
+        if self.instruction_count == 0 { return 0.0; }
+        self.total_program_cycles() as f64 / self.instruction_count as f64
     }
 
     /// Direct RAM read (no cache tracking) — used by UI rendering.
@@ -745,6 +775,7 @@ mod tests {
             write_policy: WritePolicy::WriteBack,
             write_alloc: WriteAllocPolicy::WriteAllocate,
             hit_latency: 1, miss_penalty: 10,
+            assoc_penalty: 1, transfer_width: 8,
         }
     }
 
@@ -754,6 +785,7 @@ mod tests {
             replacement: ReplacementPolicy::Lru,
             write_policy, write_alloc,
             hit_latency: 1, miss_penalty: 10,
+            assoc_penalty: 1, transfer_width: 8,
         }
     }
 
@@ -822,6 +854,7 @@ mod tests {
             write_policy: WritePolicy::WriteBack,
             write_alloc: WriteAllocPolicy::WriteAllocate,
             hit_latency: 1, miss_penalty: 10,
+            assoc_penalty: 1, transfer_width: 8,
         }
     }
 
