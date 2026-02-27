@@ -1,7 +1,6 @@
 use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
 use crate::ui::app::{App, CacheScope, CacheSubtab, EditorMode, MemRegion, RunSpeed, Tab};
 use crate::ui::view::docs::docs_body_line_count;
-use arboard::Clipboard;
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use rfd::FileDialog as OSFileDialog;
 use std::{collections::HashMap, io, time::Instant};
@@ -81,7 +80,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             if ctrl && matches!(key.code, KeyCode::Char('c')) && matches!(app.tab, Tab::Editor) {
                 if let Some(text) = app.editor.buf.selected_text() {
-                    if let Ok(mut clip) = Clipboard::new() {
+                    if let Some(clip) = app.clipboard.as_mut() {
                         let _ = clip.set_text(text);
                     }
                 }
@@ -165,7 +164,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             if ctrl && matches!(key.code, KeyCode::Char('c')) && matches!(app.tab, Tab::Editor) {
                 if let Some(text) = app.editor.buf.selected_text() {
-                    if let Ok(mut clip) = Clipboard::new() {
+                    if let Some(clip) = app.clipboard.as_mut() {
                         let _ = clip.set_text(text);
                     }
                 }

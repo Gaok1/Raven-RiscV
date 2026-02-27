@@ -10,13 +10,15 @@ use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
 };
+use arboard::Clipboard;
 use ratatui::{DefaultTerminal, layout::Rect};
 use std::{
     io,
     time::{Duration, Instant},
 };
+use std::sync::atomic::AtomicBool;
 #[cfg(unix)]
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, atomic::Ordering};
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(super) enum Tab {
@@ -308,6 +310,9 @@ pub struct App {
 
     // Program I/O console (shared across tabs)
     pub(super) console: Console,
+
+    // Persistent clipboard — must stay alive on Linux/X11 to retain ownership
+    pub(super) clipboard: Option<Clipboard>,
 }
 
 impl App {
@@ -412,6 +417,7 @@ impl App {
             hover_tab: None,
             hover_run_button: None,
             console: Console::default(),
+            clipboard: Clipboard::new().ok(),
         }
     }
 
