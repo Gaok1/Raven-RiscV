@@ -1,0 +1,18 @@
+# FALCON-ASM Cache Config v1
+icache.size=4096
+icache.line_size=16
+icache.associativity=4
+icache.replacement=Lru
+icache.write_policy=WriteBack
+icache.write_alloc=WriteAllocate
+icache.hit_latency=1
+icache.miss_penalty=50
+dcache.size=4096
+dcache.line_size=16
+dcache.associativity=4
+dcache.replacement=Lru
+dcache.write_policy=WriteBack
+dcache.write_alloc=WriteAllocate
+dcache.hit_latency=1
+dcache.miss_penalty=50
+

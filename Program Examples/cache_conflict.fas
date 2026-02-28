@@ -1,0 +1,48 @@
+.data
+title:       .asciz "CACHE: Conflito (mesmo set)"
+phase_a:     .asciz "FASE A: 2 linhas no mesmo set (2-way deve segurar ambas)."
+phase_b:     .asciz "FASE B: 3 linhas no mesmo set (2-way vai thrash -> muitos misses)."
+howto:       .asciz "Dica: Reset em Cache -> Stats e aperte Enter para medir."
+done:        .asciz "Fim."
+wait_buf:    .space 64
+
+.align 16
+buf:         .space 1536     # offsets 0, 512, 1024 (mesmo set no default: 1KB/16B/2-way)
+
+.text
+    printStrLn title
+
+    # --- Fase A (2 linhas) ---
+    printStrLn phase_a
+    printStrLn howto
+    read wait_buf
+
+    la   t0, buf
+    addi t1, t0, 0
+    addi t2, t0, 512
+    li   t3, 20000
+loop_a:
+    lw   t4, 0(t1)
+    lw   t5, 0(t2)
+    addi t3, t3, -1
+    bne  t3, zero, loop_a
+
+    # --- Fase B (3 linhas) ---
+    printStrLn phase_b
+    printStrLn howto
+    read wait_buf
+
+    addi t6, t0, 1024
+    li   t3, 20000
+loop_b:
+    lw   t4, 0(t1)
+    lw   t5, 0(t2)
+    lw   s0, 0(t6)
+    addi t3, t3, -1
+    bne  t3, zero, loop_b
+
+    printStrLn done
+    li a0, 0
+    li a7, 93        # exit
+    ecall
+

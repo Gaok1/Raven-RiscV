@@ -1,0 +1,40 @@
+[package]
+name = "falconasm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ratatui = { version = "0.28", features = ["all-widgets"] }
+crossterm = "0.29"
+thiserror = "1"
+comfy-table = "7"
+getrandom = { version = "0.3", features = ["std"] }
+unicode-truncate = "1"
+
+[profile.dev]
+incremental = false
+
+[profile.test]
+incremental = false
+
+[profile.release]
+opt-level = 3        # máxima optmizing
+lto = "fat"          # complete LTO  
+codegen-units = 1    # better perform
+panic = "abort"      # less overhead
+debug = false
+incremental = false
+
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd     = "0.15"
+arboard = "3"
+
+# Linux: arboard sem X11/Wayland obrigatório (usa o que estiver disponível)
+[target.'cfg(target_os = "linux")'.dependencies]
+rfd     = "0.15"
+arboard = { version = "3", default-features = false }
+
+# SIGINT handling no Unix (WSL2 envia SIGINT mesmo em raw-mode via ConPTY)
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"

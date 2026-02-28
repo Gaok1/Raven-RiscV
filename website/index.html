@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Falcon ASM — RISC-V Learning Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">
+        <img src="falcon_logo.png" alt="Falcon ASM" class="nav-logo-img" />
+        <span class="logo-text">Falcon<span class="logo-asm">ASM</span></span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#cache">Cache</a></li>
+        <li><a href="#examples">Examples</a></li>
+        <li><a href="#quickstart">Quick Start</a></li>
+      </ul>
+      <a href="https://github.com/Gaok1/FALCON-ASM" class="btn btn-outline nav-cta" target="_blank" rel="noopener">
+        View on GitHub
+      </a>
+      <button class="nav-hamburger" id="navHamburger" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- MOBILE NAV OVERLAY -->
+  <nav class="nav-mobile" id="navMobile" aria-hidden="true">
+    <a href="#features">Features</a>
+    <a href="#cache">Cache</a>
+    <a href="#examples">Examples</a>
+    <a href="#quickstart">Quick Start</a>
+    <a href="https://github.com/Gaok1/FALCON-ASM" class="nav-mobile-cta" target="_blank" rel="noopener">View on GitHub ↗</a>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-bg">
+      <div class="grid-lines"></div>
+      <div class="glow glow-1"></div>
+      <div class="glow glow-2"></div>
+    </div>
+
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        RV32I + M · Built with Rust
+      </div>
+
+      <h1 class="hero-title">
+        See every bit.<br />
+        <span class="gradient-text">Understand every step.</span>
+      </h1>
+
+      <p class="hero-desc">
+        Falcon ASM is a complete RISC-V platform — assembler, emulator, and cache simulator
+        in one terminal application. Write assembly, step through execution, and observe
+        exactly how your code interacts with registers, memory, and the cache hierarchy.
+      </p>
+
+      <div class="hero-actions">
+        <a href="#quickstart" class="btn btn-primary">
+          <span>Get Started</span>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a href="#examples" class="btn btn-ghost">Browse Examples</a>
+      </div>
+
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-num">47</span>
+          <span class="stat-label">Instructions</span>
+        </div>
+        <div class="stat-div"></div>
+        <div class="stat">
+          <span class="stat-num">15+</span>
+          <span class="stat-label">Pseudo-instructions</span>
+        </div>
+        <div class="stat-div"></div>
+        <div class="stat">
+          <span class="stat-num">I+D</span>
+          <span class="stat-label">Cache Simulation</span>
+        </div>
+        <div class="stat-div"></div>
+        <div class="stat">
+          <span class="stat-num">RV32I</span>
+          <span class="stat-label">Architecture</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- FALCON VISUAL -->
+    <div class="hero-visual">
+      <div class="falcon-wrap">
+        <div class="falcon-ring"></div>
+        <img src="falcon_logo.png" alt="Falcon ASM mascot" class="falcon-img" />
+        <div class="falcon-traces">
+          <div class="trace"></div>
+          <div class="trace"></div>
+          <div class="trace"></div>
+          <div class="trace"></div>
+          <div class="trace"></div>
+          <div class="trace"></div>
+          <div class="trace"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Platform</span>
+        <h2>Everything you need to learn RISC-V</h2>
+        <p>Falcon ships as a complete, self-contained environment — no extra toolchains needed.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card feature-card--large">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="5" width="22" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 10h22M8 14h4M8 18h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Integrated IDE</h3>
+          <p>Write and assemble RISC-V code in a built-in editor with syntax highlighting. Import and export <code>.asm</code>, <code>.fas</code>, and binary <code>.bin</code> files. Press <kbd>Ctrl+R</kbd> to assemble instantly.</p>
+          <div class="feature-tag-row">
+            <span class="tag">Syntax Highlighting</span>
+            <span class="tag">Import / Export</span>
+            <span class="tag">Ctrl+R Build</span>
+          </div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="10" stroke="currentColor" stroke-width="1.5"/><path d="M14 9v5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Step-by-Step Execution</h3>
+          <p>Single-step through every instruction. Pause, rewind, and inspect how each operation mutates the machine state.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="4" y="4" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="4" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="16" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="16" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h3>Register &amp; Memory Panels</h3>
+          <p>Live views of all 32 registers (<code>x0–x31</code> with ABI aliases) and memory contents, updated on every step.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 6h16v4H6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 10v12M14 10v12M20 10v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Instruction Decoder</h3>
+          <p>See the exact bit-field layout of every instruction — opcode, rd, rs1, rs2, funct3, funct7, and immediates — decoded at a glance.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M5 20L10 8l5 7 4-5 4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>RV32I + M Coverage</h3>
+          <p>Full base integer instruction set plus multiply/divide. Arithmetic, loads, stores, branches, jumps, and system calls — all supported.</p>
+        </div>
+
+        <div class="feature-card feature-card--large">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 22V8l8-4 8 4v14" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><rect x="11" y="16" width="6" height="6" rx="0.5" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h3>Pseudo-Instructions &amp; Syscalls</h3>
+          <p>Friendly pseudo-instructions like <code>push</code>, <code>pop</code>, <code>call</code>, <code>ret</code>, <code>la</code>, <code>print</code>, <code>printStrLn</code>, and <code>read</code> expand to real ISA operations — making I/O feel natural while teaching the real ABI underneath.</p>
+          <div class="feature-tag-row">
+            <span class="tag">Linux-style ABI</span>
+            <span class="tag">Teaching extensions</span>
+            <span class="tag">ecall / ebreak</span>
+          </div>
+        </div>
+
+        <div class="feature-card feature-card--large">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="4" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="15" y="4" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="16" width="10" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="15" y="16" width="10" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M8 7h2M20 7h2M8 19h2M20 19h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Cache Simulation</h3>
+          <p>A full I-cache + D-cache simulator tracks every instruction fetch and data access. Configure sets, ways, block size, and replacement policy, then watch hit/miss statistics update in real time as your program runs. A visual matrix view exposes the exact state of every cache line.</p>
+          <div class="feature-tag-row">
+            <span class="tag">I-Cache &amp; D-Cache</span>
+            <span class="tag">LRU / LFU / Clock / FIFO / MRU / Random</span>
+            <span class="tag">Live Stats</span>
+            <span class="tag">Visual Matrix</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CACHE SECTION -->
+  <section class="section section--dark" id="cache">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Cache Simulation</span>
+        <h2>Watch the cache learn your program</h2>
+        <p>Falcon's built-in cache simulator covers the full hierarchy — separate instruction and data caches, configurable geometry, and six replacement policies you can swap at runtime.</p>
+      </div>
+
+      <div class="audience-grid">
+        <div class="audience-text">
+          <ul class="audience-list" style="margin-top:0">
+            <li>
+              <span class="al-icon">⚡</span>
+              <div><strong>Separate I-Cache &amp; D-Cache</strong> — instruction fetches and data loads/stores are tracked independently, just like a real processor. Hit rates are reported per cache.</div>
+            </li>
+            <li>
+              <span class="al-icon">🔁</span>
+              <div><strong>Six Replacement Policies</strong> — LRU, FIFO, LFU, Clock, MRU, and Random. Switch policy mid-run and immediately see how it changes the hit rate on the Stats panel.</div>
+            </li>
+            <li>
+              <span class="al-icon">📊</span>
+              <div><strong>Live Statistics</strong> — hit count, miss count, and hit-rate percentage update on every access. Pause, reset, and filter by I-cache, D-cache, or both.</div>
+            </li>
+            <li>
+              <span class="al-icon">🗺️</span>
+              <div><strong>Visual Matrix View</strong> — the View subtab renders every set and way as a colour-coded grid. Valid bit, tag, and dirty state visible per cache line.</div>
+            </li>
+            <li>
+              <span class="al-icon">🔧</span>
+              <div><strong>Runtime Configuration</strong> — change sets, ways, block size, and write policy without restarting. Three built-in presets (Small / Medium / Large) for quick comparison.</div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="audience-card">
+          <div class="ac-header">
+            <span class="ac-dot ac-red"></span>
+            <span class="ac-dot ac-yellow"></span>
+            <span class="ac-dot ac-green"></span>
+            <span class="ac-title">Cache · Stats</span>
+          </div>
+          <div class="ac-body">
+            <div class="ac-row ac-row--head">
+              <span>Cache</span><span>Hits</span><span>Misses</span><span>Rate</span>
+            </div>
+            <div class="ac-row ac-row--hi">
+              <span class="ac-reg">I-Cache</span>
+              <span class="ac-changed">2 048</span>
+              <span>128</span>
+              <span class="ac-changed">94.1 %</span>
+            </div>
+            <div class="ac-row">
+              <span class="ac-reg">D-Cache</span>
+              <span class="ac-changed">840</span>
+              <span>160</span>
+              <span class="ac-changed">84.0 %</span>
+            </div>
+            <div class="ac-ellipsis">· · ·</div>
+            <div class="ac-row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px">
+              <span style="color:var(--text-muted);font-size:.75rem">Policy</span>
+              <span style="grid-column:2/5;color:var(--orange)">LRU · 4-way · 16 B lines · 16 sets</span>
+            </div>
+          </div>
+          <div class="ac-footer">
+            <span class="ac-status">● Running — Scope: Both &nbsp;|&nbsp; [R]eset &nbsp;[P]ause</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EXAMPLES -->
+  <section class="section" id="examples">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Programs</span>
+        <h2>Real programs, real assembly</h2>
+        <p>Real programs included with Falcon — from recursive sorting to raw Linux I/O syscalls.</p>
+      </div>
+
+      <div class="examples-tabs">
+        <div class="tab-buttons">
+          <button class="tab-btn active" data-tab="quicksort">Quicksort</button>
+          <button class="tab-btn" data-tab="bubble">Bubble Sort</button>
+          <button class="tab-btn" data-tab="echo">Echo (Linux)</button>
+          <button class="tab-btn" data-tab="prompt">I/O Prompt</button>
+        </div>
+
+        <div class="tab-panels">
+
+          <!-- QUICKSORT -->
+          <div class="tab-panel active" data-panel="quicksort">
+            <div class="code-pane">
+              <div class="code-header">
+                <span class="code-filename">quick_sort_20_push_pop.fas</span>
+                <span class="code-lang">RISC-V Assembly</span>
+              </div>
+              <pre class="hlcode"><span class="hl-dir">.data</span>
+<span class="hl-label">arr:</span> <span class="hl-dir">.word</span> <span class="hl-num">33,12,7,25,9,13,5,1,44,3,18,2,29,8,21,6,10,17,14,4</span>
+<span class="hl-label">msg:</span> <span class="hl-dir">.asciz</span> <span class="hl-str">"Quicksort (20 elements)"</span>
+<span class="hl-label">nl:</span>  <span class="hl-dir">.byte</span>  <span class="hl-num">10, 0</span>
+
+<span class="hl-dir">.text</span>
+    <span class="hl-pseudo">printStrLn</span> msg
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">a0</span>, arr          <span class="hl-comment">; base address</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a1</span>, <span class="hl-num">0</span>            <span class="hl-comment">; lo = 0</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a2</span>, <span class="hl-num">19</span>           <span class="hl-comment">; hi = 19</span>
+    <span class="hl-pseudo">call</span> quicksort
+
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">t0</span>, arr
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t4</span>, <span class="hl-num">20</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t1</span>, <span class="hl-num">0</span>
+<span class="hl-label">print_loop:</span>
+    <span class="hl-instr">slli</span> <span class="hl-reg">t2</span>, <span class="hl-reg">t1</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t2</span>, <span class="hl-reg">t0</span>, <span class="hl-reg">t2</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">t3</span>, <span class="hl-num">0</span>(<span class="hl-reg">t2</span>)
+    <span class="hl-pseudo">print</span>    <span class="hl-reg">t3</span>
+    <span class="hl-pseudo">printStr</span> nl
+    <span class="hl-instr">addi</span> <span class="hl-reg">t1</span>, <span class="hl-reg">t1</span>, <span class="hl-num">1</span>
+    <span class="hl-instr">blt</span>  <span class="hl-reg">t1</span>, <span class="hl-reg">t4</span>, print_loop
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">93</span>           <span class="hl-comment">; syscall: exit</span>
+    <span class="hl-instr">ecall</span>
+
+<span class="hl-comment">; quicksort(a0=base, a1=lo, a2=hi)</span>
+<span class="hl-label">quicksort:</span>
+    <span class="hl-instr">bge</span>  <span class="hl-reg">a1</span>, <span class="hl-reg">a2</span>, qs_done
+    <span class="hl-pseudo">push</span> <span class="hl-reg">ra</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s1</span>  <span class="hl-comment">; base</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s2</span>  <span class="hl-comment">; lo</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s3</span>  <span class="hl-comment">; hi</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s4</span>  <span class="hl-comment">; pivot index</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s1</span>, <span class="hl-reg">a0</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s2</span>, <span class="hl-reg">a1</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s3</span>, <span class="hl-reg">a2</span>
+    <span class="hl-pseudo">call</span> partition        <span class="hl-comment">; → a0 = pivot index</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s4</span>, <span class="hl-reg">a0</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">a0</span>, <span class="hl-reg">s1</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">a1</span>, <span class="hl-reg">s2</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">a2</span>, <span class="hl-reg">s4</span>, <span class="hl-num">-1</span>
+    <span class="hl-pseudo">call</span> quicksort        <span class="hl-comment">; recurse left</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">a0</span>, <span class="hl-reg">s1</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">a1</span>, <span class="hl-reg">s4</span>, <span class="hl-num">1</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">a2</span>, <span class="hl-reg">s3</span>
+    <span class="hl-pseudo">call</span> quicksort        <span class="hl-comment">; recurse right</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s4</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s3</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s2</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s1</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">ra</span>
+<span class="hl-label">qs_done:</span>
+    <span class="hl-pseudo">ret</span>
+
+<span class="hl-comment">; partition(a0=base, a1=lo, a2=hi) → a0 = pivot index</span>
+<span class="hl-label">partition:</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">ra</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s0</span>  <span class="hl-comment">; pivot value</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s1</span>  <span class="hl-comment">; base</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s2</span>  <span class="hl-comment">; lo</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s3</span>  <span class="hl-comment">; hi</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s4</span>  <span class="hl-comment">; i</span>
+    <span class="hl-pseudo">push</span> <span class="hl-reg">s5</span>  <span class="hl-comment">; j</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s1</span>, <span class="hl-reg">a0</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s2</span>, <span class="hl-reg">a1</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s3</span>, <span class="hl-reg">a2</span>
+    <span class="hl-instr">slli</span> <span class="hl-reg">t0</span>, <span class="hl-reg">s3</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t0</span>, <span class="hl-reg">s1</span>, <span class="hl-reg">t0</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">s0</span>, <span class="hl-num">0</span>(<span class="hl-reg">t0</span>)      <span class="hl-comment">; pivot = arr[hi]</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">s4</span>, <span class="hl-reg">s2</span>, <span class="hl-num">-1</span>     <span class="hl-comment">; i = lo - 1</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">s5</span>, <span class="hl-reg">s2</span>          <span class="hl-comment">; j = lo</span>
+<span class="hl-label">part_loop:</span>
+    <span class="hl-instr">bge</span>  <span class="hl-reg">s5</span>, <span class="hl-reg">s3</span>, part_done
+    <span class="hl-instr">slli</span> <span class="hl-reg">t1</span>, <span class="hl-reg">s5</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t1</span>, <span class="hl-reg">s1</span>, <span class="hl-reg">t1</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">t2</span>, <span class="hl-num">0</span>(<span class="hl-reg">t1</span>)      <span class="hl-comment">; arr[j]</span>
+    <span class="hl-instr">blt</span>  <span class="hl-reg">s0</span>, <span class="hl-reg">t2</span>, skip_swap
+    <span class="hl-instr">addi</span> <span class="hl-reg">s4</span>, <span class="hl-reg">s4</span>, <span class="hl-num">1</span>      <span class="hl-comment">; i++</span>
+    <span class="hl-instr">beq</span>  <span class="hl-reg">s4</span>, <span class="hl-reg">s5</span>, skip_swap
+    <span class="hl-instr">slli</span> <span class="hl-reg">t3</span>, <span class="hl-reg">s4</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t3</span>, <span class="hl-reg">s1</span>, <span class="hl-reg">t3</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">t4</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)      <span class="hl-comment">; arr[i]</span>
+    <span class="hl-instr">sw</span>   <span class="hl-reg">t2</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)      <span class="hl-comment">; arr[i] = arr[j]</span>
+    <span class="hl-instr">sw</span>   <span class="hl-reg">t4</span>, <span class="hl-num">0</span>(<span class="hl-reg">t1</span>)      <span class="hl-comment">; arr[j] = arr[i]</span>
+<span class="hl-label">skip_swap:</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">s5</span>, <span class="hl-reg">s5</span>, <span class="hl-num">1</span>
+    <span class="hl-instr">j</span>    part_loop
+<span class="hl-label">part_done:</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">t0</span>, <span class="hl-reg">s4</span>, <span class="hl-num">1</span>       <span class="hl-comment">; pivotIndex = i + 1</span>
+    <span class="hl-instr">slli</span> <span class="hl-reg">t1</span>, <span class="hl-reg">t0</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t1</span>, <span class="hl-reg">s1</span>, <span class="hl-reg">t1</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">t2</span>, <span class="hl-num">0</span>(<span class="hl-reg">t1</span>)
+    <span class="hl-instr">slli</span> <span class="hl-reg">t3</span>, <span class="hl-reg">s3</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t3</span>, <span class="hl-reg">s1</span>, <span class="hl-reg">t3</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">t4</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)
+    <span class="hl-instr">sw</span>   <span class="hl-reg">t4</span>, <span class="hl-num">0</span>(<span class="hl-reg">t1</span>)      <span class="hl-comment">; swap pivot into place</span>
+    <span class="hl-instr">sw</span>   <span class="hl-reg">t2</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)
+    <span class="hl-instr">mv</span>   <span class="hl-reg">a0</span>, <span class="hl-reg">t0</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s5</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s4</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s3</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s2</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s1</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">s0</span>
+    <span class="hl-pseudo">pop</span>  <span class="hl-reg">ra</span>
+    <span class="hl-pseudo">ret</span></pre>
+            </div>
+            <div class="example-info">
+              <h4>Quicksort — Recursive</h4>
+              <p>Full recursive quicksort on a 20-element integer array. Demonstrates proper RISC-V calling convention with <code>push</code>/<code>pop</code> to save callee-saved registers across recursive calls.</p>
+              <ul class="example-highlights">
+                <li>Recursive <code>call</code> + stack frame via <code>push</code>/<code>pop</code></li>
+                <li>Callee-saved registers (<code>s0–s5</code>)</li>
+                <li>Pointer arithmetic for in-place swaps</li>
+                <li>Partition function as a subroutine</li>
+                <li><code>exit(93)</code> via raw <code>ecall</code></li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- BUBBLE SORT -->
+          <div class="tab-panel" data-panel="bubble">
+            <div class="code-pane">
+              <div class="code-header">
+                <span class="code-filename">bubble_sort_20.fas</span>
+                <span class="code-lang">RISC-V Assembly</span>
+              </div>
+              <pre class="hlcode"><span class="hl-dir">.data</span>
+<span class="hl-label">arr:</span> <span class="hl-dir">.word</span> <span class="hl-num">20,1,19,2,18,3,17,4,16,5,15,6,14,7,13,8,12,9,11,10</span>
+<span class="hl-label">msg:</span> <span class="hl-dir">.asciz</span> <span class="hl-str">"Sorted values:"</span>
+<span class="hl-label">nl:</span>  <span class="hl-dir">.byte</span>  <span class="hl-num">10, 0</span>
+
+<span class="hl-dir">.text</span>
+    <span class="hl-pseudo">printStrLn</span> msg
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">t0</span>, arr       <span class="hl-comment">; base address</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t4</span>, <span class="hl-num">20</span>        <span class="hl-comment">; n = 20</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t1</span>, <span class="hl-num">0</span>         <span class="hl-comment">; i = 0</span>
+
+<span class="hl-label">outer:</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t2</span>, <span class="hl-num">0</span>
+    <span class="hl-instr">sub</span>  <span class="hl-reg">s2</span>, <span class="hl-reg">t4</span>, <span class="hl-reg">t1</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">s2</span>, <span class="hl-reg">s2</span>, <span class="hl-num">-1</span>   <span class="hl-comment">; limit = n - 1 - i</span>
+
+<span class="hl-label">inner:</span>
+    <span class="hl-instr">slli</span> <span class="hl-reg">t3</span>, <span class="hl-reg">t2</span>, <span class="hl-num">2</span>    <span class="hl-comment">; offset = j * 4</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t3</span>, <span class="hl-reg">t0</span>, <span class="hl-reg">t3</span>   <span class="hl-comment">; &amp;arr[j]</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">t5</span>, <span class="hl-reg">t3</span>, <span class="hl-num">4</span>    <span class="hl-comment">; &amp;arr[j+1]</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">s0</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)
+    <span class="hl-instr">lw</span>   <span class="hl-reg">s1</span>, <span class="hl-num">0</span>(<span class="hl-reg">t5</span>)
+    <span class="hl-instr">blt</span>  <span class="hl-reg">s0</span>, <span class="hl-reg">s1</span>, no_swap
+    <span class="hl-instr">sw</span>   <span class="hl-reg">s1</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)
+    <span class="hl-instr">sw</span>   <span class="hl-reg">s0</span>, <span class="hl-num">0</span>(<span class="hl-reg">t5</span>)
+<span class="hl-label">no_swap:</span>
+    <span class="hl-instr">addi</span> <span class="hl-reg">t2</span>, <span class="hl-reg">t2</span>, <span class="hl-num">1</span>
+    <span class="hl-instr">blt</span>  <span class="hl-reg">t2</span>, <span class="hl-reg">s2</span>, inner
+    <span class="hl-instr">addi</span> <span class="hl-reg">t1</span>, <span class="hl-reg">t1</span>, <span class="hl-num">1</span>
+    <span class="hl-instr">blt</span>  <span class="hl-reg">t1</span>, <span class="hl-reg">t4</span>, outer
+
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">t2</span>, <span class="hl-num">0</span>
+<span class="hl-label">print_loop:</span>
+    <span class="hl-instr">slli</span> <span class="hl-reg">t3</span>, <span class="hl-reg">t2</span>, <span class="hl-num">2</span>
+    <span class="hl-instr">add</span>  <span class="hl-reg">t3</span>, <span class="hl-reg">t0</span>, <span class="hl-reg">t3</span>
+    <span class="hl-instr">lw</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>(<span class="hl-reg">t3</span>)
+    <span class="hl-pseudo">print</span>    <span class="hl-reg">a0</span>
+    <span class="hl-pseudo">printStr</span> nl
+    <span class="hl-instr">addi</span> <span class="hl-reg">t2</span>, <span class="hl-reg">t2</span>, <span class="hl-num">1</span>
+    <span class="hl-instr">blt</span>  <span class="hl-reg">t2</span>, <span class="hl-reg">t4</span>, print_loop
+
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">93</span>        <span class="hl-comment">; syscall: exit</span>
+    <span class="hl-instr">ecall</span></pre>
+            </div>
+            <div class="example-info">
+              <h4>Bubble Sort</h4>
+              <p>Classic O(n²) sort over a 20-element array in <code>.data</code>. Great for watching D-cache access patterns in the Cache tab — the tight inner loop shows excellent spatial locality.</p>
+              <ul class="example-highlights">
+                <li>Static data with <code>.word</code> directive</li>
+                <li>Pointer arithmetic (<code>slli</code> + <code>add</code>)</li>
+                <li>In-place swap with <code>lw</code> / <code>sw</code></li>
+                <li>Nested loop control with <code>blt</code></li>
+                <li><code>exit(93)</code> via raw <code>ecall</code></li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- ECHO LINUX SYSCALL -->
+          <div class="tab-panel" data-panel="echo">
+            <div class="code-pane">
+              <div class="code-header">
+                <span class="code-filename">syscall_echo_linux.fas</span>
+                <span class="code-lang">RISC-V Assembly</span>
+              </div>
+              <pre class="hlcode"><span class="hl-dir">.data</span>
+<span class="hl-label">buf:</span> <span class="hl-dir">.space</span> <span class="hl-num">64</span>
+
+<span class="hl-dir">.text</span>
+    <span class="hl-comment">; Linux-style syscall ABI:</span>
+    <span class="hl-comment">;   a7 = syscall number</span>
+    <span class="hl-comment">;   a0..a5 = arguments</span>
+    <span class="hl-comment">;   a0 = return value</span>
+
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>        <span class="hl-comment">; fd = stdin (0)</span>
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">a1</span>, buf
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a2</span>, <span class="hl-num">64</span>       <span class="hl-comment">; max bytes</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">63</span>       <span class="hl-comment">; read(fd, buf, count)</span>
+    <span class="hl-instr">ecall</span>            <span class="hl-comment">; → a0 = bytes read</span>
+
+    <span class="hl-instr">mv</span>   <span class="hl-reg">t0</span>, <span class="hl-reg">a0</span>       <span class="hl-comment">; save byte count</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">1</span>        <span class="hl-comment">; fd = stdout (1)</span>
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">a1</span>, buf
+    <span class="hl-instr">mv</span>   <span class="hl-reg">a2</span>, <span class="hl-reg">t0</span>       <span class="hl-comment">; exact bytes to echo</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">64</span>       <span class="hl-comment">; write(fd, buf, count)</span>
+    <span class="hl-instr">ecall</span>
+
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">93</span>       <span class="hl-comment">; exit(0)</span>
+    <span class="hl-instr">ecall</span></pre>
+            </div>
+            <div class="example-info">
+              <h4>Echo — Raw Linux ABI</h4>
+              <p>No pseudo-instructions. Pure Linux-style <code>ecall</code>: put the syscall number in <code>a7</code>, arguments in <code>a0–a5</code>, fire <code>ecall</code>. Return value lands in <code>a0</code>. Reads a line from stdin and writes it straight back to stdout.</p>
+              <ul class="example-highlights">
+                <li><code>read(63)</code>: stdin → buffer</li>
+                <li><code>write(64)</code>: buffer → stdout</li>
+                <li><code>exit(93)</code>: clean exit</li>
+                <li>BSS allocation with <code>.space</code></li>
+                <li>Return value of <code>read</code> used as write length</li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- INTERACTIVE PROMPT (raw syscalls) -->
+          <div class="tab-panel" data-panel="prompt">
+            <div class="code-pane">
+              <div class="code-header">
+                <span class="code-filename">io_prompt_linux.fas</span>
+                <span class="code-lang">RISC-V Assembly</span>
+              </div>
+              <pre class="hlcode"><span class="hl-dir">.data</span>
+<span class="hl-label">prompt:</span> <span class="hl-dir">.asciz</span> <span class="hl-str">"Your name? "</span>
+<span class="hl-label">greet:</span>  <span class="hl-dir">.asciz</span> <span class="hl-str">"Hi, "</span>
+<span class="hl-label">buf:</span>    <span class="hl-dir">.space</span> <span class="hl-num">64</span>
+
+<span class="hl-dir">.text</span>
+    <span class="hl-comment">; --- write prompt to stdout ---</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">1</span>        <span class="hl-comment">; fd = stdout</span>
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">a1</span>, prompt
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a2</span>, <span class="hl-num">11</span>       <span class="hl-comment">; len("Your name? ")</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">64</span>       <span class="hl-comment">; write</span>
+    <span class="hl-instr">ecall</span>
+
+    <span class="hl-comment">; --- read name from stdin ---</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>        <span class="hl-comment">; fd = stdin</span>
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">a1</span>, buf
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a2</span>, <span class="hl-num">64</span>       <span class="hl-comment">; max bytes</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">63</span>       <span class="hl-comment">; read</span>
+    <span class="hl-instr">ecall</span>            <span class="hl-comment">; → a0 = bytes read</span>
+    <span class="hl-instr">mv</span>   <span class="hl-reg">t0</span>, <span class="hl-reg">a0</span>       <span class="hl-comment">; save byte count</span>
+
+    <span class="hl-comment">; --- write "Hi, " to stdout ---</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">1</span>
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">a1</span>, greet
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a2</span>, <span class="hl-num">4</span>        <span class="hl-comment">; len("Hi, ")</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">64</span>       <span class="hl-comment">; write</span>
+    <span class="hl-instr">ecall</span>
+
+    <span class="hl-comment">; --- write the name back ---</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">1</span>
+    <span class="hl-pseudo">la</span>   <span class="hl-reg">a1</span>, buf
+    <span class="hl-instr">mv</span>   <span class="hl-reg">a2</span>, <span class="hl-reg">t0</span>       <span class="hl-comment">; bytes_read from earlier</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">64</span>       <span class="hl-comment">; write</span>
+    <span class="hl-instr">ecall</span>
+
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>
+    <span class="hl-pseudo">li</span>   <span class="hl-reg">a7</span>, <span class="hl-num">93</span>       <span class="hl-comment">; exit(0)</span>
+    <span class="hl-instr">ecall</span></pre>
+            </div>
+            <div class="example-info">
+              <h4>Interactive Prompt — Raw Syscalls</h4>
+              <p>Composes output from three separate <code>write</code> calls — a prompt string, a greeting prefix, and the user's input — all using raw Linux ABI. No pseudo-instructions, no helpers.</p>
+              <ul class="example-highlights">
+                <li>Three distinct <code>write(64)</code> calls</li>
+                <li>Return value of <code>read</code> reused as write length</li>
+                <li>fd=0 (stdin), fd=1 (stdout)</li>
+                <li>Data pointers via <code>la</code> (load address)</li>
+                <li><code>exit(93)</code> — Linux-compatible clean exit</li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ISA TABLE -->
+  <section class="section section--dark">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Instruction Set</span>
+        <h2>Full RV32I + M coverage</h2>
+        <p>Every standard base integer instruction, plus multiply and divide extensions.</p>
+      </div>
+
+      <div class="isa-grid">
+        <div class="isa-category">
+          <div class="isa-cat-header">
+            <span class="isa-cat-badge isa-r">R</span>
+            <span>Arithmetic &amp; Logic</span>
+          </div>
+          <div class="isa-pills">
+            <span>ADD</span><span>SUB</span><span>AND</span><span>OR</span><span>XOR</span>
+            <span>SLL</span><span>SRL</span><span>SRA</span><span>SLT</span><span>SLTU</span>
+            <span class="isa-m">MUL</span><span class="isa-m">MULH</span><span class="isa-m">DIV</span><span class="isa-m">REM</span>
+          </div>
+        </div>
+        <div class="isa-category">
+          <div class="isa-cat-header">
+            <span class="isa-cat-badge isa-i">I</span>
+            <span>Immediate Ops</span>
+          </div>
+          <div class="isa-pills">
+            <span>ADDI</span><span>ANDI</span><span>ORI</span><span>XORI</span>
+            <span>SLTI</span><span>SLTIU</span><span>SLLI</span><span>SRLI</span><span>SRAI</span>
+          </div>
+        </div>
+        <div class="isa-category">
+          <div class="isa-cat-header">
+            <span class="isa-cat-badge isa-ls">LS</span>
+            <span>Loads &amp; Stores</span>
+          </div>
+          <div class="isa-pills">
+            <span>LB</span><span>LH</span><span>LW</span><span>LBU</span><span>LHU</span>
+            <span>SB</span><span>SH</span><span>SW</span>
+          </div>
+        </div>
+        <div class="isa-category">
+          <div class="isa-cat-header">
+            <span class="isa-cat-badge isa-b">B</span>
+            <span>Branches &amp; Jumps</span>
+          </div>
+          <div class="isa-pills">
+            <span>BEQ</span><span>BNE</span><span>BLT</span><span>BGE</span><span>BLTU</span><span>BGEU</span>
+            <span>JAL</span><span>JALR</span><span>LUI</span><span>AUIPC</span>
+          </div>
+        </div>
+        <div class="isa-category">
+          <div class="isa-cat-header">
+            <span class="isa-cat-badge isa-s">SYS</span>
+            <span>System</span>
+          </div>
+          <div class="isa-pills">
+            <span>ECALL</span><span>EBREAK</span><span>HALT</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="isa-legend">
+        <span><span class="legend-dot isa-m-dot"></span> M extension (multiply/divide)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- QUICKSTART -->
+  <section class="section" id="quickstart">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Get Started</span>
+        <h2>Up and running in seconds</h2>
+        <p>Falcon ships as a prebuilt binary — or you can build it yourself with Cargo.</p>
+      </div>
+
+      <div class="quickstart-grid">
+        <div class="qs-option">
+          <div class="qs-badge">Recommended</div>
+          <h3>Download &amp; Run</h3>
+          <p>Grab the latest release for your platform and run it directly — no toolchain needed.</p>
+          <div class="qs-steps">
+            <div class="qs-step">
+              <span class="qs-num">1</span>
+              <div><strong>Download</strong> the binary for your OS from the Releases page.</div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">2</span>
+              <div><strong>Run</strong> the executable — Falcon's IDE opens immediately.</div>
+            </div>
+            <div class="qs-step">
+              <span class="qs-num">3</span>
+              <div><strong>Write</strong> your first program and press <kbd>Ctrl+R</kbd> to assemble.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="qs-option">
+          <h3>Build from Source</h3>
+          <p>Requires the Rust toolchain. Gives you the latest code and lets you embed Falcon in your own projects.</p>
+          <div class="qs-terminal">
+            <div class="qs-term-line">
+              <span class="qs-prompt">$</span>
+              <span class="qs-cmd">git clone https://github.com/Gaok1/FALCON-ASM falcon-asm</span>
+            </div>
+            <div class="qs-term-line">
+              <span class="qs-prompt">$</span>
+              <span class="qs-cmd">cd falcon-asm</span>
+            </div>
+            <div class="qs-term-line">
+              <span class="qs-prompt">$</span>
+              <span class="qs-cmd">cargo run</span>
+            </div>
+            <div class="qs-term-out">
+              <span class="qs-ok">✓</span> Falcon IDE launched
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AUDIENCE -->
+  <section class="section section--accent">
+    <div class="container">
+      <div class="audience-grid">
+        <div class="audience-text">
+          <span class="eyebrow">Who is it for?</span>
+          <h2>Built for learners, teachers, and tinkerers</h2>
+          <p>
+            Whether you're a student tackling your first computer architecture course, a teacher
+            looking for a zero-friction demo tool, or a hobbyist curious about how CPUs really
+            work — Falcon gives you a safe, observable playground.
+          </p>
+          <ul class="audience-list">
+            <li>
+              <span class="al-icon">🎓</span>
+              <div><strong>Students</strong> — Follow textbooks exactly. Falcon's register naming and little-endian layout mirror standard RISC-V courses.</div>
+            </li>
+            <li>
+              <span class="al-icon">🖥️</span>
+              <div><strong>Teachers</strong> — Live-demo every pipeline stage. Assemble student assignments and step through them in class.</div>
+            </li>
+            <li>
+              <span class="al-icon">⚙️</span>
+              <div><strong>Hobbyists</strong> — Explore the RV32I ISA without reading thousands of lines of optimization-heavy code.</div>
+            </li>
+          </ul>
+        </div>
+        <div class="audience-card">
+          <div class="ac-header">
+            <span class="ac-dot ac-red"></span>
+            <span class="ac-dot ac-yellow"></span>
+            <span class="ac-dot ac-green"></span>
+            <span class="ac-title">Run Panel</span>
+          </div>
+          <div class="ac-body">
+            <div class="ac-row ac-row--head">
+              <span>Register</span><span>Hex</span><span>Dec</span>
+            </div>
+            <div class="ac-row"><span class="ac-reg">zero</span><span>0x00000000</span><span>0</span></div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">ra</span><span class="ac-changed">0x00000014</span><span class="ac-changed">20</span></div>
+            <div class="ac-row"><span class="ac-reg">sp</span><span>0xFFFFFFE8</span><span>-24</span></div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">a0</span><span class="ac-changed">0x00000006</span><span class="ac-changed">6</span></div>
+            <div class="ac-row"><span class="ac-reg">a7</span><span>0x000003E8</span><span>1000</span></div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">s0</span><span class="ac-changed">0x00000008</span><span class="ac-changed">8</span></div>
+            <div class="ac-row"><span class="ac-reg">t0</span><span>0x00000001</span><span>1</span></div>
+            <div class="ac-ellipsis">· · ·</div>
+          </div>
+          <div class="ac-footer">
+            <span class="ac-status">● Paused at PC 0x0000002C</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <div class="footer-logo">
+            <img src="falcon_logo.png" alt="Falcon ASM" class="footer-logo-img" />
+            <span class="logo-text">Falcon<span class="logo-asm">ASM</span></span>
+          </div>
+          <p>An approachable RISC-V emulator and teaching platform built with Rust.</p>
+        </div>
+        <div class="footer-links">
+          <div class="fl-group">
+            <h4>Resources</h4>
+            <ul>
+              <li><a href="docs/Tutorial.md">Tutorial</a></li>
+              <li><a href="docs/format.md">Format Guide</a></li>
+              <li><a href="Program Examples/">Examples</a></li>
+            </ul>
+          </div>
+          <div class="fl-group">
+            <h4>Project</h4>
+            <ul>
+              <li><a href="https://github.com/Gaok1/FALCON-ASM" target="_blank" rel="noopener">GitHub</a></li>
+              <li><a href="LICENSE-MIT.txt">MIT License</a></li>
+              <li><a href="LICENSE-APACHE.txt">Apache 2.0</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>Licensed under MIT / Apache 2.0 · Built with Rust</span>
+        <span class="footer-arch">RV32I + M · Little-endian · 32-bit</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

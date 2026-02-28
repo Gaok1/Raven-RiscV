@@ -1,0 +1,26 @@
+.data
+buf: .space 64
+
+.text
+    # Linux-style syscalls:
+    #   a7 = syscall number
+    #   a0..a5 = args
+    #   return value in a0
+
+    li a0, 0       # fd = stdin
+    la a1, buf
+    li a2, 64      # max bytes
+    li a7, 63      # read
+    ecall          # a0 = bytes read
+
+    mv t0, a0      # n = bytes_read
+    li a0, 1       # fd = stdout
+    la a1, buf
+    mv a2, t0
+    li a7, 64      # write
+    ecall
+
+    li a0, 0
+    li a7, 93      # exit
+    ecall
+

@@ -1,0 +1,22 @@
+.data
+msg:    .asciz "Hello, Falcon ASM!"
+prefix: .asciz "Length: "
+
+.text
+    la t0, msg      # ptr
+    li s0, 0        # len
+
+len_loop:
+    lb t1, 0(t0)
+    beq t1, zero, done
+    addi s0, s0, 1
+    addi t0, t0, 1
+    j   len_loop
+
+done:
+    printStr prefix
+    print s0
+    li a0, 0
+    li a7, 93      # exit
+    ecall
+

@@ -1,0 +1,8 @@
+.data
+message: .asciz "Hello world"
+
+.text
+  printStrLn message
+  li a0, 0
+  li a7, 93      # exit
+  ecall
