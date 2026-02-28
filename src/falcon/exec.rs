@@ -596,6 +596,54 @@ mod tests {
     }
 
     #[test]
+    fn linux_getrandom_writes_bytes() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        let mut console = crate::ui::Console::default();
+
+        let addr = 8u32;
+        for i in 0..8 {
+            mem.store8(addr + i, 0xAA).unwrap();
+        }
+
+        cpu.write(17, 278); // getrandom
+        cpu.write(10, addr); // buf
+        cpu.write(11, 8); // buflen
+        cpu.write(12, 0); // flags
+
+        let ecall = encoder::encode(Instruction::Ecall).unwrap();
+        mem.store32(0, ecall).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.read(10), 8);
+
+        let mut out = Vec::new();
+        for i in 0..8 {
+            out.push(mem.load8(addr + i).unwrap());
+        }
+        assert_ne!(out, vec![0xAA; 8]);
+    }
+
+    #[test]
+    fn linux_getrandom_invalid_flags_returns_einval() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        let mut console = crate::ui::Console::default();
+
+        let addr = 8u32;
+        cpu.write(17, 278); // getrandom
+        cpu.write(10, addr); // buf
+        cpu.write(11, 8); // buflen
+        cpu.write(12, 0x8000); // invalid flags
+
+        let ecall = encoder::encode(Instruction::Ecall).unwrap();
+        mem.store32(0, ecall).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.read(10), (-22i32) as u32);
+    }
+
+    #[test]
     fn linux_exit_sets_exit_code() {
         let mut cpu = Cpu::default();
         let mut mem = Ram::new(4);

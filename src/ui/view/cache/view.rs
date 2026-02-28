@@ -16,8 +16,9 @@ use ratatui::{
     prelude::*,
     widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
+use unicode_truncate::UnicodeTruncateStr;
 
-use crate::falcon::cache::{CacheConfig, CacheLineView, CacheSetView, ReplacementPolicy};
+use crate::falcon::cache::{CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy};
 use crate::falcon::memory::Bus;
 use crate::ui::app::{App, CacheScope};
 
@@ -36,7 +37,6 @@ pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_l1_view(f: &mut Frame, area: Rect, app: &App) {
-    // Split: matrix area(s) + 1-line legend bar
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -59,7 +59,6 @@ fn render_l1_view(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_unified_view(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    // Split: matrix + 1-line legend bar
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -187,7 +186,7 @@ fn policy_hint_short(p: ReplacementPolicy) -> &'static str {
 
 fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let cache = &app.run.mem.extra_levels[extra_idx];
-    let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
+    let level_name = CacheController::extra_level_name(extra_idx);
     let cfg = &cache.config;
 
     let title = if cfg.is_valid_config() {
@@ -713,7 +712,7 @@ fn build_cell(
     }
 
     // Enforce exact cell_width: truncate if over, pad if under
-    let used: usize = spans.iter().map(|s| s.content.len()).sum();
+    let used: usize = spans.iter().map(Span::width).sum();
     if used < cell_width {
         spans.push(Span::raw(" ".repeat(cell_width - used)));
     } else if used > cell_width {
@@ -721,15 +720,21 @@ fn build_cell(
         let mut budget = cell_width;
         for span in spans {
             if budget == 0 { break; }
-            let len = span.content.len();
-            if len <= budget {
-                budget -= len;
+            let width = span.width();
+            if width <= budget {
+                budget -= width;
                 out.push(span);
             } else {
-                let s: String = span.content.chars().take(budget).collect();
-                out.push(Span::styled(s, span.style));
-                budget = 0;
+                let (s, actual_width) = span.content.as_ref().unicode_truncate(budget);
+                if actual_width > 0 {
+                    out.push(Span::styled(s.to_string(), span.style));
+                }
+                budget -= actual_width;
+                break;
             }
+        }
+        if budget > 0 {
+            out.push(Span::raw(" ".repeat(budget)));
         }
         spans = out;
     }

@@ -446,27 +446,6 @@ impl Cache {
         Ok(self.sets[idx].lines[way].data[offset])
     }
 
-    /// Read byte via D-cache (read-write, may write back dirty eviction). Charges cycles.
-    pub fn read_byte_rw(&mut self, addr: u32, ram: &mut Ram) -> Result<u8, FalconError> {
-        if !self.config.is_valid_config() {
-            return ram.load8(addr);
-        }
-        let tag = self.config.addr_tag(addr);
-        let idx = self.config.addr_index(addr);
-        let offset = self.config.addr_offset(addr);
-
-        if let Some(way) = self.sets[idx].lookup(tag) {
-            self.stats.hits += 1;
-            self.stats.total_cycles += self.config.tag_search_cycles();
-            self.sets[idx].touch(way, self.config.replacement);
-            return Ok(self.sets[idx].lines[way].data[offset]);
-        }
-        self.stats.misses += 1;
-        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
-        self.allocate_rw(addr, ram)?;
-        let way = self.sets[idx].lookup(tag).unwrap();
-        Ok(self.sets[idx].lines[way].data[offset])
-    }
 
     /// Write byte via D-cache.
     pub fn write_byte(&mut self, addr: u32, val: u8, ram: &mut Ram) -> Result<(), FalconError> {
@@ -529,77 +508,6 @@ impl Cache {
         Ok(())
     }
 
-    /// Read 32-bit word via I-cache (read-only) — single tag lookup (correct stats for `fetch32`).
-    pub fn read_word_ro(&mut self, addr: u32, ram: &Ram) -> Result<u32, FalconError> {
-        if !self.config.is_valid_config() {
-            return ram.load32(addr);
-        }
-        let tag = self.config.addr_tag(addr);
-        let idx = self.config.addr_index(addr);
-        let offset = self.config.addr_offset(addr);
-
-        if let Some(way) = self.sets[idx].lookup(tag) {
-            self.stats.hits += 1;
-            self.stats.total_cycles += self.config.tag_search_cycles();
-            self.sets[idx].touch(way, self.config.replacement);
-            let d = &self.sets[idx].lines[way].data;
-            return Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]));
-        }
-        self.stats.misses += 1;
-        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
-        self.allocate_ro(addr, ram)?;
-        let way = self.sets[idx].lookup(tag).unwrap();
-        let d = &self.sets[idx].lines[way].data;
-        Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]))
-    }
-
-    /// Read 16-bit halfword via D-cache — single tag lookup (correct stats for `lh`/`lhu`).
-    pub fn read_halfword_rw(&mut self, addr: u32, ram: &mut Ram) -> Result<u16, FalconError> {
-        if !self.config.is_valid_config() {
-            return ram.load16(addr);
-        }
-        let tag = self.config.addr_tag(addr);
-        let idx = self.config.addr_index(addr);
-        let offset = self.config.addr_offset(addr);
-
-        if let Some(way) = self.sets[idx].lookup(tag) {
-            self.stats.hits += 1;
-            self.stats.total_cycles += self.config.tag_search_cycles();
-            self.sets[idx].touch(way, self.config.replacement);
-            let d = &self.sets[idx].lines[way].data;
-            return Ok(u16::from_le_bytes([d[offset], d[offset + 1]]));
-        }
-        self.stats.misses += 1;
-        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
-        self.allocate_rw(addr, ram)?;
-        let way = self.sets[idx].lookup(tag).unwrap();
-        let d = &self.sets[idx].lines[way].data;
-        Ok(u16::from_le_bytes([d[offset], d[offset + 1]]))
-    }
-
-    /// Read 32-bit word via D-cache — single tag lookup (correct stats for `lw`).
-    pub fn read_word_rw(&mut self, addr: u32, ram: &mut Ram) -> Result<u32, FalconError> {
-        if !self.config.is_valid_config() {
-            return ram.load32(addr);
-        }
-        let tag = self.config.addr_tag(addr);
-        let idx = self.config.addr_index(addr);
-        let offset = self.config.addr_offset(addr);
-
-        if let Some(way) = self.sets[idx].lookup(tag) {
-            self.stats.hits += 1;
-            self.stats.total_cycles += self.config.tag_search_cycles();
-            self.sets[idx].touch(way, self.config.replacement);
-            let d = &self.sets[idx].lines[way].data;
-            return Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]));
-        }
-        self.stats.misses += 1;
-        self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
-        self.allocate_rw(addr, ram)?;
-        let way = self.sets[idx].lookup(tag).unwrap();
-        let d = &self.sets[idx].lines[way].data;
-        Ok(u32::from_le_bytes([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]]))
-    }
 
     /// Write 16-bit halfword via D-cache — single tag lookup (correct stats for `sh`).
     pub fn write_halfword(&mut self, addr: u32, val: u16, ram: &mut Ram) -> Result<(), FalconError> {
@@ -611,6 +519,13 @@ impl Cache {
         let offset = self.config.addr_offset(addr);
         let hit_way = self.sets[idx].lookup(tag);
         let [b0, b1] = val.to_le_bytes();
+
+        // Misaligned halfword stores can straddle cache lines.
+        if offset + 1 >= self.config.line_size {
+            self.write_byte(addr, b0, ram)?;
+            self.write_byte(addr.wrapping_add(1), b1, ram)?;
+            return Ok(());
+        }
 
         match self.config.write_policy {
             WritePolicy::WriteThrough => {
@@ -675,6 +590,15 @@ impl Cache {
         let offset = self.config.addr_offset(addr);
         let hit_way = self.sets[idx].lookup(tag);
         let [b0, b1, b2, b3] = val.to_le_bytes();
+
+        // Misaligned word stores can straddle cache lines.
+        if offset + 3 >= self.config.line_size {
+            self.write_byte(addr, b0, ram)?;
+            self.write_byte(addr.wrapping_add(1), b1, ram)?;
+            self.write_byte(addr.wrapping_add(2), b2, ram)?;
+            self.write_byte(addr.wrapping_add(3), b3, ram)?;
+            return Ok(());
+        }
 
         match self.config.write_policy {
             WritePolicy::WriteThrough => {
@@ -895,7 +819,6 @@ impl CacheController {
         total
     }
 
-    pub fn num_extra_levels(&self) -> usize { self.extra_levels.len() }
 
     pub fn extra_level_name(n: usize) -> String {
         format!("L{}", n + 2)
@@ -1086,6 +1009,13 @@ impl Bus for CacheController {
         let idx = self.icache.config.addr_index(addr);
         let offset = self.icache.config.addr_offset(addr);
 
+        // Misaligned fetch can straddle cache lines (e.g. addr near the end of a line).
+        // RAM can always handle it byte-by-byte, so fall back instead of panicking.
+        if offset + 3 >= line_size {
+            self.instruction_count += 1;
+            return self.ram.load32(addr);
+        }
+
         // L1 hit check
         let way_opt = self.icache.sets[idx].lookup(tag);
         if let Some(way) = way_opt {
@@ -1175,6 +1105,13 @@ impl Bus for CacheController {
         let idx = self.dcache.config.addr_index(addr);
         let offset = self.dcache.config.addr_offset(addr);
 
+        // Misaligned halfword reads can straddle cache lines (addr at last byte of a line).
+        if offset + 1 >= line_size {
+            let b0 = self.dcache_read8(addr)?;
+            let b1 = self.dcache_read8(addr.wrapping_add(1))?;
+            return Ok(u16::from_le_bytes([b0, b1]));
+        }
+
         let way_opt = self.dcache.sets[idx].lookup(tag);
         if let Some(way) = way_opt {
             let (b0, b1) = {
@@ -1211,6 +1148,15 @@ impl Bus for CacheController {
         let tag = self.dcache.config.addr_tag(addr);
         let idx = self.dcache.config.addr_index(addr);
         let offset = self.dcache.config.addr_offset(addr);
+
+        // Misaligned word reads can straddle cache lines (addr near the end of a line).
+        if offset + 3 >= line_size {
+            let b0 = self.dcache_read8(addr)?;
+            let b1 = self.dcache_read8(addr.wrapping_add(1))?;
+            let b2 = self.dcache_read8(addr.wrapping_add(2))?;
+            let b3 = self.dcache_read8(addr.wrapping_add(3))?;
+            return Ok(u32::from_le_bytes([b0, b1, b2, b3]));
+        }
 
         let way_opt = self.dcache.sets[idx].lookup(tag);
         if let Some(way) = way_opt {
@@ -1363,6 +1309,43 @@ mod tests {
         assert_eq!(ctrl.dcache.stats.writebacks, 1);
         assert_eq!(ctrl.dcache.stats.ram_write_bytes, 16,
             "writeback should write exactly line_size bytes to RAM");
+    }
+
+    // ── Unaligned accesses should not panic ───────────────────────────────────
+
+    #[test]
+    fn unaligned_dcache_read16_across_line_does_not_panic() {
+        let d = cfg(64, 16, 1);
+        let mut ctrl = CacheController::new(CacheConfig::default(), d, vec![], 256);
+        for i in 0u32..32 {
+            ctrl.ram.store8(i, i as u8).unwrap();
+        }
+
+        // addr=15 reads bytes [15,16] across the 16-byte line boundary
+        let v = ctrl.dcache_read16(15).unwrap();
+        assert_eq!(v, u16::from_le_bytes([15, 16]));
+    }
+
+    #[test]
+    fn unaligned_dcache_read32_across_line_does_not_panic() {
+        let d = cfg(64, 16, 1);
+        let mut ctrl = CacheController::new(CacheConfig::default(), d, vec![], 256);
+        for i in 0u32..32 {
+            ctrl.ram.store8(i, i as u8).unwrap();
+        }
+
+        // addr=13 reads bytes [13,14,15,16] across the 16-byte line boundary
+        let v = ctrl.dcache_read32(13).unwrap();
+        assert_eq!(v, u32::from_le_bytes([13, 14, 15, 16]));
+    }
+
+    #[test]
+    fn unaligned_dcache_store32_across_line_does_not_panic() {
+        let d = cfg(64, 16, 1);
+        let mut ctrl = CacheController::new(CacheConfig::default(), d, vec![], 256);
+
+        ctrl.store32(13, 0xAABB_CCDD).unwrap();
+        assert_eq!(ctrl.effective_read32(13).unwrap(), 0xAABB_CCDD);
     }
 
     // ── Tipos de associatividade ──────────────────────────────────────────────

@@ -8,6 +8,8 @@ ratatui = { version = "0.28", features = ["all-widgets"] }
 crossterm = "0.29"
 thiserror = "1"
 comfy-table = "7"
+getrandom = { version = "0.3", features = ["std"] }
+unicode-truncate = "1"
 
 [profile.dev]
 incremental = false

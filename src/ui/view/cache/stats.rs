@@ -61,7 +61,8 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
     let instr = app.run.mem.instruction_count;
     let i_cyc = app.run.mem.icache.stats.total_cycles;
     let d_cyc = app.run.mem.dcache.stats.total_cycles;
-    let line = Line::from(vec![
+
+    let mut spans = vec![
         Span::styled(" Program total \u{2014} ", Style::default().fg(Color::DarkGray)),
         Span::styled(format!("Cycles:{total}"), Style::default().fg(Color::Cyan)),
         Span::raw("  "),
@@ -72,8 +73,18 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("I$:{i_cyc}"), Style::default().fg(Color::Cyan)),
         Span::raw(" + "),
         Span::styled(format!("D$:{d_cyc}"), Style::default().fg(Color::Green)),
-    ]);
-    f.render_widget(Paragraph::new(line), area);
+    ];
+
+    for (i, lvl) in app.run.mem.extra_levels.iter().enumerate() {
+        let name = crate::falcon::cache::CacheController::extra_level_name(i);
+        spans.push(Span::raw(" + "));
+        spans.push(Span::styled(
+            format!("{name}$:{}", lvl.stats.total_cycles),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_metrics(f: &mut Frame, area: Rect, app: &App) {
