@@ -99,7 +99,19 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
 }
 
 fn command_line(app: &App) -> Line<'static> {
-    if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
+    if app.run.faulted {
+        if let Some(code) = app.run.cpu.exit_code {
+            Line::from(Span::styled(
+                format!("Program finished (exit {code}). Press R to restart."),
+                Style::default().fg(Color::Yellow),
+            ))
+        } else {
+            Line::from(Span::styled(
+                "Program stopped. Press R to restart.",
+                Style::default().fg(Color::Yellow),
+            ))
+        }
+    } else if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
         Line::from(Span::styled(
             "Running at full speed... press R to restart or wait for completion",
             Style::default().fg(Color::Yellow),

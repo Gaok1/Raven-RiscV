@@ -92,6 +92,15 @@ const DOCS: &[DocRow] = &[
     DocRow { ty: "Pseudo", mnemonic: "readByte", operands: "label", desc: "Read number and store 1 byte at label", expands: "addi a7, x0, 1010; lui a0, hi; addi a0, a0, lo; ecall" },
     DocRow { ty: "Pseudo", mnemonic: "readHalf", operands: "label", desc: "Read number and store 2 bytes at label (little-endian)", expands: "addi a7, x0, 1011; lui a0, hi; addi a0, a0, lo; ecall" },
     DocRow { ty: "Pseudo", mnemonic: "readWord", operands: "label", desc: "Read number and store 4 bytes at label (little-endian)", expands: "addi a7, x0, 1012; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "randByte", operands: "label", desc: "Store 1 random byte at label (OS CSPRNG)", expands: "addi a7, x0, 1013; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "randHalf", operands: "label", desc: "Store 2 random bytes at label (little-endian)", expands: "addi a7, x0, 1014; lui a0, hi; addi a0, a0, lo; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "randWord", operands: "label", desc: "Store 4 random bytes at label (little-endian)", expands: "addi a7, x0, 1015; lui a0, hi; addi a0, a0, lo; ecall" },
+    // ---------- Syscall reference ----------
+    DocRow { ty: "Syscall", mnemonic: "read", operands: "a7=63", desc: "read(fd=a0, buf=a1, count=a2) → a0=n|-errno. Only fd=0 (stdin) supported.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "write", operands: "a7=64", desc: "write(fd=a0, buf=a1, count=a2) → a0=n|-errno. Only fd=1/2 (stdout/stderr) supported.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "exit", operands: "a7=93", desc: "exit(code=a0). Terminates simulation.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "exit_group", operands: "a7=94", desc: "exit_group(code=a0). Alias of exit.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "getrandom", operands: "a7=278", desc: "getrandom(buf=a0, buflen=a1, flags=a2) → a0=n|-errno. flags: 0=default, 1=NONBLOCK, 2=RANDOM.", expands: "" },
 ];
 
 fn build_docs_table_string(width: u16) -> String {

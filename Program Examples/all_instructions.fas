@@ -1,0 +1,148 @@
+# Falcon ASM - Instruction Catalog
+# --------------------------------
+# This file contains (at least) one example of every mnemonic supported by the
+# Falcon assembler/emulator. It is meant for UI formatting / disassembly /
+# decoded-field-map verification.
+#
+# Notes:
+# - The program is safe to run: it avoids div-by-zero and stops via Linux exit(0).
+# - Some mnemonics that would stop execution (ebreak/halt) or do I/O (print/read)
+#   are placed AFTER the exit, so they are present in memory but not executed.
+
+.text
+.globl _start
+
+_start:
+    # Seed registers (avoid div-by-zero; make shifts/branches deterministic)
+    addi t1, zero, 7
+    addi t2, zero, 3
+    addi t0, zero, -1
+
+    # ---------------- R-type ----------------
+    add  t0, t1, t2
+    sub  t0, t1, t2
+    and  t0, t1, t2
+    or   t0, t1, t2
+    xor  t0, t1, t2
+    sll  t0, t1, t2
+    srl  t0, t1, t2
+    sra  t0, t1, t2
+    slt  t0, t1, t2
+    sltu t0, t1, t2
+
+    # ---------------- M-extension ----------------
+    mul    t0, t1, t2
+    mulh   t0, t1, t2
+    mulhsu t0, t1, t2
+    mulhu  t0, t1, t2
+    div    t0, t1, t2
+    divu   t0, t1, t2
+    rem    t0, t1, t2
+    remu   t0, t1, t2
+
+    # ---------------- I-type ALU ----------------
+    addi  t0, t1, 123
+    andi  t0, t1, 0x7f
+    ori   t0, t1, 0x55
+    xori  t0, t1, -1
+    slti  t0, t1, -5
+    sltiu t0, t1, 5
+    slli  t0, t1, 3
+    srli  t0, t1, 3
+    srai  t0, t1, 3
+
+    # ---------------- Loads / Stores ----------------
+    la a0, data_bytes
+
+    lb  t0, 0(a0)
+    lh  t0, 0(a0)
+    lw  t0, 0(a0)
+    lbu t0, 1(a0)
+    lhu t0, 2(a0)
+
+    sb t0, 0(a0)
+    sh t0, 2(a0)
+    sw t0, 4(a0)
+
+    # ---------------- Branches (targets are next instruction; offset = 4) ----------------
+    beq  t0, t1, L_beq
+L_beq:
+    bne  t0, t0, L_bne
+L_bne:
+    blt  t0, t1, L_blt
+L_blt:
+    bge  t0, t1, L_bge
+L_bge:
+    bltu t0, t1, L_bltu
+L_bltu:
+    bgeu t0, t1, L_bgeu
+L_bgeu:
+
+    # ---------------- U-type (raw imm bits vs expanded value shown in Decoded) ----------------
+    lui   a0, 0xfffff
+    addi  a0, a0, -1         # imm[11:0] = 0xfff -> imm(sext) = -1
+
+    auipc t3, 0
+
+    # ---------------- J / JALR (fall-through patterns) ----------------
+    jal   zero, L_after_jal
+L_after_jal:
+    auipc t3, 0
+    addi  t3, t3, 12
+    jalr  zero, t3, 0
+    addi  t0, t0, 0
+
+    # ---------------- Program exit (Linux-like) ----------------
+    addi a7, zero, 93   # SYS_exit
+    addi a0, zero, 0    # exit code
+    ecall
+
+    # ----------------------------------------------------------------
+    # Everything below is for reference only (assembled, but not executed)
+    # ----------------------------------------------------------------
+
+    # System / stop
+    ebreak
+    halt
+
+    # Pseudo-instructions (assembler conveniences)
+    nop
+    mv t0, t1
+    li t0, -8
+    subi t0, t0, 1
+    push a0
+    pop a0
+
+    # Jump pseudos (placed after exit to avoid changing control-flow while running)
+    j L_after_exit_label
+L_after_exit_label:
+    call L_after_exit_call
+L_after_exit_call:
+    jr ra
+    ret
+
+    # Falcon teaching pseudos (I/O + RNG). These expand to instructions (incl. ecall).
+    print a0
+    printStr msg
+    printString msg
+    printStrLn msg
+    read input_buf
+    readByte input_buf
+    readHalf input_buf
+    readWord input_buf
+    randByte rand_buf
+    randHalf rand_buf
+    randWord rand_buf
+
+.data
+data_bytes:
+    .byte 0x01, 0x7f, 0x80, 0xff, 0x11, 0x22, 0x33, 0x44
+
+msg:
+    .string "hello from Falcon"
+
+input_buf:
+    .space 32
+
+rand_buf:
+    .space 4

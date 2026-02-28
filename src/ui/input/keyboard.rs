@@ -452,7 +452,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.remove_last_cache_level();
                 }
                 (KeyCode::Char('r'), Tab::Cache) => {
-                    app.run.mem.reset_stats();
+                    app.restart_simulation();
                 }
                 (KeyCode::Char('p'), Tab::Cache) => {
                     if app.run.is_running {

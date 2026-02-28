@@ -240,3 +240,30 @@ pub(crate) fn parse_read_word(
         i1, i2, Instruction::Ecall,
     ])
 }
+
+fn parse_rand_n(mnemonic: &str, s: &str, labels: &HashMap<String, u32>, syscall_nr: i32) -> Result<Vec<Instruction>, String> {
+    // "randByte/randHalf/randWord label" -> a7=101X; a0=addr; ecall
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 || parse_reg(&ops[0]).is_some() {
+        return Err(format!("{mnemonic}: expected 'label'"));
+    }
+    let la_line = format!("la a0, {}", ops[0]);
+    let (i1, i2) = parse_la(&la_line, labels)?;
+    Ok(vec![
+        Instruction::Addi { rd: 17, rs1: 0, imm: syscall_nr },
+        i1, i2, Instruction::Ecall,
+    ])
+}
+
+pub(crate) fn parse_rand_byte(s: &str, labels: &HashMap<String, u32>) -> Result<Vec<Instruction>, String> {
+    parse_rand_n("randByte", s, labels, 1013)
+}
+pub(crate) fn parse_rand_half(s: &str, labels: &HashMap<String, u32>) -> Result<Vec<Instruction>, String> {
+    parse_rand_n("randHalf", s, labels, 1014)
+}
+pub(crate) fn parse_rand_word(s: &str, labels: &HashMap<String, u32>) -> Result<Vec<Instruction>, String> {
+    parse_rand_n("randWord", s, labels, 1015)
+}

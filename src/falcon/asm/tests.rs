@@ -194,6 +194,27 @@ fn beq_offset_range_error() {
 }
 
 #[test]
+fn rand_word_expands_correctly() {
+    let asm = ".data\nval: .space 4\n.text\nrandWord val";
+    let prog = assemble(asm, 0).expect("assemble");
+    assert_eq!(prog.text.len(), 4);
+    let expected_li    = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1015 }).unwrap();
+    let expected_lui   = encode(Instruction::Lui  { rd: 10, imm: 0x1000 }).unwrap();
+    let expected_addi  = encode(Instruction::Addi { rd: 10, rs1: 10, imm: 0 }).unwrap();
+    let expected_ecall = encode(Instruction::Ecall).unwrap();
+    assert_eq!(prog.text[0], expected_li);
+    assert_eq!(prog.text[1], expected_lui);
+    assert_eq!(prog.text[2], expected_addi);
+    assert_eq!(prog.text[3], expected_ecall);
+}
+
+#[test]
+fn all_instructions_example_assembles() {
+    let asm = include_str!("../../../Program Examples/all_instructions.fas");
+    assemble(asm, 0).expect("assemble all_instructions.fas");
+}
+
+#[test]
 fn section_directives_equivalent() {
     let asm_section = ".section .data\nval: .word 1\n.section .text\n la t0, val\n ecall";
     let asm_traditional = ".data\nval: .word 1\n.text\n la t0, val\n ecall";

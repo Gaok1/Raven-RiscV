@@ -1191,7 +1191,7 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
-        if x >= 1 && x < 8 { app.run.mem.reset_stats(); return; }
+        if x >= 1 && x < 8 { app.restart_simulation(); return; }
         if x >= 10 && x < 18 {
             if app.run.is_running {
                 app.run.is_running = false;
@@ -1308,7 +1308,7 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
     }
 }
 
-fn apply_l1_config(app: &mut App, keep_history: bool) {
+fn apply_l1_config(app: &mut App, _keep_history: bool) {
     let icfg = app.cache.pending_icache.clone();
     let dcfg = app.cache.pending_dcache.clone();
     if let Err(msg) = icfg.validate() {
@@ -1320,18 +1320,8 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
         return;
     }
     app.cache.config_error = None;
-    let extra = app.cache.extra_pending.clone();
-    if keep_history {
-        app.cache.config_status = Some("Config applied (history kept).".to_string());
-        let old_istats = std::mem::take(&mut app.run.mem.icache.stats);
-        let old_dstats = std::mem::take(&mut app.run.mem.dcache.stats);
-        app.run.mem.apply_config(icfg, dcfg, extra);
-        app.run.mem.icache.stats.history = old_istats.history;
-        app.run.mem.dcache.stats.history = old_dstats.history;
-    } else {
-        app.cache.config_status = Some("Config applied (stats reset).".to_string());
-        app.run.mem.apply_config(icfg, dcfg, extra);
-    }
+    app.cache.config_status = Some("Config applied — simulation restarted.".to_string());
+    app.restart_simulation();
     app.cache.view_scroll = 0;
     app.cache.stats_scroll = 0;
 }
@@ -1400,7 +1390,7 @@ fn handle_unified_config_click(app: &mut App, me: MouseEvent, content_area: Rect
     }
 }
 
-fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
+fn apply_extra_config(app: &mut App, extra_idx: usize, _keep_history: bool) {
     if extra_idx >= app.cache.extra_pending.len() { return; }
     let cfg = app.cache.extra_pending[extra_idx].clone();
     if let Err(msg) = cfg.validate() {
@@ -1408,23 +1398,8 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
         return;
     }
     app.cache.config_error = None;
-    if keep_history {
-        app.cache.config_status = Some("Config applied (history kept).".to_string());
-        let old_stats = if extra_idx < app.run.mem.extra_levels.len() {
-            Some(std::mem::take(&mut app.run.mem.extra_levels[extra_idx].stats))
-        } else { None };
-        if extra_idx < app.run.mem.extra_levels.len() {
-            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
-            if let Some(s) = old_stats {
-                app.run.mem.extra_levels[extra_idx].stats.history = s.history;
-            }
-        }
-    } else {
-        app.cache.config_status = Some("Config applied (stats reset).".to_string());
-        if extra_idx < app.run.mem.extra_levels.len() {
-            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
-        }
-    }
+    app.cache.config_status = Some("Config applied — simulation restarted.".to_string());
+    app.restart_simulation();
     app.cache.view_scroll = 0;
     app.cache.stats_scroll = 0;
 }

@@ -136,7 +136,7 @@ fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
 fn bit_position_line(segs: &[Seg]) -> Line<'static> {
     let mut spans = Vec::new();
     let mut bit = 31i32;
-    for seg in segs {
+    for (i, seg) in segs.iter().enumerate() {
         let w = seg.width as usize;
         let hi = bit;
         let lo = bit - w as i32 + 1;
@@ -145,7 +145,11 @@ fn bit_position_line(segs: &[Seg]) -> Line<'static> {
         } else {
             format!("{hi:<w$}", w = (w / 2).max(1))
         };
-        let padded = format!("{marker:<w$} ", w = w);
+        let padded = if i + 1 < segs.len() {
+            format!("{marker:<w$} ", w = w)
+        } else {
+            format!("{marker:<w$}", w = w)
+        };
         spans.push(Span::styled(padded, Style::default().fg(Color::Rgb(80, 80, 100))));
         bit = lo - 1;
     }
@@ -153,18 +157,38 @@ fn bit_position_line(segs: &[Seg]) -> Line<'static> {
 }
 
 fn label_line(segs: &[Seg]) -> Line<'static> {
-    segs.iter().map(|s| {
+    let mut spans = Vec::new();
+    for (i, s) in segs.iter().enumerate() {
         let w = s.width as usize;
-        let bar = "▮".repeat(w.min(2));
-        let lbl = if s.label.len() + 1 + bar.len() <= w + 2 {
-            format!("{bar} {:<w$} ", s.label, w = w.saturating_sub(bar.len() + 1))
+        let cell = label_cell(s.label, w);
+        let text = if i + 1 < segs.len() {
+            format!("{cell} ")
         } else {
-            // Truncate label to fit
-            let avail = w.saturating_sub(bar.len() + 1);
-            format!("{bar} {:.avail$} ", s.label, avail = avail)
+            cell
         };
-        Span::styled(lbl, Style::default().fg(s.color))
-    }).collect::<Vec<_>>().into()
+        spans.push(Span::styled(text, Style::default().fg(s.color)));
+    }
+    Line::from(spans)
+}
+
+fn label_cell(label: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let bar_len = width.min(2);
+    let bar = "▮".repeat(bar_len);
+
+    if width <= bar_len {
+        return bar;
+    }
+
+    // Fill the remaining width with label text, and pad any leftover with blocks so the
+    // entire segment width is visually "filled".
+    let label_w = width - bar_len;
+    let truncated: String = label.chars().take(label_w).collect();
+    let pad = label_w.saturating_sub(truncated.chars().count());
+    format!("{bar}{truncated}{}", "▮".repeat(pad))
 }
 
 fn bits_line(word: u32, segs: &[Seg]) -> Line<'static> {
@@ -222,6 +246,46 @@ fn imm_kv(key: &'static str, v: i32) -> Line<'static> {
     kv(key, format!("{v}  (0x{v:x})"), Color::Rgb(120, 180, 255))
 }
 
+fn imm_bits_kv(key: &'static str, raw: u32, bits: u8) -> Line<'static> {
+    let bits_usize = bits as usize;
+    let masked = match bits {
+        0 => 0,
+        32.. => raw,
+        _ => raw & ((1u32 << bits) - 1),
+    };
+    let hex_width = (bits_usize + 3) / 4;
+    let bin = if bits == 0 {
+        String::new()
+    } else {
+        let bin = format!("{masked:0bits_usize$b}");
+        group_bin_nibbles(&bin, bits_usize)
+    };
+    kv(
+        key,
+        format!("0x{masked:0hex_width$x}  (0b{bin})"),
+        Color::Rgb(120, 180, 255),
+    )
+}
+
+fn group_bin_nibbles(bin: &str, bits: usize) -> String {
+    if bits == 0 {
+        return String::new();
+    }
+    let first = match bits % 4 {
+        0 => 4,
+        r => r,
+    };
+    let mut out = String::with_capacity(bin.len() + (bin.len() / 4));
+    out.push_str(&bin[..first]);
+    let mut i = first;
+    while i < bin.len() {
+        out.push('_');
+        out.push_str(&bin[i..i + 4]);
+        i += 4;
+    }
+    out
+}
+
 fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
     match format {
         EncFormat::R => {
@@ -237,15 +301,21 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
             lines.push(kv("funct7", format!("0x{funct7:02x}"), Color::Red));
         }
         EncFormat::I => {
-            let imm    = (((word >> 20) as i32) << 20) >> 20;
+            let opcode = word & 0x7f;
+            let imm12  = (word >> 20) & 0x0fff;
+            let imm    = (((imm12 as i32) << 20) >> 20) as i32;
             let rs1    = ((word >> 15) & 0x1f) as u8;
             let funct3 = (word >> 12) & 0x7;
             let rd     = ((word >> 7) & 0x1f) as u8;
+            let is_shift_imm = opcode == 0x13 && matches!(funct3, 0x1 | 0x5);
             lines.push(reg_kv("rd", rd));
             lines.push(reg_kv("rs1", rs1));
-            lines.push(imm_kv("imm", imm));
+            lines.push(imm_bits_kv("imm[11:0]", imm12, 12));
+            if !is_shift_imm {
+                lines.push(imm_kv("imm(sext)", imm));
+            }
             lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
-            if matches!(funct3, 0x1 | 0x5) {
+            if is_shift_imm {
                 let shamt  = (word >> 20) & 0x1f;
                 let funct7 = (word >> 25) & 0x7f;
                 lines.push(kv("shamt", format!("{shamt}"), Color::LightRed));
@@ -280,9 +350,11 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
         }
         EncFormat::U => {
             let rd  = ((word >> 7) & 0x1f) as u8;
-            let imm = ((word & 0xfffff000) as i32) >> 12;
+            let imm20 = (word >> 12) & 0x000f_ffff;
+            let imm   = (imm20 << 12) as i32;
             lines.push(reg_kv("rd", rd));
-            lines.push(imm_kv("imm[31:12]", imm));
+            lines.push(imm_bits_kv("imm[31:12]", imm20, 20));
+            lines.push(imm_kv("imm<<12", imm));
         }
         EncFormat::J => {
             let b20    = (word >> 31) & 1;

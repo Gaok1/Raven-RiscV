@@ -297,7 +297,7 @@ pub struct CacheStats {
     /// Bytes actually written to RAM: write-through stores + write-back dirty evictions + WB+NoAlloc misses
     pub ram_write_bytes: u64,
     pub history: VecDeque<(f64, f64)>, // (step_f64, hit_rate_pct)
-    pub miss_pcs: HashMap<u32, u64>,
+    pub miss_pcs: HashMap<u32, u64>, 
 }
 
 impl CacheStats {
@@ -323,6 +323,8 @@ pub struct Cache {
     pub config: CacheConfig,
     sets: Vec<CacheSet>,
     pub stats: CacheStats,
+    /// Dirty lines evicted by allocate_rw, to be propagated by CacheController.
+    pub writeback_pending: Vec<(u32, Vec<u8>)>,
 }
 
 impl Cache {
@@ -334,6 +336,7 @@ impl Cache {
             sets: (0..num_sets).map(|_| CacheSet::new(ways, line_size)).collect(),
             config,
             stats: CacheStats::default(),
+            writeback_pending: Vec::new(),
         }
     }
 
@@ -344,6 +347,7 @@ impl Cache {
                 line.dirty = false;
             }
         }
+        self.writeback_pending.clear();
     }
 
     pub fn reset_stats(&mut self) {
@@ -404,12 +408,11 @@ impl Cache {
                 let index_bits = self.config.index_bits();
                 let evict_base = (evicted.tag << (offset_bits + index_bits))
                     | ((idx as u32) << offset_bits);
-                for (i, &b) in evicted.data.iter().enumerate() {
-                    ram.store8(evict_base + i as u32, b)?;
-                    self.stats.ram_write_bytes += 1;
-                }
+                // Defer writeback to CacheController, which will propagate through extra_levels.
+                self.writeback_pending.push((evict_base, evicted.data));
                 self.stats.writebacks += 1;
-                self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles(); // dirty eviction cost
+                self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles();
+                // ram_write_bytes counted in drain_dcache_writebacks after propagation
             }
         }
 
@@ -447,218 +450,108 @@ impl Cache {
     }
 
 
-    /// Write byte via D-cache.
+    /// Unified write implementation for all access sizes.
+    /// Handles misalignment internally (bytes straddling a line fall back to per-byte writes).
+    fn write_impl(&mut self, addr: u32, bytes: &[u8], ram: &mut Ram) -> Result<(), FalconError> {
+        if !self.config.is_valid_config() {
+            for (i, &b) in bytes.iter().enumerate() {
+                ram.store8(addr.wrapping_add(i as u32), b)?;
+            }
+            return Ok(());
+        }
+        let n = bytes.len();
+        // Misalignment: bytes straddle a cache-line boundary → split into per-byte writes.
+        if n > 1 {
+            let offset = self.config.addr_offset(addr);
+            if offset + n > self.config.line_size {
+                for (i, &b) in bytes.iter().enumerate() {
+                    self.write_byte(addr.wrapping_add(i as u32), b, ram)?;
+                }
+                return Ok(());
+            }
+        }
+        let tag     = self.config.addr_tag(addr);
+        let idx     = self.config.addr_index(addr);
+        let offset  = self.config.addr_offset(addr);
+        let hit_way = self.sets[idx].lookup(tag);
+        let count   = n as u64;
+        match self.config.write_policy {
+            WritePolicy::WriteThrough => {
+                // Always write to RAM immediately.
+                for (i, &b) in bytes.iter().enumerate() {
+                    ram.store8(addr.wrapping_add(i as u32), b)?;
+                }
+                self.stats.ram_write_bytes += count;
+                self.stats.bytes_stored    += count;
+                if let Some(way) = hit_way {
+                    // Hit: only tag-search cost; RAM write goes via write buffer (no extra stall).
+                    self.stats.hits += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles();
+                    for (i, &b) in bytes.iter().enumerate() {
+                        self.sets[idx].lines[way].data[offset + i] = b;
+                    }
+                    self.sets[idx].touch(way, self.config.replacement);
+                } else {
+                    // Miss: tag-search + RAM-write penalty.
+                    self.stats.misses += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
+                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
+                        self.allocate_rw(addr, ram)?;
+                        self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles();
+                        if let Some(way) = self.sets[idx].lookup(tag) {
+                            for (i, &b) in bytes.iter().enumerate() {
+                                self.sets[idx].lines[way].data[offset + i] = b;
+                            }
+                        }
+                    }
+                }
+            }
+            WritePolicy::WriteBack => {
+                self.stats.bytes_stored += count;
+                if let Some(way) = hit_way {
+                    self.stats.hits += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles();
+                    for (i, &b) in bytes.iter().enumerate() {
+                        self.sets[idx].lines[way].data[offset + i] = b;
+                    }
+                    self.sets[idx].lines[way].dirty = true;
+                    self.sets[idx].touch(way, self.config.replacement);
+                } else {
+                    self.stats.misses += 1;
+                    self.stats.total_cycles += self.config.tag_search_cycles()
+                        + self.config.miss_penalty
+                        + self.config.line_transfer_cycles();
+                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
+                        self.allocate_rw(addr, ram)?;
+                        if let Some(way) = self.sets[idx].lookup(tag) {
+                            for (i, &b) in bytes.iter().enumerate() {
+                                self.sets[idx].lines[way].data[offset + i] = b;
+                            }
+                            self.sets[idx].lines[way].dirty = true;
+                        }
+                    } else {
+                        // No-allocate: write directly to RAM.
+                        for (i, &b) in bytes.iter().enumerate() {
+                            ram.store8(addr.wrapping_add(i as u32), b)?;
+                        }
+                        self.stats.ram_write_bytes += count;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn write_byte(&mut self, addr: u32, val: u8, ram: &mut Ram) -> Result<(), FalconError> {
-        if !self.config.is_valid_config() {
-            return ram.store8(addr, val);
-        }
-        let tag = self.config.addr_tag(addr);
-        let idx = self.config.addr_index(addr);
-        let offset = self.config.addr_offset(addr);
-        let hit_way = self.sets[idx].lookup(tag);
-
-        match self.config.write_policy {
-            WritePolicy::WriteThrough => {
-                ram.store8(addr, val)?;
-                self.stats.ram_write_bytes += 1; // write-through always writes RAM
-                self.stats.bytes_stored += 1;
-                if let Some(way) = hit_way {
-                    self.stats.hits += 1;
-                    // tag_search (cache lookup) + miss_penalty (write-through RAM write)
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
-                    self.sets[idx].lines[way].data[offset] = val;
-                    self.sets[idx].touch(way, self.config.replacement);
-                } else {
-                    self.stats.misses += 1;
-                    // tag_search (tag lookup) + miss_penalty (RAM write)
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
-                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
-                        self.allocate_rw(addr, ram)?;
-                        self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles(); // fill extra
-                        if let Some(way) = self.sets[idx].lookup(tag) {
-                            self.sets[idx].lines[way].data[offset] = val;
-                        }
-                    }
-                }
-            }
-            WritePolicy::WriteBack => {
-                self.stats.bytes_stored += 1;
-                if let Some(way) = hit_way {
-                    self.stats.hits += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles();
-                    self.sets[idx].lines[way].data[offset] = val;
-                    self.sets[idx].lines[way].dirty = true;
-                    self.sets[idx].touch(way, self.config.replacement);
-                } else {
-                    self.stats.misses += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
-                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
-                        self.allocate_rw(addr, ram)?;
-                        if let Some(way) = self.sets[idx].lookup(tag) {
-                            self.sets[idx].lines[way].data[offset] = val;
-                            self.sets[idx].lines[way].dirty = true;
-                        }
-                    } else {
-                        ram.store8(addr, val)?;
-                        self.stats.ram_write_bytes += 1; // WB + no-alloc miss: goes straight to RAM
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.write_impl(addr, &[val], ram)
     }
 
-
-    /// Write 16-bit halfword via D-cache — single tag lookup (correct stats for `sh`).
     pub fn write_halfword(&mut self, addr: u32, val: u16, ram: &mut Ram) -> Result<(), FalconError> {
-        if !self.config.is_valid_config() {
-            return ram.store16(addr, val);
-        }
-        let tag = self.config.addr_tag(addr);
-        let idx = self.config.addr_index(addr);
-        let offset = self.config.addr_offset(addr);
-        let hit_way = self.sets[idx].lookup(tag);
-        let [b0, b1] = val.to_le_bytes();
-
-        // Misaligned halfword stores can straddle cache lines.
-        if offset + 1 >= self.config.line_size {
-            self.write_byte(addr, b0, ram)?;
-            self.write_byte(addr.wrapping_add(1), b1, ram)?;
-            return Ok(());
-        }
-
-        match self.config.write_policy {
-            WritePolicy::WriteThrough => {
-                ram.store16(addr, val)?;
-                self.stats.ram_write_bytes += 2;
-                self.stats.bytes_stored += 2;
-                if let Some(way) = hit_way {
-                    self.stats.hits += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
-                    self.sets[idx].lines[way].data[offset] = b0;
-                    self.sets[idx].lines[way].data[offset + 1] = b1;
-                    self.sets[idx].touch(way, self.config.replacement);
-                } else {
-                    self.stats.misses += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
-                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
-                        self.allocate_rw(addr, ram)?;
-                        self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles();
-                        if let Some(way) = self.sets[idx].lookup(tag) {
-                            self.sets[idx].lines[way].data[offset] = b0;
-                            self.sets[idx].lines[way].data[offset + 1] = b1;
-                        }
-                    }
-                }
-            }
-            WritePolicy::WriteBack => {
-                self.stats.bytes_stored += 2;
-                if let Some(way) = hit_way {
-                    self.stats.hits += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles();
-                    self.sets[idx].lines[way].data[offset] = b0;
-                    self.sets[idx].lines[way].data[offset + 1] = b1;
-                    self.sets[idx].lines[way].dirty = true;
-                    self.sets[idx].touch(way, self.config.replacement);
-                } else {
-                    self.stats.misses += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
-                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
-                        self.allocate_rw(addr, ram)?;
-                        if let Some(way) = self.sets[idx].lookup(tag) {
-                            self.sets[idx].lines[way].data[offset] = b0;
-                            self.sets[idx].lines[way].data[offset + 1] = b1;
-                            self.sets[idx].lines[way].dirty = true;
-                        }
-                    } else {
-                        ram.store16(addr, val)?;
-                        self.stats.ram_write_bytes += 2;
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.write_impl(addr, &val.to_le_bytes(), ram)
     }
 
-    /// Write 32-bit word via D-cache — single tag lookup (correct stats for `sw`).
     pub fn write_word(&mut self, addr: u32, val: u32, ram: &mut Ram) -> Result<(), FalconError> {
-        if !self.config.is_valid_config() {
-            return ram.store32(addr, val);
-        }
-        let tag = self.config.addr_tag(addr);
-        let idx = self.config.addr_index(addr);
-        let offset = self.config.addr_offset(addr);
-        let hit_way = self.sets[idx].lookup(tag);
-        let [b0, b1, b2, b3] = val.to_le_bytes();
-
-        // Misaligned word stores can straddle cache lines.
-        if offset + 3 >= self.config.line_size {
-            self.write_byte(addr, b0, ram)?;
-            self.write_byte(addr.wrapping_add(1), b1, ram)?;
-            self.write_byte(addr.wrapping_add(2), b2, ram)?;
-            self.write_byte(addr.wrapping_add(3), b3, ram)?;
-            return Ok(());
-        }
-
-        match self.config.write_policy {
-            WritePolicy::WriteThrough => {
-                ram.store32(addr, val)?;
-                self.stats.ram_write_bytes += 4;
-                self.stats.bytes_stored += 4;
-                if let Some(way) = hit_way {
-                    self.stats.hits += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
-                    self.sets[idx].lines[way].data[offset] = b0;
-                    self.sets[idx].lines[way].data[offset + 1] = b1;
-                    self.sets[idx].lines[way].data[offset + 2] = b2;
-                    self.sets[idx].lines[way].data[offset + 3] = b3;
-                    self.sets[idx].touch(way, self.config.replacement);
-                } else {
-                    self.stats.misses += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty;
-                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
-                        self.allocate_rw(addr, ram)?;
-                        self.stats.total_cycles += self.config.miss_penalty + self.config.line_transfer_cycles();
-                        if let Some(way) = self.sets[idx].lookup(tag) {
-                            self.sets[idx].lines[way].data[offset] = b0;
-                            self.sets[idx].lines[way].data[offset + 1] = b1;
-                            self.sets[idx].lines[way].data[offset + 2] = b2;
-                            self.sets[idx].lines[way].data[offset + 3] = b3;
-                        }
-                    }
-                }
-            }
-            WritePolicy::WriteBack => {
-                self.stats.bytes_stored += 4;
-                if let Some(way) = hit_way {
-                    self.stats.hits += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles();
-                    self.sets[idx].lines[way].data[offset] = b0;
-                    self.sets[idx].lines[way].data[offset + 1] = b1;
-                    self.sets[idx].lines[way].data[offset + 2] = b2;
-                    self.sets[idx].lines[way].data[offset + 3] = b3;
-                    self.sets[idx].lines[way].dirty = true;
-                    self.sets[idx].touch(way, self.config.replacement);
-                } else {
-                    self.stats.misses += 1;
-                    self.stats.total_cycles += self.config.tag_search_cycles() + self.config.miss_penalty + self.config.line_transfer_cycles();
-                    if let WriteAllocPolicy::WriteAllocate = self.config.write_alloc {
-                        self.allocate_rw(addr, ram)?;
-                        if let Some(way) = self.sets[idx].lookup(tag) {
-                            self.sets[idx].lines[way].data[offset] = b0;
-                            self.sets[idx].lines[way].data[offset + 1] = b1;
-                            self.sets[idx].lines[way].data[offset + 2] = b2;
-                            self.sets[idx].lines[way].data[offset + 3] = b3;
-                            self.sets[idx].lines[way].dirty = true;
-                        }
-                    } else {
-                        ram.store32(addr, val)?;
-                        self.stats.ram_write_bytes += 4;
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.write_impl(addr, &val.to_le_bytes(), ram)
     }
 }
 
@@ -751,7 +644,6 @@ pub struct CacheController {
     /// Extra unified cache levels: extra_levels[0]=L2, extra_levels[1]=L3, …
     pub extra_levels: Vec<Cache>,
     pub instruction_count: u64,
-    step_count: u64,
 }
 
 impl CacheController {
@@ -762,14 +654,12 @@ impl CacheController {
             dcache: Cache::new(dcfg),
             extra_levels: extra_cfgs.into_iter().map(Cache::new).collect(),
             instruction_count: 0,
-            step_count: 0,
         }
     }
 
     /// Called once per executed instruction to record history snapshots.
     pub fn snapshot_stats(&mut self) {
-        let step = self.step_count as f64;
-        self.step_count += 1;
+        let step = self.instruction_count as f64;
 
         let i_rate = self.icache.stats.hit_rate();
         let d_rate = self.dcache.stats.hit_rate();
@@ -801,14 +691,6 @@ impl CacheController {
             level.reset_stats();
         }
         self.instruction_count = 0;
-        self.step_count = 0;
-    }
-
-    pub fn apply_config(&mut self, icfg: CacheConfig, dcfg: CacheConfig, extra_cfgs: Vec<CacheConfig>) {
-        self.icache = Cache::new(icfg);
-        self.dcache = Cache::new(dcfg);
-        self.extra_levels = extra_cfgs.into_iter().map(Cache::new).collect();
-        self.reset_stats();
     }
 
     pub fn total_program_cycles(&self) -> u64 {
@@ -824,12 +706,80 @@ impl CacheController {
         format!("L{}", n + 2)
     }
 
-    pub fn add_extra_level(&mut self, cfg: CacheConfig) {
-        self.extra_levels.push(Cache::new(cfg));
+    /// Propagate a dirty-evicted line through `next_levels` (write-back chain), falling back to RAM.
+    /// Returns the number of bytes ultimately written to physical RAM.
+    fn writeback_line(
+        next_levels: &mut [Cache],
+        ram: &mut Ram,
+        evict_base: u32,
+        data: Vec<u8>,
+    ) -> Result<u64, FalconError> {
+        if next_levels.is_empty() {
+            // No more cache levels — write to RAM
+            let n = data.len() as u64;
+            for (i, &b) in data.iter().enumerate() {
+                ram.store8(evict_base.wrapping_add(i as u32), b)?;
+            }
+            return Ok(n);
+        }
+        // Skip invalid or size-incompatible levels
+        if !next_levels[0].config.is_valid_config() || data.len() != next_levels[0].config.line_size {
+            let (_, rest) = next_levels.split_at_mut(1);
+            return Self::writeback_line(rest, ram, evict_base, data);
+        }
+        let (head, tail) = next_levels.split_at_mut(1);
+        let lvl = &mut head[0];
+
+        let tag = lvl.config.addr_tag(evict_base);
+        let idx = lvl.config.addr_index(evict_base);
+        let replacement = lvl.config.replacement;
+        let offset_bits = lvl.config.offset_bits();
+        let index_bits = lvl.config.index_bits();
+        let line_size = lvl.config.line_size;
+
+        let way = lvl.sets[idx].find_victim(replacement);
+        let victim_valid = lvl.sets[idx].lines[way].valid;
+        let victim_dirty = lvl.sets[idx].lines[way].dirty;
+
+        let (victim_base, victim_data) = if victim_valid && victim_dirty {
+            let vt = lvl.sets[idx].lines[way].tag;
+            let vbase = (vt << (offset_bits + index_bits)) | ((idx as u32) << offset_bits);
+            let vdata = lvl.sets[idx].lines[way].data.clone();
+            (vbase, Some(vdata))
+        } else {
+            (0, None)
+        };
+
+        if victim_valid {
+            lvl.stats.evictions += 1;
+            if victim_dirty {
+                lvl.stats.writebacks += 1;
+                lvl.stats.total_cycles += lvl.config.miss_penalty + lvl.config.line_transfer_cycles();
+            }
+        }
+
+        // Install incoming dirty line
+        lvl.sets[idx].install(way, tag, data, replacement);
+        lvl.sets[idx].lines[way].dirty = true;
+        lvl.stats.bytes_loaded += line_size as u64;
+
+        // Propagate this level's dirty victim to the next level
+        if let Some(vdata) = victim_data {
+            let ram_bytes = Self::writeback_line(tail, ram, victim_base, vdata)?;
+            lvl.stats.ram_write_bytes += ram_bytes;
+        }
+
+        Ok(0) // data went into this cache level, not directly to RAM
     }
 
-    pub fn remove_extra_level(&mut self) -> Option<CacheConfig> {
-        self.extra_levels.pop().map(|c| c.config)
+    /// Drain dirty evictions queued in dcache.writeback_pending into extra_levels / RAM.
+    fn drain_dcache_writebacks(&mut self) -> Result<(), FalconError> {
+        let pending: Vec<(u32, Vec<u8>)> = self.dcache.writeback_pending.drain(..).collect();
+        for (base, data) in pending {
+            let ram_bytes = Self::writeback_line(&mut self.extra_levels, &mut self.ram, base, data)?;
+            self.dcache.stats.ram_write_bytes += ram_bytes;
+        }
+        Ok(())
     }
 
     /// Invalidate all cache levels (icache, dcache, and all extra levels).
@@ -845,6 +795,9 @@ impl CacheController {
     /// from extra cache level `from_level` onwards, falling back to RAM.
     /// Returns a Vec<u8> of length `needed_size`.
     fn fetch_line(&mut self, addr: u32, needed_size: usize, from_level: usize) -> Result<Vec<u8>, FalconError> {
+        if needed_size == 0 {
+            return Ok(Vec::new());
+        }
         if from_level >= self.extra_levels.len() {
             // Base case: load from RAM
             let mut data = vec![0u8; needed_size];
@@ -873,18 +826,44 @@ impl CacheController {
         // byte offset of addr within the level's line
         let byte_offset = (addr.wrapping_sub(level_line_base)) as usize;
 
+        // If the requested span crosses this level's line boundary (e.g., upper level line_size
+        // is larger than this level's line_size), split across as many lines as needed so we
+        // always return exactly needed_size bytes.
+        let end = byte_offset.saturating_add(needed_size);
+        if end > level_line_size {
+            let first_len = level_line_size.saturating_sub(byte_offset).min(needed_size);
+            if first_len == 0 {
+                // Should be impossible with valid configs, but avoid infinite recursion.
+                return Err(FalconError::Bus("cache line offset out of bounds"));
+            }
+            let mut data = self.fetch_line(addr, first_len, from_level)?;
+            let mut rest = self.fetch_line(
+                addr.wrapping_add(first_len as u32),
+                needed_size - first_len,
+                from_level,
+            )?;
+            data.append(&mut rest);
+            return Ok(data);
+        }
+
         // Check for hit (extract data with limited borrow scope)
         let way_opt = self.extra_levels[from_level].sets[idx].lookup(tag);
         if let Some(way) = way_opt {
-            let data: Vec<u8> = {
+            let data_opt: Option<Vec<u8>> = {
                 let line_data = &self.extra_levels[from_level].sets[idx].lines[way].data;
-                let end = (byte_offset + needed_size).min(line_data.len());
-                line_data[byte_offset..end].to_vec()
+                line_data
+                    .get(byte_offset..byte_offset + needed_size)
+                    .map(|s| s.to_vec())
             };
-            self.extra_levels[from_level].stats.hits += 1;
-            self.extra_levels[from_level].stats.total_cycles += level_tag_search;
-            self.extra_levels[from_level].sets[idx].touch(way, level_replacement);
-            return Ok(data);
+            if let Some(data) = data_opt {
+                self.extra_levels[from_level].stats.hits += 1;
+                self.extra_levels[from_level].stats.total_cycles += level_tag_search;
+                self.extra_levels[from_level].sets[idx].touch(way, level_replacement);
+                return Ok(data);
+            }
+            // Corrupted line length: invalidate and treat as a miss.
+            self.extra_levels[from_level].sets[idx].lines[way].valid = false;
+            self.extra_levels[from_level].sets[idx].lines[way].dirty = false;
         }
 
         // Miss: record stats then recurse to fetch the level's full line
@@ -910,19 +889,19 @@ impl CacheController {
             if evicted_dirty {
                 let evict_base = (evicted_tag << (level_offset_bits + level_index_bits))
                     | ((idx as u32) << level_offset_bits);
-                for (i, &b) in evicted_data.iter().enumerate() {
-                    self.ram.store8(evict_base.wrapping_add(i as u32), b)?;
-                    self.extra_levels[from_level].stats.ram_write_bytes += 1;
-                }
                 self.extra_levels[from_level].stats.writebacks += 1;
+                let ram_bytes = {
+                    let (_, rest) = self.extra_levels.split_at_mut(from_level + 1);
+                    Self::writeback_line(rest, &mut self.ram, evict_base, evicted_data)?
+                };
+                self.extra_levels[from_level].stats.ram_write_bytes += ram_bytes;
             }
         }
         self.extra_levels[from_level].stats.bytes_loaded += level_line_size as u64;
         self.extra_levels[from_level].sets[idx].install(way, tag, line_data.clone(), level_replacement);
 
         // Return only the needed_size bytes the caller asked for
-        let end = (byte_offset + needed_size).min(line_data.len());
-        Ok(line_data[byte_offset..end].to_vec())
+        Ok(line_data[byte_offset..byte_offset + needed_size].to_vec())
     }
 
     pub fn overall_cpi(&self) -> f64 {
@@ -980,15 +959,18 @@ impl Bus for CacheController {
         self.ram.load32(addr)
     }
 
-    // store* = D-cache tracked writes (bypasses L2+ — write-through-to-RAM for evictions)
+    // store* = D-cache tracked writes; dirty evictions propagate through extra_levels
     fn store8(&mut self, addr: u32, val: u8) -> Result<(), FalconError> {
-        self.dcache.write_byte(addr, val, &mut self.ram)
+        self.dcache.write_byte(addr, val, &mut self.ram)?;
+        self.drain_dcache_writebacks()
     }
     fn store16(&mut self, addr: u32, val: u16) -> Result<(), FalconError> {
-        self.dcache.write_halfword(addr, val, &mut self.ram)
+        self.dcache.write_halfword(addr, val, &mut self.ram)?;
+        self.drain_dcache_writebacks()
     }
     fn store32(&mut self, addr: u32, val: u32) -> Result<(), FalconError> {
-        self.dcache.write_word(addr, val, &mut self.ram)
+        self.dcache.write_word(addr, val, &mut self.ram)?;
+        self.drain_dcache_writebacks()
     }
 
     // I-cache tracked fetch — hierarchical: L1 hit → return; miss → L2+/RAM fill
@@ -1019,15 +1001,24 @@ impl Bus for CacheController {
         // L1 hit check
         let way_opt = self.icache.sets[idx].lookup(tag);
         if let Some(way) = way_opt {
-            let (d0, d1, d2, d3) = {
+            let bytes_opt: Option<[u8; 4]> = {
                 let d = &self.icache.sets[idx].lines[way].data;
-                (d[offset], d[offset + 1], d[offset + 2], d[offset + 3])
+                if offset + 3 < d.len() {
+                    Some([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]])
+                } else {
+                    None
+                }
             };
-            self.icache.stats.hits += 1;
-            self.icache.stats.total_cycles += tag_search;
-            self.icache.sets[idx].touch(way, replacement);
-            self.instruction_count += 1;
-            return Ok(u32::from_le_bytes([d0, d1, d2, d3]));
+            if let Some([d0, d1, d2, d3]) = bytes_opt {
+                self.icache.stats.hits += 1;
+                self.icache.stats.total_cycles += tag_search;
+                self.icache.sets[idx].touch(way, replacement);
+                self.instruction_count += 1;
+                return Ok(u32::from_le_bytes([d0, d1, d2, d3]));
+            }
+            // Corrupted line length: invalidate and treat as a miss.
+            self.icache.sets[idx].lines[way].valid = false;
+            self.icache.sets[idx].lines[way].dirty = false;
         }
 
         // L1 miss — record and fill from L2+/RAM
@@ -1073,19 +1064,25 @@ impl Bus for CacheController {
 
         let way_opt = self.dcache.sets[idx].lookup(tag);
         if let Some(way) = way_opt {
-            let b = self.dcache.sets[idx].lines[way].data[offset];
-            self.dcache.stats.hits += 1;
-            self.dcache.stats.total_cycles += tag_search;
-            self.dcache.sets[idx].touch(way, replacement);
-            return Ok(b);
+            let b_opt: Option<u8> = self.dcache.sets[idx].lines[way].data.get(offset).copied();
+            if let Some(b) = b_opt {
+                self.dcache.stats.hits += 1;
+                self.dcache.stats.total_cycles += tag_search;
+                self.dcache.sets[idx].touch(way, replacement);
+                return Ok(b);
+            }
+            // Corrupted line length: invalidate and treat as a miss.
+            self.dcache.sets[idx].lines[way].valid = false;
+            self.dcache.sets[idx].lines[way].dirty = false;
         }
 
         self.dcache.stats.misses += 1;
         self.dcache.stats.total_cycles += tag_search + miss_penalty + transfer_cyc;
+        *self.dcache.stats.miss_pcs.entry(addr).or_insert(0) += 1;
 
         let line_data = self.fetch_line(line_base, line_size, 0)?;
-        Self::install_dcache_line(&mut self.dcache, &mut self.ram, idx, tag, replacement,
-            offset_bits, index_bits, miss_penalty, transfer_cyc, line_data.clone())?;
+        Self::install_dcache_line(&mut self.dcache, &mut self.extra_levels, &mut self.ram,
+            idx, tag, replacement, offset_bits, index_bits, miss_penalty, transfer_cyc, line_data.clone())?;
         Ok(line_data[offset])
     }
 
@@ -1114,22 +1111,32 @@ impl Bus for CacheController {
 
         let way_opt = self.dcache.sets[idx].lookup(tag);
         if let Some(way) = way_opt {
-            let (b0, b1) = {
+            let bytes_opt: Option<[u8; 2]> = {
                 let d = &self.dcache.sets[idx].lines[way].data;
-                (d[offset], d[offset + 1])
+                if offset + 1 < d.len() {
+                    Some([d[offset], d[offset + 1]])
+                } else {
+                    None
+                }
             };
-            self.dcache.stats.hits += 1;
-            self.dcache.stats.total_cycles += tag_search;
-            self.dcache.sets[idx].touch(way, replacement);
-            return Ok(u16::from_le_bytes([b0, b1]));
+            if let Some([b0, b1]) = bytes_opt {
+                self.dcache.stats.hits += 1;
+                self.dcache.stats.total_cycles += tag_search;
+                self.dcache.sets[idx].touch(way, replacement);
+                return Ok(u16::from_le_bytes([b0, b1]));
+            }
+            // Corrupted line length: invalidate and treat as a miss.
+            self.dcache.sets[idx].lines[way].valid = false;
+            self.dcache.sets[idx].lines[way].dirty = false;
         }
 
         self.dcache.stats.misses += 1;
         self.dcache.stats.total_cycles += tag_search + miss_penalty + transfer_cyc;
+        *self.dcache.stats.miss_pcs.entry(addr).or_insert(0) += 1;
 
         let line_data = self.fetch_line(line_base, line_size, 0)?;
-        Self::install_dcache_line(&mut self.dcache, &mut self.ram, idx, tag, replacement,
-            offset_bits, index_bits, miss_penalty, transfer_cyc, line_data.clone())?;
+        Self::install_dcache_line(&mut self.dcache, &mut self.extra_levels, &mut self.ram,
+            idx, tag, replacement, offset_bits, index_bits, miss_penalty, transfer_cyc, line_data.clone())?;
         Ok(u16::from_le_bytes([line_data[offset], line_data[offset + 1]]))
     }
 
@@ -1160,22 +1167,32 @@ impl Bus for CacheController {
 
         let way_opt = self.dcache.sets[idx].lookup(tag);
         if let Some(way) = way_opt {
-            let (d0, d1, d2, d3) = {
+            let bytes_opt: Option<[u8; 4]> = {
                 let d = &self.dcache.sets[idx].lines[way].data;
-                (d[offset], d[offset + 1], d[offset + 2], d[offset + 3])
+                if offset + 3 < d.len() {
+                    Some([d[offset], d[offset + 1], d[offset + 2], d[offset + 3]])
+                } else {
+                    None
+                }
             };
-            self.dcache.stats.hits += 1;
-            self.dcache.stats.total_cycles += tag_search;
-            self.dcache.sets[idx].touch(way, replacement);
-            return Ok(u32::from_le_bytes([d0, d1, d2, d3]));
+            if let Some([d0, d1, d2, d3]) = bytes_opt {
+                self.dcache.stats.hits += 1;
+                self.dcache.stats.total_cycles += tag_search;
+                self.dcache.sets[idx].touch(way, replacement);
+                return Ok(u32::from_le_bytes([d0, d1, d2, d3]));
+            }
+            // Corrupted line length: invalidate and treat as a miss.
+            self.dcache.sets[idx].lines[way].valid = false;
+            self.dcache.sets[idx].lines[way].dirty = false;
         }
 
         self.dcache.stats.misses += 1;
         self.dcache.stats.total_cycles += tag_search + miss_penalty + transfer_cyc;
+        *self.dcache.stats.miss_pcs.entry(addr).or_insert(0) += 1;
 
         let line_data = self.fetch_line(line_base, line_size, 0)?;
-        Self::install_dcache_line(&mut self.dcache, &mut self.ram, idx, tag, replacement,
-            offset_bits, index_bits, miss_penalty, transfer_cyc, line_data.clone())?;
+        Self::install_dcache_line(&mut self.dcache, &mut self.extra_levels, &mut self.ram,
+            idx, tag, replacement, offset_bits, index_bits, miss_penalty, transfer_cyc, line_data.clone())?;
         Ok(u32::from_le_bytes([
             line_data[offset],
             line_data[offset + 1],
@@ -1186,9 +1203,10 @@ impl Bus for CacheController {
 }
 
 impl CacheController {
-    /// Install a pre-fetched line into the D-cache, handling any dirty eviction writeback to RAM.
+    /// Install a pre-fetched line into the D-cache; dirty evictions propagate through extra_levels.
     fn install_dcache_line(
         dcache: &mut Cache,
+        extra_levels: &mut Vec<Cache>,
         ram: &mut Ram,
         idx: usize,
         tag: u32,
@@ -1214,12 +1232,10 @@ impl CacheController {
             if evicted_dirty {
                 let evict_base = (evicted_tag << (offset_bits + index_bits))
                     | ((idx as u32) << offset_bits);
-                for (i, &b) in evicted_data.iter().enumerate() {
-                    ram.store8(evict_base.wrapping_add(i as u32), b)?;
-                    dcache.stats.ram_write_bytes += 1;
-                }
                 dcache.stats.writebacks += 1;
                 dcache.stats.total_cycles += miss_penalty + transfer_cyc;
+                let ram_bytes = Self::writeback_line(extra_levels, ram, evict_base, evicted_data)?;
+                dcache.stats.ram_write_bytes += ram_bytes;
             }
         }
         dcache.stats.bytes_loaded += line_data.len() as u64;
@@ -1276,6 +1292,20 @@ mod tests {
         ctrl.fetch32(16).unwrap();
         assert_eq!(*ctrl.icache.stats.miss_pcs.get(&16).unwrap_or(&0), 1,
             "fetch at addr 16 should record 1 miss");
+    }
+
+    #[test]
+    fn fetch_line_splits_when_extra_line_is_smaller() {
+        // L1 line_size=16 (default); L2 line_size=4 forces fetch_line() to stitch together 4 lines.
+        let l2 = cfg(64, 4, 1);
+        let mut ctrl = CacheController::new(CacheConfig::default(), CacheConfig::default(), vec![l2], 256);
+        for i in 0u32..32 {
+            ctrl.ram.store8(i, i as u8).unwrap();
+        }
+
+        // First fetch fills the L1 line [0..16]; second fetch is a hit within that line.
+        assert_eq!(ctrl.fetch32(0).unwrap(), u32::from_le_bytes([0, 1, 2, 3]));
+        assert_eq!(ctrl.fetch32(4).unwrap(), u32::from_le_bytes([4, 5, 6, 7]));
     }
 
     // ── Caso 2A: ram_write_bytes — write-through ────────────────────────────
@@ -1346,6 +1376,63 @@ mod tests {
 
         ctrl.store32(13, 0xAABB_CCDD).unwrap();
         assert_eq!(ctrl.effective_read32(13).unwrap(), 0xAABB_CCDD);
+    }
+
+    // ── Caso 3: D-cache miss_pcs — tracked on read misses ─────────────────────
+
+    #[test]
+    fn dcache_miss_pcs_tracked_on_read_miss() {
+        let d = dcfg(WritePolicy::WriteBack, WriteAllocPolicy::WriteAllocate, 64, 16, 1);
+        let mut ctrl = CacheController::new(CacheConfig::default(), d, vec![], 256);
+
+        // First read at addr 0 → cold miss; miss_pcs[0] = 1
+        ctrl.dcache_read8(0).unwrap();
+        assert_eq!(*ctrl.dcache.stats.miss_pcs.get(&0).unwrap_or(&0), 1);
+
+        // Second read (hit) → miss_pcs unchanged
+        ctrl.dcache_read8(0).unwrap();
+        assert_eq!(*ctrl.dcache.stats.miss_pcs.get(&0).unwrap_or(&0), 1);
+
+        // Read at addr 16 → different line, cold miss; miss_pcs[16] = 1
+        ctrl.dcache_read8(16).unwrap();
+        assert_eq!(*ctrl.dcache.stats.miss_pcs.get(&16).unwrap_or(&0), 1);
+    }
+
+    // ── Caso 4: dirty eviction chain — L1 dirty goes to L2, not RAM ───────────
+
+    #[test]
+    fn dirty_eviction_goes_to_l2_not_ram() {
+        // L1 dcache: 1 set, 1 way, 16-byte line (write-back)
+        let d = dcfg(WritePolicy::WriteBack, WriteAllocPolicy::WriteAllocate, 16, 16, 1);
+        // L2: 1 set, 2 ways, 16-byte line (write-back) — large enough to hold L1 eviction
+        let l2 = CacheConfig {
+            size: 32, line_size: 16, associativity: 2,
+            replacement: ReplacementPolicy::Lru,
+            write_policy: WritePolicy::WriteBack,
+            write_alloc: WriteAllocPolicy::WriteAllocate,
+            hit_latency: 5, miss_penalty: 100,
+            assoc_penalty: 1, transfer_width: 8,
+        };
+        let mut ctrl = CacheController::new(CacheConfig::default(), d, vec![l2], 256);
+
+        // Write to addr 0 → L1 miss+alloc, line [0..16] installed dirty in L1
+        ctrl.store8(0, 0xAA).unwrap();
+        assert_eq!(ctrl.dcache.stats.writebacks, 0, "no eviction yet");
+        assert_eq!(ctrl.dcache.stats.ram_write_bytes, 0, "WB miss: no RAM write yet");
+
+        // Write to addr 16 → L1 miss → evict dirty line [0..16] from L1
+        // With fix: dirty line goes to L2 (not RAM)
+        ctrl.store8(16, 0xBB).unwrap();
+        assert_eq!(ctrl.dcache.stats.writebacks, 1, "L1 should have evicted dirty line");
+        assert_eq!(ctrl.dcache.stats.ram_write_bytes, 0, "dirty eviction should go to L2, not RAM");
+
+        // L2 should now have the dirty line for addr 0
+        let l2_has_addr0 = ctrl.extra_levels[0].sets[0].lines.iter()
+            .any(|l| l.valid && l.dirty && l.data[0] == 0xAA);
+        assert!(l2_has_addr0, "L2 should hold the dirty evicted line from L1");
+
+        // RAM should still have the original 0 at addr 0 (not yet written back)
+        assert_eq!(ctrl.ram.load8(0).unwrap(), 0, "RAM not updated until L2 evicts");
     }
 
     // ── Tipos de associatividade ──────────────────────────────────────────────

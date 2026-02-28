@@ -8,6 +8,7 @@ use super::program::Program;
 use super::pseudo::{
     parse_la, parse_pop, parse_print, parse_print_str, parse_print_strln, parse_push, parse_read,
     parse_read_byte, parse_read_half, parse_read_word,
+    parse_rand_byte, parse_rand_half, parse_rand_word,
 };
 use super::utils::*;
 
@@ -384,6 +385,15 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 } else if ltrim == "readWord" || ltrim.starts_with("readWord ") {
                     items.push((pc_text, LineKind::ReadWord(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(16);
+                } else if ltrim == "randByte" || ltrim.starts_with("randByte ") {
+                    items.push((pc_text, LineKind::RandByte(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(16);
+                } else if ltrim == "randHalf" || ltrim.starts_with("randHalf ") {
+                    items.push((pc_text, LineKind::RandHalf(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(16);
+                } else if ltrim == "randWord" || ltrim.starts_with("randWord ") {
+                    items.push((pc_text, LineKind::RandWord(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(16);
                 } else {
                     items.push((pc_text, LineKind::Instr(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(4);
@@ -752,6 +762,18 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 let insts = parse_read_word(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
                 for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
             }
+            LineKind::RandByte(s) => {
+                let insts = parse_rand_byte(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
+            LineKind::RandHalf(s) => {
+                let insts = parse_rand_half(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
+            LineKind::RandWord(s) => {
+                let insts = parse_rand_word(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
         }
     }
 
@@ -777,6 +799,9 @@ enum LineKind {
     ReadByte(String),
     ReadHalf(String),
     ReadWord(String),
+    RandByte(String),
+    RandHalf(String),
+    RandWord(String),
 }
 
 fn parse_instr(

@@ -803,8 +803,7 @@ impl App {
     pub(super) fn add_cache_level(&mut self) {
         use crate::falcon::cache::extra_level_presets;
         let cfg = extra_level_presets()[0].clone(); // Small L2 default
-        self.cache.extra_pending.push(cfg.clone());
-        self.run.mem.add_extra_level(cfg);
+        self.cache.extra_pending.push(cfg);
         // Select the newly added level
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
         // Grow hover_level vec
@@ -815,7 +814,6 @@ impl App {
     pub(super) fn remove_last_cache_level(&mut self) {
         if !self.cache.extra_pending.is_empty() {
             self.cache.extra_pending.pop();
-            self.run.mem.remove_extra_level();
             let max_level = self.cache.extra_pending.len();
             if self.cache.selected_level > max_level {
                 self.cache.selected_level = max_level;
@@ -901,7 +899,8 @@ impl App {
         if !alive {
             self.run.is_running = false;
             if !self.console.reading {
-                self.run.faulted = self.run.cpu.exit_code.is_none();
+                // Any non-interactive stop (program exit or runtime error) locks execution until restart.
+                self.run.faulted = true;
             }
         }
     }
