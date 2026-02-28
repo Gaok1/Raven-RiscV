@@ -236,6 +236,7 @@ console so the failure is obvious during teaching.
 | --- | --- | --- |
 | `63` | `read` | `a0=fd`, `a1=buf`, `a2=count` (fd=0 only). Reads bytes (line-based, appends `\n`). |
 | `64` | `write` | `a0=fd`, `a1=buf`, `a2=count` (fd=1/2). Writes `count` bytes from memory. |
+| `278` | `getrandom` | `a0=buf`, `a1=buflen`, `a2=flags` (flags bits `0x1/0x2` accepted). Fills memory with random bytes. |
 | `93` | `exit` | `a0=status`. Stops execution. |
 | `94` | `exit_group` | Same as `exit` for now. |
 

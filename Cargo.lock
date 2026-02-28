@@ -615,10 +615,12 @@ dependencies = [
  "arboard",
  "comfy-table",
  "crossterm 0.29.0",
+ "getrandom 0.3.4",
  "ratatui",
  "rfd",
  "signal-hook",
  "thiserror",
+ "unicode-truncate",
 ]
 
 [[package]]

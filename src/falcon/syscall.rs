@@ -7,6 +7,7 @@ const SYS_READ: u32 = 63;
 const SYS_WRITE: u32 = 64;
 const SYS_EXIT: u32 = 93;
 const SYS_EXIT_GROUP: u32 = 94;
+const SYS_GETRANDOM: u32 = 278;
 
 const FALCON_PRINT_INT: u32 = 1000;
 const FALCON_PRINT_ZSTR: u32 = 1001;
@@ -18,6 +19,8 @@ const FALCON_READ_U32: u32 = 1012;
 
 const LINUX_EBADF: u32 = (-9i32) as u32;
 const LINUX_EFAULT: u32 = (-14i32) as u32;
+const LINUX_EIO: u32 = (-5i32) as u32;
+const LINUX_EINVAL: u32 = (-22i32) as u32;
 
 /// Handles syscalls invoked via `ecall`.
 ///
@@ -38,6 +41,7 @@ pub fn handle_syscall<B: Bus>(
         // --- Linux ABI subset ---
         SYS_READ => linux_read(cpu, mem, console),
         SYS_WRITE => linux_write(cpu, mem, console),
+        SYS_GETRANDOM => linux_getrandom(cpu, mem, console),
         SYS_EXIT | SYS_EXIT_GROUP => {
             cpu.exit_code = Some(cpu.read(10));
             Ok(false)
@@ -166,6 +170,55 @@ fn linux_write<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Res
     cpu.stdout.extend_from_slice(&bytes);
     console_write_bytes(console, &bytes);
     cpu.write(10, count as u32);
+    Ok(true)
+}
+
+fn linux_getrandom<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
+    // Linux: getrandom(buf=a0, buflen=a1, flags=a2) -> a0 = n or -errno
+    let buf = cpu.read(10);
+    let buflen = cpu.read(11) as usize;
+    let flags = cpu.read(12);
+
+    const GRND_NONBLOCK: u32 = 0x0001;
+    const GRND_RANDOM: u32 = 0x0002;
+    const SUPPORTED_FLAGS: u32 = GRND_NONBLOCK | GRND_RANDOM;
+
+    if flags & !SUPPORTED_FLAGS != 0 {
+        cpu.write(10, LINUX_EINVAL);
+        console.push_error(format!("getrandom: unsupported flags 0x{flags:X}"));
+        return Ok(true);
+    }
+
+    if buflen == 0 {
+        cpu.write(10, 0);
+        return Ok(true);
+    }
+
+    let mut written: usize = 0;
+    let mut tmp = [0u8; 256];
+    while written < buflen {
+        let chunk = (buflen - written).min(tmp.len());
+        if let Err(e) = getrandom::fill(&mut tmp[..chunk]) {
+            cpu.write(10, LINUX_EIO);
+            console.push_error(format!("getrandom: {e}"));
+            return Ok(true);
+        }
+        for (i, &b) in tmp[..chunk].iter().enumerate() {
+            let addr = buf.wrapping_add((written + i) as u32);
+            if let Err(e) = mem.store8(addr, b) {
+                cpu.write(10, LINUX_EFAULT);
+                console.push_error(format!("getrandom: {e}"));
+                return Ok(true);
+            }
+        }
+        written += chunk;
+    }
+
+    cpu.write(10, buflen as u32);
     Ok(true)
 }
 
