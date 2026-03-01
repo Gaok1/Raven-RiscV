@@ -34,7 +34,7 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title(format!("Registers  [p]=pin/unpin{cursor_info}"));
+        .title(format!("Registers  [p]/click=pin{cursor_info}"));
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
     // Feature 7: 3-column table (name, hex, dec)
@@ -47,21 +47,27 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
     let total = 33usize;
     let visible = inner.height.saturating_sub(2) as usize;
     let pinned = &app.run.pinned_regs;
+    let hover = app.run.hover_reg_row;
 
     let mut rows: Vec<Row<'static>> = Vec::new();
 
     // ── Pinned registers (always at top) ─────────────────────────────────────
-    for &reg_idx in pinned.iter() {
+    for (pin_i, &reg_idx) in pinned.iter().enumerate() {
+        let is_hover = hover == Some(pin_i);
         let (label, hex_val, dec_val, age) = register_entry_reg(reg_idx, app);
         let pin_label = format!("◉ {label}");
+        let base = age_style(age).add_modifier(Modifier::BOLD);
+        let style = if is_hover { base.bg(Color::Rgb(60, 80, 60)) } else { base };
+        let val_style = if is_hover { age_style(age).bg(Color::Rgb(60, 80, 60)) } else { age_style(age) };
         rows.push(Row::new(vec![
-            Cell::from(pin_label).style(age_style(age).add_modifier(Modifier::BOLD)),
-            Cell::from(hex_val).style(age_style(age)),
-            Cell::from(dec_val).style(age_style(age)),
+            Cell::from(pin_label).style(style),
+            Cell::from(hex_val).style(val_style),
+            Cell::from(dec_val).style(val_style),
         ]));
     }
 
     // Separator after pinned
+    let sep_visual_row = pinned.len();
     if !pinned.is_empty() && visible > pinned.len() {
         rows.push(Row::new(vec![
             Cell::from("─────────────"),
@@ -71,13 +77,16 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
     }
 
     // ── Regular scroll section ────────────────────────────────────────────────
-    let max_scroll = total.saturating_sub(visible.saturating_sub(pinned.len() + if pinned.is_empty() { 0 } else { 1 }));
+    let offset = if pinned.is_empty() { 0 } else { pinned.len() + 1 };
+    let max_scroll = total.saturating_sub(visible.saturating_sub(offset));
     let start = app.run.regs_scroll.min(max_scroll);
     let remaining = visible.saturating_sub(rows.len());
     let end = (start + remaining).min(total);
 
-    for index in start..end {
+    for (i, index) in (start..end).enumerate() {
+        let visual_row = offset + i;
         let is_cursor = index == app.run.reg_cursor;
+        let is_hover = hover == Some(visual_row) && visual_row != sep_visual_row;
         let (label, hex_val, dec_val, age) = register_entry(index, app);
         let is_pinned = if index >= 1 { pinned.contains(&((index - 1) as u8)) } else { false };
         let marker = if is_pinned { "◉ " } else { "  " };
@@ -85,6 +94,8 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         let base_style = age_style(age);
         let row_style = if is_cursor {
             base_style.bg(Color::Rgb(50, 50, 80))
+        } else if is_hover {
+            base_style.bg(Color::Rgb(40, 60, 40))
         } else {
             base_style
         };

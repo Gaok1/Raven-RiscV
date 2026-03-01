@@ -198,6 +198,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         update_run_status_hover(app, me, area);
         update_imem_hover(app, me, area);
         update_console_hover(app, me, area);
+        update_sidebar_hover(app, me, area);
         match me.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 handle_run_status_click(app, me, area);
@@ -967,6 +968,31 @@ fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
+/// Track which visual row in the register sidebar the mouse is hovering over.
+fn update_sidebar_hover(app: &mut App, me: MouseEvent, area: Rect) {
+    if app.run.sidebar_collapsed || !app.run.show_registers {
+        app.run.hover_reg_row = None;
+        return;
+    }
+    let cols = run_cols(app, area);
+    let sidebar = cols[0];
+    let inner = Rect::new(
+        sidebar.x + 1,
+        sidebar.y + 1,
+        sidebar.width.saturating_sub(2),
+        sidebar.height.saturating_sub(2),
+    );
+    if me.column >= inner.x
+        && me.column < inner.x + inner.width
+        && me.row >= inner.y
+        && me.row < inner.y + inner.height
+    {
+        app.run.hover_reg_row = Some((me.row - inner.y) as usize);
+    } else {
+        app.run.hover_reg_row = None;
+    }
+}
+
 fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     if !app.run.show_registers { return; }
     let cols = run_cols(app, area);
@@ -979,38 +1005,37 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
         sidebar.height.saturating_sub(2),
     );
     if me.column < inner.x || me.column >= inner.x + inner.width { return; }
-    if me.row < inner.y + 1 || me.row >= inner.y + inner.height { return; }
-    // row 0 of inner = header row (table header), row 1+ = register rows
-    let visible_rows = inner.height.saturating_sub(2) as usize;
-    let total_rows = 33usize; // PC + x0..x31
-    let max_scroll = total_rows.saturating_sub(visible_rows);
-    let start = app.run.regs_scroll.min(max_scroll);
-    let row_in_table = (me.row - (inner.y + 1)) as usize; // 0-based, 0=header
-    if row_in_table == 0 { return; } // header
-    let reg_idx = start + row_in_table - 1; // 0 = PC, 1..32 = x0..x31
-    let value = if reg_idx == 0 {
-        app.run.cpu.pc
-    } else if reg_idx <= 32 {
-        app.run.cpu.x[reg_idx - 1]
-    } else {
+    if me.row < inner.y || me.row >= inner.y + inner.height { return; }
+
+    let visual_row = (me.row - inner.y) as usize;
+    let pinned = &app.run.pinned_regs;
+    let sep_row = if pinned.is_empty() { usize::MAX } else { pinned.len() };
+
+    // Click on a pinned register row → unpin it
+    if visual_row < pinned.len() {
+        let reg = pinned[visual_row];
+        app.run.pinned_regs.retain(|&r| r != reg);
         return;
-    };
-    let formatted = match app.run.fmt_mode {
-        FormatMode::Hex => format!("0x{value:08x}"),
-        FormatMode::Dec => {
-            if app.run.show_signed {
-                format!("{}", value as i32)
-            } else {
-                format!("{value}")
-            }
-        }
-        FormatMode::Str => {
-            let bytes = value.to_le_bytes();
-            bytes.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }).collect()
-        }
-    };
-    if let Some(clip) = app.clipboard.as_mut() {
-        let _ = clip.set_text(formatted);
+    }
+    // Click on separator → ignore
+    if visual_row == sep_row { return; }
+
+    // Click on a regular (scrolled) register row → pin/unpin
+    let offset = if pinned.is_empty() { 0 } else { pinned.len() + 1 };
+    let row_in_scroll = visual_row.saturating_sub(offset);
+    let visible_rows = inner.height as usize;
+    let total = 33usize;
+    let max_scroll = total.saturating_sub(visible_rows.saturating_sub(offset));
+    let start = app.run.regs_scroll.min(max_scroll);
+    let reg_idx = start + row_in_scroll; // 0 = PC, 1..=32 = x0..x31
+
+    if reg_idx == 0 { return; } // PC can't be pinned
+    if reg_idx > 32 { return; }
+    let reg = (reg_idx - 1) as u8;
+    if let Some(pos) = app.run.pinned_regs.iter().position(|&r| r == reg) {
+        app.run.pinned_regs.remove(pos);
+    } else {
+        app.run.pinned_regs.push(reg);
     }
 }
 

@@ -356,6 +356,9 @@ pub(super) struct RunState {
 
     // Feature: breakpoint list view (Feature 10)
     pub(super) show_bp_list: bool,
+
+    // Mouse hover row in register sidebar (visual row index, 0-based within inner area)
+    pub(super) hover_reg_row: Option<usize>,
 }
 
 pub(super) struct DocsState {
@@ -508,6 +511,7 @@ impl App {
                 goto_imem_open: false,
                 goto_imem_query: String::new(),
                 show_bp_list: false,
+                hover_reg_row: None,
             },
             docs: DocsState { scroll: 0, search_open: false, search_query: String::new() },
             cache: CacheState {
