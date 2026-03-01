@@ -183,6 +183,7 @@ fn eval_expr(
 
 // ---------- API ----------
 pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
+    let line_comments = extract_visible_comments(text);
     let lines = preprocess(text);
     let data_base = base_pc + 0x1000; // data region after code
 
@@ -208,6 +209,7 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
     let mut data_bytes = Vec::<u8>::new();
     // Collect label defs by section and offset; resolve absolute addresses after first pass
     let mut label_defs = HashMap::<String, (Section, u32)>::new();
+    let mut label_source_lines = HashMap::<String, usize>::new(); // label → source line (0-based)
     let mut equates = Vec::<EquateDef>::new();
 
     // Iterate over lines and collect labels and instructions
@@ -260,7 +262,9 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 Section::Data => (Section::Data, pc_data),
                 Section::Bss => (Section::Bss, pc_bss),
             };
-            label_defs.insert(lab.trim().to_string(), (sec, off));
+            let lab_name = lab.trim().to_string();
+            label_defs.insert(lab_name.clone(), (sec, off));
+            label_source_lines.insert(lab_name, *line_no);
             line = rest[1..].trim();
             if line.is_empty() {
                 // instruction label only
@@ -621,9 +625,28 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
         }
     }
 
+    // Build addr→labels reverse map and label→source-line map
+    let mut addr_to_labels: HashMap<u32, Vec<String>> = HashMap::new();
+    for (name, &addr) in &labels {
+        addr_to_labels.entry(addr).or_default().push(name.clone());
+    }
+    for v in addr_to_labels.values_mut() { v.sort(); }
+
+    let label_to_line: HashMap<String, usize> = labels.iter()
+        .filter_map(|(name, _addr)| {
+            label_source_lines.get(name).map(|&ln| (name.clone(), ln))
+        })
+        .collect();
+
     // 2nd pass: assemble
     let mut words = Vec::with_capacity(items.len());
+    let mut comments: HashMap<u32, String> = HashMap::new();
+    let mut line_addrs: HashMap<usize, u32> = HashMap::new();
     for (pc, kind, line_no) in items {
+        line_addrs.entry(line_no).or_insert(pc);
+        if let Some(c) = line_comments.get(&line_no) {
+            comments.insert(pc, c.clone());
+        }
         match kind {
             LineKind::Instr(s) => {
                 let inst = parse_instr(&s, pc, &labels, &consts).map_err(|e| AsmError {
@@ -760,6 +783,10 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
         data: data_bytes,
         data_base,
         bss_size: pc_bss,
+        comments,
+        labels: addr_to_labels,
+        line_addrs,
+        label_to_line,
     })
 }
 
@@ -960,6 +987,21 @@ fn parse_instr(
                 "bgeu" => Bgeu { rs1, rs2, imm },
                 _ => unreachable!(),
             })
+        }
+
+        // Pseudo: bez / beqz rs, label  →  beq rs, x0, label
+        //         bnez      rs, label  →  bne rs, x0, label
+        "bez" | "beqz" => {
+            if ops.len() != 2 { return Err(format!("{mnemonic}: expected 'rs, label/imm'")); }
+            let rs1 = get_reg(&ops[0])?;
+            let imm = branch_imm(&ops[1], pc, labels, 13, mnemonic.as_str())?;
+            Ok(Beq { rs1, rs2: 0, imm })
+        }
+        "bnez" => {
+            if ops.len() != 2 { return Err("bnez: expected 'rs, label/imm'".into()); }
+            let rs1 = get_reg(&ops[0])?;
+            let imm = branch_imm(&ops[1], pc, labels, 13, "bnez")?;
+            Ok(Bne { rs1, rs2: 0, imm })
         }
 
         // ---------- U-type ----------

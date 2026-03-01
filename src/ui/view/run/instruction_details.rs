@@ -28,7 +28,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    render_header(f, chunks[0], &ctx);
+    render_header(f, chunks[0], &ctx, app);
     render_field_map(f, chunks[1], ctx.word, ctx.format);
     render_decoded(f, chunks[2], ctx.word, ctx.format, &ctx.disasm);
 }
@@ -43,28 +43,53 @@ pub(super) fn disasm_word(word: u32) -> String {
 // ── Context ──────────────────────────────────────────────────────────────────
 
 struct DetailContext {
-    addr:   u32,
-    word:   u32,
-    disasm: String,
-    origin: &'static str,
-    format: EncFormat,
+    addr:        u32,
+    word:        u32,
+    disasm:      String,
+    origin:      &'static str,
+    format:      EncFormat,
+    comment:     Option<String>,
+    jump_target: Option<(bool, u32, Option<String>)>, // (taken, target_addr, label)
+}
+
+fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Option<String>)> {
+    use crate::falcon::instruction::Instruction::*;
+    use crate::falcon::decoder::decode;
+    let cpu = &app.run.cpu;
+    let (taken, target) = match decode(word) {
+        Ok(Beq  { rs1, rs2, imm }) => (cpu.x[rs1 as usize] == cpu.x[rs2 as usize], addr.wrapping_add(imm as u32)),
+        Ok(Bne  { rs1, rs2, imm }) => (cpu.x[rs1 as usize] != cpu.x[rs2 as usize], addr.wrapping_add(imm as u32)),
+        Ok(Blt  { rs1, rs2, imm }) => ((cpu.x[rs1 as usize] as i32) <  (cpu.x[rs2 as usize] as i32), addr.wrapping_add(imm as u32)),
+        Ok(Bge  { rs1, rs2, imm }) => ((cpu.x[rs1 as usize] as i32) >= (cpu.x[rs2 as usize] as i32), addr.wrapping_add(imm as u32)),
+        Ok(Bltu { rs1, rs2, imm }) => (cpu.x[rs1 as usize] <  cpu.x[rs2 as usize], addr.wrapping_add(imm as u32)),
+        Ok(Bgeu { rs1, rs2, imm }) => (cpu.x[rs1 as usize] >= cpu.x[rs2 as usize], addr.wrapping_add(imm as u32)),
+        Ok(Jal  { imm, .. })       => (true, addr.wrapping_add(imm as u32)),
+        Ok(Jalr { rs1, imm, .. })  => (true, cpu.x[rs1 as usize].wrapping_add(imm as u32) & !1),
+        _ => return None,
+    };
+    let label = app.run.labels.get(&target).and_then(|v| v.first()).cloned();
+    Some((taken, target, label))
 }
 
 fn detail_context(app: &App) -> DetailContext {
     if let Some(addr) = app.run.hover_imem_addr {
         let word = app.run.mem.load32(addr).unwrap_or(0);
-        DetailContext { addr, word, disasm: disasm_word(word), origin: "hover", format: detect_format(word) }
+        let comment = app.run.comments.get(&addr).cloned();
+        let jump_target = compute_jump_target(word, addr, app);
+        DetailContext { addr, word, disasm: disasm_word(word), origin: "hover", format: detect_format(word), comment, jump_target }
     } else if imem_address_in_range(app, app.run.cpu.pc) {
         let word = app.run.mem.load32(app.run.cpu.pc).unwrap_or(0);
-        DetailContext { addr: app.run.cpu.pc, word, disasm: disasm_word(word), origin: "PC", format: detect_format(word) }
+        let comment = app.run.comments.get(&app.run.cpu.pc).cloned();
+        let jump_target = compute_jump_target(word, app.run.cpu.pc, app);
+        DetailContext { addr: app.run.cpu.pc, word, disasm: disasm_word(word), origin: "PC", format: detect_format(word), comment, jump_target }
     } else {
-        DetailContext { addr: app.run.cpu.pc, word: 0, disasm: "<PC out of RAM>".into(), origin: "PC", format: detect_format(0) }
+        DetailContext { addr: app.run.cpu.pc, word: 0, disasm: "<PC out of RAM>".into(), origin: "PC", format: detect_format(0), comment: None, jump_target: None }
     }
 }
 
 // ── Section 1 : Header ───────────────────────────────────────────────────────
 
-fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext) {
+fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let fmt_name = ctx.format.name();
     let title = format!("Instruction  [{fmt_name}]");
     let block = Block::default()
@@ -90,7 +115,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext) {
         Style::default().fg(Color::Yellow).bold(),
     );
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("▶ ", Style::default().fg(Color::Green)),
             disasm_span,
@@ -105,6 +130,40 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext) {
             ),
         ]),
     ];
+
+    if let Some(ref comment) = ctx.comment {
+        lines.push(Line::from(vec![
+            Span::styled("  comment  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(comment.clone(), Style::default().fg(Color::Rgb(180, 220, 130))),
+        ]));
+    }
+
+    if let Some((taken, target, ref label)) = ctx.jump_target {
+        let label_part = label.as_deref().map(|l| format!(" <{l}>")).unwrap_or_default();
+        let (arrow, color) = if taken {
+            (format!("→ 0x{target:08x}{label_part}  (taken)"), Color::Rgb(0, 210, 100))
+        } else {
+            (format!("→ 0x{target:08x}{label_part}  (not taken)"), Color::Rgb(120, 120, 120))
+        };
+        let exec_count = ctx.addr.checked_add(0).and_then(|a| app.run.exec_counts.get(&a)).copied().unwrap_or(0);
+        lines.push(Line::from(vec![
+            Span::styled("  target   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(arrow, Style::default().fg(color)),
+        ]));
+        if exec_count > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("  executions ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("×{exec_count}"), Style::default().fg(Color::Cyan)),
+            ]));
+        }
+    } else if let Some(&count) = app.run.exec_counts.get(&ctx.addr) {
+        if count > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("  executions ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("×{count}"), Style::default().fg(Color::Cyan)),
+            ]));
+        }
+    }
 
     f.render_widget(Paragraph::new(lines), inner);
 }

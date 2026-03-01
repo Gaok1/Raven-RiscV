@@ -18,7 +18,17 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
     } else {
         Span::raw("Not compiled")
     };
-    let build = Line::from(vec![Span::raw("Build status: "), compile_span]);
+    let ln = app.editor.buf.cursor_row + 1;
+    let col = app.editor.buf.cursor_col + 1;
+    let hints_label = if app.editor.show_addr_hints { " [addr]" } else { "" };
+    let build = Line::from(vec![
+        Span::raw("Build status: "),
+        compile_span,
+        Span::styled(
+            format!("  Ln {ln}, Col {col}{hints_label}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
 
     // Actions with clickable buttons (hover highlights via mouse coords)
     let inner_x = area.x + 1;
@@ -114,26 +124,54 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         line.spans = new_spans;
     }
 
-    let visible_h = area.height.saturating_sub(2) as usize;
+    // Compute bar rows for find/goto
+    let bar_rows: u16 = if app.editor.find_open {
+        if app.editor.replace_open { 2 } else { 1 }
+    } else if app.editor.goto_open {
+        1
+    } else {
+        0
+    };
+
+    let inner_h = area.height.saturating_sub(2);
+    let content_h = inner_h.saturating_sub(bar_rows);
+    let visible_h = content_h as usize;
+    // Inform the editor buffer of the visible height so page_up/page_down are accurate.
+    app.editor.buf.page_size.set(visible_h);
+
     let len = app.editor.buf.lines.len();
-    let mut start = 0usize;
-    if len > visible_h {
-        if app.editor.buf.cursor_row <= visible_h / 2 {
-            start = 0;
-        } else if app.editor.buf.cursor_row >= len.saturating_sub(visible_h / 2) {
-            start = len.saturating_sub(visible_h);
-        } else {
-            start = app.editor.buf.cursor_row - visible_h / 2;
-        }
-    }
+    // Use edge-margin scrolling (not centering) so the scroll offset stays stable
+    // during mouse drag — prevents the feedback loop that caused fast-scroll artifacts.
+    let start = app.editor.buf.stable_scroll_start(visible_h);
     let end = min(len, start + visible_h);
 
-    let num_width = end.to_string().len();
+    let num_width = if end > 0 { end.to_string().len() } else { 1 };
     let labels = collect_labels(&app.editor.buf.lines);
     let content_w = area.width.saturating_sub(2);
-    let mut rows: Vec<Line> = Vec::with_capacity(end - start);
+    let query_char_len = app.editor.find_query.chars().count();
+    let show_hints = app.editor.show_addr_hints;
+    let hint_w: usize = if show_hints { 11 } else { 0 }; // "0x00000000 " = 11 chars
+
+    // Compute highlight_word: the identifier under the cursor, if it's a known label
+    let highlight_word: Option<String> = {
+        let row = app.editor.buf.cursor_row;
+        if row < app.editor.buf.lines.len() {
+            let line = &app.editor.buf.lines[row];
+            let col = app.editor.buf.cursor_col;
+            let word = word_at_col(line, col);
+            if !word.is_empty() && (labels.contains(&word) || app.editor.label_to_line.contains_key(&word)) {
+                Some(word)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    let mut rows: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for i in start..end {
-        let line_str = &app.editor.buf.lines[i];
+        let line_str: &str = &app.editor.buf.lines[i];
         let mut line = Line::from(highlight_line(line_str));
         if let Some(((sr, sc), (er, ec))) = app.editor.buf.selection_range() {
             if i >= sr && i <= er {
@@ -149,6 +187,17 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
                 apply_selection(&mut line, sel_start, sel_end);
             }
         }
+
+        // Apply find match highlighting
+        if app.editor.find_open && query_char_len > 0 {
+            apply_find_matches(&mut line, i, &app.editor.find_matches, app.editor.find_current, query_char_len);
+        }
+
+        // Apply label highlight under cursor (underline all occurrences)
+        if let Some(ref hw) = highlight_word {
+            apply_label_highlight(&mut line, line_str, hw);
+        }
+
         if Some(i) == app.editor.diag_line {
             let err_style = Style::default()
                 .fg(Color::Red)
@@ -157,7 +206,20 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
                 span.style = span.style.patch(err_style);
             }
         }
+
         let mut spans = Vec::new();
+
+        // Optional address hint gutter
+        if show_hints {
+            let addr_text = if let Some(&addr) = app.editor.line_to_addr.get(&i) {
+                format!("{addr:08x} ")
+            } else {
+                "         ".to_string()
+            };
+            spans.push(Span::styled(addr_text, Style::default().fg(Color::Rgb(80, 100, 80))));
+        }
+
+        // Line number
         spans.push(Span::styled(
             format!("{:>width$}", i + 1, width = num_width),
             Style::default().fg(Color::DarkGray),
@@ -172,7 +234,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
 
         if i == app.editor.buf.cursor_row {
             if let Some(ghost) = ghost_spans_for_line(line_str, &labels) {
-                let gutter_w = (num_width as u16).saturating_add(3);
+                let gutter_w = (hint_w as u16) + (num_width as u16) + 3;
                 let used_w = gutter_w.saturating_add(Editor::char_count(line_str) as u16);
                 let remaining = content_w.saturating_sub(used_w);
                 if remaining >= 4 {
@@ -180,8 +242,15 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
                 }
             }
         }
-        rows.push(Line::from(spans));
+
+        // Cursor line highlight
+        let mut row_line = Line::from(spans);
+        if i == app.editor.buf.cursor_row {
+            row_line = row_line.style(Style::default().bg(Color::Rgb(40, 40, 55)));
+        }
+        rows.push(row_line);
     }
+
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
@@ -196,18 +265,173 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         let flag = Line::styled(txt, Style::default().fg(color)).right_aligned();
         block = block.title(flag);
     }
-    let para = Paragraph::new(rows).block(block);
 
-    f.render_widget(para, area);
+    // Render block border
+    f.render_widget(block, area);
 
-    let cur_row = app.editor.buf.cursor_row as u16;
-    let cur_col = app.editor.buf.cursor_col as u16;
-    let gutter = (num_width + 3) as u16;
-    let cursor_x = area.x + 1 + gutter + cur_col;
-    let cursor_y = area.y + 1 + (cur_row - start as u16);
-    if cursor_y < area.y + area.height && cursor_x < area.x + area.width {
-        f.set_cursor_position((cursor_x, cursor_y));
+    // Render content to inner sub-area (excluding bar rows)
+    let content_area = Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(2),
+        content_h,
+    );
+    f.render_widget(Paragraph::new(rows), content_area);
+
+    // Render find/goto bar
+    if bar_rows > 0 {
+        let bar_area = Rect::new(
+            area.x + 1,
+            area.y + 1 + content_h,
+            area.width.saturating_sub(2),
+            bar_rows,
+        );
+        render_find_goto_bar(f, bar_area, app);
     }
+
+    // Cursor placement
+    if (app.editor.find_open || app.editor.goto_open) && bar_rows > 0 {
+        let bar_y = area.y + 1 + content_h;
+        let (query, prefix_len) = if app.editor.goto_open {
+            (&app.editor.goto_query, "  Go to line (1-XXXXX): ".len() as u16)
+        } else if app.editor.find_in_replace {
+            (&app.editor.replace_query, " Repl: ".len() as u16)
+        } else {
+            (&app.editor.find_query, " Find: ".len() as u16)
+        };
+        let cursor_x = (area.x + 1 + prefix_len + query.chars().count() as u16)
+            .min(area.x + area.width.saturating_sub(2));
+        let cursor_y = bar_y + if app.editor.find_in_replace { 1 } else { 0 };
+        f.set_cursor_position((cursor_x, cursor_y));
+    } else {
+        let cur_row = app.editor.buf.cursor_row as u16;
+        let cur_col = app.editor.buf.cursor_col as u16;
+        let gutter = (num_width + 3) as u16;
+        let cursor_x = area.x + 1 + gutter + cur_col;
+        let cursor_y = area.y + 1 + (cur_row.saturating_sub(start as u16));
+        if cursor_y < area.y + 1 + content_h && cursor_x < area.x + area.width {
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
+    }
+}
+
+fn render_find_goto_bar(f: &mut Frame, area: Rect, app: &App) {
+    let sep = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50));
+    let label_s = Style::default().fg(Color::Cyan).bg(Color::Rgb(30, 30, 50));
+    let text_s = Style::default().fg(Color::White).bg(Color::Rgb(30, 30, 50));
+    let focus_s = Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 50));
+    let info_s = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50));
+
+    if app.editor.goto_open {
+        let match_info = format!("  Go to line (1-{}):", app.editor.buf.lines.len());
+        let line = Line::from(vec![
+            Span::styled(match_info, label_s),
+            Span::styled(format!(" {}", app.editor.goto_query), text_s),
+            Span::styled("  Esc=close  Enter=jump", info_s),
+        ]);
+        f.render_widget(Paragraph::new(line).style(sep), area);
+    } else {
+        // Find bar (row 0)
+        let match_count = app.editor.find_matches.len();
+        let current_disp = if match_count > 0 { app.editor.find_current + 1 } else { 0 };
+        let status = if app.editor.find_query.is_empty() {
+            String::new()
+        } else if match_count == 0 {
+            "  (no matches)".to_string()
+        } else {
+            format!("  {}/{}", current_disp, match_count)
+        };
+
+        let find_is_focus = !app.editor.find_in_replace;
+        let find_text_s = if find_is_focus { focus_s } else { text_s };
+
+        let find_line = Line::from(vec![
+            Span::styled(" Find: ", label_s),
+            Span::styled(app.editor.find_query.clone(), find_text_s),
+            Span::styled(status, info_s),
+            Span::styled("  Tab=replace  Esc=close  Enter=next", info_s),
+        ]);
+
+        f.render_widget(
+            Paragraph::new(find_line).style(sep),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
+
+        // Replace bar (row 1, only if replace_open)
+        if app.editor.replace_open && area.height >= 2 {
+            let rep_is_focus = app.editor.find_in_replace;
+            let rep_text_s = if rep_is_focus { focus_s } else { text_s };
+            let rep_line = Line::from(vec![
+                Span::styled(" Repl: ", label_s),
+                Span::styled(app.editor.replace_query.clone(), rep_text_s),
+                Span::styled("  Enter=replace current", info_s),
+            ]);
+            f.render_widget(
+                Paragraph::new(rep_line).style(sep),
+                Rect::new(area.x, area.y + 1, area.width, 1),
+            );
+        }
+    }
+}
+
+fn apply_find_matches(
+    line: &mut Line,
+    row: usize,
+    matches: &[(usize, usize)],
+    current: usize,
+    query_char_len: usize,
+) {
+    if query_char_len == 0 {
+        return;
+    }
+    let mut positions: Vec<(usize, bool)> = Vec::new();
+    for (i, &(r, c)) in matches.iter().enumerate() {
+        if r == row {
+            positions.push((c, i == current));
+        }
+    }
+    if positions.is_empty() {
+        return;
+    }
+    for (col_start, is_current) in positions {
+        let col_end = col_start + query_char_len;
+        let bg = if is_current { Color::Yellow } else { Color::Rgb(80, 80, 120) };
+        let fg = if is_current { Color::Black } else { Color::White };
+        overlay_range(line, col_start, col_end, Style::default().fg(fg).bg(bg));
+    }
+}
+
+fn overlay_range(line: &mut Line, start: usize, end: usize, style: Style) {
+    if start >= end {
+        return;
+    }
+    let mut char_pos = 0;
+    let mut new_spans = Vec::new();
+    for span in line.spans.drain(..) {
+        let content = span.content.to_string();
+        let len = Editor::char_count(&content);
+        let span_start = char_pos;
+        let span_end = char_pos + len;
+        if span_end <= start || span_start >= end {
+            new_spans.push(Span::styled(content, span.style));
+        } else {
+            if span_start < start {
+                let b = Editor::byte_at(&content, start - span_start);
+                new_spans.push(Span::styled(content[..b].to_string(), span.style));
+            }
+            let sel_from = start.max(span_start);
+            let sel_to = end.min(span_end);
+            let bf = Editor::byte_at(&content, sel_from - span_start);
+            let bt = Editor::byte_at(&content, sel_to - span_start);
+            new_spans.push(Span::styled(content[bf..bt].to_string(), style));
+            if span_end > end {
+                let b = Editor::byte_at(&content, end - span_start);
+                new_spans.push(Span::styled(content[b..].to_string(), span.style));
+            }
+        }
+        char_pos += len;
+    }
+    line.spans = new_spans;
 }
 
 fn highlight_line(s: &str) -> Vec<Span<'_>> {
@@ -233,6 +457,14 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
             if ch.is_whitespace() { ws += ch.len_utf8(); } else { break; }
         }
         if ci == ws {
+            let trimmed = &s[ws..];
+            if trimmed.starts_with("#!") {
+                let mut v = Vec::new();
+                if ws > 0 { v.push(Span::raw(s[..ws].to_string())); }
+                v.push(Span::styled("#!", Style::default().fg(Color::Rgb(100, 200, 100))));
+                v.push(Span::styled(s[ws + 2..].to_string(), Style::default().fg(Color::Rgb(160, 220, 140))));
+                return v;
+            }
             return vec![Span::styled(s, Style::default().fg(DarkGray))];
         }
     }
@@ -272,6 +504,15 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
                 if !rest.is_empty() {
                     out.push(Span::raw(rest));
                 }
+            } else if first.starts_with('.') {
+                // Assembler directive — distinct color from mnemonics
+                out.push(Span::styled(
+                    first,
+                    Style::default().fg(Color::LightYellow),
+                ));
+                if !rest.is_empty() {
+                    out.push(Span::raw(rest));
+                }
             } else {
                 out.push(Span::styled(
                     first,
@@ -297,9 +538,14 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
         }
     }
 
-    // Append the comment part dimmed
+    // Append the comment part; #! visible comments get a distinct color
     if !comment.is_empty() {
-        out.push(Span::styled(comment, Style::default().fg(DarkGray)));
+        if comment.starts_with("#!") {
+            out.push(Span::styled("#!", Style::default().fg(Color::Rgb(100, 200, 100))));
+            out.push(Span::styled(&comment[2..], Style::default().fg(Color::Rgb(160, 220, 140))));
+        } else {
+            out.push(Span::styled(comment, Style::default().fg(DarkGray)));
+        }
     }
 
     out
@@ -371,6 +617,63 @@ fn collect_labels(lines: &[String]) -> HashSet<String> {
         }
     }
     out
+}
+
+/// Extract the identifier word at the given character column.
+fn word_at_col(line: &str, col: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    if col >= chars.len() { return String::new(); }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+    if !is_word(chars[col]) { return String::new(); }
+    let start = (0..=col).rev().take_while(|&i| i < chars.len() && is_word(chars[i])).last().unwrap_or(col);
+    let end = (col..chars.len()).take_while(|&i| is_word(chars[i])).last().map(|i| i + 1).unwrap_or(col + 1);
+    chars[start..end].iter().collect()
+}
+
+/// Underline all occurrences of `word` in the line's spans.
+fn apply_label_highlight(line: &mut Line, line_str: &str, word: &str) {
+    if word.is_empty() || !line_str.contains(word) { return; }
+    let uline = Style::default().add_modifier(Modifier::UNDERLINED).fg(Color::Rgb(200, 200, 100));
+    // Find byte offsets of all occurrences
+    let mut search = line_str;
+    let mut byte_off = 0usize;
+    let mut ranges: Vec<(usize, usize)> = Vec::new(); // char start, char end
+    while let Some(idx) = search.find(word) {
+        let char_start = Editor::char_count(&line_str[..byte_off + idx]);
+        let char_end = char_start + Editor::char_count(word);
+        ranges.push((char_start, char_end));
+        byte_off += idx + word.len();
+        search = &line_str[byte_off..];
+    }
+    for (cs, ce) in ranges {
+        let mut char_pos = 0usize;
+        let mut new_spans: Vec<Span> = Vec::new();
+        for span in line.spans.drain(..) {
+            let content = span.content.to_string();
+            let len = Editor::char_count(&content);
+            let sp_start = char_pos;
+            let sp_end = char_pos + len;
+            if sp_end <= cs || sp_start >= ce {
+                new_spans.push(Span::styled(content, span.style));
+            } else {
+                if sp_start < cs {
+                    let b = Editor::byte_at(&content, cs - sp_start);
+                    new_spans.push(Span::styled(content[..b].to_string(), span.style));
+                }
+                let sel_from = cs.max(sp_start);
+                let sel_to = ce.min(sp_end);
+                let b0 = Editor::byte_at(&content, sel_from - sp_start);
+                let b1 = Editor::byte_at(&content, sel_to - sp_start);
+                new_spans.push(Span::styled(content[b0..b1].to_string(), span.style.patch(uline)));
+                if sp_end > ce {
+                    let b = Editor::byte_at(&content, ce - sp_start);
+                    new_spans.push(Span::styled(content[b..].to_string(), span.style));
+                }
+            }
+            char_pos += len;
+        }
+        line.spans = new_spans;
+    }
 }
 
 fn strip_comments(line: &str) -> &str {
@@ -487,6 +790,10 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
                 && is_reg(&ops[1])
                 && is_label_or_imm_even(&ops[2], 13)
         }
+        // Zero-compare branch pseudos
+        "bez" | "beqz" | "bnez" => {
+            ops.len() == 2 && is_reg(&ops[0]) && is_label_or_imm_even(&ops[1], 13)
+        }
 
         // U-type
         "lui" => ops.len() == 2 && is_reg(&ops[0]) && is_imm20u(&ops[1]),
@@ -551,6 +858,7 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
         "sb" | "sh" | "sw" => vec![vec!["rs2", "imm(rs1)"]],
 
         "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" => vec![vec!["rs1", "rs2", "label"]],
+        "bez" | "beqz" | "bnez" => vec![vec!["rs", "label"]],
 
         "lui" => vec![vec!["rd", "imm"]],
         "auipc" => vec![vec!["rd", "imm"]],

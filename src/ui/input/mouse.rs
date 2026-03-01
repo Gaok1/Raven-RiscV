@@ -204,9 +204,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 handle_panel_title_click(app, me, area);
                 start_sidebar_drag(app, me, area);
                 start_imem_drag(app, me, area);
+                handle_imem_bp_click(app, me, area);
                 handle_imem_click(app, me, area);
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
+                handle_register_click(app, me, area);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if app.run.sidebar_drag {
@@ -937,6 +939,78 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
             app.run.prev_pc = app.run.cpu.pc;
             app.run.cpu.pc = addr;
         }
+    }
+}
+
+fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let cols = run_cols(app, area);
+    let imem = cols[1];
+    if app.run.imem_collapsed { return; }
+    let inner = Rect::new(
+        imem.x + 1,
+        imem.y + 1,
+        imem.width.saturating_sub(2),
+        imem.height.saturating_sub(2),
+    );
+    // Only toggle breakpoint when clicking exactly on the marker column (inner.x)
+    if me.column == inner.x
+        && me.row >= inner.y
+        && me.row < inner.y + inner.height
+    {
+        if let Some(addr) = app.run.hover_imem_addr {
+            if app.run.breakpoints.contains(&addr) {
+                app.run.breakpoints.remove(&addr);
+            } else {
+                app.run.breakpoints.insert(addr);
+            }
+        }
+    }
+}
+
+fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if !app.run.show_registers { return; }
+    let cols = run_cols(app, area);
+    let sidebar = cols[0];
+    if app.run.sidebar_collapsed { return; }
+    let inner = Rect::new(
+        sidebar.x + 1,
+        sidebar.y + 1,
+        sidebar.width.saturating_sub(2),
+        sidebar.height.saturating_sub(2),
+    );
+    if me.column < inner.x || me.column >= inner.x + inner.width { return; }
+    if me.row < inner.y + 1 || me.row >= inner.y + inner.height { return; }
+    // row 0 of inner = header row (table header), row 1+ = register rows
+    let visible_rows = inner.height.saturating_sub(2) as usize;
+    let total_rows = 33usize; // PC + x0..x31
+    let max_scroll = total_rows.saturating_sub(visible_rows);
+    let start = app.run.regs_scroll.min(max_scroll);
+    let row_in_table = (me.row - (inner.y + 1)) as usize; // 0-based, 0=header
+    if row_in_table == 0 { return; } // header
+    let reg_idx = start + row_in_table - 1; // 0 = PC, 1..32 = x0..x31
+    let value = if reg_idx == 0 {
+        app.run.cpu.pc
+    } else if reg_idx <= 32 {
+        app.run.cpu.x[reg_idx - 1]
+    } else {
+        return;
+    };
+    let formatted = match app.run.fmt_mode {
+        FormatMode::Hex => format!("0x{value:08x}"),
+        FormatMode::Dec => {
+            if app.run.show_signed {
+                format!("{}", value as i32)
+            } else {
+                format!("{value}")
+            }
+        }
+        FormatMode::Str => {
+            let bytes = value.to_le_bytes();
+            bytes.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }).collect()
+        }
+    };
+    if let Some(clip) = app.clipboard.as_mut() {
+        let _ = clip.set_text(formatted);
     }
 }
 

@@ -4,6 +4,17 @@ use super::{
     input::{handle_key, handle_mouse},
     view::ui,
 };
+
+/// Extract the identifier-like word at the given character column in a line.
+fn word_at(line: &str, col: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    if col >= chars.len() { return String::new(); }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+    if !is_word(chars[col]) { return String::new(); }
+    let start = (0..=col).rev().take_while(|&i| i < chars.len() && is_word(chars[i])).last().unwrap_or(col);
+    let end = (col..chars.len()).take_while(|&i| is_word(chars[i])).last().map(|i| i + 1).unwrap_or(col + 1);
+    chars[start..end].iter().collect()
+}
 use crate::falcon::{self, Cpu, CacheController};
 use crate::falcon::cache::CacheConfig;
 use crossterm::{
@@ -62,6 +73,7 @@ pub(super) enum ConfigField {
     Size, LineSize, Associativity,
     Replacement, WritePolicy, WriteAlloc,
     HitLatency, MissPenalty, AssocPenalty, TransferWidth,
+    Inclusion,
 }
 
 impl ConfigField {
@@ -71,7 +83,7 @@ impl ConfigField {
     pub(super) fn all_editable() -> &'static [ConfigField] {
         &[Self::Size, Self::LineSize, Self::Associativity, Self::Replacement,
           Self::WritePolicy, Self::WriteAlloc, Self::HitLatency, Self::MissPenalty,
-          Self::AssocPenalty, Self::TransferWidth]
+          Self::AssocPenalty, Self::TransferWidth, Self::Inclusion]
     }
     /// Row index in the rendered fields list (3 = Sets which is read-only, skip it)
     pub(super) fn list_row(self) -> usize {
@@ -80,6 +92,7 @@ impl ConfigField {
             Self::Replacement => 4, Self::WritePolicy => 5, Self::WriteAlloc => 6,
             Self::HitLatency => 7, Self::MissPenalty => 8,
             Self::AssocPenalty => 9, Self::TransferWidth => 10,
+            Self::Inclusion => 11,
         }
     }
     pub(super) fn from_list_row(row: usize) -> Option<Self> {
@@ -89,6 +102,7 @@ impl ConfigField {
             4 => Some(Self::Replacement), 5 => Some(Self::WritePolicy), 6 => Some(Self::WriteAlloc),
             7 => Some(Self::HitLatency), 8 => Some(Self::MissPenalty),
             9 => Some(Self::AssocPenalty), 10 => Some(Self::TransferWidth),
+            11 => Some(Self::Inclusion),
             _ => None,
         }
     }
@@ -232,6 +246,23 @@ pub(super) struct EditorState {
     pub(super) diag_line: Option<usize>,
     pub(super) diag_msg: Option<String>,
     pub(super) diag_line_text: Option<String>,
+
+    // Source-level metadata from last successful assembly
+    pub(super) label_to_line: std::collections::HashMap<String, usize>,
+    pub(super) line_to_addr: std::collections::HashMap<usize, u32>,
+    pub(super) show_addr_hints: bool,
+
+    // Find bar
+    pub(super) find_open: bool,
+    pub(super) find_query: String,
+    pub(super) replace_open: bool,
+    pub(super) replace_query: String,
+    pub(super) find_in_replace: bool,
+    pub(super) find_matches: Vec<(usize, usize)>,
+    pub(super) find_current: usize,
+    // Goto bar
+    pub(super) goto_open: bool,
+    pub(super) goto_query: String,
 }
 
 pub(super) struct RunState {
@@ -239,6 +270,7 @@ pub(super) struct RunState {
     pub(super) prev_x: [u32; 32],
     pub(super) prev_pc: u32,
     pub(super) mem: CacheController,
+    pub(super) breakpoints: std::collections::HashSet<u32>,
     pub(super) mem_size: usize,
     pub(super) base_pc: u32,
     pub(super) data_base: u32,
@@ -289,10 +321,31 @@ pub(super) struct RunState {
     pub(super) step_interval: Duration,
     pub(super) faulted: bool,
     pub(super) speed: RunSpeed,
+
+    // Visible comments from source (#! text), keyed by instruction address
+    pub(super) comments: std::collections::HashMap<u32, String>,
+
+    // Source label metadata
+    pub(super) labels: std::collections::HashMap<u32, Vec<String>>,
+
+    // Execution statistics
+    pub(super) exec_counts: std::collections::HashMap<u32, u64>,
+    pub(super) exec_trace: std::collections::VecDeque<(u32, String)>,
+
+    // Register highlight age: 0 = just changed, 255 = unchanged for long
+    pub(super) reg_age: [u8; 32],
+
+    // UI flags
+    pub(super) show_trace: bool,
+    pub(super) show_stack: bool,
+    pub(super) pinned_regs: Vec<u8>,
+    pub(super) reg_cursor: usize, // 0 = PC, 1-32 = x0-x31
 }
 
 pub(super) struct DocsState {
     pub(super) scroll: usize,
+    pub(super) search_open: bool,
+    pub(super) search_query: String,
 }
 
 // ── Top-level app ──────────────────────────────────────────────────────────────
@@ -322,6 +375,28 @@ pub struct App {
     pub(super) clipboard: Option<Clipboard>,
 }
 
+pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
+    if query.is_empty() { return vec![]; }
+    let q = query.to_lowercase();
+    let q_len = q.len();
+    let mut matches = Vec::new();
+    for (row, line) in lines.iter().enumerate() {
+        let line_lower = line.to_lowercase();
+        let mut byte_from = 0;
+        while byte_from < line_lower.len() {
+            if let Some(rel) = line_lower[byte_from..].find(&q) {
+                let byte_pos = byte_from + rel;
+                let col = line[..byte_pos].chars().count();
+                matches.push((row, col));
+                byte_from = byte_pos + q_len.max(1);
+            } else {
+                break;
+            }
+        }
+    }
+    matches
+}
+
 impl App {
     pub fn new() -> Self {
         let mut cpu = Cpu::default();
@@ -347,6 +422,18 @@ impl App {
                 diag_line: None,
                 diag_msg: None,
                 diag_line_text: None,
+                label_to_line: std::collections::HashMap::new(),
+                line_to_addr: std::collections::HashMap::new(),
+                show_addr_hints: false,
+                find_open: false,
+                find_query: String::new(),
+                replace_open: false,
+                replace_query: String::new(),
+                find_in_replace: false,
+                find_matches: Vec::new(),
+                find_current: 0,
+                goto_open: false,
+                goto_query: String::new(),
             },
             run: RunState {
                 cpu,
@@ -354,6 +441,7 @@ impl App {
                 prev_pc: base_pc,
                 mem_size,
                 mem: CacheController::new(CacheConfig::default(), CacheConfig::default(), vec![], mem_size),
+                breakpoints: std::collections::HashSet::new(),
                 base_pc,
                 data_base,
                 mem_view_addr: data_base,
@@ -389,8 +477,17 @@ impl App {
                 step_interval: Duration::from_millis(80),
                 faulted: false,
                 speed: RunSpeed::X1,
+                comments: std::collections::HashMap::new(),
+                labels: std::collections::HashMap::new(),
+                exec_counts: std::collections::HashMap::new(),
+                exec_trace: std::collections::VecDeque::new(),
+                reg_age: [255u8; 32],
+                show_trace: false,
+                show_stack: false,
+                pinned_regs: Vec::new(),
+                reg_cursor: 0,
             },
-            docs: DocsState { scroll: 0 },
+            docs: DocsState { scroll: 0, search_open: false, search_query: String::new() },
             cache: CacheState {
                 subtab: CacheSubtab::Stats,
                 scope: CacheScope::Both,
@@ -480,6 +577,13 @@ impl App {
                 self.run.mem.invalidate_all();
                 self.run.mem.reset_stats();
 
+                self.run.comments = prog.comments;
+                self.run.labels = prog.labels;
+                self.run.exec_counts.clear();
+                self.run.exec_trace.clear();
+                self.run.reg_age = [255u8; 32];
+                self.editor.label_to_line = prog.label_to_line;
+                self.editor.line_to_addr = prog.line_addrs;
                 self.editor.last_ok_text = Some(prog.text.clone());
                 self.editor.last_ok_data = Some(prog.data.clone());
                 self.editor.last_ok_data_base = Some(prog.data_base);
@@ -755,6 +859,22 @@ impl App {
                     WriteAllocPolicy::NoWriteAllocate => WriteAllocPolicy::WriteAllocate,
                 };
             }
+            ConfigField::Inclusion => {
+                use crate::falcon::cache::InclusionPolicy;
+                cfg.inclusion = if forward {
+                    match cfg.inclusion {
+                        InclusionPolicy::NonInclusive => InclusionPolicy::Inclusive,
+                        InclusionPolicy::Inclusive    => InclusionPolicy::Exclusive,
+                        InclusionPolicy::Exclusive    => InclusionPolicy::NonInclusive,
+                    }
+                } else {
+                    match cfg.inclusion {
+                        InclusionPolicy::NonInclusive => InclusionPolicy::Exclusive,
+                        InclusionPolicy::Inclusive    => InclusionPolicy::NonInclusive,
+                        InclusionPolicy::Exclusive    => InclusionPolicy::Inclusive,
+                    }
+                };
+            }
             _ => {}
         }
     }
@@ -882,6 +1002,7 @@ impl App {
     pub(super) fn single_step(&mut self) {
         self.run.prev_x = self.run.cpu.x;
         self.run.prev_pc = self.run.cpu.pc;
+        let step_pc = self.run.cpu.pc;
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
         }));
@@ -898,11 +1019,103 @@ impl App {
             }
         };
         self.run.mem.snapshot_stats();
+
+        // Track execution statistics
+        *self.run.exec_counts.entry(step_pc).or_insert(0) += 1;
+        let disasm = {
+            let word = self.run.mem.peek32(step_pc).unwrap_or(0);
+            match falcon::decoder::decode(word) {
+                Ok(instr) => format!("{instr:?}"),
+                Err(_) => format!("0x{word:08x}"),
+            }
+        };
+        self.run.exec_trace.push_back((step_pc, disasm));
+        if self.run.exec_trace.len() > 200 {
+            self.run.exec_trace.pop_front();
+        }
+
+        // Update register age (fading highlight)
+        for i in 0..32usize {
+            if self.run.cpu.x[i] != self.run.prev_x[i] {
+                self.run.reg_age[i] = 0;
+            } else {
+                self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
+            }
+        }
+
+        // Auto-follow SP when stack view is active
+        if self.run.show_stack {
+            let sp = self.run.cpu.x[2];
+            self.run.mem_view_addr = sp.saturating_sub(sp % 4);
+        }
+
+        // Check breakpoints: stop if the new PC is a breakpoint
+        if alive && self.run.breakpoints.contains(&self.run.cpu.pc) {
+            self.run.is_running = false;
+        }
         if !alive {
             self.run.is_running = false;
             if !self.console.reading {
                 self.run.faulted = self.run.cpu.exit_code.is_none();
             }
+        }
+    }
+
+    /// Jump editor cursor to the definition of the label under the cursor.
+    pub(super) fn goto_label_definition(&mut self) {
+        let row = self.editor.buf.cursor_row;
+        let col = self.editor.buf.cursor_col;
+        if row >= self.editor.buf.lines.len() { return; }
+        let line = &self.editor.buf.lines[row];
+        let word = word_at(line, col);
+        if word.is_empty() { return; }
+        if let Some(&target_line) = self.editor.label_to_line.get(&word) {
+            self.editor.buf.cursor_row = target_line;
+            self.editor.buf.cursor_col = 0;
+        }
+    }
+
+    /// Select next occurrence of the word currently under the cursor.
+    pub(super) fn select_next_occurrence(&mut self) {
+        let row = self.editor.buf.cursor_row;
+        let col = self.editor.buf.cursor_col;
+        if row >= self.editor.buf.lines.len() { return; }
+        let word = word_at(&self.editor.buf.lines[row], col);
+        if word.is_empty() { return; }
+        let lines = &self.editor.buf.lines;
+        let total = lines.len();
+        // Search from after current cursor position
+        for offset in 1..=(total * lines[0].len().max(80) + 1) {
+            let _ = offset; // silence lint
+            break; // use proper search below
+        }
+        // Find next occurrence after (row, col+word.len())
+        let start_col = col + 1;
+        let positions: Vec<(usize, usize)> = lines.iter().enumerate()
+            .flat_map(|(r, l)| {
+                let mut found = Vec::new();
+                let mut search = l.as_str();
+                let mut byte_off = 0;
+                while let Some(idx) = search.find(&word) {
+                    let char_col = Editor::char_count(&l[..byte_off + idx]);
+                    found.push((r, char_col));
+                    byte_off += idx + word.len();
+                    search = &l[byte_off..];
+                }
+                found
+            })
+            .collect();
+        if positions.is_empty() { return; }
+        // Find the next position after current cursor
+        let next = positions.iter()
+            .find(|&&(r, c)| r > row || (r == row && c >= start_col))
+            .or_else(|| positions.first());
+        if let Some(&(r, c)) = next {
+            self.editor.buf.cursor_row = r;
+            self.editor.buf.cursor_col = c;
+            // Select the word via the selection_anchor API
+            self.editor.buf.selection_anchor = Some((r, c));
+            self.editor.buf.cursor_col = c + Editor::char_count(&word);
         }
     }
 }

@@ -38,6 +38,121 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    // Find bar / goto bar intercept (Editor tab)
+    if matches!(app.tab, Tab::Editor) && (app.editor.find_open || app.editor.goto_open) {
+        match key.code {
+            KeyCode::Esc => {
+                app.editor.find_open = false;
+                app.editor.goto_open = false;
+                app.editor.replace_open = false;
+                app.editor.find_in_replace = false;
+            }
+            KeyCode::Enter => {
+                if app.editor.goto_open {
+                    if let Ok(n) = app.editor.goto_query.trim().parse::<usize>() {
+                        let row = n.saturating_sub(1).min(app.editor.buf.lines.len().saturating_sub(1));
+                        app.editor.buf.cursor_row = row;
+                        app.editor.buf.cursor_col = 0;
+                    }
+                    app.editor.goto_open = false;
+                    app.editor.goto_query.clear();
+                } else if app.editor.find_open && app.editor.find_in_replace {
+                    if let Some(&(row, col)) = app.editor.find_matches.get(app.editor.find_current) {
+                        let q_chars = app.editor.find_query.chars().count();
+                        let end_col = col + q_chars;
+                        app.editor.buf.snapshot();
+                        let sb = crate::ui::editor::Editor::byte_at(&app.editor.buf.lines[row], col);
+                        let eb = crate::ui::editor::Editor::byte_at(&app.editor.buf.lines[row], end_col);
+                        let rep = app.editor.replace_query.clone();
+                        app.editor.buf.lines[row].replace_range(sb..eb, &rep);
+                        app.editor.find_matches = crate::ui::app::compute_find_matches(
+                            &app.editor.find_query, &app.editor.buf.lines);
+                        app.editor.find_current = app.editor.find_current.min(
+                            app.editor.find_matches.len().saturating_sub(1));
+                        app.editor.dirty = true;
+                        app.editor.last_edit_at = Some(Instant::now());
+                    }
+                } else {
+                    if !app.editor.find_matches.is_empty() {
+                        app.editor.find_current = (app.editor.find_current + 1) % app.editor.find_matches.len();
+                        let (row, col) = app.editor.find_matches[app.editor.find_current];
+                        app.editor.buf.cursor_row = row;
+                        app.editor.buf.cursor_col = col;
+                    }
+                }
+            }
+            KeyCode::BackTab if app.editor.find_open => {
+                app.editor.find_in_replace = !app.editor.find_in_replace;
+            }
+            KeyCode::Tab if app.editor.find_open => {
+                app.editor.find_in_replace = !app.editor.find_in_replace;
+            }
+            KeyCode::Backspace => {
+                if app.editor.goto_open {
+                    app.editor.goto_query.pop();
+                } else if app.editor.find_in_replace {
+                    app.editor.replace_query.pop();
+                } else {
+                    app.editor.find_query.pop();
+                    app.editor.find_matches = crate::ui::app::compute_find_matches(
+                        &app.editor.find_query, &app.editor.buf.lines);
+                    app.editor.find_current = 0;
+                }
+            }
+            KeyCode::Char(c) => {
+                let mods = key.modifiers;
+                let ctrl_pressed = mods.contains(crossterm::event::KeyModifiers::CONTROL);
+                if ctrl_pressed && c == 'f' {
+                    if !app.editor.find_matches.is_empty() {
+                        app.editor.find_current = (app.editor.find_current + 1) % app.editor.find_matches.len();
+                        let (row, col) = app.editor.find_matches[app.editor.find_current];
+                        app.editor.buf.cursor_row = row;
+                        app.editor.buf.cursor_col = col;
+                    }
+                } else if !ctrl_pressed {
+                    if app.editor.goto_open {
+                        if c.is_ascii_digit() {
+                            app.editor.goto_query.push(c);
+                        }
+                    } else if app.editor.find_in_replace {
+                        app.editor.replace_query.push(c);
+                    } else {
+                        app.editor.find_query.push(c);
+                        app.editor.find_matches = crate::ui::app::compute_find_matches(
+                            &app.editor.find_query, &app.editor.buf.lines);
+                        if !app.editor.find_matches.is_empty() {
+                            let cursor_pos = (app.editor.buf.cursor_row, app.editor.buf.cursor_col);
+                            let idx = app.editor.find_matches.iter()
+                                .position(|&(r, c_)| (r, c_) >= cursor_pos)
+                                .unwrap_or(0);
+                            app.editor.find_current = idx;
+                            let (row, col) = app.editor.find_matches[idx];
+                            app.editor.buf.cursor_row = row;
+                            app.editor.buf.cursor_col = col;
+                        } else {
+                            app.editor.find_current = 0;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    // Docs search bar intercept
+    if matches!(app.tab, Tab::Docs) && app.docs.search_open {
+        match key.code {
+            KeyCode::Esc => { app.docs.search_open = false; app.docs.search_query.clear(); }
+            KeyCode::Backspace => { app.docs.search_query.pop(); }
+            KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                app.docs.search_query.push(c);
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
@@ -101,6 +216,82 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             if ctrl && matches!(key.code, KeyCode::Char('a')) && matches!(app.tab, Tab::Editor) {
                 app.editor.buf.select_all();
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('w')) && matches!(app.tab, Tab::Editor) {
+                app.editor.buf.select_word_at_cursor();
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('f')) && matches!(app.tab, Tab::Editor) {
+                if app.editor.find_open {
+                    if !app.editor.find_matches.is_empty() {
+                        app.editor.find_current = (app.editor.find_current + 1) % app.editor.find_matches.len();
+                        let (row, col) = app.editor.find_matches[app.editor.find_current];
+                        app.editor.buf.cursor_row = row;
+                        app.editor.buf.cursor_col = col;
+                    }
+                } else {
+                    app.editor.find_open = true;
+                    app.editor.goto_open = false;
+                    app.editor.find_query.clear();
+                    app.editor.replace_query.clear();
+                    app.editor.find_in_replace = false;
+                    app.editor.find_matches.clear();
+                    app.editor.find_current = 0;
+                }
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('h')) && matches!(app.tab, Tab::Editor) {
+                app.editor.find_open = true;
+                app.editor.replace_open = true;
+                app.editor.goto_open = false;
+                app.editor.find_in_replace = false;
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('g')) && matches!(app.tab, Tab::Editor) {
+                app.editor.goto_open = true;
+                app.editor.find_open = false;
+                app.editor.goto_query.clear();
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('f')) && matches!(app.tab, Tab::Docs) {
+                app.docs.search_open = !app.docs.search_open;
+                if !app.docs.search_open {
+                    app.docs.search_query.clear();
+                }
+                return Ok(false);
+            }
+
+            if key.code == KeyCode::F(9) && matches!(app.tab, Tab::Run) {
+                let pc = app.run.cpu.pc;
+                if app.run.breakpoints.contains(&pc) {
+                    app.run.breakpoints.remove(&pc);
+                } else {
+                    app.run.breakpoints.insert(pc);
+                }
+                return Ok(false);
+            }
+
+            // F12: go to label definition
+            if key.code == KeyCode::F(12) && matches!(app.tab, Tab::Editor) {
+                app.goto_label_definition();
+                return Ok(false);
+            }
+
+            // F2: toggle address hints gutter
+            if key.code == KeyCode::F(2) && matches!(app.tab, Tab::Editor) {
+                app.editor.show_addr_hints = !app.editor.show_addr_hints;
+                return Ok(false);
+            }
+
+            // Ctrl+D: select next occurrence of word under cursor
+            if ctrl && matches!(key.code, KeyCode::Char('d')) && matches!(app.tab, Tab::Editor) {
+                app.select_next_occurrence();
                 return Ok(false);
             }
 
@@ -297,6 +488,38 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.run.is_running = true;
                     }
                 }
+                // v: cycle sidebar view — REGS → RAM → STACK
+                (KeyCode::Char('v'), Tab::Run) => {
+                    if app.run.show_stack {
+                        app.run.show_stack = false;
+                        app.run.show_registers = true;
+                    } else if app.run.show_registers {
+                        app.run.show_registers = false;
+                    } else {
+                        app.run.show_stack = true;
+                    }
+                }
+                // t: toggle execution trace panel
+                (KeyCode::Char('t'), Tab::Run) => {
+                    app.run.show_trace = !app.run.show_trace;
+                }
+                // k: toggle stack view
+                (KeyCode::Char('k'), Tab::Run) => {
+                    app.run.show_stack = !app.run.show_stack;
+                    if app.run.show_stack { app.run.show_registers = false; }
+                }
+                // P (shift+p): pin/unpin the currently selected register
+                (KeyCode::Char('P'), Tab::Run) if app.run.show_registers => {
+                    let idx = app.run.reg_cursor;
+                    if idx >= 1 {
+                        let reg = (idx - 1) as u8;
+                        if let Some(pos) = app.run.pinned_regs.iter().position(|&r| r == reg) {
+                            app.run.pinned_regs.remove(pos);
+                        } else {
+                            app.run.pinned_regs.push(reg);
+                        }
+                    }
+                }
                 // Cycle speed: 1x → 2x → 4x → GO → 1x (locked while running in Instant)
                 (KeyCode::Char('f'), Tab::Run)
                     if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
@@ -322,30 +545,26 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Up, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
                     app.run.regs_scroll = app.run.regs_scroll.saturating_sub(1);
-                    if app.run.regs_scroll > max_scroll {
-                        app.run.regs_scroll = max_scroll;
-                    }
+                    if app.run.regs_scroll > max_scroll { app.run.regs_scroll = max_scroll; }
+                    app.run.reg_cursor = app.run.reg_cursor.saturating_sub(1);
                 }
                 (KeyCode::Down, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
-                    if app.run.regs_scroll > max_scroll {
-                        app.run.regs_scroll = max_scroll;
-                    }
+                    if app.run.regs_scroll > max_scroll { app.run.regs_scroll = max_scroll; }
                     app.run.regs_scroll = (app.run.regs_scroll + 1).min(max_scroll);
+                    app.run.reg_cursor = (app.run.reg_cursor + 1).min(32);
                 }
                 (KeyCode::PageUp, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
                     app.run.regs_scroll = app.run.regs_scroll.saturating_sub(10);
-                    if app.run.regs_scroll > max_scroll {
-                        app.run.regs_scroll = max_scroll;
-                    }
+                    if app.run.regs_scroll > max_scroll { app.run.regs_scroll = max_scroll; }
+                    app.run.reg_cursor = app.run.reg_cursor.saturating_sub(10);
                 }
                 (KeyCode::PageDown, Tab::Run) if app.run.show_registers => {
                     let max_scroll = max_regs_scroll(app);
-                    if app.run.regs_scroll > max_scroll {
-                        app.run.regs_scroll = max_scroll;
-                    }
+                    if app.run.regs_scroll > max_scroll { app.run.regs_scroll = max_scroll; }
                     app.run.regs_scroll = (app.run.regs_scroll + 10).min(max_scroll);
+                    app.run.reg_cursor = (app.run.reg_cursor + 10).min(32);
                 }
                 (KeyCode::Up, Tab::Run) if !app.run.show_registers => {
                     app.run.mem_view_addr = app.run.mem_view_addr.saturating_sub(app.run.mem_view_bytes);
@@ -632,6 +851,13 @@ fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<Ca
     let transfer_width = map.get(&format!("{prefix}.transfer_width"))
         .and_then(|v| v.parse::<u32>().ok()).unwrap_or(8).max(1);
 
+    use crate::falcon::cache::InclusionPolicy;
+    let inclusion = match map.get(&format!("{prefix}.inclusion")).map(String::as_str).unwrap_or("NonInclusive") {
+        "Inclusive"  => InclusionPolicy::Inclusive,
+        "Exclusive"  => InclusionPolicy::Exclusive,
+        _            => InclusionPolicy::NonInclusive,
+    };
+
     Ok(CacheConfig {
         size: get_usize("size")?,
         line_size: get_usize("line_size")?,
@@ -639,6 +865,7 @@ fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<Ca
         replacement,
         write_policy,
         write_alloc,
+        inclusion,
         hit_latency: get_u64("hit_latency")?,
         miss_penalty: get_u64("miss_penalty")?,
         assoc_penalty,

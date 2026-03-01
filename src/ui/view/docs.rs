@@ -95,6 +95,19 @@ const DOCS: &[DocRow] = &[
 ];
 
 fn build_docs_table_string(width: u16) -> String {
+    build_docs_table_filtered(width, "")
+}
+
+fn build_docs_table_filtered(width: u16, query: &str) -> String {
+    let q = query.to_lowercase();
+    let filtered: Vec<&DocRow> = DOCS.iter()
+        .filter(|r| q.is_empty()
+            || r.mnemonic.to_lowercase().contains(&q)
+            || r.operands.to_lowercase().contains(&q)
+            || r.desc.to_lowercase().contains(&q)
+            || r.ty.to_lowercase().contains(&q))
+        .collect();
+
     let mut table = ATable::new();
     table.load_preset(ASCII_BORDERS_ONLY);
     table.set_content_arrangement(ContentArrangement::Dynamic);
@@ -110,7 +123,7 @@ fn build_docs_table_string(width: u16) -> String {
         ACell::new("Expands"),
     ]));
 
-    for r in DOCS {
+    for r in filtered {
         table.add_row(ARow::from(vec![
             ACell::new(r.ty),
             ACell::new(r.mnemonic),
@@ -198,30 +211,70 @@ pub(crate) fn docs_body_line_count(width: u16) -> usize {
 }
 
 pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
+    // Reserve 1 extra line for search bar if open
+    let search_bar_h: u16 = if app.docs.search_open { 1 } else { 0 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(search_bar_h),
+            Constraint::Min(0),
+        ])
         .split(area);
 
     let meta_area = chunks[0];
-    let table_area = chunks[1];
+    let search_area = chunks[1];
+    let table_area = chunks[2];
 
+    // Show Ctrl+F hint in the header
+    let search_hint = if app.docs.search_open { "" } else { "  Ctrl+F=search" };
     let meta_lines = vec![
-        Line::from(Span::styled(
-            "Instruction Reference • Up/Down/PgUp/PgDn scroll",
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
+        Line::from(vec![
+            Span::styled(
+                "Instruction Reference • Up/Down/PgUp/PgDn scroll",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(search_hint, Style::default().fg(Color::DarkGray)),
+        ]),
         style_table_line(
             "Legend: rd=dest, rs1/rs2/rs=src, imm/shamt=imm, label=label • Pseudo: see Expands",
         ),
     ];
     f.render_widget(Paragraph::new(meta_lines), meta_area);
 
+    // Render search bar
+    if app.docs.search_open {
+        let bar_style = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50));
+        let label_s = Style::default().fg(Color::Cyan).bg(Color::Rgb(30, 30, 50));
+        let text_s = Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 50));
+        let info_s = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50));
+        let bar_line = Line::from(vec![
+            Span::styled(" Find: ", label_s),
+            Span::styled(app.docs.search_query.clone(), text_s),
+            Span::styled("  Esc=close", info_s),
+        ]);
+        f.render_widget(Paragraph::new(bar_line).style(bar_style), search_area);
+
+        // Set cursor in search bar
+        let prefix_len = " Find: ".len() as u16;
+        let cursor_x = (search_area.x + prefix_len + app.docs.search_query.chars().count() as u16)
+            .min(search_area.x + search_area.width.saturating_sub(1));
+        if search_area.height > 0 {
+            f.set_cursor_position((cursor_x, search_area.y));
+        }
+    }
+
     if table_area.height == 0 || table_area.width == 0 {
         return;
     }
 
-    let table_str = build_docs_table_string(table_area.width);
+    // Use filtered table when search query is non-empty
+    let table_str = if app.docs.search_open && !app.docs.search_query.is_empty() {
+        build_docs_table_filtered(table_area.width, &app.docs.search_query)
+    } else {
+        build_docs_table_string(table_area.width)
+    };
     let all_lines: Vec<&str> = table_str.lines().collect();
 
     if all_lines.is_empty() {

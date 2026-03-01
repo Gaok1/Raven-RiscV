@@ -1,4 +1,5 @@
 // ---------- Simple text editor with lightweight syntax highlighting ----------
+use std::cell::Cell;
 use std::collections::VecDeque;
 
 #[derive(Clone)]
@@ -8,6 +9,13 @@ struct EditorState {
     cursor_col: usize,
 }
 
+#[derive(PartialEq, Clone, Copy, Default)]
+enum LastOp {
+    #[default]
+    Other,
+    Char,
+}
+
 #[derive(Default)]
 pub struct Editor {
     pub lines: Vec<String>,
@@ -15,6 +23,12 @@ pub struct Editor {
     pub cursor_col: usize,
     pub selection_anchor: Option<(usize, usize)>,
     history: VecDeque<EditorState>,
+    redo_stack: VecDeque<EditorState>,
+    /// Set by the render function each frame so page_up/page_down use the real visible height.
+    pub page_size: Cell<usize>,
+    /// Stable scroll offset — written by stable_scroll_start(), read by mouse handler.
+    pub scroll_offset: Cell<usize>,
+    last_op: LastOp,
 }
 
 impl Editor {
@@ -42,11 +56,15 @@ impl Editor {
             cursor_col: 0,
             selection_anchor: None,
             history: VecDeque::new(),
+            redo_stack: VecDeque::new(),
+            page_size: Cell::new(20),
+            scroll_offset: Cell::new(0),
+            last_op: LastOp::Other,
         }
     }
 
-    fn snapshot(&mut self) {
-        if self.history.len() == 15 {
+    pub fn snapshot(&mut self) {
+        if self.history.len() == 50 {
             self.history.pop_front();
         }
         self.history.push_back(EditorState {
@@ -54,14 +72,46 @@ impl Editor {
             cursor_row: self.cursor_row,
             cursor_col: self.cursor_col,
         });
+        // Any explicit snapshot (non-char edit) invalidates the redo history.
+        self.redo_stack.clear();
+        self.last_op = LastOp::Other;
     }
 
     pub fn undo(&mut self) {
         if let Some(state) = self.history.pop_back() {
+            // Save current state so redo can restore it.
+            if self.redo_stack.len() == 50 {
+                self.redo_stack.pop_front();
+            }
+            self.redo_stack.push_back(EditorState {
+                lines: self.lines.clone(),
+                cursor_row: self.cursor_row,
+                cursor_col: self.cursor_col,
+            });
             self.lines = state.lines;
             self.cursor_row = state.cursor_row;
             self.cursor_col = state.cursor_col;
             self.clear_selection();
+            self.last_op = LastOp::Other;
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(state) = self.redo_stack.pop_back() {
+            // Save current state back to history.
+            if self.history.len() == 50 {
+                self.history.pop_front();
+            }
+            self.history.push_back(EditorState {
+                lines: self.lines.clone(),
+                cursor_row: self.cursor_row,
+                cursor_col: self.cursor_col,
+            });
+            self.lines = state.lines;
+            self.cursor_row = state.cursor_row;
+            self.cursor_col = state.cursor_col;
+            self.clear_selection();
+            self.last_op = LastOp::Other;
         }
     }
 
@@ -118,6 +168,7 @@ impl Editor {
         self.selection_anchor = Some((0, 0));
         self.cursor_row = self.lines.len() - 1;
         self.cursor_col = Self::char_count(&self.lines[self.cursor_row]);
+        self.last_op = LastOp::Other;
     }
 
     pub fn selection_range(&self) -> Option<((usize, usize), (usize, usize))> {
@@ -195,7 +246,13 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, ch: char) {
-        self.snapshot();
+        // Coalesce consecutive char inserts into a single undo group.
+        // A selection-replace always starts a new group so the delete isn't lost.
+        let has_selection = self.selection_range().is_some();
+        if self.last_op != LastOp::Char || has_selection {
+            self.snapshot(); // also clears redo_stack and sets last_op = Other
+        }
+        self.last_op = LastOp::Char;
         if let Some((start, end)) = self.selection_range() {
             self.delete_range(start, end);
         }
@@ -325,12 +382,68 @@ impl Editor {
         }
     }
 
+    /// Delete from the cursor back to the start of the previous word (Ctrl+Backspace).
+    pub fn delete_word_back(&mut self) {
+        self.snapshot();
+        if self.lines.is_empty() {
+            return;
+        }
+        if self.cursor_col == 0 {
+            if self.cursor_row > 0 {
+                let cur = self.lines.remove(self.cursor_row);
+                self.cursor_row -= 1;
+                let prev_len = Self::char_count(&self.lines[self.cursor_row]);
+                self.lines[self.cursor_row].push_str(&cur);
+                self.cursor_col = prev_len;
+            }
+            return;
+        }
+        let end_col = self.cursor_col;
+        let start_col = word_left_col(self.current_line(), end_col);
+        if start_col < end_col {
+            let row = self.cursor_row;
+            let sb = Self::byte_at(&self.lines[row], start_col);
+            let eb = Self::byte_at(&self.lines[row], end_col);
+            self.lines[row].replace_range(sb..eb, "");
+            self.cursor_col = start_col;
+        }
+    }
+
+    /// Delete from the cursor forward to the end of the next word (Ctrl+Delete).
+    pub fn delete_word_forward(&mut self) {
+        self.snapshot();
+        if self.lines.is_empty() {
+            return;
+        }
+        let len = Self::char_count(self.current_line());
+        let col = self.cursor_col.min(len);
+        if col >= len {
+            if self.cursor_row + 1 < self.lines.len() {
+                let next = self.lines.remove(self.cursor_row + 1);
+                self.current_line_mut().push_str(&next);
+            }
+            return;
+        }
+        let end_col = word_right_col(self.current_line(), col);
+        if end_col > col {
+            let row = self.cursor_row;
+            let sb = Self::byte_at(&self.lines[row], col);
+            let eb = Self::byte_at(&self.lines[row], end_col);
+            self.lines[row].replace_range(sb..eb, "");
+        }
+    }
+
     pub fn enter(&mut self) {
         self.snapshot();
         if let Some((start, end)) = self.selection_range() {
             self.delete_range(start, end);
         }
         self.ensure_line();
+        // Auto-indent: carry the leading whitespace of the current line.
+        let indent: String = self.current_line()
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
         let (idx_bytes, rest) = {
             let line = self.current_line();
             let idx = Self::byte_at(line, self.cursor_col.min(Self::char_count(line)));
@@ -341,11 +454,66 @@ impl Editor {
             line_mut.truncate(idx_bytes);
         }
         self.cursor_row += 1;
-        self.cursor_col = 0;
-        self.lines.insert(self.cursor_row, rest);
+        self.cursor_col = indent.chars().count();
+        self.lines.insert(self.cursor_row, indent + &rest);
+    }
+
+    /// Toggle `;` comment on the current line (or each selected line).
+    pub fn toggle_comment(&mut self) {
+        self.snapshot();
+        self.ensure_line();
+        let (start_row, end_row) = if let Some(((sr, _), (er, _))) = self.selection_range() {
+            (sr, er)
+        } else {
+            (self.cursor_row, self.cursor_row)
+        };
+
+        // Determine if ALL non-empty lines in range already start with ';'
+        let all_commented = (start_row..=end_row).all(|r| {
+            if r >= self.lines.len() { return true; }
+            let trimmed = self.lines[r].trim_start();
+            trimmed.is_empty() || trimmed.starts_with(';')
+        });
+
+        for r in start_row..=end_row {
+            if r >= self.lines.len() { break; }
+            // Byte offset of the first non-whitespace character.
+            let ws_bytes: usize = self.lines[r].chars()
+                .take_while(|c| c.is_whitespace())
+                .map(|c| c.len_utf8())
+                .sum();
+            if all_commented {
+                let content = &self.lines[r][ws_bytes..];
+                if content.starts_with("; ") {
+                    self.lines[r].replace_range(ws_bytes..ws_bytes + 2, "");
+                } else if content.starts_with(';') {
+                    self.lines[r].replace_range(ws_bytes..ws_bytes + 1, "");
+                }
+            } else {
+                if !self.lines[r].trim_start().is_empty() {
+                    self.lines[r].insert_str(ws_bytes, "; ");
+                }
+            }
+        }
+        // Adjust cursor column if it shifted on the cursor row
+        if self.cursor_row >= start_row && self.cursor_row <= end_row {
+            let delta: isize = if all_commented { -2 } else { 2 };
+            self.cursor_col = (self.cursor_col as isize + delta).max(0) as usize;
+        }
+        self.clear_selection();
+    }
+
+    /// Duplicate the current line, inserting the copy below, and move down.
+    pub fn duplicate_line(&mut self) {
+        self.snapshot();
+        self.ensure_line();
+        let line = self.lines[self.cursor_row].clone();
+        self.cursor_row += 1;
+        self.lines.insert(self.cursor_row, line);
     }
 
     pub fn move_left(&mut self) {
+        self.last_op = LastOp::Other;
         if self.cursor_col > 0 {
             self.cursor_col -= 1
         } else if self.cursor_row > 0 {
@@ -354,6 +522,7 @@ impl Editor {
         }
     }
     pub fn move_right(&mut self) {
+        self.last_op = LastOp::Other;
         let len = Self::char_count(self.current_line());
         if self.cursor_col < len {
             self.cursor_col += 1;
@@ -363,6 +532,7 @@ impl Editor {
         }
     }
     pub fn move_up(&mut self) {
+        self.last_op = LastOp::Other;
         if self.cursor_row > 0 {
             self.cursor_row -= 1;
             let len = Self::char_count(self.current_line());
@@ -370,6 +540,7 @@ impl Editor {
         }
     }
     pub fn move_down(&mut self) {
+        self.last_op = LastOp::Other;
         if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
             let len = Self::char_count(self.current_line());
@@ -377,17 +548,47 @@ impl Editor {
         }
     }
 
+    /// Move left by one word (Ctrl+←).
+    pub fn move_word_left(&mut self) {
+        self.last_op = LastOp::Other;
+        if self.cursor_col == 0 {
+            if self.cursor_row > 0 {
+                self.cursor_row -= 1;
+                self.cursor_col = Self::char_count(&self.lines[self.cursor_row]);
+            }
+            return;
+        }
+        self.cursor_col = word_left_col(self.current_line(), self.cursor_col);
+    }
+
+    /// Move right by one word (Ctrl+→).
+    pub fn move_word_right(&mut self) {
+        self.last_op = LastOp::Other;
+        let len = Self::char_count(self.current_line());
+        if self.cursor_col >= len {
+            if self.cursor_row + 1 < self.lines.len() {
+                self.cursor_row += 1;
+                self.cursor_col = 0;
+            }
+            return;
+        }
+        self.cursor_col = word_right_col(self.current_line(), self.cursor_col);
+    }
+
     pub fn move_home(&mut self) {
+        self.last_op = LastOp::Other;
         self.cursor_col = 0;
     }
 
     pub fn move_end(&mut self) {
+        self.last_op = LastOp::Other;
         let len = Self::char_count(self.current_line());
         self.cursor_col = len;
     }
 
     pub fn page_up(&mut self) {
-        let h = 20usize;
+        self.last_op = LastOp::Other;
+        let h = self.page_size.get().max(1);
         if self.cursor_row >= h {
             self.cursor_row -= h;
         } else {
@@ -398,7 +599,8 @@ impl Editor {
     }
 
     pub fn page_down(&mut self) {
-        let h = 20usize;
+        self.last_op = LastOp::Other;
+        let h = self.page_size.get().max(1);
         let max_row = self.lines.len().saturating_sub(1);
         self.cursor_row = (self.cursor_row + h).min(max_row);
         let len = Self::char_count(self.current_line());
@@ -408,4 +610,87 @@ impl Editor {
     pub fn text(&self) -> String {
         self.lines.join("\n")
     }
+
+    /// Edge-margin stable scroll: keeps cursor 3 lines from viewport edges.
+    /// Writes the result to `self.scroll_offset` so the mouse handler can read it.
+    pub fn stable_scroll_start(&self, visible_h: usize) -> usize {
+        if visible_h == 0 {
+            self.scroll_offset.set(0);
+            return 0;
+        }
+        let len = self.lines.len();
+        let margin = 3usize;
+        let mut start = self.scroll_offset.get();
+        // Scroll down if cursor is below viewport
+        if self.cursor_row >= start + visible_h.saturating_sub(margin) {
+            start = self.cursor_row + margin + 1;
+            if start + visible_h > len {
+                start = len.saturating_sub(visible_h);
+            }
+        }
+        // Scroll up if cursor is above viewport
+        if self.cursor_row < start + margin {
+            start = self.cursor_row.saturating_sub(margin);
+        }
+        start = start.min(len.saturating_sub(visible_h));
+        self.scroll_offset.set(start);
+        start
+    }
+
+    /// Select the word (alphanumeric+underscore run) around the cursor.
+    pub fn select_word_at_cursor(&mut self) {
+        let col = self.cursor_col;
+        let line = self.current_line().to_string();
+        let left = word_left_col_inclusive(&line, col);
+        let right = word_right_col_inclusive(&line, col);
+        if left < right {
+            self.selection_anchor = Some((self.cursor_row, left));
+            self.cursor_col = right;
+        }
+    }
+}
+
+/// Compute the column position of the start of the word to the left of `col`.
+fn word_left_col(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    let mut c = col;
+    // Skip non-word chars, then skip word chars
+    while c > 0 && !is_word_char(chars[c - 1]) { c -= 1; }
+    while c > 0 && is_word_char(chars[c - 1]) { c -= 1; }
+    c
+}
+
+/// Compute the column position of the end of the word to the right of `col`.
+fn word_right_col(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    let len = chars.len();
+    let mut c = col;
+    // Skip word chars, then skip non-word chars
+    while c < len && is_word_char(chars[c]) { c += 1; }
+    while c < len && !is_word_char(chars[c]) { c += 1; }
+    c
+}
+
+#[inline]
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn word_left_col_inclusive(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    let mut c = col.min(chars.len());
+    // If cursor is past end or on non-word char, step back into word
+    while c > 0 && !is_word_char(chars[c - 1]) { c -= 1; }
+    while c > 0 && is_word_char(chars[c - 1]) { c -= 1; }
+    c
+}
+
+fn word_right_col_inclusive(line: &str, col: usize) -> usize {
+    let chars: Vec<char> = line.chars().collect();
+    let len = chars.len();
+    let mut c = col.min(len);
+    // If on non-word char, step into word
+    while c < len && !is_word_char(chars[c]) { c += 1; }
+    while c < len && is_word_char(chars[c]) { c += 1; }
+    c
 }

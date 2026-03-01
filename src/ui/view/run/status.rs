@@ -105,20 +105,20 @@ fn command_line(app: &App) -> Line<'static> {
             Style::default().fg(Color::Yellow),
         ))
     } else {
-        Line::from("Commands: s=step  r=run  p=pause/resume  R=restart  f=speed  Up/Down scroll")
+        Line::from("s=step  r=run  p=pause  R=restart  f=speed  v=view  t=trace  k=stack  pin=p  F9=bp")
     }
 }
 
 fn view_text(app: &App) -> &'static str {
-    if app.run.show_registers { "REGS" } else { "RAM" }
+    if app.run.show_stack { "STACK" }
+    else if app.run.show_registers { "REGS" }
+    else { "RAM" }
 }
 
 fn view_color(app: &App) -> Color {
-    if app.run.show_registers {
-        Color::Blue
-    } else {
-        Color::Green
-    }
+    if app.run.show_stack { Color::LightBlue }
+    else if app.run.show_registers { Color::Blue }
+    else { Color::Green }
 }
 
 fn region_text(app: &App) -> &'static str {

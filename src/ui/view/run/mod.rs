@@ -15,7 +15,7 @@ mod sidebar;
 mod status;
 
 use instruction_details::render_instruction_details;
-use instruction_list::render_instruction_memory;
+use instruction_list::{render_instruction_memory, render_exec_trace};
 use sidebar::render_sidebar;
 use status::render_run_status;
 
@@ -56,6 +56,14 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
 
     if app.run.imem_collapsed {
         render_collapsed(f, columns[1], "◄ I");
+    } else if app.run.show_trace && columns[1].height >= 10 {
+        // Split instruction memory column: top = imem, bottom = trace
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(columns[1]);
+        render_instruction_memory(f, split[0], app);
+        render_exec_trace(f, split[1], app);
     } else {
         render_instruction_memory(f, columns[1], app);
     }

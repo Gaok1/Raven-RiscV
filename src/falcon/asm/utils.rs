@@ -1,6 +1,20 @@
 use std::collections::HashMap;
 
 // Public(crate) helpers reused by submodules
+
+/// Extracts `#!` visible comments from raw source lines.
+/// Returns a map from 0-based line number to the comment text (trimmed, without `#!`).
+pub(crate) fn extract_visible_comments(text: &str) -> HashMap<usize, String> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let pos = l.find("#!")?;
+            let comment = l[pos + 2..].trim().to_string();
+            if comment.is_empty() { None } else { Some((i, comment)) }
+        })
+        .collect()
+}
+
 pub(crate) fn preprocess(text: &str) -> Vec<(usize, String)> {
     text.lines()
         .enumerate()

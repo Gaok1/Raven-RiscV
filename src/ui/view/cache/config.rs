@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 
-use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
+use crate::falcon::cache::{CacheConfig, InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
 use crate::ui::app::{App, ConfigField};
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
@@ -59,7 +59,8 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         ])
         .split(inner);
 
-    render_fields(f, layout[0], cfg, current, active_field, hovered_field, edit_buf);
+    let is_last_level = app.cache.extra_pending.is_empty();
+    render_fields(f, layout[0], cfg, current, active_field, hovered_field, edit_buf, is_last_level);
     render_presets(f, layout[1], app, icache);
     // Apply is global (applies both I-cache and D-cache), so render it only once to avoid duplication.
     if icache {
@@ -115,7 +116,8 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
         ])
         .split(col_area);
 
-    render_fields(f, layout[0], pending, current, active_field, hovered_field, edit_buf);
+    let is_last_level = extra_idx == app.cache.extra_pending.len().saturating_sub(1);
+    render_fields(f, layout[0], pending, current, active_field, hovered_field, edit_buf, is_last_level);
     render_unified_presets(f, layout[1], app, extra_idx);
     render_apply_row(f, layout[2], app);
 }
@@ -124,6 +126,7 @@ fn render_fields(
     f: &mut Frame, area: Rect,
     pending: &CacheConfig, current: &CacheConfig,
     active: Option<ConfigField>, hovered: Option<ConfigField>, edit_buf: &str,
+    is_last_level: bool,
 ) {
     let validation = pending.validate();
 
@@ -218,6 +221,16 @@ fn render_fields(
         field_item(ConfigField::TransferWidth, "  Transfer Width:",
             format!("{} B", pending.transfer_width),
             cs(pending.transfer_width == current.transfer_width)),
+        if is_last_level {
+            ListItem::new(Line::from(vec![
+                Span::styled("  Inclusion:      ", Style::default().fg(Color::DarkGray)),
+                Span::styled("N/A (last level)", Style::default().fg(Color::DarkGray)),
+            ]))
+        } else {
+            field_item(ConfigField::Inclusion, "  Inclusion:      ",
+                inclusion_label(pending.inclusion).to_string(),
+                cs(pending.inclusion == current.inclusion))
+        },
         ListItem::new(Line::raw("")),
         ListItem::new(Line::from(Span::styled(
             if active.is_some() {
@@ -344,5 +357,13 @@ pub fn write_alloc_label(w: WriteAllocPolicy) -> &'static str {
     match w {
         WriteAllocPolicy::WriteAllocate => "Write-Allocate",
         WriteAllocPolicy::NoWriteAllocate => "No-Write-Allocate",
+    }
+}
+
+pub fn inclusion_label(p: InclusionPolicy) -> &'static str {
+    match p {
+        InclusionPolicy::NonInclusive => "Non-Inclusive (NINE)",
+        InclusionPolicy::Inclusive    => "Inclusive",
+        InclusionPolicy::Exclusive    => "Exclusive",
     }
 }

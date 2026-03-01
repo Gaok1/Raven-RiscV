@@ -39,6 +39,19 @@ pub enum WriteAllocPolicy {
     NoWriteAllocate,
 }
 
+/// Inclusion policy between this cache level and the NEXT level below it.
+/// Applies to all levels except the last (which has no level below it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum InclusionPolicy {
+    /// No constraint — data may or may not appear in both levels (NINE).
+    #[default]
+    NonInclusive,
+    /// Every line in this level is guaranteed to also exist in the level below.
+    Inclusive,
+    /// Lines in this level are guaranteed NOT to exist in the level below.
+    Exclusive,
+}
+
 // ── Config ──────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -49,6 +62,9 @@ pub struct CacheConfig {
     pub replacement: ReplacementPolicy,
     pub write_policy: WritePolicy,
     pub write_alloc: WriteAllocPolicy,
+    /// Inclusion/exclusion policy with respect to the next cache level.
+    /// Ignored for the last (lowest) cache level.
+    pub inclusion: InclusionPolicy,
     /// Cycles consumed on a cache hit
     pub hit_latency: u64,
     /// Extra cycles added on a cache miss (stall waiting for RAM)
@@ -152,6 +168,7 @@ impl Default for CacheConfig {
             replacement: ReplacementPolicy::Lru,
             write_policy: WritePolicy::WriteBack,
             write_alloc: WriteAllocPolicy::WriteAllocate,
+            inclusion: InclusionPolicy::NonInclusive,
             hit_latency: 1,
             miss_penalty: 50,
             assoc_penalty: 1,
@@ -718,15 +735,15 @@ impl Cache {
 pub fn cache_presets(icache: bool) -> [CacheConfig; 3] {
     if icache {
         [
-            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
-            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
-            CacheConfig { size: 4096, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 4096, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 1, miss_penalty: 50,  assoc_penalty: 1, transfer_width: 8 },
         ]
     } else {
         [
-            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
-            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
-            CacheConfig { size: 8192, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 256,  line_size: 16, associativity: 1, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 1024, line_size: 16, associativity: 2, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
+            CacheConfig { size: 8192, line_size: 32, associativity: 4, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 1, miss_penalty: 100, assoc_penalty: 1, transfer_width: 8 },
         ]
     }
 }
@@ -736,9 +753,9 @@ pub fn cache_presets(icache: bool) -> [CacheConfig; 3] {
 /// Returns [Small, Medium, Large] preset configs for a unified L2/L3 cache.
 pub fn extra_level_presets() -> [CacheConfig; 3] {
     [
-        CacheConfig { size: 8192,   line_size: 64,  associativity: 4,  replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 5,  miss_penalty: 200, assoc_penalty: 1, transfer_width: 8 },
-        CacheConfig { size: 65536,  line_size: 64,  associativity: 8,  replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 10, miss_penalty: 400, assoc_penalty: 1, transfer_width: 8 },
-        CacheConfig { size: 524288, line_size: 128, associativity: 16, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, hit_latency: 20, miss_penalty: 600, assoc_penalty: 1, transfer_width: 8 },
+        CacheConfig { size: 8192,   line_size: 64,  associativity: 4,  replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 5,  miss_penalty: 200, assoc_penalty: 1, transfer_width: 8 },
+        CacheConfig { size: 65536,  line_size: 64,  associativity: 8,  replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 10, miss_penalty: 400, assoc_penalty: 1, transfer_width: 8 },
+        CacheConfig { size: 524288, line_size: 128, associativity: 16, replacement: ReplacementPolicy::Lru, write_policy: WritePolicy::WriteBack, write_alloc: WriteAllocPolicy::WriteAllocate, inclusion: InclusionPolicy::NonInclusive, hit_latency: 20, miss_penalty: 600, assoc_penalty: 1, transfer_width: 8 },
     ]
 }
 
@@ -1241,6 +1258,7 @@ mod tests {
             replacement: ReplacementPolicy::Lru,
             write_policy: WritePolicy::WriteBack,
             write_alloc: WriteAllocPolicy::WriteAllocate,
+            inclusion: InclusionPolicy::NonInclusive,
             hit_latency: 1, miss_penalty: 10,
             assoc_penalty: 1, transfer_width: 8,
         }
@@ -1251,6 +1269,7 @@ mod tests {
             size, line_size, associativity: assoc,
             replacement: ReplacementPolicy::Lru,
             write_policy, write_alloc,
+            inclusion: InclusionPolicy::NonInclusive,
             hit_latency: 1, miss_penalty: 10,
             assoc_penalty: 1, transfer_width: 8,
         }
@@ -1356,6 +1375,7 @@ mod tests {
             replacement: ReplacementPolicy::Lru,
             write_policy: WritePolicy::WriteBack,
             write_alloc: WriteAllocPolicy::WriteAllocate,
+            inclusion: InclusionPolicy::NonInclusive,
             hit_latency: 1, miss_penalty: 10,
             assoc_penalty: 1, transfer_width: 8,
         }
