@@ -127,6 +127,17 @@ jobs:
       - name: SHA256 checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
 
+      - name: Read changelog
+        id: changelog
+        run: |
+          # Extrai a primeira seção do CHANGELOG.md (entre o primeiro ## e o segundo ##)
+          NOTES=$(awk '/^## /{if(found){exit} found=1; next} found{print}' CHANGELOG.md)
+          {
+            echo "notes<<__CHANGELOG_EOF__"
+            echo "$NOTES"
+            echo "__CHANGELOG_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Compute next tag
         id: next_tag
         run: |
@@ -163,11 +174,11 @@ jobs:
           files: dist/*
           generate_release_notes: false
           body: |
-            Build automático a partir de [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            ${{ steps.changelog.outputs.notes }}
 
-            > ${{ github.event.head_commit.message }}
+            ---
 
-            | Platform | Arquivo |
+            | Platform | Download |
             |---|---|
             | Windows x64 | `falconasm-windows-x86_64.zip` |
             | Linux x64 | `falconasm-linux-x86_64.tar.gz` |
@@ -175,3 +186,5 @@ jobs:
             | macOS ARM64 (Apple Silicon) | `falconasm-macos-aarch64.tar.gz` |
 
             SHA256 de todos os arquivos em `SHA256SUMS.txt`.
+
+            > build [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
