@@ -16,9 +16,6 @@ const FALCON_READ_LINE_Z: u32 = 1003;
 const FALCON_READ_U8: u32 = 1010;
 const FALCON_READ_U16: u32 = 1011;
 const FALCON_READ_U32: u32 = 1012;
-const FALCON_RAND_U8: u32 = 1013;
-const FALCON_RAND_U16: u32 = 1014;
-const FALCON_RAND_U32: u32 = 1015;
 
 const LINUX_EBADF: u32 = (-9i32) as u32;
 const LINUX_EFAULT: u32 = (-14i32) as u32;
@@ -27,8 +24,8 @@ const LINUX_EINVAL: u32 = (-22i32) as u32;
 
 /// Handles syscalls invoked via `ecall`.
 ///
-/// - Linux-like subset: `read(63)`, `write(64)`, `exit(93)`, `exit_group(94)`
-/// - Falcon teaching extensions: `1000..` (used by assembler pseudos)
+/// - Linux-like subset: `read(63)`, `write(64)`, `exit(93)`, `exit_group(94)`, `getrandom(278)`
+/// - Falcon teaching extensions: `1000..1012` (used by assembler pseudos)
 ///
 /// ABI (Linux-style):
 /// - `a7` = syscall number
@@ -89,9 +86,6 @@ pub fn handle_syscall<B: Bus>(
         FALCON_READ_U8 => falcon_read_u8(cpu, mem, console),
         FALCON_READ_U16 => falcon_read_u16(cpu, mem, console),
         FALCON_READ_U32 => falcon_read_u32(cpu, mem, console),
-        FALCON_RAND_U8 => falcon_rand_bytes(cpu, mem, console, 1),
-        FALCON_RAND_U16 => falcon_rand_bytes(cpu, mem, console, 2),
-        FALCON_RAND_U32 => falcon_rand_bytes(cpu, mem, console, 4),
 
         _ => {
             console.push_error(format!("Unimplemented syscall {code}"));
@@ -255,29 +249,6 @@ fn console_write_bytes(console: &mut Console, bytes: &[u8]) {
     if start < bytes.len() {
         console.append_str(&String::from_utf8_lossy(&bytes[start..]));
     }
-}
-
-/// Falcon teaching extension: write `n` random bytes to memory[a0..a0+n].
-/// No flags, no buflen arg — simpler than Linux getrandom for educational use.
-fn falcon_rand_bytes<B: Bus>(
-    cpu: &mut Cpu,
-    mem: &mut B,
-    console: &mut Console,
-    n: usize,
-) -> Result<bool, FalconError> {
-    let addr = cpu.read(10);
-    let mut tmp = [0u8; 4];
-    if let Err(e) = getrandom::fill(&mut tmp[..n]) {
-        console.push_error(format!("rand: {e}"));
-        return Ok(true);
-    }
-    for (i, &b) in tmp[..n].iter().enumerate() {
-        if let Err(e) = mem.store8(addr.wrapping_add(i as u32), b) {
-            console.push_error(format!("rand: {e}"));
-            return Ok(true);
-        }
-    }
-    Ok(true)
 }
 
 fn falcon_read_u8<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {

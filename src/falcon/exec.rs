@@ -120,14 +120,13 @@ pub fn step<B: Bus>(
             let old_pc = pc;
             let code = cpu.read(17);
             let cont = handle_syscall(code, cpu, mem, console)?;
-            if !cont && console.reading {
+            if !cont {
                 cpu.pc = old_pc;
-                return Ok(false);
             }
             return Ok(cont);
         }
         Instruction::Ebreak | Instruction::Halt => {
-            console.push_error(format!("EBREAK/HALT at 0x{pc:08X}"));
+            console.push_line(format!("EBREAK/HALT at 0x{pc:08X}"));
             return Ok(false);
         }
         _ => {}
@@ -195,39 +194,39 @@ fn exec_rtype<B: Bus>(
             let num = cpu.read(rs1) as i32;
             let den = cpu.read(rs2) as i32;
             if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
+                cpu.write(rd, u32::MAX);
+            } else {
+                let val = num.wrapping_div(den);
+                cpu.write(rd, val as u32);
             }
-            let val = num.wrapping_div(den);
-            cpu.write(rd, val as u32);
         }
         Instruction::Divu { rd, rs1, rs2 } => {
             let den = cpu.read(rs2);
             if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
+                cpu.write(rd, u32::MAX);
+            } else {
+                let val = cpu.read(rs1).wrapping_div(den);
+                cpu.write(rd, val);
             }
-            let val = cpu.read(rs1).wrapping_div(den);
-            cpu.write(rd, val);
         }
         Instruction::Rem { rd, rs1, rs2 } => {
             let num = cpu.read(rs1) as i32;
             let den = cpu.read(rs2) as i32;
             if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
+                cpu.write(rd, cpu.read(rs1));
+            } else {
+                let val = num.wrapping_rem(den);
+                cpu.write(rd, val as u32);
             }
-            let val = num.wrapping_rem(den);
-            cpu.write(rd, val as u32);
         }
         Instruction::Remu { rd, rs1, rs2 } => {
             let den = cpu.read(rs2);
             if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
+                cpu.write(rd, cpu.read(rs1));
+            } else {
+                let val = cpu.read(rs1).wrapping_rem(den);
+                cpu.write(rd, val);
             }
-            let val = cpu.read(rs1).wrapping_rem(den);
-            cpu.write(rd, val);
         }
         _ => unreachable!(),
     }
@@ -652,15 +651,16 @@ mod tests {
         let addr = 16u32;
         mem.store8(addr, 0xAA).unwrap();
 
-        cpu.write(17, 1013); // FALCON_RAND_U8
+        cpu.write(17, 278); // getrandom
         cpu.write(10, addr);
+        cpu.write(11, 1); // buflen = 1
+        cpu.write(12, 0); // flags = 0
 
         let ecall = encoder::encode(Instruction::Ecall).unwrap();
         mem.store32(0, ecall).unwrap();
 
         assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
-        // The byte must have been written (no error): we just check it was touched
-        // (the value is random, so only verify it can change; 0xAA is valid though rare)
+        // The byte must have been written (no error): just verify it can be read
         let _ = mem.load8(addr).unwrap(); // must not fault
     }
 
@@ -673,8 +673,10 @@ mod tests {
         let addr = 16u32;
         for i in 0..4 { mem.store8(addr + i, 0).unwrap(); }
 
-        cpu.write(17, 1015); // FALCON_RAND_U32
+        cpu.write(17, 278); // getrandom
         cpu.write(10, addr);
+        cpu.write(11, 4); // buflen = 4
+        cpu.write(12, 0); // flags = 0
 
         let ecall = encoder::encode(Instruction::Ecall).unwrap();
         mem.store32(0, ecall).unwrap();
@@ -698,5 +700,101 @@ mod tests {
 
         assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
         assert_eq!(cpu.exit_code, Some(7));
+    }
+
+    #[test]
+    fn div_by_zero_writes_minus_one_and_continues() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(8);
+        let mut console = crate::ui::Console::default();
+
+        cpu.write(1, 123);
+        cpu.write(2, 0);
+
+        let div = encoder::encode(Instruction::Div {
+            rd: 3,
+            rs1: 1,
+            rs2: 2,
+        })
+        .unwrap();
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        mem.store32(0, div).unwrap();
+        mem.store32(4, halt).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.read(3), u32::MAX);
+        assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
+    }
+
+    #[test]
+    fn divu_by_zero_writes_max_and_continues() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(8);
+        let mut console = crate::ui::Console::default();
+
+        cpu.write(1, 123);
+        cpu.write(2, 0);
+
+        let divu = encoder::encode(Instruction::Divu {
+            rd: 3,
+            rs1: 1,
+            rs2: 2,
+        })
+        .unwrap();
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        mem.store32(0, divu).unwrap();
+        mem.store32(4, halt).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.read(3), u32::MAX);
+        assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
+    }
+
+    #[test]
+    fn rem_by_zero_writes_dividend_and_continues() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(8);
+        let mut console = crate::ui::Console::default();
+
+        cpu.write(1, 0xDEAD_BEEF);
+        cpu.write(2, 0);
+
+        let rem = encoder::encode(Instruction::Rem {
+            rd: 3,
+            rs1: 1,
+            rs2: 2,
+        })
+        .unwrap();
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        mem.store32(0, rem).unwrap();
+        mem.store32(4, halt).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.read(3), cpu.read(1));
+        assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
+    }
+
+    #[test]
+    fn remu_by_zero_writes_dividend_and_continues() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(8);
+        let mut console = crate::ui::Console::default();
+
+        cpu.write(1, 0xDEAD_BEEF);
+        cpu.write(2, 0);
+
+        let remu = encoder::encode(Instruction::Remu {
+            rd: 3,
+            rs1: 1,
+            rs2: 2,
+        })
+        .unwrap();
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        mem.store32(0, remu).unwrap();
+        mem.store32(4, halt).unwrap();
+
+        assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+        assert_eq!(cpu.read(3), cpu.read(1));
+        assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
     }
 }

@@ -197,15 +197,49 @@ fn beq_offset_range_error() {
 fn rand_word_expands_correctly() {
     let asm = ".data\nval: .space 4\n.text\nrandWord val";
     let prog = assemble(asm, 0).expect("assemble");
-    assert_eq!(prog.text.len(), 4);
-    let expected_li    = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1015 }).unwrap();
-    let expected_lui   = encode(Instruction::Lui  { rd: 10, imm: 0x1000 }).unwrap();
-    let expected_addi  = encode(Instruction::Addi { rd: 10, rs1: 10, imm: 0 }).unwrap();
-    let expected_ecall = encode(Instruction::Ecall).unwrap();
-    assert_eq!(prog.text[0], expected_li);
+    assert_eq!(prog.text.len(), 6);
+    let expected_li_a7  = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 278 }).unwrap();
+    let expected_lui    = encode(Instruction::Lui  { rd: 10, imm: 0x1000 }).unwrap();
+    let expected_addi   = encode(Instruction::Addi { rd: 10, rs1: 10, imm: 0 }).unwrap();
+    let expected_li_a1  = encode(Instruction::Addi { rd: 11, rs1: 0, imm: 4 }).unwrap();
+    let expected_li_a2  = encode(Instruction::Addi { rd: 12, rs1: 0, imm: 0 }).unwrap();
+    let expected_ecall  = encode(Instruction::Ecall).unwrap();
+    assert_eq!(prog.text[0], expected_li_a7);
     assert_eq!(prog.text[1], expected_lui);
     assert_eq!(prog.text[2], expected_addi);
-    assert_eq!(prog.text[3], expected_ecall);
+    assert_eq!(prog.text[3], expected_li_a1);
+    assert_eq!(prog.text[4], expected_li_a2);
+    assert_eq!(prog.text[5], expected_ecall);
+}
+
+#[test]
+fn rand_bytes_register_len_expands_correctly() {
+    let asm = ".data\nbuf: .space 8\n.text\nrandBytes buf, a2";
+    let prog = assemble(asm, 0).expect("assemble");
+    assert_eq!(prog.text.len(), 6);
+    let expected_li_a7  = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 278 }).unwrap();
+    let expected_lui    = encode(Instruction::Lui  { rd: 10, imm: 0x1000 }).unwrap();
+    let expected_addi   = encode(Instruction::Addi { rd: 10, rs1: 10, imm: 0 }).unwrap();
+    let expected_mv     = encode(Instruction::Addi { rd: 11, rs1: 12, imm: 0 }).unwrap(); // mv a1, a2
+    let expected_li_a2  = encode(Instruction::Addi { rd: 12, rs1: 0, imm: 0 }).unwrap();
+    let expected_ecall  = encode(Instruction::Ecall).unwrap();
+    assert_eq!(prog.text[0], expected_li_a7);
+    assert_eq!(prog.text[1], expected_lui);
+    assert_eq!(prog.text[2], expected_addi);
+    assert_eq!(prog.text[3], expected_mv);
+    assert_eq!(prog.text[4], expected_li_a2);
+    assert_eq!(prog.text[5], expected_ecall);
+}
+
+#[test]
+fn rand_bytes_immediate_len_expands_correctly() {
+    let asm = ".data\nbuf: .space 16\n.text\nrandBytes buf, 16";
+    let prog = assemble(asm, 0).expect("assemble");
+    assert_eq!(prog.text.len(), 6);
+    let expected_li_len = encode(Instruction::Addi { rd: 11, rs1: 0, imm: 16 }).unwrap();
+    let expected_li_a2  = encode(Instruction::Addi { rd: 12, rs1: 0, imm: 0 }).unwrap();
+    assert_eq!(prog.text[3], expected_li_len);
+    assert_eq!(prog.text[4], expected_li_a2);
 }
 
 #[test]

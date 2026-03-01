@@ -287,20 +287,19 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.run.is_running = true;
                     }
                 }
-                // Pause/resume — blocked in Instant mode while running (use R to restart)
-                (KeyCode::Char('p'), Tab::Run)
-                    if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
-                {
+                // Pause/resume — works in all speeds; pausing from Instant drops back to X1
+                (KeyCode::Char('p'), Tab::Run) => {
                     if app.run.is_running {
                         app.run.is_running = false;
+                        if matches!(app.run.speed, RunSpeed::Instant) {
+                            app.run.speed = RunSpeed::X1;
+                        }
                     } else if !app.run.faulted {
                         app.run.is_running = true;
                     }
                 }
-                // Cycle speed: 1x → 2x → 4x → GO → 1x (locked while running in Instant)
-                (KeyCode::Char('f'), Tab::Run)
-                    if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
-                {
+                // Cycle speed: 1x → 2x → 4x → GO → 1x (works from any speed)
+                (KeyCode::Char('f'), Tab::Run) => {
                     app.run.speed = app.run.speed.cycle();
                 }
                 (KeyCode::Up, Tab::Run) if ctrl => {

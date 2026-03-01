@@ -1,3 +1,4 @@
+use crate::falcon::cache::ReplacementPolicy;
 use crate::ui::{
     app::{App, CacheScope, CacheSubtab, ConfigField, EditorMode, FormatMode, MemRegion, RunButton, RunSpeed, Tab},
     editor::Editor,
@@ -101,8 +102,21 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     // Cache tab interactions
     if let Tab::Cache = app.tab {
         update_cache_hover(app, me, area);
-        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-            handle_cache_click(app, me, area);
+        match me.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                handle_cache_click(app, me, area);
+                start_cache_hscroll_drag(app, me, area);
+            }
+            MouseEventKind::Drag(MouseButton::Left) if app.cache.view_hscroll_drag => {
+                handle_cache_hscroll_drag(app, me, area);
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                app.cache.view_hscroll_drag = false;
+                app.cache.view_hscroll_drag_track_x = 0;
+                app.cache.view_hscroll_drag_track_width = 0;
+                app.cache.view_hscroll_drag_max_h_scroll = 0;
+            }
+            _ => {}
         }
     }
 
@@ -1053,9 +1067,9 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         // [Reset]=1..8  [Pause/Resume]=10..18  [I-Cache]=27..36  [D-Cache]=37..46  [Both]=47..53
         if x >= 1 && x < 8 { app.cache.hover_reset = true; }
         else if x >= 10 && x < 18 { app.cache.hover_pause = true; }
-        else if x >= 27 && x < 36 { app.cache.hover_scope_i = true; }
-        else if x >= 37 && x < 46 { app.cache.hover_scope_d = true; }
-        else if x >= 47 && x < 53 { app.cache.hover_scope_both = true; }
+        else if x >= 27 && x < 36 && app.cache.selected_level == 0 { app.cache.hover_scope_i = true; }
+        else if x >= 37 && x < 46 && app.cache.selected_level == 0 { app.cache.hover_scope_d = true; }
+        else if x >= 47 && x < 53 && app.cache.selected_level == 0 { app.cache.hover_scope_both = true; }
     }
 
     // Config panel controls
@@ -1308,7 +1322,7 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
     }
 }
 
-fn apply_l1_config(app: &mut App, _keep_history: bool) {
+fn apply_l1_config(app: &mut App, keep_history: bool) {
     let icfg = app.cache.pending_icache.clone();
     let dcfg = app.cache.pending_dcache.clone();
     if let Err(msg) = icfg.validate() {
@@ -1321,7 +1335,21 @@ fn apply_l1_config(app: &mut App, _keep_history: bool) {
     }
     app.cache.config_error = None;
     app.cache.config_status = Some("Config applied — simulation restarted.".to_string());
+    let saved = keep_history.then(|| (
+        app.run.mem.icache.stats.history.clone(),
+        app.run.mem.dcache.stats.history.clone(),
+        app.run.mem.extra_levels.iter().map(|l| l.stats.history.clone()).collect::<Vec<_>>(),
+    ));
     app.restart_simulation();
+    if let Some((ih, dh, extra_h)) = saved {
+        app.run.mem.icache.stats.history = ih;
+        app.run.mem.dcache.stats.history = dh;
+        for (i, h) in extra_h.into_iter().enumerate() {
+            if let Some(lvl) = app.run.mem.extra_levels.get_mut(i) {
+                lvl.stats.history = h;
+            }
+        }
+    }
     app.cache.view_scroll = 0;
     app.cache.stats_scroll = 0;
 }
@@ -1390,7 +1418,7 @@ fn handle_unified_config_click(app: &mut App, me: MouseEvent, content_area: Rect
     }
 }
 
-fn apply_extra_config(app: &mut App, extra_idx: usize, _keep_history: bool) {
+fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
     if extra_idx >= app.cache.extra_pending.len() { return; }
     let cfg = app.cache.extra_pending[extra_idx].clone();
     if let Err(msg) = cfg.validate() {
@@ -1399,12 +1427,281 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, _keep_history: bool) {
     }
     app.cache.config_error = None;
     app.cache.config_status = Some("Config applied — simulation restarted.".to_string());
+    let saved = keep_history.then(|| (
+        app.run.mem.icache.stats.history.clone(),
+        app.run.mem.dcache.stats.history.clone(),
+        app.run.mem.extra_levels.iter().map(|l| l.stats.history.clone()).collect::<Vec<_>>(),
+    ));
     app.restart_simulation();
+    if let Some((ih, dh, extra_h)) = saved {
+        app.run.mem.icache.stats.history = ih;
+        app.run.mem.dcache.stats.history = dh;
+        for (i, h) in extra_h.into_iter().enumerate() {
+            if let Some(lvl) = app.run.mem.extra_levels.get_mut(i) {
+                lvl.stats.history = h;
+            }
+        }
+    }
     app.cache.view_scroll = 0;
     app.cache.stats_scroll = 0;
 }
 
+// ── Cache view horizontal scrollbar drag ─────────────────────────────────────
 
+/// Geometry needed to map a mouse position to a horizontal scroll offset.
+struct HScrollGeom {
+    /// Full scrollbar widget area (1 row) inside the matrix inner area.
+    sb_area: Rect,
+    /// Track start x (excludes the left arrow head).
+    track_x: u16,
+    /// Track width (excludes both arrow heads).
+    track_width: u16,
+    /// Max scroll value (chars).
+    max_h_scroll: usize,
+}
 
+/// Compute the horizontal scrollbar geometry for the primary (first) visible
+/// cache matrix in the View subtab.  Returns `None` if no scrollbar is needed.
+#[allow(dead_code)]
+fn cache_view_hscroll_geom(app: &App, area: Rect) -> Option<HScrollGeom> {
+    use crate::falcon::cache::CacheConfig;
 
+    let (_, _, content_area, _) = cache_content_area(area);
 
+    // Replicate the layout done by render_l1_view / render_unified_view
+    let legend_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(content_area);
+    let matrix_full = legend_layout[0];
+
+    // Pick the first (primary) matrix area and its config
+    let (mat_area, cfg): (Rect, CacheConfig) = if app.cache.selected_level == 0 {
+        match app.cache.scope {
+            CacheScope::Both => {
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(matrix_full);
+                (cols[0], app.run.mem.icache.config.clone())
+            }
+            CacheScope::ICache => (matrix_full, app.run.mem.icache.config.clone()),
+            CacheScope::DCache => (matrix_full, app.run.mem.dcache.config.clone()),
+        }
+    } else {
+        let idx = app.cache.selected_level - 1;
+        let cfg = app.run.mem.extra_levels.get(idx)?.config.clone();
+        (matrix_full, cfg)
+    };
+
+    if !cfg.is_valid_config() { return None; }
+
+    // block.inner() with Borders::ALL → inset by 1 on every side
+    let inner = Rect::new(
+        mat_area.x + 1,
+        mat_area.y + 1,
+        mat_area.width.saturating_sub(2),
+        mat_area.height.saturating_sub(2),
+    );
+    if inner.width < 4 || inner.height < 2 { return None; }
+
+    // Replicate way_col_w / total_content_w from render_cache_matrix
+    let ways = cfg.associativity;
+    let tag_bits = 32u32.saturating_sub(cfg.offset_bits() + cfg.index_bits());
+    let tag_hex_w = ((tag_bits + 3) / 4) as usize;
+    let set_col_w: usize = 5;
+    let sep_w: usize = 1;
+    let policy_w: usize = match cfg.replacement {
+        ReplacementPolicy::Lfu    => 6,
+        ReplacementPolicy::Clock  => 4,
+        ReplacementPolicy::Random => 2,
+        _                         => 4,
+    };
+    let cell_overhead = tag_hex_w + 8 + policy_w + 2;
+    let total_way_space = (inner.width as usize)
+        .saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
+    let ideal_way_col_w = total_way_space / ways.max(1);
+    let min_way_col_w = (cell_overhead + 2).max(28);
+    let way_col_w = ideal_way_col_w.max(min_way_col_w);
+    let total_content_w = set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
+    let max_h_scroll = total_content_w.saturating_sub(inner.width as usize);
+
+    if max_h_scroll == 0 { return None; }
+
+    let sb_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+    let track_x = sb_area.x.saturating_add(1);
+    let track_width = sb_area.width.saturating_sub(2);
+
+    Some(HScrollGeom {
+        sb_area,
+        track_x,
+        track_width,
+        max_h_scroll,
+    })
+}
+
+fn rect_contains(r: Rect, x: u16, y: u16) -> bool {
+    x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
+}
+
+fn hscroll_geom_for_matrix(
+    mat_area: Rect,
+    cfg: &crate::falcon::cache::CacheConfig,
+) -> Option<HScrollGeom> {
+    if !cfg.is_valid_config() {
+        return None;
+    }
+
+    // Mirrors Block::inner() used by the cache matrix renderers.
+    let inner = Rect::new(
+        mat_area.x + 1,
+        mat_area.y + 1,
+        mat_area.width.saturating_sub(2),
+        mat_area.height.saturating_sub(2),
+    );
+
+    // render_cache_matrix/render_extra_cache_matrix early-return with the same constraints.
+    if inner.height < 2 || inner.width < 20 {
+        return None;
+    }
+
+    let ways = cfg.associativity;
+    let tag_bits = 32u32.saturating_sub(cfg.offset_bits() + cfg.index_bits());
+    let tag_hex_w = ((tag_bits + 3) / 4) as usize;
+    let set_col_w: usize = 5;
+    let sep_w: usize = 1;
+    let policy_w: usize = match cfg.replacement {
+        ReplacementPolicy::Lfu => 6,
+        ReplacementPolicy::Clock => 4,
+        ReplacementPolicy::Random => 2,
+        _ => 4,
+    };
+    let cell_overhead = tag_hex_w + 8 + policy_w + 2;
+    let total_way_space = (inner.width as usize)
+        .saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
+    let ideal_way_col_w = total_way_space / ways.max(1);
+    let min_way_col_w = (cell_overhead + 2).max(28);
+    let way_col_w = ideal_way_col_w.max(min_way_col_w);
+    let total_content_w =
+        set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
+    let max_h_scroll = total_content_w.saturating_sub(inner.width as usize);
+    if max_h_scroll == 0 {
+        return None;
+    }
+
+    let sb_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+    let track_x = sb_area.x.saturating_add(1);
+    let track_width = sb_area.width.saturating_sub(2);
+
+    Some(HScrollGeom {
+        sb_area,
+        track_x,
+        track_width,
+        max_h_scroll,
+    })
+}
+
+fn cache_view_hscroll_geom_at(app: &App, area: Rect, x: u16, y: u16) -> Option<HScrollGeom> {
+    let (_, _, content_area, _) = cache_content_area(area);
+
+    // Replicate the layout done by render_l1_view / render_unified_view.
+    let legend_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(content_area);
+    let matrix_full = legend_layout[0];
+
+    if app.cache.selected_level == 0 {
+        match app.cache.scope {
+            CacheScope::Both => {
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(matrix_full);
+
+                let ic = hscroll_geom_for_matrix(cols[0], &app.run.mem.icache.config);
+                if ic.as_ref().is_some_and(|g| rect_contains(g.sb_area, x, y)) {
+                    return ic;
+                }
+
+                let dc = hscroll_geom_for_matrix(cols[1], &app.run.mem.dcache.config);
+                if dc.as_ref().is_some_and(|g| rect_contains(g.sb_area, x, y)) {
+                    return dc;
+                }
+            }
+            CacheScope::ICache => {
+                let g = hscroll_geom_for_matrix(matrix_full, &app.run.mem.icache.config);
+                if g.as_ref().is_some_and(|g| rect_contains(g.sb_area, x, y)) {
+                    return g;
+                }
+            }
+            CacheScope::DCache => {
+                let g = hscroll_geom_for_matrix(matrix_full, &app.run.mem.dcache.config);
+                if g.as_ref().is_some_and(|g| rect_contains(g.sb_area, x, y)) {
+                    return g;
+                }
+            }
+        }
+    } else {
+        let idx = app.cache.selected_level - 1;
+        let cfg = &app.run.mem.extra_levels.get(idx)?.config;
+        let g = hscroll_geom_for_matrix(matrix_full, cfg);
+        if g.as_ref().is_some_and(|g| rect_contains(g.sb_area, x, y)) {
+            return g;
+        }
+    }
+
+    None
+}
+
+fn scroll_from_track_x(mouse_x: u16, track_x: u16, track_width: u16, max_h_scroll: usize) -> usize {
+    if max_h_scroll == 0 || track_width <= 1 {
+        return 0;
+    }
+    let track_last_x = track_x.saturating_add(track_width.saturating_sub(1));
+    let x = mouse_x.clamp(track_x, track_last_x);
+    let rel = (x - track_x) as usize;
+    let denom = (track_width - 1) as usize;
+    // Round to nearest integer so the thumb feels stable.
+    (rel * max_h_scroll + denom / 2) / denom
+}
+
+fn start_cache_hscroll_drag(app: &mut App, me: MouseEvent, area: Rect) {
+    if !matches!(app.cache.subtab, CacheSubtab::View) { return; }
+
+    let Some(geom) = cache_view_hscroll_geom_at(app, area, me.column, me.row) else {
+        return;
+    };
+
+    // Allow clicking on arrow-heads for small step scroll.
+    const STEP: usize = 3;
+    if me.column == geom.sb_area.x {
+        app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(STEP);
+        return;
+    }
+    if me.column == geom.sb_area.x + geom.sb_area.width.saturating_sub(1) {
+        app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(STEP);
+        return;
+    }
+
+    // Track drag: store geometry and also jump to the clicked position.
+    app.cache.view_hscroll_drag = true;
+    app.cache.view_hscroll_drag_track_x = geom.track_x;
+    app.cache.view_hscroll_drag_track_width = geom.track_width;
+    app.cache.view_hscroll_drag_max_h_scroll = geom.max_h_scroll;
+    app.cache.view_h_scroll = scroll_from_track_x(
+        me.column,
+        geom.track_x,
+        geom.track_width,
+        geom.max_h_scroll,
+    );
+}
+
+fn handle_cache_hscroll_drag(app: &mut App, me: MouseEvent, _area: Rect) {
+    app.cache.view_h_scroll = scroll_from_track_x(
+        me.column,
+        app.cache.view_hscroll_drag_track_x,
+        app.cache.view_hscroll_drag_track_width,
+        app.cache.view_hscroll_drag_max_h_scroll,
+    );
+}

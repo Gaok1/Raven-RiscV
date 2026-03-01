@@ -92,15 +92,29 @@ const DOCS: &[DocRow] = &[
     DocRow { ty: "Pseudo", mnemonic: "readByte", operands: "label", desc: "Read number and store 1 byte at label", expands: "addi a7, x0, 1010; lui a0, hi; addi a0, a0, lo; ecall" },
     DocRow { ty: "Pseudo", mnemonic: "readHalf", operands: "label", desc: "Read number and store 2 bytes at label (little-endian)", expands: "addi a7, x0, 1011; lui a0, hi; addi a0, a0, lo; ecall" },
     DocRow { ty: "Pseudo", mnemonic: "readWord", operands: "label", desc: "Read number and store 4 bytes at label (little-endian)", expands: "addi a7, x0, 1012; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "randByte", operands: "label", desc: "Store 1 random byte at label (OS CSPRNG)", expands: "addi a7, x0, 1013; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "randHalf", operands: "label", desc: "Store 2 random bytes at label (little-endian)", expands: "addi a7, x0, 1014; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "randWord", operands: "label", desc: "Store 4 random bytes at label (little-endian)", expands: "addi a7, x0, 1015; lui a0, hi; addi a0, a0, lo; ecall" },
-    // ---------- Syscall reference ----------
-    DocRow { ty: "Syscall", mnemonic: "read", operands: "a7=63", desc: "read(fd=a0, buf=a1, count=a2) → a0=n|-errno. Only fd=0 (stdin) supported.", expands: "" },
-    DocRow { ty: "Syscall", mnemonic: "write", operands: "a7=64", desc: "write(fd=a0, buf=a1, count=a2) → a0=n|-errno. Only fd=1/2 (stdout/stderr) supported.", expands: "" },
-    DocRow { ty: "Syscall", mnemonic: "exit", operands: "a7=93", desc: "exit(code=a0). Terminates simulation.", expands: "" },
-    DocRow { ty: "Syscall", mnemonic: "exit_group", operands: "a7=94", desc: "exit_group(code=a0). Alias of exit.", expands: "" },
-    DocRow { ty: "Syscall", mnemonic: "getrandom", operands: "a7=278", desc: "getrandom(buf=a0, buflen=a1, flags=a2) → a0=n|-errno. flags: 0=default, 1=NONBLOCK, 2=RANDOM.", expands: "" },
+    DocRow { ty: "Pseudo", mnemonic: "randByte", operands: "label", desc: "Store 1 random byte at label (OS CSPRNG via getrandom)", expands: "addi a7, x0, 278; lui a0, hi; addi a0, a0, lo; addi a1, x0, 1; addi a2, x0, 0; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "randHalf", operands: "label", desc: "Store 2 random bytes at label (little-endian)", expands: "addi a7, x0, 278; lui a0, hi; addi a0, a0, lo; addi a1, x0, 2; addi a2, x0, 0; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "randWord", operands: "label", desc: "Store 4 random bytes at label (little-endian)", expands: "addi a7, x0, 278; lui a0, hi; addi a0, a0, lo; addi a1, x0, 4; addi a2, x0, 0; ecall" },
+    DocRow { ty: "Pseudo", mnemonic: "randBytes", operands: "label, len", desc: "Store len random bytes at label. len can be a register or 12-bit immediate", expands: "addi a7, x0, 278; lui a0, hi; addi a0, a0, lo; addi a1, len, 0; addi a2, x0, 0; ecall" },
+    // ---------- Syscall reference (Linux ABI) ----------
+    // Pseudos above expand into these ecalls. The ABI is Linux-compatible:
+    //   a7 = syscall number, a0..a5 = arguments, a0 = return value (negative = -errno).
+    DocRow { ty: "Syscall", mnemonic: "read", operands: "a7=63", desc: "Linux read(fd=a0, buf=a1, count=a2) → a0=n|-errno. Only fd=0 (stdin) supported. Blocks until a line is available.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "write", operands: "a7=64", desc: "Linux write(fd=a0, buf=a1, count=a2) → a0=n|-errno. Supported fd: 1=stdout, 2=stderr.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "exit", operands: "a7=93", desc: "Linux exit(code=a0). Terminates simulation; exit code stored in CPU state.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "exit_group", operands: "a7=94", desc: "Linux exit_group(code=a0). Alias of exit (93).", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "getrandom", operands: "a7=278", desc: "Linux getrandom(buf=a0, buflen=a1, flags=a2) → a0=n|-errno. Fills buffer with OS CSPRNG bytes. flags: 0=default, 1=NONBLOCK, 2=RANDOM.", expands: "" },
+    // ---------- Falcon teaching extensions ----------
+    // These are NOT real Linux syscalls. They are Falcon-specific extensions used by
+    // Falcon pseudo-instructions for educational use. They are simpler than their
+    // Linux equivalents (no fd handling, no flags, direct memory access).
+    DocRow { ty: "Syscall", mnemonic: "printInt", operands: "a7=1000", desc: "Falcon: print integer in a0 to console (signed decimal).", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "printStr", operands: "a7=1001", desc: "Falcon: print NUL-terminated string at a0 to console (no newline).", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "printStrLn", operands: "a7=1002", desc: "Falcon: print NUL-terminated string at a0 to console with newline.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "readLine", operands: "a7=1003", desc: "Falcon: read a line from console into memory at a0; NUL-terminates the string.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "readByte", operands: "a7=1010", desc: "Falcon: read a number from console and store 1 byte at a0. Range: 0..255.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "readHalf", operands: "a7=1011", desc: "Falcon: read a number from console and store 2 bytes at a0. Range: 0..65535.", expands: "" },
+    DocRow { ty: "Syscall", mnemonic: "readWord", operands: "a7=1012", desc: "Falcon: read a number from console and store 4 bytes at a0. Range: 0..2^32-1.", expands: "" },
 ];
 
 fn build_docs_table_string(width: u16) -> String {

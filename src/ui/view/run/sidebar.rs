@@ -90,7 +90,7 @@ fn memory_block() -> Block<'static> {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title("Memory  ● = dirty cache (cache → RAM stale)")
+        .title("Memory  ○=cached  ●=dirty (→ RAM stale)")
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -109,38 +109,58 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
 
 const PURPLE: Color = Color::Rgb(180, 100, 255);
 const STALE_COLOR: Color = Color::Rgb(110, 70, 160);
+const CACHED_COLOR: Color = Color::Rgb(80, 180, 120);
 
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
-    let is_dirty = app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
+    let location = app.run.mem.data_cache_location(addr);
     let is_sp = addr == app.run.cpu.x[2];
-
-    if !is_dirty {
-        let text = format!("  0x{addr:08x}: {}", format_memory_value(app, addr));
-        return if is_sp {
-            ListItem::new(format!("{text}   ▶ sp")).style(Style::default().fg(Color::Yellow))
-        } else {
-            ListItem::new(text)
-        };
-    }
-
-    // Dirty cache line — compose a styled line:
-    //   ● 0xaddr: CACHE_VAL  ← RAM: STALE_VAL   [▶ sp]
-    let cache_val = format_memory_value(app, addr);
-    let stale_val = format_stale_value(app, addr);
     let sp_suffix = if is_sp { "   ▶ sp" } else { "" };
 
-    let line = ratatui::text::Line::from(vec![
-        ratatui::text::Span::styled("● ", Style::default().fg(PURPLE).bold()),
-        ratatui::text::Span::styled(
-            format!("0x{addr:08x}: "),
-            Style::default().fg(PURPLE),
-        ),
-        ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()),
-        ratatui::text::Span::styled(
-            format!("  ← RAM: {stale_val}{sp_suffix}"),
-            Style::default().fg(STALE_COLOR),
-        ),
-    ]);
-
-    ListItem::new(line)
+    match location {
+        None => {
+            // Not in any cache — plain RAM value
+            let text = format!("  0x{addr:08x}: {}{sp_suffix}", format_memory_value(app, addr));
+            if is_sp {
+                ListItem::new(text).style(Style::default().fg(Color::Yellow))
+            } else {
+                ListItem::new(text)
+            }
+        }
+        Some((level, false)) => {
+            // Clean cache hit — show level indicator, no stale value
+            let lbl = format!("L{level}");
+            let line = ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled(format!("○ {lbl} "), Style::default().fg(CACHED_COLOR)),
+                ratatui::text::Span::styled(
+                    format!("0x{addr:08x}: "),
+                    Style::default().fg(CACHED_COLOR),
+                ),
+                ratatui::text::Span::styled(
+                    format!("{}{sp_suffix}", format_memory_value(app, addr)),
+                    Style::default().fg(CACHED_COLOR).bold(),
+                ),
+            ]);
+            ListItem::new(line)
+        }
+        Some((level, true)) => {
+            // Dirty cache line — show level, cached value, and stale RAM value
+            //   ● L1 0xaddr: CACHE_VAL  → RAM: STALE_VAL   [▶ sp]
+            let lbl = format!("L{level}");
+            let cache_val = format_memory_value(app, addr);
+            let stale_val = format_stale_value(app, addr);
+            let line = ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled(format!("● {lbl} "), Style::default().fg(PURPLE).bold()),
+                ratatui::text::Span::styled(
+                    format!("0x{addr:08x}: "),
+                    Style::default().fg(PURPLE),
+                ),
+                ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()),
+                ratatui::text::Span::styled(
+                    format!("  → RAM: {stale_val}{sp_suffix}"),
+                    Style::default().fg(STALE_COLOR),
+                ),
+            ]);
+            ListItem::new(line)
+        }
+    }
 }

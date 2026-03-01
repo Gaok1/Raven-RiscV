@@ -328,7 +328,8 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     if need_h_scrollbar {
         let sb_y = inner.y + inner.height - 1;
         let sb_area = Rect::new(inner.x, sb_y, inner.width, 1);
-        let mut sb_state = ScrollbarState::new(max_h_scroll).position(h_scroll as usize);
+        let mut sb_state =
+            ScrollbarState::new(max_h_scroll.saturating_add(1)).position(h_scroll as usize);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .begin_symbol(Some("◄"))
@@ -530,8 +531,8 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     if need_h_scrollbar {
         let sb_y = inner.y + inner.height - 1;
         let sb_area = Rect::new(inner.x, sb_y, inner.width, 1);
-        let mut sb_state = ScrollbarState::new(max_h_scroll)
-            .position(h_scroll as usize);
+        let mut sb_state =
+            ScrollbarState::new(max_h_scroll.saturating_add(1)).position(h_scroll as usize);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .begin_symbol(Some("◄"))

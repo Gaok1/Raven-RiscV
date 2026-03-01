@@ -365,6 +365,16 @@ impl Cache {
         if line.dirty { Some(line.data[offset]) } else { None }
     }
 
+    /// Returns `Some(dirty)` if `addr` hits a valid line in this cache, `None` if not present.
+    /// Does not update any replacement-policy state (safe for UI queries).
+    pub fn has_line(&self, addr: u32) -> Option<bool> {
+        if !self.config.is_valid_config() { return None; }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        let way = self.sets[idx].lookup(tag)?;
+        Some(self.sets[idx].lines[way].dirty)
+    }
+
     /// Allocate a line (read-only path — I-cache, no dirty eviction writes).
     fn allocate_ro(&mut self, addr: u32, ram: &Ram) -> Result<(), FalconError> {
         if !self.config.is_valid_config() {
@@ -922,10 +932,14 @@ impl CacheController {
         self.ram.load32(addr)
     }
 
-    /// Effective read: returns dirty D-cache value if present, else RAM.
-    /// Use this in the RUN tab memory view so write-back stores are visible.
+    /// Effective read: returns dirty cache value if present (L1 first, then L2+), else RAM.
+    /// Use this in the RUN tab memory view so write-back stores are visible even after
+    /// dirty lines are evicted from L1 into deeper levels.
     pub fn effective_read8(&self, addr: u32) -> Result<u8, FalconError> {
         if let Some(v) = self.dcache.peek_dirty(addr) { return Ok(v); }
+        for level in &self.extra_levels {
+            if let Some(v) = level.peek_dirty(addr) { return Ok(v); }
+        }
         self.ram.load8(addr)
     }
     pub fn effective_read16(&self, addr: u32) -> Result<u16, FalconError> {
@@ -941,9 +955,28 @@ impl CacheController {
         Ok(u32::from_le_bytes([b0, b1, b2, b3]))
     }
 
-    /// True if any byte in [addr, addr+bytes) is dirty in D-cache.
+    /// True if any byte in [addr, addr+bytes) is dirty in any cache level (L1 D or L2+).
     pub fn is_dirty_cached(&self, addr: u32, bytes: u32) -> bool {
-        (0..bytes).any(|i| self.dcache.peek_dirty(addr.wrapping_add(i)).is_some())
+        (0..bytes).any(|i| {
+            let a = addr.wrapping_add(i);
+            self.dcache.peek_dirty(a).is_some()
+                || self.extra_levels.iter().any(|l| l.peek_dirty(a).is_some())
+        })
+    }
+
+    /// Returns `(level, dirty)` for the first cache level that holds `addr`, or `None`.
+    /// `level` is 1-based (1 = L1 D-cache, 2 = L2, …).
+    /// Does not update replacement-policy state — safe for UI queries.
+    pub fn data_cache_location(&self, addr: u32) -> Option<(u8, bool)> {
+        if let Some(dirty) = self.dcache.has_line(addr) {
+            return Some((1, dirty));
+        }
+        for (i, level) in self.extra_levels.iter().enumerate() {
+            if let Some(dirty) = level.has_line(addr) {
+                return Some(((i + 2) as u8, dirty));
+            }
+        }
+        None
     }
 }
 

@@ -52,10 +52,10 @@ struct DetailContext {
 
 fn detail_context(app: &App) -> DetailContext {
     if let Some(addr) = app.run.hover_imem_addr {
-        let word = app.run.mem.load32(addr).unwrap_or(0);
+        let word = app.run.mem.peek32(addr).unwrap_or(0);
         DetailContext { addr, word, disasm: disasm_word(word), origin: "hover", format: detect_format(word) }
     } else if imem_address_in_range(app, app.run.cpu.pc) {
-        let word = app.run.mem.load32(app.run.cpu.pc).unwrap_or(0);
+        let word = app.run.mem.peek32(app.run.cpu.pc).unwrap_or(0);
         DetailContext { addr: app.run.cpu.pc, word, disasm: disasm_word(word), origin: "PC", format: detect_format(word) }
     } else {
         DetailContext { addr: app.run.cpu.pc, word: 0, disasm: "<PC out of RAM>".into(), origin: "PC", format: detect_format(0) }
@@ -176,15 +176,13 @@ fn label_cell(label: &str, width: usize) -> String {
         return String::new();
     }
 
-    let bar_len = width.min(2);
+    let label_chars = label.chars().count();
+    // Reserve space for the full label (capped at cell width), then use any leftover for bars.
+    // This prevents bars from crowding out the label in narrow fields (e.g. fn3 at width=3).
+    let reserved = label_chars.min(width);
+    let bar_len = width.saturating_sub(reserved).min(2);
     let bar = "▮".repeat(bar_len);
 
-    if width <= bar_len {
-        return bar;
-    }
-
-    // Fill the remaining width with label text, and pad any leftover with blocks so the
-    // entire segment width is visually "filled".
     let label_w = width - bar_len;
     let truncated: String = label.chars().take(label_w).collect();
     let pad = label_w.saturating_sub(truncated.chars().count());
@@ -238,12 +236,12 @@ fn kv(key: &'static str, val: String, val_color: Color) -> Line<'static> {
     ])
 }
 
-fn reg_kv(key: &'static str, reg: u8) -> Line<'static> {
-    kv(key, format!("x{reg} ({})", reg_name(reg)), Color::LightGreen)
+fn reg_kv(key: &'static str, reg: u8, color: Color) -> Line<'static> {
+    kv(key, format!("x{reg} ({})", reg_name(reg)), color)
 }
 
 fn imm_kv(key: &'static str, v: i32) -> Line<'static> {
-    kv(key, format!("{v}  (0x{v:x})"), Color::Rgb(120, 180, 255))
+    kv(key, format!("{v}  (0x{v:x})"), Color::Blue)
 }
 
 fn imm_bits_kv(key: &'static str, raw: u32, bits: u8) -> Line<'static> {
@@ -263,7 +261,7 @@ fn imm_bits_kv(key: &'static str, raw: u32, bits: u8) -> Line<'static> {
     kv(
         key,
         format!("0x{masked:0hex_width$x}  (0b{bin})"),
-        Color::Rgb(120, 180, 255),
+        Color::Blue,
     )
 }
 
@@ -294,22 +292,22 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
             let rs1    = ((word >> 15) & 0x1f) as u8;
             let funct3 = (word >> 12) & 0x7;
             let rd     = ((word >> 7) & 0x1f) as u8;
-            lines.push(reg_kv("rd", rd));
-            lines.push(reg_kv("rs1", rs1));
-            lines.push(reg_kv("rs2", rs2));
+            lines.push(reg_kv("rd",  rd,  Color::LightGreen));
+            lines.push(reg_kv("rs1", rs1, Color::LightMagenta));
+            lines.push(reg_kv("rs2", rs2, Color::LightRed));
             lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
             lines.push(kv("funct7", format!("0x{funct7:02x}"), Color::Red));
         }
         EncFormat::I => {
             let opcode = word & 0x7f;
             let imm12  = (word >> 20) & 0x0fff;
-            let imm    = (((imm12 as i32) << 20) >> 20) as i32;
+            let imm    = ((imm12 << 20) as i32) >> 20;
             let rs1    = ((word >> 15) & 0x1f) as u8;
             let funct3 = (word >> 12) & 0x7;
             let rd     = ((word >> 7) & 0x1f) as u8;
             let is_shift_imm = opcode == 0x13 && matches!(funct3, 0x1 | 0x5);
-            lines.push(reg_kv("rd", rd));
-            lines.push(reg_kv("rs1", rs1));
+            lines.push(reg_kv("rd",  rd,  Color::LightGreen));
+            lines.push(reg_kv("rs1", rs1, Color::LightMagenta));
             lines.push(imm_bits_kv("imm[11:0]", imm12, 12));
             if !is_shift_imm {
                 lines.push(imm_kv("imm(sext)", imm));
@@ -328,9 +326,9 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
             let rs1    = ((word >> 15) & 0x1f) as u8;
             let rs2    = ((word >> 20) & 0x1f) as u8;
             let imm_hi = (word >> 25) & 0x7f;
-            let imm    = (((((imm_hi << 5) | imm_lo) as i32) << 20) >> 20) as i32;
-            lines.push(reg_kv("rs1 (base)", rs1));
-            lines.push(reg_kv("rs2 (src)", rs2));
+            let imm    = (((imm_hi << 5) | imm_lo) << 20) as i32 >> 20;
+            lines.push(reg_kv("rs1 (base)", rs1, Color::LightMagenta));
+            lines.push(reg_kv("rs2 (src)",  rs2, Color::LightRed));
             lines.push(imm_kv("offset", imm));
             lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
         }
@@ -342,17 +340,17 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
             let funct3 = (word >> 12) & 0x7;
             let b4_1   = (word >> 8) & 0xf;
             let b11    = (word >> 7) & 1;
-            let imm    = (((((b12 << 12) | (b11 << 11) | (b10_5 << 5) | (b4_1 << 1)) as i32) << 19) >> 19) as i32;
-            lines.push(reg_kv("rs1", rs1));
-            lines.push(reg_kv("rs2", rs2));
+            let imm    = (((b12 << 12) | (b11 << 11) | (b10_5 << 5) | (b4_1 << 1)) << 19) as i32 >> 19;
+            lines.push(reg_kv("rs1", rs1, Color::LightMagenta));
+            lines.push(reg_kv("rs2", rs2, Color::LightRed));
             lines.push(imm_kv("offset", imm));
             lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
         }
         EncFormat::U => {
-            let rd  = ((word >> 7) & 0x1f) as u8;
+            let rd    = ((word >> 7) & 0x1f) as u8;
             let imm20 = (word >> 12) & 0x000f_ffff;
             let imm   = (imm20 << 12) as i32;
-            lines.push(reg_kv("rd", rd));
+            lines.push(reg_kv("rd", rd, Color::LightGreen));
             lines.push(imm_bits_kv("imm[31:12]", imm20, 20));
             lines.push(imm_kv("imm<<12", imm));
         }
@@ -362,8 +360,8 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
             let b11    = (word >> 20) & 1;
             let b19_12 = (word >> 12) & 0xff;
             let rd     = ((word >> 7) & 0x1f) as u8;
-            let imm    = (((((b20 << 20) | (b19_12 << 12) | (b11 << 11) | (b10_1 << 1)) as i32) << 11) >> 11) as i32;
-            lines.push(reg_kv("rd", rd));
+            let imm    = (((b20 << 20) | (b19_12 << 12) | (b11 << 11) | (b10_1 << 1)) << 11) as i32 >> 11;
+            lines.push(reg_kv("rd", rd, Color::LightGreen));
             lines.push(imm_kv("offset", imm));
         }
     }
@@ -573,8 +571,8 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         Bge{rs1,rs2,imm}   => fmt_br("bge",  rs1, rs2, imm),
         Bltu{rs1,rs2,imm}  => fmt_br("bltu", rs1, rs2, imm),
         Bgeu{rs1,rs2,imm}  => fmt_br("bgeu", rs1, rs2, imm),
-        Lui{rd,imm}        => format!("{:<5} {}, {}", "lui",   reg_name(rd), imm),
-        Auipc{rd,imm}      => format!("{:<5} {}, {}", "auipc", reg_name(rd), imm),
+        Lui{rd,imm}        => format!("{:<5} {}, {}", "lui",   reg_name(rd), (imm as u32) >> 12),
+        Auipc{rd,imm}      => format!("{:<5} {}, {}", "auipc", reg_name(rd), (imm as u32) >> 12),
         Jal{rd,imm}        => format!("{:<5} {}, {}", "jal",   reg_name(rd), imm),
         Jalr{rd,rs1,imm}   => fmt_ri("jalr", rd, rs1, imm),
         Ecall              => "ecall".into(),
@@ -596,4 +594,64 @@ fn fmt_store(m: &str, rs2: u8, rs1: u8, imm: i32) -> String {
 }
 fn fmt_br(m: &str, rs1: u8, rs2: u8, imm: i32) -> String {
     format!("{m:<5} {}, {}, {imm}", reg_name(rs1), reg_name(rs2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::falcon::encoder::encode;
+    use crate::falcon::instruction::Instruction;
+
+    // Ensure sign-extension in push_fields never panics (debug overflow) for negative immediates.
+    fn fields_no_panic(word: u32) {
+        let fmt = detect_format(word);
+        let mut lines = Vec::new();
+        push_fields(&mut lines, word, fmt); // must not panic
+    }
+
+    #[test]
+    fn push_fields_negative_addi_no_panic() {
+        // addi t0, t1, -4  →  imm12 = 0xFFC (sign bit set)
+        let w = encode(Instruction::Addi { rd: 5, rs1: 6, imm: -4 }).unwrap();
+        fields_no_panic(w);
+    }
+
+    #[test]
+    fn push_fields_negative_sw_no_panic() {
+        // sw t0, -4(sp)  →  S-type, negative offset
+        let w = encode(Instruction::Sw { rs2: 5, rs1: 2, imm: -4 }).unwrap();
+        fields_no_panic(w);
+    }
+
+    #[test]
+    fn push_fields_negative_beq_no_panic() {
+        // beq t0, t1, -4  →  B-type, negative offset
+        let w = encode(Instruction::Beq { rs1: 5, rs2: 6, imm: -4 }).unwrap();
+        fields_no_panic(w);
+    }
+
+    #[test]
+    fn push_fields_negative_jal_no_panic() {
+        // jal ra, -4  →  J-type, negative offset
+        let w = encode(Instruction::Jal { rd: 1, imm: -4 }).unwrap();
+        fields_no_panic(w);
+    }
+
+    #[test]
+    fn lui_pretty_shows_imm20_not_shifted() {
+        // lui t0, 1  →  Instruction::Lui { rd:5, imm:0x1000 }
+        // pretty_instr should show "lui   t0, 1" not "lui   t0, 4096"
+        let instr = Instruction::Lui { rd: 5, imm: 0x1000 };
+        let s = pretty_instr(&instr);
+        assert!(s.contains("1"), "expected imm20=1, got: {s}");
+        assert!(!s.contains("4096"), "should not show shifted value 4096, got: {s}");
+    }
+
+    #[test]
+    fn auipc_pretty_shows_imm20_not_shifted() {
+        let instr = Instruction::Auipc { rd: 5, imm: 0x2000 };
+        let s = pretty_instr(&instr);
+        assert!(s.contains("2"), "expected imm20=2, got: {s}");
+        assert!(!s.contains("8192"), "should not show shifted value 8192, got: {s}");
+    }
 }

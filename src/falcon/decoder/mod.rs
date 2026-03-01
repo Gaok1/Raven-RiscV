@@ -29,27 +29,4 @@ pub fn decode(word: u32) -> Result<Instruction, FalconError> {
         _ => Err(FalconError::Decode("unknown opcode")),
     }
 }
-
-
-#[allow(dead_code)]
-pub fn disasm(word: u32) -> String {
-    match decode(word) {
-        Ok(i) => match i {
-            Instruction::Addi{rd,rs1,imm} => format!("addi x{rd}, x{rs1}, {}", imm),
-            Instruction::Add {rd,rs1,rs2}  => format!("add  x{rd}, x{rs1}, x{rs2}"),
-            Instruction::Beq {rs1,rs2,imm} => format!("beq  x{rs1}, x{rs2}, {}", imm),
-            Instruction::Jal {rd,imm}      => format!("jal  x{rd}, {}", imm),
-            Instruction::Jalr{rd,rs1,imm}  => format!("jalr x{rd}, x{rs1}, {}", imm),
-            Instruction::Lw  {rd,rs1,imm}  => format!("lw   x{rd}, {}(x{rs1})", imm),
-            Instruction::Sw  {rs2,rs1,imm} => format!("sw   x{rs2}, {}(x{rs1})", imm),
-            Instruction::Ecall => "ecall".into(),
-            Instruction::Ebreak => "ebreak".into(),
-            Instruction::Halt => "ebreak".into(),
-            other => format!("{other:?}"), // fallback para o resto
-        },
-        Err(e) => format!(".word 0x{word:08x} ; {e}"),
-    }
-}
-
-
 // expose helpers to submodules

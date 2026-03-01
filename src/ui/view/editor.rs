@@ -170,7 +170,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(" │ ", marker_style));
         spans.extend(line.spans);
 
-        if i == app.editor.buf.cursor_row {
+        if i == app.editor.buf.cursor_row || Some(i) == app.editor.diag_line {
             if let Some(ghost) = ghost_spans_for_line(line_str, &labels) {
                 let gutter_w = (num_width as u16).saturating_add(3);
                 let used_w = gutter_w.saturating_add(Editor::char_count(line_str) as u16);
@@ -520,6 +520,8 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
                 "readByte" => ops.len() == 1 && is_label(&ops[0]),
                 "readHalf" => ops.len() == 1 && is_label(&ops[0]),
                 "readWord" => ops.len() == 1 && is_label(&ops[0]),
+                "randByte" | "randHalf" | "randWord" => ops.len() == 1 && is_label(&ops[0]),
+                "randBytes" => ops.len() == 2 && is_label(&ops[0]) && parse_reg(&ops[0]).is_none(),
                 _ => return None,
             }
         }
@@ -573,6 +575,8 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
             "readByte" => vec![vec!["label"]],
             "readHalf" => vec![vec!["label"]],
             "readWord" => vec![vec!["label"]],
+            "randByte" | "randHalf" | "randWord" => vec![vec!["label"]],
+            "randBytes" => vec![vec!["label", "len"]],
             _ => return None,
         },
     };

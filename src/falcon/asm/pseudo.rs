@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::falcon::instruction::Instruction;
 
-use super::utils::{check_signed, check_u_imm, parse_reg, split_operands};
+use super::utils::{check_signed, check_u_imm, parse_imm, parse_reg, split_operands};
 
 pub(crate) fn parse_la(
     s: &str,
@@ -14,12 +14,12 @@ pub(crate) fn parse_la(
     let rest = parts.collect::<Vec<_>>().join(" ");
     let ops = split_operands(&rest);
     if ops.len() != 2 {
-        return Err("expected 'rd, label'".into());
+        return Err("la: expected 'rd, label'".into());
     }
-    let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
+    let rd = parse_reg(&ops[0]).ok_or("la: invalid register")?;
     let addr = *labels
         .get(&ops[1])
-        .ok_or_else(|| format!("label not found: {}", ops[1]))? as i32;
+        .ok_or_else(|| format!("la: label not found: '{}'", ops[1]))? as i32;
 
     // Split the address into a high U-immediate (imm20) and a signed low 12-bit immediate.
     // Use rounding (+0x800) so the low part fits a signed 12-bit ADDI.
@@ -45,9 +45,9 @@ pub(crate) fn parse_push(s: &str) -> Result<(Instruction, Instruction), String> 
     let rest = parts.collect::<Vec<_>>().join(" ");
     let ops = split_operands(&rest);
     if ops.len() != 1 {
-        return Err("expected 'rs'".into());
+        return Err("push: expected 'rs'".into());
     }
-    let rs = parse_reg(&ops[0]).ok_or("invalid rs")?;
+    let rs = parse_reg(&ops[0]).ok_or("push: invalid register")?;
     Ok((
         Instruction::Addi {
             rd: 2,
@@ -69,9 +69,9 @@ pub(crate) fn parse_pop(s: &str) -> Result<(Instruction, Instruction), String> {
     let rest = parts.collect::<Vec<_>>().join(" ");
     let ops = split_operands(&rest);
     if ops.len() != 1 {
-        return Err("expected 'rd'".into());
+        return Err("pop: expected 'rd'".into());
     }
-    let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
+    let rd = parse_reg(&ops[0]).ok_or("pop: invalid register")?;
     Ok((
         Instruction::Lw { rd, rs1: 2, imm: 4 }, // read from sp+4
         Instruction::Addi {
@@ -241,8 +241,15 @@ pub(crate) fn parse_read_word(
     ])
 }
 
-fn parse_rand_n(mnemonic: &str, s: &str, labels: &HashMap<String, u32>, syscall_nr: i32) -> Result<Vec<Instruction>, String> {
-    // "randByte/randHalf/randWord label" -> a7=101X; a0=addr; ecall
+fn parse_rand_n(mnemonic: &str, s: &str, labels: &HashMap<String, u32>, count: i32) -> Result<Vec<Instruction>, String> {
+    // "randByte/randHalf/randWord label"
+    // Expands to 6 instructions:
+    //   addi a7, x0, 278   (li a7, getrandom)
+    //   lui  a0, hi(label) ]  la a0, label
+    //   addi a0, a0, lo    ]
+    //   addi a1, x0, count (li a1, 1/2/4)
+    //   addi a2, x0, 0     (li a2, 0  — flags=0)
+    //   ecall
     let mut parts = s.split_whitespace();
     parts.next();
     let rest = parts.collect::<Vec<_>>().join(" ");
@@ -253,17 +260,67 @@ fn parse_rand_n(mnemonic: &str, s: &str, labels: &HashMap<String, u32>, syscall_
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: syscall_nr },
-        i1, i2, Instruction::Ecall,
+        Instruction::Addi { rd: 17, rs1: 0, imm: 278 },
+        i1, i2,
+        Instruction::Addi { rd: 11, rs1: 0, imm: count },
+        Instruction::Addi { rd: 12, rs1: 0, imm: 0 },
+        Instruction::Ecall,
     ])
 }
 
 pub(crate) fn parse_rand_byte(s: &str, labels: &HashMap<String, u32>) -> Result<Vec<Instruction>, String> {
-    parse_rand_n("randByte", s, labels, 1013)
+    parse_rand_n("randByte", s, labels, 1)
 }
 pub(crate) fn parse_rand_half(s: &str, labels: &HashMap<String, u32>) -> Result<Vec<Instruction>, String> {
-    parse_rand_n("randHalf", s, labels, 1014)
+    parse_rand_n("randHalf", s, labels, 2)
 }
 pub(crate) fn parse_rand_word(s: &str, labels: &HashMap<String, u32>) -> Result<Vec<Instruction>, String> {
-    parse_rand_n("randWord", s, labels, 1015)
+    parse_rand_n("randWord", s, labels, 4)
+}
+
+pub(crate) fn parse_rand_bytes(
+    s: &str,
+    labels: &HashMap<String, u32>,
+) -> Result<Vec<Instruction>, String> {
+    // "randBytes label, len_reg"  or  "randBytes label, imm"
+    // Expands to 6 instructions (Linux getrandom ABI):
+    //   addi a7, x0, 278        (li a7, getrandom)
+    //   lui  a0, hi(label)      ]  la a0, label
+    //   addi a0, a0, lo(label)  ]
+    //   addi a1, reg, 0         (mv a1, reg)  — or — addi a1, x0, imm  (li a1, imm)
+    //   addi a2, x0, 0          (li a2, 0  — flags=0)
+    //   ecall
+    let mut parts = s.split_whitespace();
+    parts.next(); // consume mnemonic
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 2 {
+        return Err("randBytes: expected 'label, len'".into());
+    }
+    if parse_reg(&ops[0]).is_some() {
+        return Err("randBytes: first operand must be a label, not a register".into());
+    }
+    let la_line = format!("la a0, {}", ops[0]);
+    let (la_lui, la_addi) = parse_la(&la_line, labels)?;
+
+    // Second operand: register or immediate for the byte count (a1)
+    let len_inst = if let Some(reg) = parse_reg(&ops[1]) {
+        Instruction::Addi { rd: 11, rs1: reg, imm: 0 }
+    } else if let Some(imm) = parse_imm(&ops[1]) {
+        if !(-2048..=2047).contains(&imm) {
+            return Err(format!("randBytes: length immediate {imm} out of 12-bit signed range"));
+        }
+        Instruction::Addi { rd: 11, rs1: 0, imm }
+    } else {
+        return Err(format!("randBytes: invalid length operand '{}'", ops[1]));
+    };
+
+    Ok(vec![
+        Instruction::Addi { rd: 17, rs1: 0, imm: 278 },
+        la_lui,
+        la_addi,
+        len_inst,
+        Instruction::Addi { rd: 12, rs1: 0, imm: 0 },
+        Instruction::Ecall,
+    ])
 }
