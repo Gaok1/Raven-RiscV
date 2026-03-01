@@ -340,6 +340,22 @@ pub(super) struct RunState {
     pub(super) show_stack: bool,
     pub(super) pinned_regs: Vec<u8>,
     pub(super) reg_cursor: usize, // 0 = PC, 1-32 = x0-x31
+
+    // Feature: raw hex toggle (Feature 1)
+    pub(super) show_raw_hex: bool,
+
+    // Feature: block comments from source (Feature 4)
+    pub(super) block_comments: std::collections::HashMap<u32, String>,
+
+    // Feature: register write trace (Feature 8)
+    pub(super) reg_last_write_pc: [Option<u32>; 32],
+
+    // Feature: jump to PC (Feature 9)
+    pub(super) goto_imem_open: bool,
+    pub(super) goto_imem_query: String,
+
+    // Feature: breakpoint list view (Feature 10)
+    pub(super) show_bp_list: bool,
 }
 
 pub(super) struct DocsState {
@@ -486,6 +502,12 @@ impl App {
                 show_stack: false,
                 pinned_regs: Vec::new(),
                 reg_cursor: 0,
+                show_raw_hex: false,
+                block_comments: std::collections::HashMap::new(),
+                reg_last_write_pc: [None; 32],
+                goto_imem_open: false,
+                goto_imem_query: String::new(),
+                show_bp_list: false,
             },
             docs: DocsState { scroll: 0, search_open: false, search_query: String::new() },
             cache: CacheState {
@@ -578,10 +600,12 @@ impl App {
                 self.run.mem.reset_stats();
 
                 self.run.comments = prog.comments;
+                self.run.block_comments = prog.block_comments;
                 self.run.labels = prog.labels;
                 self.run.exec_counts.clear();
                 self.run.exec_trace.clear();
                 self.run.reg_age = [255u8; 32];
+                self.run.reg_last_write_pc = [None; 32];
                 self.editor.label_to_line = prog.label_to_line;
                 self.editor.line_to_addr = prog.line_addrs;
                 self.editor.last_ok_text = Some(prog.text.clone());
@@ -711,6 +735,10 @@ impl App {
     pub(super) fn restart_simulation(&mut self) {
         self.run.is_running = false;
         self.run.faulted = false;
+        self.run.goto_imem_open = false;
+        self.run.goto_imem_query.clear();
+        self.run.reg_last_write_pc = [None; 32];
+        self.run.block_comments = std::collections::HashMap::new();
         self.load_last_ok_program();
     }
 
@@ -1034,10 +1062,11 @@ impl App {
             self.run.exec_trace.pop_front();
         }
 
-        // Update register age (fading highlight)
+        // Update register age (fading highlight) and track last write PC
         for i in 0..32usize {
             if self.run.cpu.x[i] != self.run.prev_x[i] {
                 self.run.reg_age[i] = 0;
+                self.run.reg_last_write_pc[i] = Some(step_pc);
             } else {
                 self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
             }

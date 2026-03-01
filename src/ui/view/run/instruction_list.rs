@@ -17,6 +17,16 @@ pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(List::new(items), inner);
     render_instruction_hover(f, inner, base, app);
     render_instruction_drag_arrow(f, area, app);
+
+    // Feature 9: goto bar overlay
+    if app.run.goto_imem_open {
+        let bar_area = Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1);
+        let display = format!("Go to: 0x{}", app.run.goto_imem_query);
+        f.render_widget(
+            Paragraph::new(display).style(Style::default().fg(Color::Black).bg(Color::LightCyan)),
+            bar_area,
+        );
+    }
 }
 
 fn instruction_block(app: &App) -> Block<'static> {
@@ -45,6 +55,15 @@ fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>
     let mut addr = base;
 
     while remaining > 0 && imem_address_in_range(app, addr) {
+        // Feature 4: block comment separator
+        if let Some(bc) = app.run.block_comments.get(&addr) {
+            if remaining == 0 { break; }
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(format!("▌ {bc}"), Style::default().fg(Color::Rgb(130, 220, 180))),
+            ])));
+            remaining -= 1;
+        }
+
         // Show label headers (one per label at this address)
         if let Some(label_names) = app.run.labels.get(&addr) {
             for name in label_names {
@@ -104,18 +123,39 @@ fn branch_outcome(word: u32, addr: u32, cpu: &crate::falcon::Cpu) -> Option<(boo
     }
 }
 
+/// Feature 2: instruction type badge color
+fn type_badge(word: u32) -> (&'static str, Color) {
+    match word & 0x7f {
+        0x33 => ("[R]", Color::LightRed),
+        0x13 | 0x03 | 0x67 | 0x73 => ("[I]", Color::LightBlue),
+        0x23 => ("[S]", Color::LightYellow),
+        0x63 => ("[B]", Color::LightGreen),
+        0x37 | 0x17 => ("[U]", Color::LightMagenta),
+        0x6f => ("[J]", Color::LightCyan),
+        _ => ("[ ]", Color::DarkGray),
+    }
+}
+
+/// Feature 3: heat color based on exec count
+fn heat_color(n: u64) -> Color {
+    match n {
+        0 => Color::DarkGray,
+        1..=10 => Color::Cyan,
+        11..=100 => Color::Green,
+        101..=1000 => Color::Yellow,
+        _ => Color::Red,
+    }
+}
+
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let word = app.run.mem.peek32(addr).unwrap_or(0);
     let is_bp = app.run.breakpoints.contains(&addr);
     let bp_marker = if is_bp { "●" } else { " " };
     let is_pc = addr == app.run.cpu.pc;
     let marker = if is_pc { "▶" } else { bp_marker };
-    let value = format_u32_value(word, app.run.fmt_mode, app.run.show_signed);
     let disasm = disasm_word(word);
 
-    let exec_suffix = app.run.exec_counts.get(&addr)
-        .map(|&n| format!(" ×{n}"))
-        .unwrap_or_default();
+    let exec_count = app.run.exec_counts.get(&addr).copied().unwrap_or(0);
 
     let (line_bg, line_fg) = if is_pc {
         (Some(Color::Yellow), Some(Color::Black))
@@ -125,10 +165,21 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         (None, None)
     };
 
-    let base_text = format!("{marker} 0x{addr:08x}: {value}  {disasm}{exec_suffix}");
+    // Feature 1: raw hex toggle
+    let addr_part = if app.run.show_raw_hex {
+        format!("{marker} 0x{addr:08x}: 0x{word:08x}  {disasm}")
+    } else {
+        let value = format_u32_value(word, app.run.fmt_mode, app.run.show_signed);
+        format!("{marker} 0x{addr:08x}: {value}  {disasm}")
+    };
 
     // Build span list
     let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Feature 2: type badge (before main text)
+    let (badge_text, badge_color) = type_badge(word);
+    spans.push(Span::styled(badge_text.to_string(), Style::default().fg(badge_color)));
+    spans.push(Span::raw(" "));
 
     // Main instruction text
     if let Some(comment) = app.run.comments.get(&addr) {
@@ -137,10 +188,18 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        spans.push(Span::raw(base_text));
+        spans.push(Span::raw(addr_part));
         spans.push(Span::styled(format!("  # {comment}"), comment_style));
     } else {
-        spans.push(Span::raw(base_text));
+        spans.push(Span::raw(addr_part));
+    }
+
+    // Feature 3: heat coloring on exec count
+    if exec_count > 0 {
+        spans.push(Span::styled(
+            format!(" \u{d7}{exec_count}"),
+            Style::default().fg(heat_color(exec_count)),
+        ));
     }
 
     // Branch/jump indicator on current PC instruction
@@ -151,9 +210,9 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
                 .map(|s| format!(" ({s})"))
                 .unwrap_or_default();
             let (arrow, color) = if taken {
-                (format!("  → 0x{target:08x}{label}"), Color::Rgb(0, 200, 100))
+                (format!("  \u{2192} 0x{target:08x}{label}"), Color::Rgb(0, 200, 100))
             } else {
-                ("  ↛ (not taken)".to_string(), Color::Rgb(150, 150, 150))
+                ("  \u{219b} (not taken)".to_string(), Color::Rgb(150, 150, 150))
             };
             spans.push(Span::styled(arrow, Style::default().fg(color)));
         }

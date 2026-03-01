@@ -2,6 +2,20 @@ use std::collections::HashMap;
 
 // Public(crate) helpers reused by submodules
 
+/// Extracts `##!` block comments from raw source lines.
+/// Returns map from 0-based line number → comment text.
+pub(crate) fn extract_block_comments(text: &str) -> HashMap<usize, String> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let t = l.trim();
+            let rest = t.strip_prefix("##!")?;
+            let c = rest.trim().to_string();
+            if c.is_empty() { None } else { Some((i, c)) }
+        })
+        .collect()
+}
+
 /// Extracts `#!` visible comments from raw source lines.
 /// Returns a map from 0-based line number to the comment text (trimmed, without `#!`).
 pub(crate) fn extract_visible_comments(text: &str) -> HashMap<usize, String> {

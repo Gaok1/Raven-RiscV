@@ -30,7 +30,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
 
     render_header(f, chunks[0], &ctx, app);
     render_field_map(f, chunks[1], ctx.word, ctx.format);
-    render_decoded(f, chunks[2], ctx.word, ctx.format, &ctx.disasm);
+    render_decoded(f, chunks[2], ctx.word, ctx.format, &ctx.disasm, Some(&app.run.cpu));
 }
 
 pub(super) fn disasm_word(word: u32) -> String {
@@ -43,13 +43,15 @@ pub(super) fn disasm_word(word: u32) -> String {
 // ── Context ──────────────────────────────────────────────────────────────────
 
 struct DetailContext {
-    addr:        u32,
-    word:        u32,
-    disasm:      String,
-    origin:      &'static str,
-    format:      EncFormat,
-    comment:     Option<String>,
-    jump_target: Option<(bool, u32, Option<String>)>, // (taken, target_addr, label)
+    addr:           u32,
+    word:           u32,
+    disasm:         String,
+    origin:         &'static str,
+    format:         EncFormat,
+    comment:        Option<String>,
+    jump_target:    Option<(bool, u32, Option<String>)>, // (taken, target_addr, label)
+    has_raw_hazard: bool,
+    hazard_regs:    Vec<u8>,
 }
 
 fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Option<String>)> {
@@ -71,19 +73,54 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
     Some((taken, target, label))
 }
 
+/// Feature 6: extract source and destination registers from a word
+fn extract_regs(word: u32) -> (Vec<u8>, Option<u8>) {
+    let opcode = word & 0x7f;
+    let rs1 = ((word >> 15) & 0x1f) as u8;
+    let rs2 = ((word >> 20) & 0x1f) as u8;
+    let rd  = ((word >> 7)  & 0x1f) as u8;
+    match opcode {
+        0x33 => (vec![rs1, rs2], Some(rd)), // R-type
+        0x13 | 0x03 | 0x67 | 0x73 => (vec![rs1], Some(rd)), // I-type
+        0x23 => (vec![rs1, rs2], None), // S-type
+        0x63 => (vec![rs1, rs2], None), // B-type
+        0x37 | 0x17 => (vec![], Some(rd)), // U-type
+        0x6f => (vec![], Some(rd)), // J-type
+        _ => (vec![], None),
+    }
+}
+
 fn detail_context(app: &App) -> DetailContext {
-    if let Some(addr) = app.run.hover_imem_addr {
+    let (addr, word, origin) = if let Some(addr) = app.run.hover_imem_addr {
         let word = app.run.mem.load32(addr).unwrap_or(0);
-        let comment = app.run.comments.get(&addr).cloned();
-        let jump_target = compute_jump_target(word, addr, app);
-        DetailContext { addr, word, disasm: disasm_word(word), origin: "hover", format: detect_format(word), comment, jump_target }
+        (addr, word, "hover")
     } else if imem_address_in_range(app, app.run.cpu.pc) {
         let word = app.run.mem.load32(app.run.cpu.pc).unwrap_or(0);
-        let comment = app.run.comments.get(&app.run.cpu.pc).cloned();
-        let jump_target = compute_jump_target(word, app.run.cpu.pc, app);
-        DetailContext { addr: app.run.cpu.pc, word, disasm: disasm_word(word), origin: "PC", format: detect_format(word), comment, jump_target }
+        (app.run.cpu.pc, word, "PC")
     } else {
-        DetailContext { addr: app.run.cpu.pc, word: 0, disasm: "<PC out of RAM>".into(), origin: "PC", format: detect_format(0), comment: None, jump_target: None }
+        return DetailContext {
+            addr: app.run.cpu.pc, word: 0, disasm: "<PC out of RAM>".into(),
+            origin: "PC", format: detect_format(0), comment: None,
+            jump_target: None, has_raw_hazard: false, hazard_regs: vec![],
+        };
+    };
+
+    let comment = app.run.comments.get(&addr).cloned();
+    let jump_target = compute_jump_target(word, addr, app);
+
+    // Feature 6: RAW hazard detection
+    let prev_word = if addr >= 4 { app.run.mem.load32(addr - 4).unwrap_or(0) } else { 0 };
+    let (cur_reads, _) = extract_regs(word);
+    let (_, prev_write) = extract_regs(prev_word);
+    let hazard_regs: Vec<u8> = if let Some(pw) = prev_write {
+        cur_reads.iter().filter(|&&r| r != 0 && r == pw).cloned().collect()
+    } else { vec![] };
+    let has_raw_hazard = !hazard_regs.is_empty();
+
+    DetailContext {
+        addr, word, disasm: disasm_word(word), origin,
+        format: detect_format(word), comment, jump_target,
+        has_raw_hazard, hazard_regs,
     }
 }
 
@@ -163,6 +200,17 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
                 Span::styled(format!("×{count}"), Style::default().fg(Color::Cyan)),
             ]));
         }
+    }
+
+    // Feature 6: RAW hazard warning
+    if ctx.has_raw_hazard && !ctx.hazard_regs.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("  \u{26a0} RAW   ", Style::default().fg(Color::Red)),
+            Span::styled(
+                format!("x{} read after write by prev instr", ctx.hazard_regs[0]),
+                Style::default().fg(Color::LightRed),
+            ),
+        ]));
     }
 
     f.render_widget(Paragraph::new(lines), inner);
@@ -246,7 +294,7 @@ fn bits_line(word: u32, segs: &[Seg]) -> Line<'static> {
 
 // ── Section 3 : Decoded fields + description ─────────────────────────────────
 
-fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disasm: &str) {
+fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disasm: &str, cpu: Option<&crate::falcon::Cpu>) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -257,7 +305,7 @@ fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disas
     f.render_widget(block, area);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    push_fields(&mut lines, word, format);
+    push_fields(&mut lines, word, format, cpu);
     // blank separator
     lines.push(Line::from(""));
     // Semantic description
@@ -281,7 +329,8 @@ fn imm_kv(key: &'static str, v: i32) -> Line<'static> {
     kv(key, format!("{v}  (0x{v:x})"), Color::Rgb(120, 180, 255))
 }
 
-fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
+fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat, cpu: Option<&crate::falcon::Cpu>) {
+    let opcode = word & 0x7f;
     match format {
         EncFormat::R => {
             let funct7 = (word >> 25) & 0x7f;
@@ -310,6 +359,13 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
                 lines.push(kv("shamt", format!("{shamt}"), Color::LightRed));
                 lines.push(kv("funct7", format!("0x{funct7:02x}"), Color::Red));
             }
+            // Feature 5: effective address for loads (opcode 0x03)
+            if opcode == 0x03 {
+                if let Some(cpu) = cpu {
+                    let ea = cpu.x[rs1 as usize].wrapping_add(imm as u32);
+                    lines.push(kv("\u{2192} addr", format!("0x{ea:08x}"), Color::Rgb(255, 180, 80)));
+                }
+            }
         }
         EncFormat::S => {
             let imm_lo = (word >> 7) & 0x1f;
@@ -322,6 +378,11 @@ fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat) {
             lines.push(reg_kv("rs2 (src)", rs2));
             lines.push(imm_kv("offset", imm));
             lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+            // Feature 5: effective address for stores
+            if let Some(cpu) = cpu {
+                let ea = cpu.x[rs1 as usize].wrapping_add(imm as u32);
+                lines.push(kv("\u{2192} addr", format!("0x{ea:08x}"), Color::Rgb(255, 180, 80)));
+            }
         }
         EncFormat::B => {
             let b12    = (word >> 31) & 1;

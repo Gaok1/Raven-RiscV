@@ -1,13 +1,15 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Row, Table};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table};
 
 use super::App;
 use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    if app.run.show_stack {
+    if app.run.show_bp_list {
+        render_bp_list(f, area, app);
+    } else if app.run.show_stack {
         render_stack_view(f, area, app);
     } else if app.run.show_registers {
         render_register_table(f, area, app);
@@ -19,19 +21,25 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
 // ── Register table ────────────────────────────────────────────────────────────
 
 fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
-    let block = register_block();
-    let inner = block.inner(area);
-    let rows = build_register_rows(inner, app);
-    let table = Table::new(rows, [Constraint::Length(14), Constraint::Length(20)]).block(block);
-    f.render_widget(table, area);
-}
+    // Feature 8: show last write PC in title
+    let cursor_info = if app.run.reg_cursor >= 1 && app.run.reg_cursor <= 32 {
+        let reg = (app.run.reg_cursor - 1) as usize;
+        match app.run.reg_last_write_pc[reg] {
+            Some(pc) => format!("  [last write @ 0x{pc:08x}]"),
+            None => String::new(),
+        }
+    } else { String::new() };
 
-fn register_block() -> Block<'static> {
-    Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title("Registers  [p]=pin/unpin")
+        .title(format!("Registers  [p]=pin/unpin{cursor_info}"));
+    let inner = block.inner(area);
+    let rows = build_register_rows(inner, app);
+    // Feature 7: 3-column table (name, hex, dec)
+    let table = Table::new(rows, [Constraint::Length(14), Constraint::Length(11), Constraint::Length(12)]).block(block);
+    f.render_widget(table, area);
 }
 
 fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
@@ -44,11 +52,12 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
 
     // ── Pinned registers (always at top) ─────────────────────────────────────
     for &reg_idx in pinned.iter() {
-        let (label, value, age) = register_entry_reg(reg_idx, app);
+        let (label, hex_val, dec_val, age) = register_entry_reg(reg_idx, app);
         let pin_label = format!("◉ {label}");
         rows.push(Row::new(vec![
             Cell::from(pin_label).style(age_style(age).add_modifier(Modifier::BOLD)),
-            Cell::from(value).style(age_style(age)),
+            Cell::from(hex_val).style(age_style(age)),
+            Cell::from(dec_val).style(age_style(age)),
         ]));
     }
 
@@ -56,6 +65,7 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
     if !pinned.is_empty() && visible > pinned.len() {
         rows.push(Row::new(vec![
             Cell::from("─────────────"),
+            Cell::from(""),
             Cell::from(""),
         ]).style(Style::default().fg(Color::DarkGray)));
     }
@@ -68,7 +78,7 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
 
     for index in start..end {
         let is_cursor = index == app.run.reg_cursor;
-        let (label, value, age) = register_entry(index, app);
+        let (label, hex_val, dec_val, age) = register_entry(index, app);
         let is_pinned = if index >= 1 { pinned.contains(&((index - 1) as u8)) } else { false };
         let marker = if is_pinned { "◉ " } else { "  " };
         let full_label = format!("{marker}{label}");
@@ -80,7 +90,8 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         };
         rows.push(Row::new(vec![
             Cell::from(full_label).style(row_style),
-            Cell::from(value).style(row_style),
+            Cell::from(hex_val).style(row_style),
+            Cell::from(dec_val).style(row_style),
         ]));
     }
 
@@ -98,12 +109,14 @@ fn age_style(age: u8) -> Style {
     }
 }
 
-fn register_entry(index: usize, app: &App) -> (String, String, u8) {
+/// Feature 7: returns (label, hex_value, dec_value, age)
+fn register_entry(index: usize, app: &App) -> (String, String, String, u8) {
     if index == 0 {
         let age = if app.run.cpu.pc != app.run.prev_pc { 0 } else { 255 };
         (
             "PC".to_string(),
-            format_u32_value(app.run.cpu.pc, app.run.fmt_mode, app.run.show_signed),
+            format!("0x{:08x}", app.run.cpu.pc),
+            format!("{}", app.run.cpu.pc as i32),
             age,
         )
     } else {
@@ -111,17 +124,20 @@ fn register_entry(index: usize, app: &App) -> (String, String, u8) {
         let value = app.run.cpu.x[reg_index as usize];
         (
             format!("x{reg_index:02} ({})", reg_name(reg_index)),
-            format_u32_value(value, app.run.fmt_mode, app.run.show_signed),
+            format!("0x{value:08x}"),
+            format!("{}", value as i32),
             app.run.reg_age[reg_index as usize],
         )
     }
 }
 
-fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
+/// Feature 7: returns (label, hex_value, dec_value, age) for pinned register
+fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, String, u8) {
     let value = app.run.cpu.x[reg_idx as usize];
     (
         format!("x{reg_idx:02} ({})", reg_name(reg_idx)),
-        format_u32_value(value, app.run.fmt_mode, app.run.show_signed),
+        format!("0x{value:08x}"),
+        format!("{}", value as i32),
         app.run.reg_age[reg_idx as usize],
     )
 }
@@ -169,7 +185,7 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     if !is_dirty {
         let text = format!("  0x{addr:08x}: {}", format_memory_value(app, addr));
         return if is_sp {
-            ListItem::new(format!("{text}   ▶ sp")).style(Style::default().fg(Color::Yellow))
+            ListItem::new(format!("{text}   \u{25b6} sp")).style(Style::default().fg(Color::Yellow))
         } else {
             ListItem::new(text)
         };
@@ -177,17 +193,17 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
 
     let cache_val = format_memory_value(app, addr);
     let stale_val = format_stale_value(app, addr);
-    let sp_suffix = if is_sp { "   ▶ sp" } else { "" };
+    let sp_suffix = if is_sp { "   \u{25b6} sp" } else { "" };
 
     let line = ratatui::text::Line::from(vec![
-        ratatui::text::Span::styled("● ", Style::default().fg(PURPLE).bold()),
+        ratatui::text::Span::styled("\u{25cf} ", Style::default().fg(PURPLE).bold()),
         ratatui::text::Span::styled(
             format!("0x{addr:08x}: "),
             Style::default().fg(PURPLE),
         ),
         ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()),
         ratatui::text::Span::styled(
-            format!("  ← RAM: {stale_val}{sp_suffix}"),
+            format!("  \u{2190} RAM: {stale_val}{sp_suffix}"),
             Style::default().fg(STALE_COLOR),
         ),
     ]);
@@ -210,7 +226,6 @@ fn render_stack_view(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     let visible = inner.height.saturating_sub(2) as i32;
-    let _bytes = 4u32;
     let sp_aligned = sp & !3; // align to 4 bytes
 
     // Show visible/2 words below SP, SP itself, visible/2 words above
@@ -234,7 +249,7 @@ fn render_stack_view(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(Color::White)
             };
-            let sp_mark = if is_sp_row { " ◀ SP" } else { "" };
+            let sp_mark = if is_sp_row { " \u{25c0} SP" } else { "" };
             Some(ListItem::new(
                 format!("  {offset_str}  0x{addr:08x}: 0x{val:08x}{sp_mark}")
             ).style(style))
@@ -242,4 +257,51 @@ fn render_stack_view(f: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     f.render_widget(List::new(items), inner);
+}
+
+// ── Breakpoint list view (Feature 10) ─────────────────────────────────────────
+
+fn render_bp_list(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled("Breakpoints  F9=toggle", Style::default().fg(Color::Red)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if app.run.breakpoints.is_empty() {
+        f.render_widget(
+            Paragraph::new("No breakpoints set.\nF9 to toggle at current PC.")
+                .style(Style::default().fg(Color::DarkGray)),
+            inner,
+        );
+        return;
+    }
+
+    let mut addrs: Vec<u32> = app.run.breakpoints.iter().cloned().collect();
+    addrs.sort();
+    let items: Vec<ListItem<'static>> = addrs.iter().map(|&addr| {
+        let word = app.run.mem.peek32(addr).unwrap_or(0);
+        let disasm = super::instruction_details::disasm_word(word);
+        let label = app.run.labels.get(&addr)
+            .and_then(|v| v.first())
+            .map(|l| format!(" <{l}>"))
+            .unwrap_or_default();
+        let is_pc = addr == app.run.cpu.pc;
+        let text = format!("\u{25cf} 0x{addr:08x}{label}  {disasm}");
+        let style = if is_pc {
+            Style::default().fg(Color::Black).bg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::LightRed)
+        };
+        ListItem::new(text).style(style)
+    }).collect();
+    f.render_widget(List::new(items), inner);
+}
+
+// Keep the old format_u32_value usage for format_memory_value compatibility
+#[allow(dead_code)]
+fn _unused_format(app: &App, addr: u32) -> String {
+    format_u32_value(app.run.mem.peek32(addr).unwrap_or(0), app.run.fmt_mode, app.run.show_signed)
 }

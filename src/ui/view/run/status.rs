@@ -49,7 +49,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         app.hover_run_button == Some(RunButton::View),
     ));
 
-    if !app.run.show_registers {
+    if !app.run.show_registers && !app.run.show_bp_list {
         spans.push(Span::raw("  Region "));
         spans.push(button_span(
             region_text(app),
@@ -72,7 +72,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         sign_enabled(app) && app.hover_run_button == Some(RunButton::Sign),
     ));
 
-    if !app.run.show_registers {
+    if !app.run.show_registers && !app.run.show_bp_list {
         spans.push(Span::raw("  Bytes "));
         spans.push(button_span(
             bytes_text(app),
@@ -105,18 +105,20 @@ fn command_line(app: &App) -> Line<'static> {
             Style::default().fg(Color::Yellow),
         ))
     } else {
-        Line::from("s=step  r=run  p=pause  R=restart  f=speed  v=view  t=trace  k=stack  pin=p  F9=bp")
+        Line::from("s=step  r=run  p=pause  R=restart  f=speed  v=view  t=trace  k=stack  x=hex  g=goto  F9=bp")
     }
 }
 
 fn view_text(app: &App) -> &'static str {
-    if app.run.show_stack { "STACK" }
+    if app.run.show_bp_list { "BP" }
+    else if app.run.show_stack { "STACK" }
     else if app.run.show_registers { "REGS" }
     else { "RAM" }
 }
 
 fn view_color(app: &App) -> Color {
-    if app.run.show_stack { Color::LightBlue }
+    if app.run.show_bp_list { Color::Red }
+    else if app.run.show_stack { Color::LightBlue }
     else if app.run.show_registers { Color::Blue }
     else { Color::Green }
 }

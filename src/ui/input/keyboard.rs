@@ -468,6 +468,29 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             match (key.code, app.tab) {
+                // Feature 9: goto_imem bar intercept (before other Run commands)
+                _ if matches!(app.tab, Tab::Run) && app.run.goto_imem_open => {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.run.goto_imem_open = false;
+                        }
+                        KeyCode::Backspace => {
+                            app.run.goto_imem_query.pop();
+                        }
+                        KeyCode::Enter => {
+                            let q = app.run.goto_imem_query.trim_start_matches("0x").trim_start_matches("0X").to_string();
+                            if let Ok(addr) = u32::from_str_radix(&q, 16) {
+                                app.run.imem_scroll = (addr.saturating_sub(app.run.base_pc) / 4) as usize;
+                            }
+                            app.run.goto_imem_open = false;
+                        }
+                        KeyCode::Char(c) if c.is_ascii_hexdigit() || c == 'x' || c == 'X' => {
+                            app.run.goto_imem_query.push(c);
+                        }
+                        _ => {}
+                    }
+                }
+
                 (KeyCode::Char('s'), Tab::Run) => {
                     if !app.run.faulted {
                         app.single_step();
@@ -488,16 +511,30 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.run.is_running = true;
                     }
                 }
-                // v: cycle sidebar view — REGS → RAM → STACK
+                // v: cycle sidebar view — REGS → RAM → STACK → BP → REGS (Feature 10)
                 (KeyCode::Char('v'), Tab::Run) => {
-                    if app.run.show_stack {
-                        app.run.show_stack = false;
+                    if app.run.show_bp_list {
+                        app.run.show_bp_list = false;
+                        // back to REGS
                         app.run.show_registers = true;
+                        app.run.show_stack = false;
+                    } else if app.run.show_stack {
+                        app.run.show_stack = false;
+                        app.run.show_bp_list = true;
                     } else if app.run.show_registers {
                         app.run.show_registers = false;
                     } else {
                         app.run.show_stack = true;
                     }
+                }
+                // x: toggle raw hex display (Feature 1)
+                (KeyCode::Char('x'), Tab::Run) => {
+                    app.run.show_raw_hex = !app.run.show_raw_hex;
+                }
+                // g: open goto imem bar (Feature 9)
+                (KeyCode::Char('g'), Tab::Run) => {
+                    app.run.goto_imem_open = true;
+                    app.run.goto_imem_query.clear();
                 }
                 // t: toggle execution trace panel
                 (KeyCode::Char('t'), Tab::Run) => {

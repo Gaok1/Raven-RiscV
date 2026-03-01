@@ -18,4 +18,6 @@ pub struct Program {
     pub line_addrs: HashMap<usize, u32>,
     /// Maps label name → 0-based source line where it is defined.
     pub label_to_line: HashMap<String, usize>,
+    /// Block comments (`##! text`) shown above an instruction, keyed by instruction address.
+    pub block_comments: HashMap<u32, String>,
 }

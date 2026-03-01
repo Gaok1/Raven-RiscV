@@ -184,6 +184,7 @@ fn eval_expr(
 // ---------- API ----------
 pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
     let line_comments = extract_visible_comments(text);
+    let raw_block_comments = extract_block_comments(text);
     let lines = preprocess(text);
     let data_base = base_pc + 0x1000; // data region after code
 
@@ -641,12 +642,23 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
     // 2nd pass: assemble
     let mut words = Vec::with_capacity(items.len());
     let mut comments: HashMap<u32, String> = HashMap::new();
+    let mut block_comments: HashMap<u32, String> = HashMap::new();
     let mut line_addrs: HashMap<usize, u32> = HashMap::new();
+    let mut prev_item_line: usize = 0;
     for (pc, kind, line_no) in items {
         line_addrs.entry(line_no).or_insert(pc);
         if let Some(c) = line_comments.get(&line_no) {
             comments.insert(pc, c.clone());
         }
+        // Find the nearest ##! block comment for lines in range (prev_item_line+1)..=line_no
+        let search_start = prev_item_line + 1;
+        for search_line in search_start..=line_no {
+            if let Some(bc) = raw_block_comments.get(&search_line) {
+                block_comments.insert(pc, bc.clone());
+                break;
+            }
+        }
+        prev_item_line = line_no;
         match kind {
             LineKind::Instr(s) => {
                 let inst = parse_instr(&s, pc, &labels, &consts).map_err(|e| AsmError {
@@ -784,6 +796,7 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
         data_base,
         bss_size: pc_bss,
         comments,
+        block_comments,
         labels: addr_to_labels,
         line_addrs,
         label_to_line,
