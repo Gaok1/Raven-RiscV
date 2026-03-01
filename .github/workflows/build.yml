@@ -1,7 +1,7 @@
 name: CI
 
 # Roda em todo push/PR para verificar compilação.
-# Em push na main: empacota binários e cria uma nova release vX.Y.Z+1.
+# Em push na main com vN.N.N na mensagem: empacota binários e cria nova release.
 
 on:
   push:
@@ -82,14 +82,36 @@ jobs:
           if-no-files-found: error
 
   # ────────────────────────────────────────────────────────
-  # 2. Auto-versioned release (só em push na main)
+  # 2. Verifica se a mensagem do commit contém vN.N.N
+  # ────────────────────────────────────────────────────────
+  check-release:
+    name: Check release trigger
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - name: Check commit message for vN.N.N
+        id: check
+        run: |
+          MSG="${{ github.event.head_commit.message }}"
+          if echo "$MSG" | grep -qE 'v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "should_release=true"  >> "$GITHUB_OUTPUT"
+            echo "Release trigger found in: $MSG"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "No vN.N.N found — skipping release"
+          fi
+
+  # ────────────────────────────────────────────────────────
+  # 3. Auto-versioned release (só se check-release aprovado)
   #    Lê a última tag vX.Y.Z, incrementa Z e cria nova release
   # ────────────────────────────────────────────────────────
   versioned-release:
     name: Create versioned release
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build, check-release]
+    if: needs.check-release.outputs.should_release == 'true'
 
     steps:
       - uses: actions/checkout@v4
