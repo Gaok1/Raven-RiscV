@@ -242,6 +242,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
+            if ctrl && matches!(key.code, KeyCode::Char('v')) && matches!(app.tab, Tab::Editor) {
+                let text = app.clipboard.as_mut().and_then(|clip| clip.get_text().ok());
+                if let Some(text) = text {
+                    paste_editor(app, &text);
+                }
+                return Ok(false);
+            }
+
             if ctrl && matches!(key.code, KeyCode::Char('z')) && matches!(app.tab, Tab::Editor) {
                 app.editor.buf.undo();
                 app.editor.dirty = true;
@@ -388,6 +396,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     if let Some(clip) = app.clipboard.as_mut() {
                         let _ = clip.set_text(text);
                     }
+                }
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('v')) && matches!(app.tab, Tab::Editor) {
+                let text = app.clipboard.as_mut().and_then(|clip| clip.get_text().ok());
+                if let Some(text) = text {
+                    paste_editor(app, &text);
                 }
                 return Ok(false);
             }
@@ -577,10 +593,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         }
                     }
                 }
-                // Cycle speed: 1x → 2x → 4x → GO → 1x (locked while running in Instant)
-                (KeyCode::Char('f'), Tab::Run)
-                    if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
-                {
+                // Cycle speed: 1x → 2x → 4x → GO → 1x
+                (KeyCode::Char('f'), Tab::Run) => {
                     app.run.speed = app.run.speed.cycle();
                 }
                 (KeyCode::Up, Tab::Run) if ctrl => {
@@ -819,8 +833,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.run.show_bp_list = false;
                 }
                 (KeyCode::Char('f'), Tab::Cache)
-                    if !matches!(app.cache.subtab, CacheSubtab::Config)
-                    && !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
+                    if !matches!(app.cache.subtab, CacheSubtab::Config) =>
                 {
                     app.run.speed = app.run.speed.cycle();
                 }
@@ -883,6 +896,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     }
 
     Ok(false)
+}
+
+pub fn paste_from_terminal(app: &mut App, text: &str) {
+    app.editor.buf.paste_text(text);
+    app.editor.dirty = true;
+    app.editor.last_edit_at = Some(Instant::now());
+    app.editor.diag_line = None;
+    app.editor.diag_msg = None;
+    app.editor.diag_line_text = None;
+    app.editor.last_compile_ok = None;
+    app.editor.last_assemble_msg = None;
+}
+
+fn paste_editor(app: &mut App, text: &str) {
+    paste_from_terminal(app, text);
 }
 
 fn clamp_docs_scroll_keyboard(app: &mut App) {
