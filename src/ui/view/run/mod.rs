@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
-use super::components::{render_build_status, render_console};
+use super::components::render_console;
 pub(super) use super::{App, MemRegion, RunButton};
 pub(super) use crate::ui::app::{FormatMode, RunSpeed};
 
@@ -17,23 +17,21 @@ mod status;
 use instruction_details::render_instruction_details;
 use instruction_list::{render_instruction_memory, render_exec_trace};
 use sidebar::render_sidebar;
-use status::render_run_status;
+pub(crate) use status::render_run_status;
 
 pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
             Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
         .split(area);
 
-    render_build_status(f, layout[0], app);
-    render_run_status(f, layout[1], app);
+    render_run_status(f, layout[0], app);
 
-    let main = layout[2];
+    let main = layout[1];
     let sidebar_w  = if app.run.sidebar_collapsed  { 3 } else { app.run.sidebar_width };
     let imem_w     = if app.run.imem_collapsed     { 3 } else { app.run.imem_width    };
     let details_min = if app.run.details_collapsed { 3 } else { 40 };
@@ -74,7 +72,7 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
         render_instruction_details(f, columns[2], app);
     }
 
-    render_console(f, layout[3], app);
+    render_console(f, layout[2], app);
 }
 
 fn render_collapsed(f: &mut Frame, area: Rect, label: &'static str) {

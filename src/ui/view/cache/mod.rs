@@ -7,18 +7,20 @@ use ratatui::{
 
 use crate::falcon::cache::CacheController;
 use crate::ui::app::{App, CacheScope, CacheSubtab};
+use crate::ui::view::run::render_run_status;
 
 mod config;
 mod stats;
 mod view;
 
 pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
-    // Layout: level selector (1) | subtab header (3) | content (min) | shared controls bar (3)
+    // Layout: level selector (1) | subtab header (3) | run controls (5) | content (min) | shared controls bar (3)
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // level selector bar
             Constraint::Length(3), // subtab header
+            Constraint::Length(5), // run controls (always visible)
             Constraint::Min(0),    // content
             Constraint::Length(3), // shared controls bar (Reset / Pause / Scope)
         ])
@@ -26,14 +28,15 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
 
     render_level_selector(f, layout[0], app);
     render_subtab_header(f, layout[1], app);
+    render_run_status(f, layout[2], app);
 
     match app.cache.subtab {
-        CacheSubtab::Stats  => stats::render_stats(f, layout[2], app),
-        CacheSubtab::View   => view::render_view(f, layout[2], app),
-        CacheSubtab::Config => config::render_config(f, layout[2], app),
+        CacheSubtab::Stats  => stats::render_stats(f, layout[3], app),
+        CacheSubtab::View   => view::render_view(f, layout[3], app),
+        CacheSubtab::Config => config::render_config(f, layout[3], app),
     }
 
-    render_controls_bar(f, layout[3], app);
+    render_controls_bar(f, layout[4], app);
 }
 
 fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
@@ -141,6 +144,18 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     } else {
         Style::default().fg(Color::Black).bg(Color::Blue)
     };
+    let export_style = if app.cache.hover_export_results {
+        Style::default().fg(Color::Black).bg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Green)
+    };
+    let compare_style = if app.cache.hover_compare {
+        Style::default().fg(Color::Black).bg(Color::Yellow)
+    } else if app.cache.loaded_snapshot.is_some() {
+        Style::default().fg(Color::LightBlue)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
 
     let pause_label = if app.run.is_running { "[Pause]" } else { "[Resume]" };
 
@@ -150,11 +165,17 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     let scope_d_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::DCache), app.cache.hover_scope_d);
     let scope_both_style = scope_btn_style(matches!(app.cache.scope, CacheScope::Both),   app.cache.hover_scope_both);
 
+    // Layout: " [Reset]  [Pause]  [\u{2b06} Export]  [\u{2b07} Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
+    // x=1..8   x=10..17  x=19..29         x=31..42
     let mut line_spans = vec![
         Span::raw(" "),
-        Span::styled("[Reset]",   reset_style),
+        Span::styled("[Reset]",      reset_style),
         Span::raw("  "),
-        Span::styled(pause_label, pause_style),
+        Span::styled(pause_label,    pause_style),
+        Span::raw("  "),
+        Span::styled("[\u{2b06} Export]",  export_style),
+        Span::raw("  "),
+        Span::styled("[\u{2b07} Compare]", compare_style),
     ];
 
     if show_scope {
@@ -165,12 +186,12 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         line_spans.push(Span::raw(" "));
         line_spans.push(Span::styled("[Both]",    scope_both_style));
         line_spans.push(Span::styled(
-            "   r=reset  p=pause  i/d/b=scope",
+            "   r=reset  p=pause  Ctrl+R=export  Ctrl+M=compare",
             Style::default().fg(Color::DarkGray),
         ));
     } else {
         line_spans.push(Span::styled(
-            "   r=reset  p=pause",
+            "   r=reset  p=pause  Ctrl+R=export  Ctrl+M=compare",
             Style::default().fg(Color::DarkGray),
         ));
     }

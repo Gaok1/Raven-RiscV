@@ -2,6 +2,7 @@ use crate::ui::{
     app::{App, CacheScope, CacheSubtab, ConfigField, EditorMode, FormatMode, MemRegion, RunButton, RunSpeed, Tab},
     editor::Editor,
 };
+use crate::ui::input::keyboard::{do_export_results, do_compare_load};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use rfd::FileDialog as OSFileDialog;
@@ -18,29 +19,47 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
+    if app.help_open {
+        // Clicking anywhere outside the popup closes it; click inside does page nav
+        handle_help_popup_mouse(app, me, area);
+        return;
+    }
+
     // Hover tabs — derived from Tab::all() so new tabs are automatically supported
     app.hover_tab = None;
     app.hover_run_button = None;
+    app.hover_help = false;
     if me.row == area.y + 1 {
-        let x = me.column.saturating_sub(area.x + 1);
-        let divider = 3u16; // " │ "
-        let pad_left = 1u16;
-        let pad_right = 1u16;
-        let mut pos: u16 = 0;
-        for (i, &tab) in Tab::all().iter().enumerate() {
-            let label = tab.label();
-            let w = pad_left + label.len() as u16 + pad_right;
-            if x >= pos && x < pos + w {
-                app.hover_tab = Some(tab);
-                if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                    app.tab = tab;
-                    app.mode = EditorMode::Command;
-                }
-                break;
+        // "?" help button is in the rightmost position of the tab bar row
+        // It occupies 5 columns from the right edge: "[?]  " → columns [width-6..width-1]
+        let help_col = area.x + area.width.saturating_sub(6);
+        if me.column >= help_col && me.column < area.x + area.width.saturating_sub(1) {
+            app.hover_help = true;
+            if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                app.help_open = !app.help_open;
+                app.help_page = 0;
             }
-            pos += w;
-            if i + 1 < Tab::all().len() {
-                pos += divider;
+        } else {
+            let x = me.column.saturating_sub(area.x + 1);
+            let divider = 3u16; // " │ "
+            let pad_left = 1u16;
+            let pad_right = 1u16;
+            let mut pos: u16 = 0;
+            for (i, &tab) in Tab::all().iter().enumerate() {
+                let label = tab.label();
+                let w = pad_left + label.len() as u16 + pad_right;
+                if x >= pos && x < pos + w {
+                    app.hover_tab = Some(tab);
+                    if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                        app.tab = tab;
+                        app.mode = EditorMode::Command;
+                    }
+                    break;
+                }
+                pos += w;
+                if i + 1 < Tab::all().len() {
+                    pos += divider;
+                }
             }
         }
     }
@@ -101,7 +120,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     // Cache tab interactions
     if let Tab::Cache = app.tab {
         update_cache_hover(app, me, area);
+        update_cache_run_status_hover(app, me, area);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            handle_cache_run_status_click(app, me, area);
             handle_cache_click(app, me, area);
         }
     }
@@ -232,79 +253,109 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
-fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
-    let status = run_status_area(app, area);
-    if me.row != status.y + 1 {
-        return;
-    }
-    if let Some(btn) = run_status_hit(app, status, me.column) {
-        match btn {
-            RunButton::View => {
-                app.run.show_registers = !app.run.show_registers;
+fn apply_run_button(app: &mut App, btn: RunButton) {
+    match btn {
+        RunButton::View => {
+            if app.run.show_bp_list {
+                app.run.show_bp_list = false;
+                app.run.show_registers = true;
+            } else if app.run.show_registers {
+                app.run.show_registers = false;
+            } else {
+                app.run.show_bp_list = true;
             }
-            RunButton::Format => {
-                app.run.fmt_mode = match app.run.fmt_mode {
-                    FormatMode::Hex => FormatMode::Dec,
-                    FormatMode::Dec => FormatMode::Str,
-                    FormatMode::Str => FormatMode::Hex,
-                };
+        }
+        RunButton::Format => {
+            app.run.fmt_mode = match app.run.fmt_mode {
+                FormatMode::Hex => FormatMode::Dec,
+                FormatMode::Dec => FormatMode::Str,
+                FormatMode::Str => FormatMode::Hex,
+            };
+        }
+        RunButton::Sign => {
+            if matches!(app.run.fmt_mode, FormatMode::Dec) {
+                app.run.show_signed = !app.run.show_signed;
             }
-            RunButton::Sign => {
-                if matches!(app.run.fmt_mode, FormatMode::Dec) {
-                    app.run.show_signed = !app.run.show_signed;
+        }
+        RunButton::Bytes => {
+            let next = match app.run.mem_view_bytes {
+                4 => 2,
+                2 => 1,
+                _ => 4,
+            };
+            app.run.mem_view_bytes = next;
+            if next > 1 {
+                let mask = !(next as u32 - 1);
+                app.run.mem_view_addr &= mask;
+            }
+        }
+        RunButton::Region => {
+            app.run.mem_region = match app.run.mem_region {
+                MemRegion::Data | MemRegion::Custom => {
+                    let sp = app.run.cpu.x[2];
+                    app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
+                    MemRegion::Stack
                 }
-            }
-            RunButton::Bytes => {
-                let next = match app.run.mem_view_bytes {
-                    4 => 2,
-                    2 => 1,
-                    _ => 4,
-                };
-                app.run.mem_view_bytes = next;
-                if next > 1 {
-                    let mask = !(next as u32 - 1);
-                    app.run.mem_view_addr &= mask;
+                _ => {
+                    app.run.mem_view_addr = app.run.data_base;
+                    MemRegion::Data
                 }
+            };
+            app.run.show_registers = false;
+            app.run.show_bp_list = false;
+        }
+        RunButton::Speed => {
+            if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) {
+                app.run.speed = app.run.speed.cycle();
             }
-            RunButton::Region => {
-                app.run.mem_region = match app.run.mem_region {
-                    MemRegion::Data => {
-                        app.run.mem_view_addr = app.run.cpu.x[2];
-                        MemRegion::Stack
-                    }
-                    _ => {
-                        app.run.mem_view_addr = app.run.data_base;
-                        MemRegion::Data
-                    }
-                };
+        }
+        RunButton::ExecCount => { app.run.show_exec_count = !app.run.show_exec_count; }
+        RunButton::InstrType => { app.run.show_instr_type = !app.run.show_instr_type; }
+        RunButton::State => {
+            if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
+                return;
             }
-            RunButton::Speed => {
-                // Locked while running in Instant mode
-                if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) {
-                    app.run.speed = app.run.speed.cycle();
-                }
-            }
-            RunButton::State => {
-                // Pause/resume blocked while running in Instant mode
-                if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
-                    return;
-                }
-                if app.run.is_running {
-                    app.run.is_running = false;
-                } else if !app.run.faulted {
-                    app.run.is_running = true;
-                }
+            if app.run.is_running {
+                app.run.is_running = false;
+            } else if !app.run.faulted {
+                app.run.is_running = true;
             }
         }
     }
 }
 
+fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let status = run_status_area(app, area);
+    if me.row != status.y + 1 { return; }
+    if let Some(btn) = run_status_hit(app, status, me.column) {
+        apply_run_button(app, btn);
+    }
+}
+
 fn update_run_status_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let status = run_status_area(app, area);
-    if me.row != status.y + 1 {
-        return;
-    }
+    if me.row != status.y + 1 { return; }
     app.hover_run_button = run_status_hit(app, status, me.column);
+}
+
+/// Area of the run-controls widget (always visible, above subtab content).
+fn cache_run_status_area(area: Rect) -> Rect {
+    let (_, _, run_controls, _, _) = cache_content_area(area);
+    run_controls
+}
+
+fn update_cache_run_status_hover(app: &mut App, me: MouseEvent, area: Rect) {
+    let status = cache_run_status_area(area);
+    if me.row != status.y + 1 { return; }
+    app.hover_run_button = run_status_hit(app, status, me.column);
+}
+
+fn handle_cache_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let status = cache_run_status_area(area);
+    if me.row != status.y + 1 { return; }
+    if let Some(btn) = run_status_hit(app, status, me.column) {
+        apply_run_button(app, btn);
+    }
 }
 
 fn run_status_area(app: &App, area: Rect) -> Rect {
@@ -319,13 +370,12 @@ fn run_status_area(app: &App, area: Rect) -> Rect {
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
             Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
         .split(root_chunks[1]);
-    run_chunks[1]
+    run_chunks[0]
 }
 
 fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
@@ -388,6 +438,14 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     skip(&mut pos, "  State ");
     let (state_start, state_end) = range(&mut pos, run_text);
 
+    let count_text = if app.run.show_exec_count { "ON" } else { "OFF" };
+    skip(&mut pos, "  Count ");
+    let (count_start, count_end) = range(&mut pos, count_text);
+
+    let type_text = if app.run.show_instr_type { "ON" } else { "OFF" };
+    skip(&mut pos, "  Type ");
+    let (type_start, type_end) = range(&mut pos, type_text);
+
     if col >= view_start && col < view_end {
         Some(RunButton::View)
     } else if !app.run.show_registers && col >= region_start && col < region_end {
@@ -406,6 +464,10 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
         Some(RunButton::Speed)
     } else if col >= state_start && col < state_end {
         Some(RunButton::State)
+    } else if col >= count_start && col < count_end {
+        Some(RunButton::ExecCount)
+    } else if col >= type_start && col < type_end {
+        Some(RunButton::InstrType)
     } else {
         None
     }
@@ -424,13 +486,12 @@ fn run_main_area(app: &App, area: Rect) -> Rect {
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
             Constraint::Length(5),
             Constraint::Min(0),
             Constraint::Length(app.run.console_height),
         ])
         .split(run_area);
-    run_chunks[2]
+    run_chunks[1]
 }
 
 fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
@@ -489,25 +550,50 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row >= inner.y
         && me.row < inner.y + inner.height
     {
-        if let Some(ref text) = app.editor.last_ok_text {
-            let rows = inner.height as usize;
-            let total = text.len();
-            let max_scroll = total.saturating_sub(rows);
-            if app.run.imem_scroll > max_scroll {
-                app.run.imem_scroll = max_scroll;
-            }
-            let row = (me.row - inner.y) as usize;
-            let idx = app.run.imem_scroll + row;
-            if idx < total {
-                app.run.hover_imem_addr = Some(app.run.base_pc + (idx as u32) * 4);
-            } else {
-                app.run.hover_imem_addr = None;
-            }
+        let rows = inner.height as usize;
+        let max_scroll = if let Some(ref text) = app.editor.last_ok_text {
+            text.len().saturating_sub(rows)
         } else {
-            app.run.hover_imem_addr = None;
+            (app.run.mem_size / 4).saturating_sub(rows)
+        };
+        if app.run.imem_scroll > max_scroll {
+            app.run.imem_scroll = max_scroll;
         }
+        let target_row = (me.row - inner.y) as usize;
+        let base = app.run.base_pc.saturating_add((app.run.imem_scroll as u32) * 4);
+        app.run.hover_imem_addr = addr_at_visual_row(base, target_row, app);
     } else {
         app.run.hover_imem_addr = None;
+    }
+}
+
+/// Map a visual row within the instruction panel to the instruction address at that row,
+/// accounting for block_comment and label header rows emitted by instruction_items().
+fn addr_at_visual_row(base: u32, target_row: usize, app: &App) -> Option<u32> {
+    let mem_end = if let Some(text) = &app.editor.last_ok_text {
+        app.run.base_pc.saturating_add((text.len() as u32).saturating_mul(4))
+    } else {
+        app.run.mem_size as u32
+    };
+    let mut vrow = 0usize;
+    let mut addr = base;
+    loop {
+        if addr >= mem_end || (addr as usize) + 4 > app.run.mem_size {
+            return None;
+        }
+        if app.run.block_comments.contains_key(&addr) {
+            if vrow == target_row { return Some(addr); }
+            vrow += 1;
+        }
+        if let Some(names) = app.run.labels.get(&addr) {
+            for _ in names {
+                if vrow == target_row { return Some(addr); }
+                vrow += 1;
+            }
+        }
+        if vrow == target_row { return Some(addr); }
+        vrow += 1;
+        addr = addr.wrapping_add(4);
     }
 }
 
@@ -903,7 +989,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
             return;
         }
         if let Some(ref text) = app.editor.last_ok_text {
-            let visible = imem.height.saturating_sub(2) as usize;
+            let visible = imem.height as usize;
             let total = text.len();
             let max_scroll = total.saturating_sub(visible);
             if app.run.imem_scroll > max_scroll {
@@ -1039,6 +1125,13 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
+fn handle_help_popup_mouse(app: &mut App, me: MouseEvent, _area: Rect) {
+    // Any left click closes the help popup (or could navigate pages)
+    if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+        app.help_open = false;
+    }
+}
+
 fn handle_exit_popup_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     let popup = centered_rect(area.width / 3, area.height / 4, area);
     if me.kind != MouseEventKind::Down(MouseButton::Left) {
@@ -1081,8 +1174,8 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
 
 // ── Cache tab mouse handlers ─────────────────────────────────────────────────
 
-/// Returns (level_selector, subtab_header, content, controls_bar).
-fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect) {
+/// Returns (level_selector, subtab_header, run_controls, content, controls_bar).
+fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(1)])
@@ -1092,15 +1185,16 @@ fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect) {
         .constraints([
             Constraint::Length(1), // level selector bar
             Constraint::Length(3), // subtab header
+            Constraint::Length(5), // run controls (always visible)
             Constraint::Min(0),    // content
             Constraint::Length(3), // shared controls bar
         ])
         .split(root[1]);
-    (parts[0], parts[1], parts[2], parts[3])
+    (parts[0], parts[1], parts[2], parts[3], parts[4])
 }
 
 fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
-    let (level_area, header_area, content_area, controls_area) = cache_content_area(area);
+    let (level_area, header_area, _, content_area, controls_area) = cache_content_area(area);
 
     // Reset all hover flags
     app.cache.hover_subtab_stats = false;
@@ -1108,6 +1202,8 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_subtab_view = false;
     app.cache.hover_reset = false;
     app.cache.hover_pause = false;
+    app.cache.hover_export_results = false;
+    app.cache.hover_compare = false;
     app.cache.hover_scope_i = false;
     app.cache.hover_scope_d = false;
     app.cache.hover_scope_both = false;
@@ -1116,6 +1212,7 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_preset_i = None;
     app.cache.hover_preset_d = None;
     app.cache.hover_config_field = None;
+    app.cache.hover_cpi_field = None;
     for h in app.cache.hover_level.iter_mut() { *h = false; }
     app.cache.hover_add_level = false;
     app.cache.hover_remove_level = false;
@@ -1145,16 +1242,18 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Shared controls bar — active for all subtabs
+    // Layout: " [Reset]  [Pause]  [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
+    // x=1..8  x=10..18  x=19..29         x=31..42          x=52..61  x=63..72   x=74..80
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
-        // " [Reset]  [Pause]    View: [I-Cache] [D-Cache] [Both]  ..."
-        // [Reset]=1..8  [Pause/Resume]=10..18  [I-Cache]=27..36  [D-Cache]=37..46  [Both]=47..53
         if x >= 1 && x < 8 { app.cache.hover_reset = true; }
-        else if x >= 10 && x < 18 { app.cache.hover_pause = true; }
-        else if x >= 27 && x < 36 { app.cache.hover_scope_i = true; }
-        else if x >= 37 && x < 46 { app.cache.hover_scope_d = true; }
-        else if x >= 47 && x < 53 { app.cache.hover_scope_both = true; }
+        else if x >= 10 && x < 19 { app.cache.hover_pause = true; }
+        else if x >= 19 && x < 31 { app.cache.hover_export_results = true; }
+        else if x >= 31 && x < 44 { app.cache.hover_compare = true; }
+        else if x >= 52 && x < 62 { app.cache.hover_scope_i = true; }
+        else if x >= 63 && x < 73 { app.cache.hover_scope_d = true; }
+        else if x >= 74 && x < 81 { app.cache.hover_scope_both = true; }
     }
 
     // Config panel controls
@@ -1162,21 +1261,28 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         let selected = app.cache.selected_level;
 
         if selected == 0 {
-            // L1 two-column layout
-            let half_w = content_area.width / 2;
+            // L1 three-column layout: I-Cache(38%) | D-Cache(38%) | CPI(24%)
+            let i_w = content_area.width * 38 / 100;
+            let d_w = content_area.width * 38 / 100;
+            let cpi_x = content_area.x + i_w + d_w;
 
             let fields_y0 = content_area.y + 1;
             let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
             if me.row >= fields_y0 && me.row < fields_y1 {
                 let row_idx = (me.row - fields_y0) as usize;
-                if let Some(field) = ConfigField::from_list_row(row_idx) {
-                    let is_icache = me.column < content_area.x + half_w;
+                if me.column >= cpi_x {
+                    // CPI panel hover
+                    if row_idx < 9 {
+                        app.cache.hover_cpi_field = Some(row_idx);
+                    }
+                } else if let Some(field) = ConfigField::from_list_row(row_idx) {
+                    let is_icache = me.column < content_area.x + i_w;
                     app.cache.hover_config_field = Some((is_icache, field));
                 }
             }
 
             let apply_y = content_area.y + content_area.height.saturating_sub(3);
-            if me.row == apply_y {
+            if me.row == apply_y && me.column < cpi_x {
                 let x = me.column.saturating_sub(content_area.x + 1);
                 if x >= 1 && x < 22 { app.cache.hover_apply = true; }
                 else if x >= 24 && x < 43 { app.cache.hover_apply_keep = true; }
@@ -1193,8 +1299,8 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
                     else if x >= 27 && x < 34 { Some(2) }
                     else { None }
                 };
-                app.cache.hover_preset_i = check_preset(content_area.x, half_w);
-                app.cache.hover_preset_d = check_preset(content_area.x + half_w, half_w);
+                app.cache.hover_preset_i = check_preset(content_area.x, i_w);
+                app.cache.hover_preset_d = check_preset(content_area.x + i_w, d_w);
             }
         } else {
             // L2+ single-column unified layout (centered, max 60 wide)
@@ -1264,7 +1370,7 @@ fn update_level_selector_hover(app: &mut App, me: MouseEvent, level_area: Rect) 
 }
 
 fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
-    let (level_area, header_area, content_area, controls_area) = cache_content_area(area);
+    let (level_area, header_area, _, content_area, controls_area) = cache_content_area(area);
 
     // Level selector bar clicks
     if me.row == level_area.y {
@@ -1287,11 +1393,12 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Shared controls bar — available in all subtabs
+    // Layout: " [Reset]  [Pause]  [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]"
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
         if x >= 1 && x < 8 { app.run.mem.reset_stats(); return; }
-        if x >= 10 && x < 18 {
+        if x >= 10 && x < 19 {
             if app.run.is_running {
                 app.run.is_running = false;
             } else if !app.run.faulted {
@@ -1299,10 +1406,12 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
             }
             return;
         }
+        if x >= 19 && x < 31 { do_export_results(app); return; }
+        if x >= 31 && x < 44 { do_compare_load(app);   return; }
         if app.cache.selected_level == 0 {
-            if x >= 27 && x < 36 { app.cache.scope = CacheScope::ICache; return; }
-            if x >= 37 && x < 46 { app.cache.scope = CacheScope::DCache; return; }
-            if x >= 47 && x < 53 { app.cache.scope = CacheScope::Both;   return; }
+            if x >= 52 && x < 62 { app.cache.scope = CacheScope::ICache; return; }
+            if x >= 63 && x < 73 { app.cache.scope = CacheScope::DCache; return; }
+            if x >= 74 && x < 81 { app.cache.scope = CacheScope::Both;   return; }
         }
     }
 
@@ -1343,14 +1452,25 @@ fn handle_level_selector_click(app: &mut App, me: MouseEvent, level_area: Rect) 
 }
 
 fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
-    let half_w = content_area.width / 2;
+    let i_w = content_area.width * 38 / 100;
+    let d_w = content_area.width * 38 / 100;
+    let cpi_x = content_area.x + i_w + d_w;
 
     let fields_y0 = content_area.y + 1;
     let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
     if me.row >= fields_y0 && me.row < fields_y1 {
         let row_idx = (me.row - fields_y0) as usize;
+        if me.column >= cpi_x {
+            // CPI field click: select + start editing
+            if row_idx < 9 {
+                app.cache.cpi_selected = row_idx;
+                app.cache.cpi_edit_buf = app.run.cpi_config.get(row_idx).to_string();
+                app.cache.cpi_editing = true;
+            }
+            return;
+        }
         if let Some(field) = ConfigField::from_list_row(row_idx) {
-            let is_icache = me.column < content_area.x + half_w;
+            let is_icache = me.column < content_area.x + i_w;
             if field.is_numeric() {
                 let initial = app.cache_field_value_str(is_icache, field);
                 app.cache.edit_field = Some((is_icache, field));
@@ -1370,7 +1490,7 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
     app.cache.edit_buf.clear();
 
     let apply_y = content_area.y + content_area.height.saturating_sub(3);
-    if me.row == apply_y {
+    if me.row == apply_y && me.column < cpi_x {
         let x = me.column.saturating_sub(content_area.x + 1);
         if x >= 1 && x < 22 {
             apply_l1_config(app, false);
@@ -1394,12 +1514,12 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
             else { None }
         };
         use crate::falcon::cache::cache_presets;
-        if let Some(idx) = apply_preset(content_area.x, half_w) {
+        if let Some(idx) = apply_preset(content_area.x, i_w) {
             app.cache.pending_icache = cache_presets(true)[idx].clone();
             app.cache.config_error = None;
             app.cache.config_status = None;
         }
-        if let Some(idx) = apply_preset(content_area.x + half_w, half_w) {
+        if let Some(idx) = apply_preset(content_area.x + i_w, d_w) {
             app.cache.pending_dcache = cache_presets(false)[idx].clone();
             app.cache.config_error = None;
             app.cache.config_status = None;

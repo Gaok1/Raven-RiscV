@@ -160,6 +160,107 @@ pub(super) struct CacheState {
     // For L2+: is_icache is ignored (unified), treated as false
     pub(super) edit_field: Option<(bool, ConfigField)>,
     pub(super) edit_buf: String,
+    // CPI config editing
+    pub(super) cpi_selected: usize, // 0-8 field index
+    pub(super) cpi_editing: bool,
+    pub(super) cpi_edit_buf: String,
+    pub(super) hover_cpi_field: Option<usize>,
+    // Export/Compare
+    pub(super) loaded_snapshot: Option<Box<CacheResultsSnapshot>>,
+    pub(super) hover_export_results: bool,
+    pub(super) hover_compare: bool,
+}
+
+// ── Simulation results snapshot ──────────────────────────────────────────────
+
+pub(super) struct LevelSnapshot {
+    pub name: String,
+    pub size: usize, pub line_size: usize, pub associativity: usize,
+    pub replacement: String, pub write_policy: String,
+    pub hit_latency: u64, pub miss_penalty: u64,
+    pub hits: u64, pub misses: u64, pub evictions: u64, pub writebacks: u64,
+    pub bytes_loaded: u64, pub bytes_stored: u64,
+    pub total_cycles: u64, pub ram_write_bytes: u64, pub amat: f64,
+}
+
+pub(super) struct CacheResultsSnapshot {
+    pub label: String,
+    pub instruction_count: u64, pub total_cycles: u64, pub base_cycles: u64,
+    pub cpi: f64, pub ipc: f64,
+    pub icache: LevelSnapshot, pub dcache: LevelSnapshot,
+    pub extra_levels: Vec<LevelSnapshot>,
+    pub cpi_config: CpiConfig,
+    pub miss_hotspots: Vec<(u32, u64)>,
+    pub hit_rate_history_i: Vec<(f64, f64)>,
+    pub hit_rate_history_d: Vec<(f64, f64)>,
+}
+
+// ── CPI (Cycles Per Instruction) configuration ───────────────────────────────
+
+/// Base execution cycles per instruction class.
+/// These are added on top of cache latency cycles.
+#[derive(Clone, Debug)]
+pub(super) struct CpiConfig {
+    pub alu:              u64,   // Add, sub, logic, shifts, lui, auipc, immediate variants = 1
+    pub mul:              u64,   // mul, mulh, mulhsu, mulhu = 3
+    pub div:              u64,   // div, divu, rem, remu = 20
+    pub load:             u64,   // lb, lh, lw, lbu, lhu (extra over cache) = 0
+    pub store:            u64,   // sb, sh, sw (extra over cache) = 0
+    pub branch_taken:     u64,   // branch when taken = 3
+    pub branch_not_taken: u64,   // branch when not taken = 1
+    pub jump:             u64,   // jal, jalr = 2
+    pub system:           u64,   // ecall, ebreak, halt = 10
+}
+
+impl Default for CpiConfig {
+    fn default() -> Self {
+        Self {
+            alu: 1, mul: 3, div: 20,
+            load: 0, store: 0,
+            branch_taken: 3, branch_not_taken: 1,
+            jump: 2, system: 10,
+        }
+    }
+}
+
+impl CpiConfig {
+    pub(super) fn field_names() -> &'static [&'static str] {
+        &["ALU", "MUL", "DIV", "Load+", "Store+", "Branch-T", "Branch-NT", "Jump", "System"]
+    }
+
+    pub(super) fn get(&self, idx: usize) -> u64 {
+        match idx {
+            0 => self.alu, 1 => self.mul, 2 => self.div,
+            3 => self.load, 4 => self.store,
+            5 => self.branch_taken, 6 => self.branch_not_taken,
+            7 => self.jump, 8 => self.system,
+            _ => 0,
+        }
+    }
+
+    pub(super) fn set(&mut self, idx: usize, val: u64) {
+        match idx {
+            0 => self.alu = val, 1 => self.mul = val, 2 => self.div = val,
+            3 => self.load = val, 4 => self.store = val,
+            5 => self.branch_taken = val, 6 => self.branch_not_taken = val,
+            7 => self.jump = val, 8 => self.system = val,
+            _ => {}
+        }
+    }
+
+    pub(super) fn descriptions() -> &'static [&'static str] {
+        &[
+            "add/sub/logic/shift/lui/auipc/imm",
+            "mul/mulh/mulhsu/mulhu",
+            "div/divu/rem/remu",
+            "load (extra over cache miss)",
+            "store (extra over cache)",
+            "branch when taken (pipeline flush)",
+            "branch when not taken",
+            "jal / jalr",
+            "ecall / ebreak / halt",
+        ]
+    }
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -224,6 +325,8 @@ pub(super) enum RunButton {
     Region,
     State,
     Speed,
+    ExecCount,
+    InstrType,
 }
 
 // ── State per tab ──────────────────────────────────────────────────────────────
@@ -241,6 +344,9 @@ pub(super) struct EditorState {
     pub(super) last_ok_data: Option<Vec<u8>>,
     pub(super) last_ok_data_base: Option<u32>,
     pub(super) last_ok_bss_size: Option<u32>,
+    pub(super) last_ok_comments: std::collections::HashMap<u32, String>,
+    pub(super) last_ok_block_comments: std::collections::HashMap<u32, String>,
+    pub(super) last_ok_labels: std::collections::HashMap<u32, Vec<String>>,
 
     // Compile diagnostics
     pub(super) diag_line: Option<usize>,
@@ -337,12 +443,8 @@ pub(super) struct RunState {
 
     // UI flags
     pub(super) show_trace: bool,
-    pub(super) show_stack: bool,
     pub(super) pinned_regs: Vec<u8>,
     pub(super) reg_cursor: usize, // 0 = PC, 1-32 = x0-x31
-
-    // Feature: raw hex toggle (Feature 1)
-    pub(super) show_raw_hex: bool,
 
     // Feature: block comments from source (Feature 4)
     pub(super) block_comments: std::collections::HashMap<u32, String>,
@@ -350,21 +452,32 @@ pub(super) struct RunState {
     // Feature: register write trace (Feature 8)
     pub(super) reg_last_write_pc: [Option<u32>; 32],
 
-    // Feature: jump to PC (Feature 9)
-    pub(super) goto_imem_open: bool,
-    pub(super) goto_imem_query: String,
-
     // Feature: breakpoint list view (Feature 10)
     pub(super) show_bp_list: bool,
 
     // Mouse hover row in register sidebar (visual row index, 0-based within inner area)
     pub(super) hover_reg_row: Option<usize>,
+
+    // CPI configuration
+    pub(super) cpi_config: CpiConfig,
+
+    // Instruction list display toggles
+    pub(super) show_exec_count: bool,
+    pub(super) show_instr_type: bool,
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Default)]
+pub(super) enum DocsPage {
+    #[default]
+    InstrRef,
+    RunGuide,
 }
 
 pub(super) struct DocsState {
     pub(super) scroll: usize,
     pub(super) search_open: bool,
     pub(super) search_query: String,
+    pub(super) page: DocsPage,
 }
 
 // ── Top-level app ──────────────────────────────────────────────────────────────
@@ -380,6 +493,11 @@ pub struct App {
 
     pub(super) show_exit_popup: bool,
     pub(super) should_quit: bool,
+
+    // Help popup
+    pub(super) help_open: bool,
+    pub(super) help_page: usize,
+    pub(super) hover_help: bool,
 
     // Mouse tracking (shared across tabs)
     pub(super) mouse_x: u16,
@@ -438,6 +556,9 @@ impl App {
                 last_ok_data: None,
                 last_ok_data_base: None,
                 last_ok_bss_size: None,
+                last_ok_comments: std::collections::HashMap::new(),
+                last_ok_block_comments: std::collections::HashMap::new(),
+                last_ok_labels: std::collections::HashMap::new(),
                 diag_line: None,
                 diag_msg: None,
                 diag_line_text: None,
@@ -502,18 +623,17 @@ impl App {
                 exec_trace: std::collections::VecDeque::new(),
                 reg_age: [255u8; 32],
                 show_trace: false,
-                show_stack: false,
                 pinned_regs: Vec::new(),
                 reg_cursor: 0,
-                show_raw_hex: false,
                 block_comments: std::collections::HashMap::new(),
                 reg_last_write_pc: [None; 32],
-                goto_imem_open: false,
-                goto_imem_query: String::new(),
                 show_bp_list: false,
                 hover_reg_row: None,
+                cpi_config: CpiConfig::default(),
+                show_exec_count: true,
+                show_instr_type: true,
             },
-            docs: DocsState { scroll: 0, search_open: false, search_query: String::new() },
+            docs: DocsState { scroll: 0, search_open: false, search_query: String::new(), page: DocsPage::InstrRef },
             cache: CacheState {
                 subtab: CacheSubtab::Stats,
                 scope: CacheScope::Both,
@@ -544,9 +664,19 @@ impl App {
                 config_status: None,
                 edit_field: None,
                 edit_buf: String::new(),
+                cpi_selected: 0,
+                cpi_editing: false,
+                cpi_edit_buf: String::new(),
+                hover_cpi_field: None,
+                loaded_snapshot: None,
+                hover_export_results: false,
+                hover_compare: false,
             },
             show_exit_popup: false,
             should_quit: false,
+            help_open: false,
+            help_page: 0,
+            hover_help: false,
             mouse_x: 0,
             mouse_y: 0,
             hover_tab: None,
@@ -649,6 +779,11 @@ impl App {
                 self.editor.last_ok_data = Some(prog.data.clone());
                 self.editor.last_ok_data_base = Some(prog.data_base);
                 self.editor.last_ok_bss_size = Some(prog.bss_size);
+                self.editor.last_ok_comments = prog.comments;
+                self.editor.last_ok_block_comments = prog.block_comments;
+                self.editor.last_ok_labels = prog.labels.clone();
+                self.editor.label_to_line = prog.label_to_line;
+                self.editor.line_to_addr = prog.line_addrs;
                 self.editor.last_assemble_msg = Some(format!(
                     "OK: {} instructions, {} data bytes, {} bss bytes",
                     prog.text.len(),
@@ -724,6 +859,10 @@ impl App {
             self.run.mem.invalidate_all();
             self.run.mem.reset_stats();
 
+            self.run.comments = self.editor.last_ok_comments.clone();
+            self.run.block_comments = self.editor.last_ok_block_comments.clone();
+            self.run.labels = self.editor.last_ok_labels.clone();
+
             let bss_sz = self.editor.last_ok_bss_size.unwrap_or(0);
             self.editor.last_assemble_msg = Some(format!(
                 "Loaded last successful build: {} instructions, {} data bytes, {} bss bytes.",
@@ -739,10 +878,9 @@ impl App {
     pub(super) fn restart_simulation(&mut self) {
         self.run.is_running = false;
         self.run.faulted = false;
-        self.run.goto_imem_open = false;
-        self.run.goto_imem_query.clear();
         self.run.reg_last_write_pc = [None; 32];
-        self.run.block_comments = std::collections::HashMap::new();
+        self.run.exec_counts.clear();
+        self.run.exec_trace.clear();
         self.load_last_ok_program();
     }
 
@@ -1035,6 +1173,10 @@ impl App {
         self.run.prev_x = self.run.cpu.x;
         self.run.prev_pc = self.run.cpu.pc;
         let step_pc = self.run.cpu.pc;
+
+        // Classify instruction BEFORE stepping (registers still hold pre-step values)
+        let cpi_cycles = classify_cpi_cycles(step_pc, &self.run.cpu, &self.run.mem, &self.run.cpi_config);
+
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
         }));
@@ -1050,6 +1192,7 @@ impl App {
                 false
             }
         };
+        self.run.mem.add_instruction_cycles(cpi_cycles);
         self.run.mem.snapshot_stats();
 
         // Track execution statistics
@@ -1076,10 +1219,10 @@ impl App {
             }
         }
 
-        // Auto-follow SP when stack view is active
-        if self.run.show_stack {
+        // Auto-follow SP when Stack region is active in the memory view
+        if self.run.mem_region == crate::ui::app::MemRegion::Stack {
             let sp = self.run.cpu.x[2];
-            self.run.mem_view_addr = sp.saturating_sub(sp % 4);
+            self.run.mem_view_addr = sp & !(self.run.mem_view_bytes - 1);
         }
 
         // Check breakpoints: stop if the new PC is a breakpoint
@@ -1150,6 +1293,82 @@ impl App {
             self.editor.buf.selection_anchor = Some((r, c));
             self.editor.buf.cursor_col = c + Editor::char_count(&word);
         }
+    }
+}
+
+/// Classify the instruction at `pc` and return its base CPI cycles.
+/// Branch taken/not-taken is determined from pre-step register values.
+fn classify_cpi_cycles(pc: u32, cpu: &crate::falcon::Cpu, mem: &crate::falcon::CacheController, cpi: &CpiConfig) -> u64 {
+    use crate::falcon::instruction::Instruction::*;
+    let word = match mem.peek32(pc) {
+        Ok(w) => w,
+        Err(_) => return 1,
+    };
+    match crate::falcon::decoder::decode(word) {
+        Ok(Add  { .. } | Sub   { .. } | And   { .. } | Or  { .. } | Xor  { .. } |
+           Sll  { .. } | Srl   { .. } | Sra   { .. } | Slt { .. } | Sltu { .. } |
+           Addi { .. } | Andi  { .. } | Ori   { .. } | Xori{ .. } | Slti { .. } |
+           Sltiu{ .. } | Slli  { .. } | Srli  { .. } | Srai{ .. } |
+           Lui  { .. } | Auipc { .. }) => cpi.alu,
+        Ok(Mul  { .. } | Mulh  { .. } | Mulhsu{ .. } | Mulhu{ .. }) => cpi.mul,
+        Ok(Div  { .. } | Divu  { .. } | Rem   { .. } | Remu { .. }) => cpi.div,
+        Ok(Lb   { .. } | Lh    { .. } | Lw    { .. } | Lbu  { .. } | Lhu  { .. }) => cpi.load,
+        Ok(Sb   { .. } | Sh    { .. } | Sw    { .. }) => cpi.store,
+        Ok(Jal  { .. } | Jalr  { .. }) => cpi.jump,
+        Ok(Ecall | Ebreak | Halt) => cpi.system,
+        Ok(Beq  { rs1, rs2, .. }) => if cpu.x[rs1 as usize] == cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bne  { rs1, rs2, .. }) => if cpu.x[rs1 as usize] != cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Blt  { rs1, rs2, .. }) => if (cpu.x[rs1 as usize] as i32) <  (cpu.x[rs2 as usize] as i32) { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bge  { rs1, rs2, .. }) => if (cpu.x[rs1 as usize] as i32) >= (cpu.x[rs2 as usize] as i32) { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bltu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] <  cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bgeu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] >= cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        _ => 1,
+    }
+}
+
+/// Classify instruction for display (doesn't need mutable mem, uses word directly).
+pub(super) fn classify_cpi_for_display(word: u32, _addr: u32, cpu: &crate::falcon::Cpu, cpi: &CpiConfig) -> u64 {
+    use crate::falcon::instruction::Instruction::*;
+    match crate::falcon::decoder::decode(word) {
+        Ok(Add  { .. } | Sub   { .. } | And   { .. } | Or  { .. } | Xor  { .. } |
+           Sll  { .. } | Srl   { .. } | Sra   { .. } | Slt { .. } | Sltu { .. } |
+           Addi { .. } | Andi  { .. } | Ori   { .. } | Xori{ .. } | Slti { .. } |
+           Sltiu{ .. } | Slli  { .. } | Srli  { .. } | Srai{ .. } |
+           Lui  { .. } | Auipc { .. }) => cpi.alu,
+        Ok(Mul  { .. } | Mulh  { .. } | Mulhsu{ .. } | Mulhu{ .. }) => cpi.mul,
+        Ok(Div  { .. } | Divu  { .. } | Rem   { .. } | Remu { .. }) => cpi.div,
+        Ok(Lb   { .. } | Lh    { .. } | Lw    { .. } | Lbu  { .. } | Lhu  { .. }) => cpi.load,
+        Ok(Sb   { .. } | Sh    { .. } | Sw    { .. }) => cpi.store,
+        Ok(Jal  { .. } | Jalr  { .. }) => cpi.jump,
+        Ok(Ecall | Ebreak | Halt) => cpi.system,
+        Ok(Beq  { rs1, rs2, .. }) => if cpu.x[rs1 as usize] == cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bne  { rs1, rs2, .. }) => if cpu.x[rs1 as usize] != cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Blt  { rs1, rs2, .. }) => if (cpu.x[rs1 as usize] as i32) <  (cpu.x[rs2 as usize] as i32) { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bge  { rs1, rs2, .. }) => if (cpu.x[rs1 as usize] as i32) >= (cpu.x[rs2 as usize] as i32) { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bltu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] <  cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Bgeu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] >= cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        _ => 1,
+    }
+}
+
+/// Return the CPI class label for an instruction word (for display purposes).
+pub(super) fn cpi_class_label(word: u32) -> &'static str {
+    use crate::falcon::instruction::Instruction::*;
+    match crate::falcon::decoder::decode(word) {
+        Ok(Add  { .. } | Sub   { .. } | And   { .. } | Or  { .. } | Xor  { .. } |
+           Sll  { .. } | Srl   { .. } | Sra   { .. } | Slt { .. } | Sltu { .. } |
+           Addi { .. } | Andi  { .. } | Ori   { .. } | Xori{ .. } | Slti { .. } |
+           Sltiu{ .. } | Slli  { .. } | Srli  { .. } | Srai{ .. } |
+           Lui  { .. } | Auipc { .. }) => "ALU",
+        Ok(Mul  { .. } | Mulh  { .. } | Mulhsu{ .. } | Mulhu{ .. }) => "MUL",
+        Ok(Div  { .. } | Divu  { .. } | Rem   { .. } | Remu { .. }) => "DIV",
+        Ok(Lb   { .. } | Lh    { .. } | Lw    { .. } | Lbu  { .. } | Lhu  { .. }) => "Load",
+        Ok(Sb   { .. } | Sh    { .. } | Sw    { .. }) => "Store",
+        Ok(Jal  { .. } | Jalr  { .. }) => "Jump",
+        Ok(Ecall | Ebreak | Halt) => "System",
+        Ok(Beq  { .. } | Bne   { .. } | Blt   { .. } |
+           Bge  { .. } | Bltu  { .. } | Bgeu  { .. }) => "Branch",
+        _ => "?",
     }
 }
 

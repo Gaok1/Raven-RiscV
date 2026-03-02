@@ -4,7 +4,7 @@ use comfy_table::{
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 
-use super::App;
+use super::{App, DocsPage};
 
 #[derive(Clone, Copy)]
 struct DocRow {
@@ -93,6 +93,84 @@ const DOCS: &[DocRow] = &[
     DocRow { ty: "Pseudo", mnemonic: "readHalf", operands: "label", desc: "Read number and store 2 bytes at label (little-endian)", expands: "addi a7, x0, 1011; lui a0, hi; addi a0, a0, lo; ecall" },
     DocRow { ty: "Pseudo", mnemonic: "readWord", operands: "label", desc: "Read number and store 4 bytes at label (little-endian)", expands: "addi a7, x0, 1012; lui a0, hi; addi a0, a0, lo; ecall" },
 ];
+
+// ── Run Guide ─────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+struct RunRow {
+    key: &'static str,
+    feature: &'static str,
+    desc: &'static str,
+}
+
+const RUN_GUIDE: &[RunRow] = &[
+    // ── Execution ──
+    RunRow { key: "F5 / Space",   feature: "Run / Pause",         desc: "Start continuous execution or pause" },
+    RunRow { key: "F10 / Enter",  feature: "Step",                desc: "Execute one instruction" },
+    RunRow { key: "F8",           feature: "Step-over",           desc: "Step over call/jump (runs until next PC)" },
+    RunRow { key: "F9",           feature: "Breakpoint",          desc: "Toggle breakpoint at current PC" },
+    RunRow { key: "R",            feature: "Reset",               desc: "Restart program from the beginning" },
+    // ── Sidebar views ──
+    RunRow { key: "v",            feature: "View cycle",          desc: "Cycle sidebar: RAM → Registers → Stack → Breakpoints → RAM" },
+    RunRow { key: "k",            feature: "Stack view",          desc: "Jump directly to Stack sidebar view (memory ±N words around SP)" },
+    // ── Format & display ──
+    RunRow { key: "f",            feature: "Format",              desc: "Cycle memory/register display: HEX → DEC → STR" },
+    RunRow { key: "s",            feature: "Signed",              desc: "Toggle signed / unsigned decimal display" },
+    RunRow { key: "x",            feature: "Raw hex",             desc: "Toggle raw hex for instructions (bypass disassembly)" },
+    RunRow { key: "b",            feature: "Byte width",          desc: "Cycle memory-view cell width: 4 bytes → 2 → 1 → 4" },
+    // ── Navigation ──
+    RunRow { key: "g",            feature: "Goto",                desc: "Open address bar: jump instruction view to any 0xADDR" },
+    RunRow { key: "↑ / ↓",        feature: "Cursor",              desc: "Move cursor in instruction list or register list" },
+    RunRow { key: "PgUp / PgDn",  feature: "Scroll",              desc: "Scroll instruction list or memory view" },
+    RunRow { key: "Home",         feature: "Jump to PC",          desc: "Scroll instruction list back to current PC" },
+    RunRow { key: "Enter",        feature: "Follow label",        desc: "In instruction list: jump to branch/jump target" },
+    // ── Registers ──
+    RunRow { key: "p / P",        feature: "Pin register",        desc: "Pin/unpin register at cursor to top of sidebar (keyboard)" },
+    RunRow { key: "click",        feature: "Pin register",        desc: "Left-click a register row to pin/unpin it" },
+    RunRow { key: "hover",        feature: "Hover highlight",     desc: "Mouse hover highlights register row in green" },
+    RunRow { key: "t",            feature: "Trace panel",         desc: "Toggle register write-trace panel below instruction list" },
+    // ── Memory regions ──
+    RunRow { key: "1–5",          feature: "Memory region",       desc: "Jump memory view: 1=TEXT 2=DATA 3=BSS 4=HEAP 5=STACK" },
+    // ── Sidebar collapse ──
+    RunRow { key: "[ / ]",        feature: "Collapse panels",     desc: "Collapse/expand sidebar or details panel" },
+    // ── Instruction details ──
+    RunRow { key: "(auto)",       feature: "Type badge",          desc: "Details panel shows [R]/[I]/[S]/[B]/[U]/[J] for instruction format" },
+    RunRow { key: "(auto)",       feature: "Heat color",          desc: "Instruction list highlights hot instructions by exec count" },
+    RunRow { key: "(auto)",       feature: "Effective address",   desc: "Load/store shows computed effective address = rs1 + imm" },
+    RunRow { key: "(auto)",       feature: "RAW hazard",          desc: "Details panel warns if current instruction reads a register written by the previous one" },
+    RunRow { key: "(auto)",       feature: "Write trace",         desc: "Details panel shows which instruction last wrote each source register" },
+    RunRow { key: "(auto)",       feature: "Branch outcome",      desc: "Details panel shows Taken / Not taken for branch instructions" },
+    // ── Editor hints ──
+    RunRow { key: "##!",          feature: "Block comment",       desc: "Lines starting with ##! appear as annotated blocks in the instruction list" },
+];
+
+fn build_run_guide_string(width: u16) -> String {
+    let mut table = ATable::new();
+    table.load_preset(ASCII_BORDERS_ONLY);
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+    if width > 0 {
+        table.set_width(width);
+    }
+    table.set_header(ARow::from(vec![
+        ACell::new("Key / Trigger"),
+        ACell::new("Feature"),
+        ACell::new("Description"),
+    ]));
+    for r in RUN_GUIDE {
+        table.add_row(ARow::from(vec![
+            ACell::new(r.key),
+            ACell::new(r.feature),
+            ACell::new(r.desc),
+        ]));
+    }
+    table.to_string()
+}
+
+pub(crate) fn run_guide_line_count(width: u16) -> usize {
+    build_run_guide_string(width).lines().count().saturating_sub(4)
+}
+
+// ── Instruction reference ──────────────────────────────────────────────────────
 
 fn build_docs_table_string(width: u16) -> String {
     build_docs_table_filtered(width, "")
@@ -211,6 +289,38 @@ pub(crate) fn docs_body_line_count(width: u16) -> usize {
 }
 
 pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
+    match app.docs.page {
+        DocsPage::RunGuide => render_run_guide(f, area, app),
+        DocsPage::InstrRef => render_instr_ref(f, area, app),
+    }
+}
+
+fn render_run_guide(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let header = vec![
+        Line::from(vec![
+            Span::styled("Run Tab — Controls & Features", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow)),
+            Span::styled("  Tab=switch page  Up/Down/PgUp/PgDn scroll", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(Span::styled(
+            "(auto) = shown automatically in the details panel, no key required",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    f.render_widget(Paragraph::new(header), chunks[0]);
+
+    let table_area = chunks[1];
+    if table_area.height == 0 || table_area.width == 0 { return; }
+
+    let table_str = build_run_guide_string(table_area.width);
+    render_scrollable_table(f, table_area, &table_str, app.docs.scroll);
+}
+
+fn render_instr_ref(f: &mut Frame, area: Rect, app: &App) {
     // Reserve 1 extra line for search bar if open
     let search_bar_h: u16 = if app.docs.search_open { 1 } else { 0 };
 
@@ -232,8 +342,12 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
     let meta_lines = vec![
         Line::from(vec![
             Span::styled(
-                "Instruction Reference • Up/Down/PgUp/PgDn scroll",
+                "Instruction Reference",
                 Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  Tab=switch page  Up/Down/PgUp/PgDn scroll",
+                Style::default().fg(Color::DarkGray),
             ),
             Span::styled(search_hint, Style::default().fg(Color::DarkGray)),
         ]),
@@ -275,19 +389,23 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
     } else {
         build_docs_table_string(table_area.width)
     };
+    render_scrollable_table(f, table_area, &table_str, app.docs.scroll);
+}
+
+fn render_scrollable_table(f: &mut Frame, area: Rect, table_str: &str, scroll: usize) {
     let all_lines: Vec<&str> = table_str.lines().collect();
 
     if all_lines.is_empty() {
         return;
     }
 
-    if all_lines.len() < 4 || table_area.height < 4 {
+    if all_lines.len() < 4 || area.height < 4 {
         let lines = all_lines
             .iter()
-            .take(table_area.height as usize)
+            .take(area.height as usize)
             .map(|l| style_table_line(l))
             .collect::<Vec<_>>();
-        f.render_widget(Paragraph::new(lines), table_area);
+        f.render_widget(Paragraph::new(lines), area);
         return;
     }
 
@@ -295,19 +413,19 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
     let footer_line = all_lines[all_lines.len() - 1];
     let body_lines = &all_lines[3..all_lines.len() - 1];
 
-    let viewport_h = table_area.height.saturating_sub(4) as usize;
+    let viewport_h = area.height.saturating_sub(4) as usize;
     if viewport_h == 0 {
         let lines = header_lines
             .iter()
             .map(|l| style_table_line(l))
             .chain(std::iter::once(style_table_line(footer_line)))
             .collect::<Vec<_>>();
-        f.render_widget(Paragraph::new(lines), table_area);
+        f.render_widget(Paragraph::new(lines), area);
         return;
     }
 
     let max_start = body_lines.len().saturating_sub(viewport_h);
-    let start = app.docs.scroll.min(max_start);
+    let start = scroll.min(max_start);
     let end = (start + viewport_h).min(body_lines.len());
 
     let mut lines = Vec::with_capacity(3 + viewport_h + 1);
@@ -321,5 +439,5 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
 
     lines.push(style_table_line(footer_line));
 
-    f.render_widget(Paragraph::new(lines), table_area);
+    f.render_widget(Paragraph::new(lines), area);
 }

@@ -3,7 +3,6 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 
 use super::App;
-use super::formatting::format_u32_value;
 use super::instruction_details::disasm_word;
 use super::memory::imem_address_in_range;
 
@@ -15,18 +14,8 @@ pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
 
     f.render_widget(block, area);
     f.render_widget(List::new(items), inner);
-    render_instruction_hover(f, inner, base, app);
     render_instruction_drag_arrow(f, area, app);
 
-    // Feature 9: goto bar overlay
-    if app.run.goto_imem_open {
-        let bar_area = Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1);
-        let display = format!("Go to: 0x{}", app.run.goto_imem_query);
-        f.render_widget(
-            Paragraph::new(display).style(Style::default().fg(Color::Black).bg(Color::LightCyan)),
-            bar_area,
-        );
-    }
 }
 
 fn instruction_block(app: &App) -> Block<'static> {
@@ -49,7 +38,7 @@ fn instruction_list_base(app: &App) -> u32 {
 }
 
 fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>> {
-    let lines = inner.height.saturating_sub(2) as u32;
+    let lines = inner.height as u32;
     let mut items = Vec::new();
     let mut remaining = lines;
     let mut addr = base;
@@ -58,8 +47,11 @@ fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>
         // Feature 4: block comment separator
         if let Some(bc) = app.run.block_comments.get(&addr) {
             if remaining == 0 { break; }
+            let is_hover = app.run.hover_imem_addr == Some(addr);
+            let bc_style = Style::default().fg(Color::Rgb(130, 220, 180))
+                .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
             items.push(ListItem::new(Line::from(vec![
-                Span::styled(format!("▌ {bc}"), Style::default().fg(Color::Rgb(130, 220, 180))),
+                Span::styled(format!("▌ {bc}"), bc_style),
             ])));
             remaining -= 1;
         }
@@ -68,9 +60,12 @@ fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>
         if let Some(label_names) = app.run.labels.get(&addr) {
             for name in label_names {
                 if remaining == 0 { break; }
+                let is_hover = app.run.hover_imem_addr == Some(addr);
+                let lbl_style = Style::default().fg(Color::Yellow)
+                    .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
                 items.push(ListItem::new(
                     Line::from(vec![
-                        Span::styled(format!("{name}:"), Style::default().fg(Color::Yellow)),
+                        Span::styled(format!("{name}:"), lbl_style),
                     ])
                 ));
                 remaining -= 1;
@@ -147,11 +142,14 @@ fn heat_color(n: u64) -> Color {
     }
 }
 
+const HOVER_BG: Color = Color::Rgb(38, 48, 72);
+
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let word = app.run.mem.peek32(addr).unwrap_or(0);
     let is_bp = app.run.breakpoints.contains(&addr);
     let bp_marker = if is_bp { "●" } else { " " };
     let is_pc = addr == app.run.cpu.pc;
+    let is_hover = !is_pc && app.run.hover_imem_addr == Some(addr);
     let marker = if is_pc { "▶" } else { bp_marker };
     let disasm = disasm_word(word);
 
@@ -165,21 +163,17 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         (None, None)
     };
 
-    // Feature 1: raw hex toggle
-    let addr_part = if app.run.show_raw_hex {
-        format!("{marker} 0x{addr:08x}: 0x{word:08x}  {disasm}")
-    } else {
-        let value = format_u32_value(word, app.run.fmt_mode, app.run.show_signed);
-        format!("{marker} 0x{addr:08x}: {value}  {disasm}")
-    };
+    let addr_part = format!("{marker} 0x{addr:08x}:  {disasm}");
 
     // Build span list
     let mut spans: Vec<Span<'static>> = Vec::new();
 
-    // Feature 2: type badge (before main text)
-    let (badge_text, badge_color) = type_badge(word);
-    spans.push(Span::styled(badge_text.to_string(), Style::default().fg(badge_color)));
-    spans.push(Span::raw(" "));
+    // Type badge (before main text) — shown only if enabled
+    if app.run.show_instr_type {
+        let (badge_text, badge_color) = type_badge(word);
+        spans.push(Span::styled(badge_text.to_string(), Style::default().fg(badge_color)));
+        spans.push(Span::raw(" "));
+    }
 
     // Main instruction text
     if let Some(comment) = app.run.comments.get(&addr) {
@@ -194,8 +188,8 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         spans.push(Span::raw(addr_part));
     }
 
-    // Feature 3: heat coloring on exec count
-    if exec_count > 0 {
+    // Heat coloring on exec count — shown only if enabled
+    if app.run.show_exec_count && exec_count > 0 {
         spans.push(Span::styled(
             format!(" \u{d7}{exec_count}"),
             Style::default().fg(heat_color(exec_count)),
@@ -220,35 +214,10 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
 
     let line = Line::from(spans);
     let mut style = Style::default();
+    if is_hover { style = style.bg(HOVER_BG); }
     if let Some(bg) = line_bg { style = style.bg(bg); }
     if let Some(fg) = line_fg { style = style.fg(fg); }
     ListItem::new(line).style(style)
-}
-
-fn render_instruction_hover(f: &mut Frame, inner: Rect, base: u32, app: &App) {
-    if let Some(rect) = hover_highlight(inner, base, app) {
-        let bar = Paragraph::new(" ".repeat(rect.width as usize))
-            .style(Style::default().bg(Color::Rgb(180, 230, 255)));
-        f.render_widget(bar, rect);
-    }
-}
-
-fn hover_highlight(inner: Rect, base: u32, app: &App) -> Option<Rect> {
-    let addr = app.run.hover_imem_addr?;
-    let visible_rows = inner.height.saturating_sub(2) as u32;
-    let end_addr = base.saturating_add(visible_rows.saturating_mul(4));
-
-    if addr < base || addr >= end_addr {
-        return None;
-    }
-
-    let row = (addr.saturating_sub(base) / 4) as u16;
-    let seg_width = 2u16.min(inner.width);
-    if seg_width == 0 {
-        None
-    } else {
-        Some(Rect::new(inner.x, inner.y + row, seg_width, 1))
-    }
 }
 
 fn render_instruction_drag_arrow(f: &mut Frame, area: Rect, app: &App) {

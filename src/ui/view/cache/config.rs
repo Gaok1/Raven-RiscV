@@ -6,21 +6,82 @@ use ratatui::{
 };
 
 use crate::falcon::cache::{CacheConfig, InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
-use crate::ui::app::{App, ConfigField};
+use crate::ui::app::{App, ConfigField, CpiConfig};
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     if app.cache.selected_level == 0 {
-        // L1: two-column layout (I-Cache | D-Cache) — unchanged
+        // L1: three-column layout (I-Cache | D-Cache | CPI Config)
         let cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints([Constraint::Percentage(38), Constraint::Percentage(38), Constraint::Percentage(24)])
             .split(area);
         render_cache_config_panel(f, cols[0], app, true);
         render_cache_config_panel(f, cols[1], app, false);
+        render_cpi_panel(f, cols[2], app);
     } else {
         // L2+: single-column unified config
         render_unified_config(f, area, app, app.cache.selected_level - 1);
     }
+}
+
+// ── CPI Config panel ─────────────────────────────────────────────────────────
+
+fn render_cpi_panel(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled("CPI Config", Style::default().fg(Color::Rgb(100, 220, 180)).bold()));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.height == 0 { return; }
+
+    let names = CpiConfig::field_names();
+    let descs = CpiConfig::descriptions();
+    let selected = app.cache.cpi_selected;
+    let editing = app.cache.cpi_editing;
+
+    let hover = app.cache.hover_cpi_field;
+    let items: Vec<ListItem> = names.iter().enumerate().map(|(i, &name)| {
+        let val = if editing && i == selected {
+            format!("{}_", app.cache.cpi_edit_buf)
+        } else {
+            format!("{}", app.run.cpi_config.get(i))
+        };
+        let desc = descs.get(i).copied().unwrap_or("");
+        let is_sel = i == selected;
+        let is_hov = hover == Some(i);
+
+        let name_style = if is_sel {
+            Style::default().fg(Color::Black).bg(Color::Rgb(100, 220, 180)).bold()
+        } else if is_hov {
+            Style::default().fg(Color::Rgb(100, 220, 180)).bg(Color::Rgb(30, 50, 40))
+        } else {
+            Style::default().fg(Color::Rgb(100, 220, 180))
+        };
+        let val_style = if is_sel && editing {
+            Style::default().fg(Color::Yellow).bold()
+        } else if is_sel || is_hov {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let desc_style = if is_hov {
+            Style::default().fg(Color::Gray)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let line = Line::from(vec![
+            Span::styled(format!("{name:<10}"), name_style),
+            Span::styled(format!("{val:>4}  "), val_style),
+            Span::styled(desc.to_string(), desc_style),
+        ]);
+        ListItem::new(line)
+    }).collect();
+
+    f.render_widget(List::new(items), inner);
 }
 
 fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool) {

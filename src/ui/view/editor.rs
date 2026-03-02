@@ -458,6 +458,13 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
         }
         if ci == ws {
             let trimmed = &s[ws..];
+            if trimmed.starts_with("##!") {
+                // Block comment separator — bold green
+                let mut v = Vec::new();
+                if ws > 0 { v.push(Span::raw(s[..ws].to_string())); }
+                v.push(Span::styled(s[ws..].to_string(), Style::default().fg(Color::Rgb(80, 180, 80)).add_modifier(Modifier::BOLD)));
+                return v;
+            }
             if trimmed.starts_with("#!") {
                 let mut v = Vec::new();
                 if ws > 0 { v.push(Span::raw(s[..ws].to_string())); }
@@ -540,7 +547,9 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
 
     // Append the comment part; #! visible comments get a distinct color
     if !comment.is_empty() {
-        if comment.starts_with("#!") {
+        if comment.starts_with("##!") {
+            out.push(Span::styled(comment.to_string(), Style::default().fg(Color::Rgb(80, 180, 80)).add_modifier(Modifier::BOLD)));
+        } else if comment.starts_with("#!") {
             out.push(Span::styled("#!", Style::default().fg(Color::Rgb(100, 200, 100))));
             out.push(Span::styled(&comment[2..], Style::default().fg(Color::Rgb(160, 220, 140))));
         } else {

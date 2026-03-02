@@ -378,6 +378,15 @@ impl Cache {
         if line.dirty { Some(line.data[offset]) } else { None }
     }
 
+    /// Returns Some(dirty) if this address is present in the cache, None if not.
+    pub fn has_line(&self, addr: u32) -> Option<bool> {
+        if !self.config.is_valid_config() { return None; }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        let way = self.sets[idx].lookup(tag)?;
+        Some(self.sets[idx].lines[way].dirty)
+    }
+
     /// Allocate a line (read-only path — I-cache, no dirty eviction writes).
     fn allocate_ro(&mut self, addr: u32, ram: &Ram) -> Result<(), FalconError> {
         if !self.config.is_valid_config() {
@@ -768,6 +777,8 @@ pub struct CacheController {
     /// Extra unified cache levels: extra_levels[0]=L2, extra_levels[1]=L3, …
     pub extra_levels: Vec<Cache>,
     pub instruction_count: u64,
+    /// Base instruction-execution cycles (not cache): set via add_instruction_cycles().
+    pub extra_cycles: u64,
     step_count: u64,
 }
 
@@ -779,8 +790,14 @@ impl CacheController {
             dcache: Cache::new(dcfg),
             extra_levels: extra_cfgs.into_iter().map(Cache::new).collect(),
             instruction_count: 0,
+            extra_cycles: 0,
             step_count: 0,
         }
+    }
+
+    /// Accumulate base instruction-execution cycles (not cache latency).
+    pub fn add_instruction_cycles(&mut self, cycles: u64) {
+        self.extra_cycles += cycles;
     }
 
     /// Called once per executed instruction to record history snapshots.
@@ -818,6 +835,7 @@ impl CacheController {
             level.reset_stats();
         }
         self.instruction_count = 0;
+        self.extra_cycles = 0;
         self.step_count = 0;
     }
 
@@ -829,7 +847,7 @@ impl CacheController {
     }
 
     pub fn total_program_cycles(&self) -> u64 {
-        let mut total = self.icache.stats.total_cycles + self.dcache.stats.total_cycles;
+        let mut total = self.icache.stats.total_cycles + self.dcache.stats.total_cycles + self.extra_cycles;
         for level in &self.extra_levels {
             total += level.stats.total_cycles;
         }
@@ -947,6 +965,49 @@ impl CacheController {
         self.total_program_cycles() as f64 / self.instruction_count as f64
     }
 
+    pub fn ipc(&self) -> f64 {
+        let cpi = self.overall_cpi();
+        if cpi == 0.0 { 0.0 } else { 1.0 / cpi }
+    }
+
+    /// AMAT for I-cache hierarchy (hierarchical formula).
+    pub fn icache_amat(&self) -> f64 {
+        let hit_lat = self.icache.config.hit_latency as f64;
+        let total = self.icache.stats.total_accesses();
+        let miss_rate = if total == 0 { 0.0 } else { self.icache.stats.misses as f64 / total as f64 };
+        if self.extra_levels.is_empty() {
+            hit_lat + miss_rate * (self.icache.config.miss_penalty + self.icache.config.line_transfer_cycles()) as f64
+        } else {
+            hit_lat + miss_rate * self.extra_level_amat(0)
+        }
+    }
+
+    /// AMAT for D-cache hierarchy (hierarchical formula).
+    pub fn dcache_amat(&self) -> f64 {
+        let hit_lat = self.dcache.config.hit_latency as f64;
+        let total = self.dcache.stats.total_accesses();
+        let miss_rate = if total == 0 { 0.0 } else { self.dcache.stats.misses as f64 / total as f64 };
+        if self.extra_levels.is_empty() {
+            hit_lat + miss_rate * (self.dcache.config.miss_penalty + self.dcache.config.line_transfer_cycles()) as f64
+        } else {
+            hit_lat + miss_rate * self.extra_level_amat(0)
+        }
+    }
+
+    /// Recursive AMAT helper for extra cache levels.
+    fn extra_level_amat(&self, idx: usize) -> f64 {
+        let level = &self.extra_levels[idx];
+        let hit_lat = level.config.hit_latency as f64;
+        let total = level.stats.total_accesses();
+        let miss_rate = if total == 0 { 0.0 } else { level.stats.misses as f64 / total as f64 };
+        let next_penalty = if idx + 1 < self.extra_levels.len() {
+            self.extra_level_amat(idx + 1)
+        } else {
+            (level.config.miss_penalty + level.config.line_transfer_cycles()) as f64
+        };
+        hit_lat + miss_rate * next_penalty
+    }
+
     /// Direct RAM read (no cache tracking) — used by UI rendering.
     #[allow(dead_code)]
     pub fn peek8(&self, addr: u32) -> Result<u8, FalconError> {
@@ -982,6 +1043,20 @@ impl CacheController {
     /// True if any byte in [addr, addr+bytes) is dirty in D-cache.
     pub fn is_dirty_cached(&self, addr: u32, bytes: u32) -> bool {
         (0..bytes).any(|i| self.dcache.peek_dirty(addr.wrapping_add(i)).is_some())
+    }
+
+    /// Returns `Some((level, dirty))` if `addr`'s cache line is present in the D-cache hierarchy.
+    /// `level` is 1-based (1 = L1 D-cache, 2 = L2, …). No side effects.
+    pub fn data_cache_location(&self, addr: u32) -> Option<(u8, bool)> {
+        if let Some(dirty) = self.dcache.has_line(addr) {
+            return Some((1, dirty));
+        }
+        for (i, level) in self.extra_levels.iter().enumerate() {
+            if let Some(dirty) = level.has_line(addr) {
+                return Some((i as u8 + 2, dirty));
+            }
+        }
+        None
     }
 }
 

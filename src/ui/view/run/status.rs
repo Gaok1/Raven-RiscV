@@ -4,7 +4,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use super::{App, FormatMode, MemRegion, RunButton, RunSpeed};
 
-pub(super) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
+pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     let border_color = if app.hover_run_button.is_some() {
         Color::LightCyan
     } else {
@@ -22,7 +22,15 @@ pub(super) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn status_lines(app: &App) -> Vec<Line<'static>> {
-    vec![Line::from(status_spans(app)), cycle_line(app), command_line(app)]
+    let hint = if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
+        Line::from(Span::styled(
+            "Running at full speed... press R to restart or wait for completion",
+            Style::default().fg(Color::Yellow),
+        ))
+    } else {
+        Line::from("") // hints removed — use [?] help button
+    };
+    vec![Line::from(status_spans(app)), cycle_line(app), hint]
 }
 
 fn cycle_line(app: &App) -> Line<'static> {
@@ -30,7 +38,6 @@ fn cycle_line(app: &App) -> Line<'static> {
     let cpi   = app.run.mem.overall_cpi();
     let instr = app.run.mem.instruction_count;
     Line::from(vec![
-        Span::styled("\u{23f1} ", Style::default().fg(Color::DarkGray)),
         Span::styled(format!("Cycles:{total}"), Style::default().fg(Color::Cyan)),
         Span::raw("  "),
         Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(Color::Magenta)),
@@ -95,30 +102,31 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         app.hover_run_button == Some(RunButton::State),
     ));
 
-    spans
-}
+    spans.push(Span::raw("  Count "));
+    spans.push(button_span(
+        if app.run.show_exec_count { "ON" } else { "OFF" },
+        if app.run.show_exec_count { Color::Cyan } else { Color::DarkGray },
+        app.hover_run_button == Some(RunButton::ExecCount),
+    ));
 
-fn command_line(app: &App) -> Line<'static> {
-    if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
-        Line::from(Span::styled(
-            "Running at full speed... press R to restart or wait for completion",
-            Style::default().fg(Color::Yellow),
-        ))
-    } else {
-        Line::from("s=step  r=run  p=pause  R=restart  f=speed  v=view  t=trace  k=stack  x=hex  g=goto  F9=bp")
-    }
+    spans.push(Span::raw("  Type "));
+    spans.push(button_span(
+        if app.run.show_instr_type { "ON" } else { "OFF" },
+        if app.run.show_instr_type { Color::LightBlue } else { Color::DarkGray },
+        app.hover_run_button == Some(RunButton::InstrType),
+    ));
+
+    spans
 }
 
 fn view_text(app: &App) -> &'static str {
     if app.run.show_bp_list { "BP" }
-    else if app.run.show_stack { "STACK" }
     else if app.run.show_registers { "REGS" }
     else { "RAM" }
 }
 
 fn view_color(app: &App) -> Color {
     if app.run.show_bp_list { Color::Red }
-    else if app.run.show_stack { Color::LightBlue }
     else if app.run.show_registers { Color::Blue }
     else { Color::Green }
 }

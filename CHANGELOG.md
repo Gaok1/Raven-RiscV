@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.7.0
+
+### Aba Cache — Métricas Acadêmicas
+
+- **AMAT** (Average Memory Access Time) — calculado hierarquicamente: `hit_lat + miss_rate × AMAT_próximo_nível`; exibido por cache no painel de métricas
+- **IPC** (Instructions Per Cycle) — exibido ao lado do CPI no sumário de programa
+- **CPI breakdown** — contribuição individual de cada nível de cache já estava calculada; agora exibida com mais destaque
+
+### Aba Cache — Exportação de Resultados
+
+- **`Ctrl+R` — exportar resultados** — salva snapshot completo em dois formatos:
+  - `.fstats` — flat key=value reimportável (configuração + estatísticas + histórico + top miss PCs)
+  - `.csv` — planilha com seções Program Summary, I-Cache, D-Cache, L2+, Miss Hotspots; ideal para comparações acadêmicas
+- **`Ctrl+M` — carregar baseline** — importa um `.fstats` anterior para comparação lado a lado
+- **Delta comparison** — quando um baseline está carregado, cada bloco de cache exibe `Vs base: ΔHit ΔMPKi ΔAMAT ΔCycles` em azul
+- **Banner de comparação** — faixa `Comparing with: arquivo.fstats  [c] clear` no topo do painel de stats
+- **`c` (Stats)** — limpa o baseline carregado
+- **Botões `[⬆ Export]` e `[⬇ Compare]`** na barra de controles compartilhada (clicáveis com mouse)
+
+### Aba Cache — Run Controls integrados
+
+- **Run Controls sempre visível** — a barra de controles da aba Run (View / Region / Format / Sign / Bytes / Speed / State / Count / Type) aparece em todas as sub-abas da Cache (Stats, View e Config), sem precisar trocar de aba
+- **Hotkeys espelhados** — os mesmos atalhos da aba Run agora funcionam na Cache (fora do subtab Config):
+  - `v` — alterna sidebar: RAM → REGS → BP
+  - `k` — alterna região: DATA ↔ STACK
+  - `f` — avança velocidade: 1× → 2× → 4× → Instant
+  - `e` — ativa/desativa contador de execuções
+  - `y` — ativa/desativa badge de tipo de instrução
+- **Mouse** — hover e click nos botões da Run Controls funcionam na aba Cache da mesma forma que na aba Run
+
+### Aba Run — Sidebar de Memória
+
+- **Indicador de nível de cache** — endereços marcados como `●` (dirty, roxo) agora exibem o nível onde estão cacheados: `● L1 0xADDR: VALUE` ou `● L2 0xADDR: VALUE`, em vez de apenas `● 0xADDR`
+
+---
+
 ## Unreleased → v1.6.0
 
 ### Aba Run — Instrução Memory

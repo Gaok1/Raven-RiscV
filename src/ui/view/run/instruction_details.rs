@@ -1,4 +1,5 @@
 use crate::falcon::{self, memory::Bus};
+use crate::ui::app::cpi_class_label;
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
@@ -30,7 +31,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
 
     render_header(f, chunks[0], &ctx, app);
     render_field_map(f, chunks[1], ctx.word, ctx.format);
-    render_decoded(f, chunks[2], ctx.word, ctx.format, &ctx.disasm, Some(&app.run.cpu));
+    render_decoded(f, chunks[2], ctx.word, ctx.format, &ctx.disasm, ctx.comment.as_deref(), Some(&app.run.cpu));
 }
 
 pub(super) fn disasm_word(word: u32) -> String {
@@ -50,8 +51,6 @@ struct DetailContext {
     format:         EncFormat,
     comment:        Option<String>,
     jump_target:    Option<(bool, u32, Option<String>)>, // (taken, target_addr, label)
-    has_raw_hazard: bool,
-    hazard_regs:    Vec<u8>,
 }
 
 fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Option<String>)> {
@@ -73,23 +72,6 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
     Some((taken, target, label))
 }
 
-/// Feature 6: extract source and destination registers from a word
-fn extract_regs(word: u32) -> (Vec<u8>, Option<u8>) {
-    let opcode = word & 0x7f;
-    let rs1 = ((word >> 15) & 0x1f) as u8;
-    let rs2 = ((word >> 20) & 0x1f) as u8;
-    let rd  = ((word >> 7)  & 0x1f) as u8;
-    match opcode {
-        0x33 => (vec![rs1, rs2], Some(rd)), // R-type
-        0x13 | 0x03 | 0x67 | 0x73 => (vec![rs1], Some(rd)), // I-type
-        0x23 => (vec![rs1, rs2], None), // S-type
-        0x63 => (vec![rs1, rs2], None), // B-type
-        0x37 | 0x17 => (vec![], Some(rd)), // U-type
-        0x6f => (vec![], Some(rd)), // J-type
-        _ => (vec![], None),
-    }
-}
-
 fn detail_context(app: &App) -> DetailContext {
     let (addr, word, origin) = if let Some(addr) = app.run.hover_imem_addr {
         let word = app.run.mem.load32(addr).unwrap_or(0);
@@ -101,26 +83,16 @@ fn detail_context(app: &App) -> DetailContext {
         return DetailContext {
             addr: app.run.cpu.pc, word: 0, disasm: "<PC out of RAM>".into(),
             origin: "PC", format: detect_format(0), comment: None,
-            jump_target: None, has_raw_hazard: false, hazard_regs: vec![],
+            jump_target: None,
         };
     };
 
     let comment = app.run.comments.get(&addr).cloned();
     let jump_target = compute_jump_target(word, addr, app);
 
-    // Feature 6: RAW hazard detection
-    let prev_word = if addr >= 4 { app.run.mem.load32(addr - 4).unwrap_or(0) } else { 0 };
-    let (cur_reads, _) = extract_regs(word);
-    let (_, prev_write) = extract_regs(prev_word);
-    let hazard_regs: Vec<u8> = if let Some(pw) = prev_write {
-        cur_reads.iter().filter(|&&r| r != 0 && r == pw).cloned().collect()
-    } else { vec![] };
-    let has_raw_hazard = !hazard_regs.is_empty();
-
     DetailContext {
         addr, word, disasm: disasm_word(word), origin,
         format: detect_format(word), comment, jump_target,
-        has_raw_hazard, hazard_regs,
     }
 }
 
@@ -152,6 +124,11 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
         Style::default().fg(Color::Yellow).bold(),
     );
 
+    // Compute base CPI cycles for current instruction
+    let cpi = &app.run.cpi_config;
+    let base_cycles = crate::ui::app::classify_cpi_for_display(ctx.word, ctx.addr, &app.run.cpu, cpi);
+    let class_label = cpi_class_label(ctx.word);
+
     let mut lines = vec![
         Line::from(vec![
             Span::styled("▶ ", Style::default().fg(Color::Green)),
@@ -165,6 +142,11 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
                 format!("  ({:032b})", ctx.word),
                 Style::default().fg(Color::Rgb(80, 80, 100)),
             ),
+        ]),
+        Line::from(vec![
+            Span::styled("  cycles  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("~{base_cycles}"), Style::default().fg(Color::Rgb(100, 220, 180)).bold()),
+            Span::styled(format!("  [{class_label}]"), Style::default().fg(Color::DarkGray)),
         ]),
     ];
 
@@ -200,17 +182,6 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
                 Span::styled(format!("×{count}"), Style::default().fg(Color::Cyan)),
             ]));
         }
-    }
-
-    // Feature 6: RAW hazard warning
-    if ctx.has_raw_hazard && !ctx.hazard_regs.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled("  \u{26a0} RAW   ", Style::default().fg(Color::Red)),
-            Span::styled(
-                format!("x{} read after write by prev instr", ctx.hazard_regs[0]),
-                Style::default().fg(Color::LightRed),
-            ),
-        ]));
     }
 
     f.render_widget(Paragraph::new(lines), inner);
@@ -260,17 +231,24 @@ fn bit_position_line(segs: &[Seg]) -> Line<'static> {
 }
 
 fn label_line(segs: &[Seg]) -> Line<'static> {
-    segs.iter().map(|s| {
-        let w = s.width as usize;
-        let bar = "▮".repeat(w.min(2));
-        let lbl = if s.label.len() + 1 + bar.len() <= w + 2 {
-            format!("{bar} {:<w$} ", s.label, w = w.saturating_sub(bar.len() + 1))
+    let n = segs.len();
+    segs.iter().enumerate().map(|(i, s)| {
+        let is_last = i + 1 == n;
+        let w = s.width as usize; // display columns for this field's content
+        let label_len = s.label.chars().count();
+
+        // Name always comes first; ▮ blocks fill any leftover columns
+        let content: String = if label_len <= w {
+            let blocks = "▮".repeat(w - label_len);
+            format!("{}{blocks}", s.label)
         } else {
-            // Truncate label to fit
-            let avail = w.saturating_sub(bar.len() + 1);
-            format!("{bar} {:.avail$} ", s.label, avail = avail)
+            // Truncate label to fit exactly w columns
+            s.label.chars().take(w).collect()
         };
-        Span::styled(lbl, Style::default().fg(s.color))
+
+        // Non-last segments get one trailing separator space for alignment
+        let padded = if is_last { content } else { format!("{content} ") };
+        Span::styled(padded, Style::default().fg(s.color))
     }).collect::<Vec<_>>().into()
 }
 
@@ -294,7 +272,7 @@ fn bits_line(word: u32, segs: &[Seg]) -> Line<'static> {
 
 // ── Section 3 : Decoded fields + description ─────────────────────────────────
 
-fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disasm: &str, cpu: Option<&crate::falcon::Cpu>) {
+fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disasm: &str, comment: Option<&str>, cpu: Option<&crate::falcon::Cpu>) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -305,6 +283,13 @@ fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disas
     f.render_widget(block, area);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
+    if let Some(c) = comment {
+        lines.push(Line::from(vec![
+            Span::styled("#! ", Style::default().fg(Color::Rgb(100, 200, 100))),
+            Span::styled(c.to_string(), Style::default().fg(Color::Rgb(180, 220, 130))),
+        ]));
+        lines.push(Line::from(""));
+    }
     push_fields(&mut lines, word, format, cpu);
     // blank separator
     lines.push(Line::from(""));

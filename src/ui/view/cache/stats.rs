@@ -2,15 +2,13 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{
-        Axis, Block, BorderType, Borders, Chart, Dataset, Gauge, GraphType, List, ListItem,
-        Paragraph,
-    },
+    widgets::{Axis, Block, BorderType, Borders, Chart, Dataset, Gauge, GraphType, Paragraph},
 };
 
 use crate::ui::app::{App, CacheScope};
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
+// Run Controls widget is rendered at the cache tab level (always visible).
 
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
     if app.cache.selected_level == 0 {
@@ -24,20 +22,45 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_l1_stats(f: &mut Frame, area: Rect, app: &App) {
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(9), // metric gauges (4 lines per cache + border)
-            Constraint::Length(1), // program summary line
-            Constraint::Min(8),    // chart
-            Constraint::Length(8), // miss-by-PC table
-        ])
-        .split(area);
+    let has_snap = app.cache.loaded_snapshot.is_some();
+    if has_snap {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),  // comparison banner
+                Constraint::Length(11), // cache metrics (AMAT + delta lines)
+                Constraint::Length(1),  // program summary line
+                Constraint::Min(8),     // chart
+            ])
+            .split(area);
+        render_comparison_banner(f, layout[0], app);
+        render_metrics(f, layout[1], app);
+        render_program_summary(f, layout[2], app);
+        render_chart(f, layout[3], app);
+    } else {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(11), // cache metrics (includes AMAT line)
+                Constraint::Length(1),  // program summary line
+                Constraint::Min(8),     // chart
+            ])
+            .split(area);
+        render_metrics(f, layout[0], app);
+        render_program_summary(f, layout[1], app);
+        render_chart(f, layout[2], app);
+    }
+}
 
-    render_metrics(f, layout[0], app);
-    render_program_summary(f, layout[1], app);
-    render_chart(f, layout[2], app);
-    render_miss_table(f, layout[3], app);
+fn render_comparison_banner(f: &mut Frame, area: Rect, app: &App) {
+    if let Some(snap) = &app.cache.loaded_snapshot {
+        let line = Line::from(vec![
+            Span::styled(" Comparing with: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(snap.label.clone(), Style::default().fg(Color::LightBlue).bold()),
+            Span::styled("   [c] clear", Style::default().fg(Color::DarkGray)),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+    }
 }
 
 fn render_unified_stats(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
@@ -58,6 +81,7 @@ fn render_unified_stats(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
 fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
     let total = app.run.mem.total_program_cycles();
     let cpi   = app.run.mem.overall_cpi();
+    let ipc   = app.run.mem.ipc();
     let instr = app.run.mem.instruction_count;
     let i_cyc = app.run.mem.icache.stats.total_cycles;
     let d_cyc = app.run.mem.dcache.stats.total_cycles;
@@ -67,6 +91,8 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("Cycles:{total}"), Style::default().fg(Color::Cyan)),
         Span::raw("  "),
         Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(Color::Magenta)),
+        Span::raw("  "),
+        Span::styled(format!("IPC:{ipc:.2}"), Style::default().fg(Color::LightMagenta)),
         Span::raw("  "),
         Span::styled(format!("Instrs:{instr}"), Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
@@ -239,6 +265,47 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         Paragraph::new(Span::styled(line7, Style::default().fg(Color::DarkGray))),
         Rect::new(inner.x, inner.y + 6, inner.width, 1),
     );
+
+    if inner.height < 8 {
+        return;
+    }
+
+    // Line 8: AMAT
+    let amat = if icache { app.run.mem.icache_amat() } else { app.run.mem.dcache_amat() };
+    let line8 = format!("AMAT:{amat:.2}cyc");
+    f.render_widget(
+        Paragraph::new(Span::styled(line8, Style::default().fg(Color::Yellow))),
+        Rect::new(inner.x, inner.y + 7, inner.width, 1),
+    );
+
+    if inner.height < 9 {
+        return;
+    }
+
+    // Line 9: delta comparison (only when baseline snapshot loaded)
+    if let Some(snap) = &app.cache.loaded_snapshot {
+        let snap_lvl = if icache { &snap.icache } else { &snap.dcache };
+        let snap_total = snap_lvl.hits + snap_lvl.misses;
+        let snap_hit_rate = if snap_total == 0 { 0.0 }
+            else { snap_lvl.hits as f64 / snap_total as f64 * 100.0 };
+        let d_hit = hit_rate - snap_hit_rate;
+        let snap_mpki = if instructions == 0 { 0.0 }
+            else { snap_lvl.misses as f64 / instructions as f64 * 1000.0 };
+        let d_mpki = mpki - snap_mpki;
+        let d_amat = amat - snap_lvl.amat;
+        let d_cyc = stats.total_cycles as i64 - snap_lvl.total_cycles as i64;
+        let sh = if d_hit >= 0.0 { "+" } else { "" };
+        let sm = if d_mpki >= 0.0 { "+" } else { "" };
+        let sa = if d_amat >= 0.0 { "+" } else { "" };
+        let sc = if d_cyc >= 0 { "+" } else { "" };
+        let line9 = format!(
+            "Vs base: \u{394}Hit {sh}{d_hit:.1}%  \u{394}MPKI {sm}{d_mpki:.1}  \u{394}AMAT {sa}{d_amat:.2}c  \u{394}Cyc {sc}{d_cyc}"
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(line9, Style::default().fg(Color::LightBlue))),
+            Rect::new(inner.x, inner.y + 8, inner.width, 1),
+        );
+    }
 }
 
 fn render_chart(f: &mut Frame, area: Rect, app: &App) {
@@ -343,50 +410,6 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(chart, inner);
 }
 
-fn render_miss_table(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title("Top Miss PCs (I-Cache)");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    if inner.height == 0 {
-        return;
-    }
-
-    let mut miss_vec: Vec<(u32, u64)> =
-        app.run.mem.icache.stats.miss_pcs.iter().map(|(&k, &v)| (k, v)).collect();
-    miss_vec.sort_by(|a, b| b.1.cmp(&a.1));
-
-    let visible = inner.height as usize;
-    let start = app.cache.stats_scroll.min(miss_vec.len().saturating_sub(1));
-
-    let header = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<12}", "PC"), Style::default().fg(Color::Yellow).bold()),
-        Span::styled(format!("{:>8}", "Misses"), Style::default().fg(Color::Yellow).bold()),
-    ]));
-
-    let mut items = vec![header];
-    for (pc, count) in miss_vec.iter().skip(start).take(visible.saturating_sub(1)) {
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(
-                format!("0x{pc:08x}  "),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled(format!("{count:>8}"), Style::default().fg(Color::Red)),
-        ])));
-    }
-
-    if miss_vec.is_empty() {
-        items.push(ListItem::new(
-            Span::styled("  No misses recorded", Style::default().fg(Color::DarkGray)),
-        ));
-    }
-
-    f.render_widget(List::new(items), inner);
-}
 
 fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let cache = &app.run.mem.extra_levels[extra_idx];
