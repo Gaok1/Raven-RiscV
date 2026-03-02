@@ -6,8 +6,8 @@ use crate::falcon::instruction::Instruction;
 use super::errors::AsmError;
 use super::program::Program;
 use super::pseudo::{
-    parse_la, parse_pop, parse_print, parse_print_str, parse_print_strln, parse_push, parse_read,
-    parse_read_byte, parse_read_half, parse_read_word,
+    parse_la, parse_pop, parse_print, parse_print_str, parse_print_strln, parse_push, parse_random_byte,
+    parse_random_bytes, parse_read, parse_read_byte, parse_read_half, parse_read_word,
 };
 use super::utils::*;
 
@@ -389,6 +389,12 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 } else if ltrim == "readWord" || ltrim.starts_with("readWord ") {
                     items.push((pc_text, LineKind::ReadWord(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(16);
+                } else if ltrim.starts_with("randomByte ") {
+                    items.push((pc_text, LineKind::RandomByte(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(32); // 8 instructions
+                } else if ltrim.starts_with("randomBytes ") {
+                    items.push((pc_text, LineKind::RandomBytes(ltrim.to_string()), *line_no));
+                    pc_text = pc_text.wrapping_add(24); // 6 instructions
                 } else {
                     items.push((pc_text, LineKind::Instr(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(4);
@@ -787,6 +793,14 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 let insts = parse_read_word(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
                 for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
             }
+            LineKind::RandomByte(s) => {
+                let insts = parse_random_byte(&s).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
+            LineKind::RandomBytes(s) => {
+                let insts = parse_random_bytes(&s, &labels).map_err(|e| AsmError { line: line_no, msg: e })?;
+                for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
+            }
         }
     }
 
@@ -817,6 +831,8 @@ enum LineKind {
     ReadByte(String),
     ReadHalf(String),
     ReadWord(String),
+    RandomByte(String),
+    RandomBytes(String),
 }
 
 fn parse_instr(

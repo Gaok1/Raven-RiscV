@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.8.0
+
+### Editor / IDE
+
+- **`randomByte rd`** — pseudo-instrução que expande para `getrandom` (syscall Linux 278): aloca 1 byte na pilha, invoca ecall e carrega o resultado em `rd` via `lbu`. Clobbers: `a0`, `a1`, `a2`, `a7`.
+- **`randomBytes label, n`** — pseudo-instrução que preenche `n` bytes a partir de `label` com bytes aleatórios via `getrandom`. Clobbers: `a0`, `a1`, `a2`, `a7`.
+- **Ctrl+V — colar sem deslocamento de `\t`** — `paste_text()` no editor normaliza `\r\n` → `\n`, `\r` → `\n`, `\t` → 4 espaços antes de inserir; suporte a paste multi-linha (divide corretamente ao `\n`).
+- **Bracketed paste** — ativado via `EnableBracketedPaste`; `Event::Paste` do terminal também chama `paste_text()`, eliminando o deslocamento causado por paste via atalho do terminal.
+
+### Aba Run — Controles de Velocidade
+
+- **Velocidade desbloqueada em GO** — era possível alterar a velocidade apenas quando pausado. Agora `f` (teclado) e o botão `[Speed]` (mouse) ciclam livremente mesmo em `Instant+running`, permitindo sair de GO para 1× sem precisar reiniciar.
+
+---
+
 ## v1.7.0
 
 ### Aba Cache — Métricas Acadêmicas
