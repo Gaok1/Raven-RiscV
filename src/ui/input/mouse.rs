@@ -147,21 +147,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             handle_editor_status_click(app, me, status_area);
         }
 
-        let start = {
-            let visible_h = editor_area.height.saturating_sub(2) as usize;
-            let len = app.editor.buf.lines.len();
-            let mut s = 0usize;
-            if len > visible_h {
-                if app.editor.buf.cursor_row <= visible_h / 2 {
-                    s = 0;
-                } else if app.editor.buf.cursor_row >= len.saturating_sub(visible_h / 2) {
-                    s = len.saturating_sub(visible_h);
-                } else {
-                    s = app.editor.buf.cursor_row - visible_h / 2;
-                }
-            }
-            s
-        };
+        // Use the stable scroll offset written by the renderer (consistent with display).
+        let start = app.editor.buf.scroll_offset.get();
 
         let visible_h = editor_area.height.saturating_sub(2) as usize;
         let len = app.editor.buf.lines.len();
@@ -169,19 +156,21 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         let num_width = end.to_string().len() as u16;
         let gutter = num_width + 3;
 
+        let inner_top  = editor_area.y + 1;
+        let inner_bot  = editor_area.y + editor_area.height.saturating_sub(1);
+        let inner_left = editor_area.x + 1;
+        let inner_right = editor_area.x + editor_area.width.saturating_sub(1);
+
         let within = |x: u16, y: u16| {
-            x >= editor_area.x + 1
-                && x < editor_area.x + editor_area.width - 1
-                && y >= editor_area.y + 1
-                && y < editor_area.y + editor_area.height - 1
+            x >= inner_left && x < inner_right && y >= inner_top && y < inner_bot
         };
 
         match me.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if within(me.column, me.row) {
-                    let y = (me.row - (editor_area.y + 1)) as usize;
+                    let y = (me.row - inner_top) as usize;
                     let row = (start + y).min(app.editor.buf.lines.len().saturating_sub(1));
-                    let x = me.column.saturating_sub(editor_area.x + 1 + gutter) as usize;
+                    let x = me.column.saturating_sub(inner_left + gutter) as usize;
                     let col = x.min(Editor::char_count(&app.editor.buf.lines[row]));
                     app.editor.buf.cursor_row = row;
                     app.editor.buf.cursor_col = col;
@@ -194,13 +183,24 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                // Use stable scroll_offset so view doesn't jump during drag.
+                let drag_start = app.editor.buf.scroll_offset.get();
                 if within(me.column, me.row) {
-                    let y = (me.row - (editor_area.y + 1)) as usize;
-                    let row = (start + y).min(app.editor.buf.lines.len().saturating_sub(1));
-                    let x = me.column.saturating_sub(editor_area.x + 1 + gutter) as usize;
+                    let y = (me.row - inner_top) as usize;
+                    let row = (drag_start + y).min(app.editor.buf.lines.len().saturating_sub(1));
+                    let x = me.column.saturating_sub(inner_left + gutter) as usize;
                     let col = x.min(Editor::char_count(&app.editor.buf.lines[row]));
                     app.editor.buf.cursor_row = row;
                     app.editor.buf.cursor_col = col;
+                } else if me.row < inner_top && app.editor.buf.cursor_row > 0 {
+                    // Dragged above: scroll up one line per event
+                    app.editor.buf.cursor_row -= 1;
+                } else if me.row >= inner_bot {
+                    // Dragged below: scroll down one line per event
+                    let max = app.editor.buf.lines.len().saturating_sub(1);
+                    if app.editor.buf.cursor_row < max {
+                        app.editor.buf.cursor_row += 1;
+                    }
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
@@ -305,9 +305,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             app.run.show_bp_list = false;
         }
         RunButton::Speed => {
-            if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) {
-                app.run.speed = app.run.speed.cycle();
-            }
+            app.run.speed = app.run.speed.cycle();
         }
         RunButton::ExecCount => { app.run.show_exec_count = !app.run.show_exec_count; }
         RunButton::InstrType => { app.run.show_instr_type = !app.run.show_instr_type; }

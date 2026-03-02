@@ -836,6 +836,8 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
                 "readByte" => ops.len() == 1 && is_label(&ops[0]),
                 "readHalf" => ops.len() == 1 && is_label(&ops[0]),
                 "readWord" => ops.len() == 1 && is_label(&ops[0]),
+                "randomByte" => ops.len() == 1 && is_reg(&ops[0]),
+                "randomBytes" => ops.len() == 2 && is_label(&ops[0]),
                 _ => return None,
             }
         }
@@ -890,6 +892,8 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
             "readByte" => vec![vec!["label"]],
             "readHalf" => vec![vec!["label"]],
             "readWord" => vec![vec!["label"]],
+            "randomByte" => vec![vec!["rd"]],
+            "randomBytes" => vec![vec!["label", "n"]],
             _ => return None,
         },
     };

@@ -22,14 +22,7 @@ pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn status_lines(app: &App) -> Vec<Line<'static>> {
-    let hint = if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
-        Line::from(Span::styled(
-            "Running at full speed... press R to restart or wait for completion",
-            Style::default().fg(Color::Yellow),
-        ))
-    } else {
-        Line::from("") // hints removed — use [?] help button
-    };
+    let hint = Line::from(""); // hints removed — use [?] help button
     vec![Line::from(status_spans(app)), cycle_line(app), hint]
 }
 
@@ -190,10 +183,6 @@ fn speed_text(app: &App) -> &'static str {
 }
 
 fn speed_color(app: &App) -> Color {
-    // Locked (instant+running): dim gray so user sees it's unavailable
-    if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
-        return Color::DarkGray;
-    }
     match app.run.speed {
         RunSpeed::X1 => Color::Blue,
         RunSpeed::X2 => Color::Cyan,

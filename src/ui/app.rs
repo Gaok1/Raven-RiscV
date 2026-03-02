@@ -18,7 +18,7 @@ fn word_at(line: &str, col: usize) -> String {
 use crate::falcon::{self, Cpu, CacheController};
 use crate::falcon::cache::CacheConfig;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event},
     execute,
 };
 use arboard::Clipboard;
@@ -1383,7 +1383,7 @@ pub fn run(terminal: &mut DefaultTerminal, mut app: App) -> io::Result<()> {
 }
 
 fn run_inner(terminal: &mut DefaultTerminal, app: &mut App, #[allow(unused)] quit_flag: Option<&AtomicBool>) -> io::Result<()> {
-    execute!(terminal.backend_mut(), EnableMouseCapture)?;
+    execute!(terminal.backend_mut(), EnableMouseCapture, EnableBracketedPaste)?;
     let mut last_draw = Instant::now();
     loop {
         #[cfg(unix)]
@@ -1407,6 +1407,12 @@ fn run_inner(terminal: &mut DefaultTerminal, app: &mut App, #[allow(unused)] qui
                             break;
                         }
                     }
+                    Ok(Event::Paste(text)) => {
+                        if matches!(app.tab, Tab::Editor) {
+                            use crate::ui::input::keyboard::paste_from_terminal;
+                            paste_from_terminal(app, &text);
+                        }
+                    }
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                     Err(e) => return Err(e),
@@ -1426,6 +1432,6 @@ fn run_inner(terminal: &mut DefaultTerminal, app: &mut App, #[allow(unused)] qui
             last_draw = Instant::now();
         }
     }
-    execute!(terminal.backend_mut(), DisableMouseCapture)?;
+    execute!(terminal.backend_mut(), DisableMouseCapture, DisableBracketedPaste)?;
     Ok(())
 }

@@ -240,3 +240,59 @@ pub(crate) fn parse_read_word(
         i1, i2, Instruction::Ecall,
     ])
 }
+
+pub(crate) fn parse_random_byte(s: &str) -> Result<Vec<Instruction>, String> {
+    // "randomByte rd" — getrandom(syscall 278) into temp stack slot, then lbu rd, 0(sp)
+    // Clobbers: a0, a1, a2, a7
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 1 {
+        return Err("randomByte: expected 'rd'".into());
+    }
+    let rd = parse_reg(&ops[0]).ok_or("randomByte: invalid rd")?;
+    Ok(vec![
+        Instruction::Addi { rd: 2,  rs1: 2, imm: -4 }, // sp -= 4 (temp slot)
+        Instruction::Addi { rd: 17, rs1: 0, imm: 278 }, // a7 = getrandom
+        Instruction::Addi { rd: 10, rs1: 2, imm: 0  }, // a0 = sp (buf)
+        Instruction::Addi { rd: 11, rs1: 0, imm: 1  }, // a1 = 1 (len)
+        Instruction::Addi { rd: 12, rs1: 0, imm: 0  }, // a2 = 0 (flags)
+        Instruction::Ecall,
+        Instruction::Lbu { rd, rs1: 2, imm: 0 },       // rd = mem[sp]
+        Instruction::Addi { rd: 2,  rs1: 2, imm: 4  }, // sp += 4 (restore)
+    ])
+}
+
+pub(crate) fn parse_random_bytes(
+    s: &str,
+    labels: &HashMap<String, u32>,
+) -> Result<Vec<Instruction>, String> {
+    // "randomBytes label, n" — getrandom(buf=label, len=n, flags=0)
+    // Clobbers: a0, a1, a2, a7
+    use super::utils::parse_imm;
+    let mut parts = s.split_whitespace();
+    parts.next();
+    let rest = parts.collect::<Vec<_>>().join(" ");
+    let ops = split_operands(&rest);
+    if ops.len() != 2 {
+        return Err("randomBytes: expected 'label, n'".into());
+    }
+    if parse_reg(&ops[0]).is_some() {
+        return Err("randomBytes: first operand must be a label, not a register".into());
+    }
+    let n = parse_imm(&ops[1])
+        .ok_or_else(|| format!("randomBytes: invalid byte count: {}", ops[1]))?;
+    if n <= 0 {
+        return Err(format!("randomBytes: byte count must be positive, got {n}"));
+    }
+    let la_line = format!("la a0, {}", ops[0]);
+    let (i1, i2) = parse_la(&la_line, labels)?;
+    Ok(vec![
+        Instruction::Addi { rd: 17, rs1: 0, imm: 278 }, // a7 = getrandom
+        i1, i2,                                          // la a0, label
+        Instruction::Addi { rd: 11, rs1: 0, imm: n  },  // a1 = n (len)
+        Instruction::Addi { rd: 12, rs1: 0, imm: 0  },  // a2 = 0 (flags)
+        Instruction::Ecall,
+    ])
+}

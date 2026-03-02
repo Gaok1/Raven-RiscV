@@ -503,6 +503,37 @@ impl Editor {
         self.clear_selection();
     }
 
+    /// Paste multi-line text at the cursor, normalizing line endings and replacing tabs with spaces.
+    pub fn paste_text(&mut self, text: &str) {
+        self.snapshot();
+        if let Some((start, end)) = self.selection_range() {
+            self.delete_range(start, end);
+            self.selection_anchor = None;
+        }
+        // Normalize: CRLF → LF, lone CR → LF, tabs → 4 spaces
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ");
+        let chunks: Vec<&str> = normalized.split('\n').collect();
+        if chunks.is_empty() {
+            return;
+        }
+        // Insert first chunk inline at cursor
+        for ch in chunks[0].chars() {
+            self.insert_char_internal(ch);
+        }
+        // Each subsequent chunk starts a new line
+        for chunk in &chunks[1..] {
+            self.ensure_line();
+            let col = self.cursor_col.min(Self::char_count(self.current_line()));
+            let byte_idx = Self::byte_at(self.current_line(), col);
+            let rest = self.current_line()[byte_idx..].to_string();
+            self.current_line_mut().truncate(byte_idx);
+            let new_line = chunk.to_string() + &rest;
+            self.cursor_row += 1;
+            self.lines.insert(self.cursor_row, new_line);
+            self.cursor_col = Self::char_count(chunk);
+        }
+    }
+
     /// Duplicate the current line, inserting the copy below, and move down.
     pub fn duplicate_line(&mut self) {
         self.snapshot();
