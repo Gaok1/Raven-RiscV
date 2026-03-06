@@ -1,65 +1,120 @@
-# Falcon ASM — um emulador RISC-V (RV32I) para aprender brincando
+# FALCON ASM — Emulador e IDE RISC-V
+
 <img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="400"/>
 
-O Falcon ASM é um projeto pequeno em Rust que revela cada etapa do ciclo buscar → decodificar → executar. Ele foi pensado para
-estudantes, entusiastas e professores que querem experimentar a base do ISA RISC-V sem esbarrar em um código cheio de
-micro-otimizações.
+**FALCON ASM** é um emulador, montador e IDE RISC-V rodando no terminal, escrito em Rust. Cobre **RV32I + M + F** e foi pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa — ideal para estudantes, professores e qualquer um aprendendo assembly.
 
-Além do núcleo do emulador, o Falcon traz uma experiência de IDE integrada: explorador de projetos, editor com destaque de
-sintaxe, visualização passo a passo das instruções e painéis dedicados para registradores, memória e syscalls. Você monta,
-executa, pausa e volta no tempo sem sair da interface, o que facilita demonstrar como cada instrução altera o estado ou
-depurar trabalhos de alunos em tempo real. A proposta é ser um simulador e uma plataforma de ensino acolhedora mesmo para quem
-está abrindo o RISC-V pela primeira vez.
+Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, inspecione registradores e memória, perfile sua hierarquia de cache e leia a documentação — sem sair do terminal.
 
-## O que vem no Falcon
+---
 
-- **Núcleo legível** – CPU, memória e decodificador foram escritos para você acompanhar linha a linha.
-- **Assembler integrado** – monte segmentos `.text`, `.data` e `.bss` com diretivas como `.byte`, `.word`, `.ascii`, `.space`
-  e um conjunto de pseudoinstruções (`la`, `call`, `ret`, `push`, `pop`, `printStr`, `printStrLn`, `read`, entre outras).
-- **Simulação de cache** – modelo configurável de I-cache + D-cache com métricas ao vivo (hit rate, MPKI, tráfego de RAM) e “Top Miss PCs”.
-- **Facilidades de syscall** – basta definir `a7` e chamar `ecall` para imprimir valores, strings, ler entradas do usuário ou
-  encerrar o programa.
-- **Cobertura RV32I + M** – aritmética, loads/stores, desvios, saltos, multiplicação, divisão e mensagens amigáveis para
-  instruções não suportadas.
+## Funcionalidades
 
-O emulador usa a convenção padrão de registradores (`zero`, `ra`, `sp`, `a0`…`a7`, `t0`…`t6`, `s0`…`s11`) e memória
-little-endian, reproduzindo o comportamento esperado em cursos e materiais introdutórios.
+### Cobertura do ISA
+- **RV32I** — conjunto base completo de instruções inteiras
+- **RV32M** — multiplicação e divisão inteira
+- **RV32F** — ponto flutuante de precisão simples (26 instruções, `f0`–`f31`, `fcsr`)
+- Conjunto rico de pseudoinstruções: `la`, `li`, `call`, `ret`, `push`, `pop`, `mv`, `neg`, `not`, `seqz`, `snez`, `beqz`, `bnez`, `bgt`, `ble`, `fmv.s`, `fneg.s`, `fabs.s`, entre outras
+- Syscalls via `ecall`: imprimir inteiro/string, ler entrada, sair, bytes aleatórios
 
-## Primeiros passos
-0. Baixe e rode a útima release para sua plataforma ou 
-1. Instale o Rust pelo [rustup.rs](https://rustup.rs).
-2. Clone este repositório e execute:
+### Montador
+- Segmentos `.text`, `.data`, `.bss` com `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.space`
+- `.word label` — use endereços de labels como valores em dados (tabelas de salto, arrays de ponteiros)
+- Comentários de bloco (`##!`) e anotações inline (`#!`) visíveis em tempo de execução
+- Mensagens de erro claras com número de linha
 
-   ```bash
-   cargo run
-   ```
+### Editor (Aba 1)
+- Highlight de sintaxe — instruções, registradores, diretivas, labels e strings com cores distintas
+- Hints de operandos enquanto digita
+- Ir para definição (`F12`), highlight de label sob o cursor, gutter de endereços (`F2`)
+- Desfazer/refazer (50 níveis), navegação por palavra, alternar comentário (`Ctrl+/`), duplicar linha (`Ctrl+D`)
+- Auto-indent, colar com formatação, page up/down
 
-3. Escreva um programa com seções `.text` e `.data`, monte com o Falcon e acompanhe cada passo enquanto avança instrução por
-   instrução.
+### Aba Run (Aba 2)
+**Memória de Instruções**
+- Headers de label e separadores de bloco renderizados inline
+- Badge de tipo por instrução (`[R]` `[I]` `[S]` `[B]` `[U]` `[J]`)
+- Heat coloring — sufixo `×N` de contagem de execuções colorido por frequência
+- Resultado de branch no PC atual: `→ 0xADDR (taken)` / `↛ (not taken)`
+- Breakpoints (`b`), saltar para endereço (`g`), painel de trace de execução (`t`)
 
-Vai embutir o Falcon em outro projeto? Use os auxiliares para posicionar cada segmento na memória:
+**Painel de Detalhes Decodificados**
+- Breakdown completo dos campos (opcode, funct3/7, rs1/rs2/rd, imediato com sinal)
+- Endereço efetivo para loads/stores; aviso de hazard RAW (`⚠ RAW`)
+- Estimativa de CPI e classe da instrução
 
-```rust
-use falcon::program::{load_words, load_bytes, zero_bytes};
+**Sidebar de Registradores**
+- Registradores inteiros: dual-column hex + decimal, fade por idade, pin (`p`), write trace
+- Registradores float: nomes ABI (`ft0`–`ft11`, `fa0`–`fa7`, `fs0`–`fs11`), alternar com `Tab`
+- Quatro modos de sidebar: visão de RAM / registradores inteiros / stack view / lista de breakpoints (`v`)
 
-let prog = falcon::asm::assemble(source, base_pc)?;
-load_words(&mut mem, base_pc, &prog.text)?;
-load_bytes(&mut mem, prog.data_base, &prog.data)?;
-let bss_base = prog.data_base + prog.data.len() as u32;
-zero_bytes(&mut mem, bss_base, prog.bss_size)?;
+### Aba Cache (Aba 3)
+- L1 I-cache + D-cache configuráveis + níveis extras ilimitados (L2, L3…)
+- Políticas de substituição: LRU, FIFO, LFU, Clock, MRU, Random
+- Políticas de escrita: write-through / write-back + write-allocate / no-allocate
+- Políticas de inclusão: Não-inclusiva, Inclusiva, Exclusiva
+- Estatísticas ao vivo: hit rate, MPKI, tráfego de RAM, top miss PCs
+- Métricas acadêmicas: AMAT (hierárquico), IPC, breakdown de CPI por nível
+- Exportar resultados (`Ctrl+R`) para `.fstats` / `.csv`; carregar baseline para comparação delta (`Ctrl+M`)
+- Matriz visual de cache com scroll horizontal e drag por scrollbar
+
+### Configuração de CPI
+- Custos de ciclo por classe: ALU, MUL, DIV, LOAD, STORE, branch taken/not-taken, JUMP, SYSTEM, FP
+- Configurável diretamente na aba Cache → Config
+
+### Aba Docs (Aba 4)
+- Referência de instruções e guia da aba Run embutidos no app
+
+---
+
+## Início Rápido
+
+Baixe o binário mais recente em [Releases](https://github.com/Gaok1/FALCON-ASM/releases), ou compile da fonte:
+
+```bash
+git clone https://github.com/Gaok1/FALCON-ASM.git
+cd FALCON-ASM
+cargo run
 ```
 
-## Continue aprendendo
+Requer Rust 1.75+. Sem dependências externas além da toolchain Rust.
 
-- Siga o passo a passo do [tutorial em português](Tutorial-pt.md) para montar e executar seus primeiros programas.
-- Consulte os layouts de instrução e as pseudoinstruções detalhadas no [`format.pt-BR.md`](format.pt-BR.md).
-- Veja o guia de simulação/configuração de cache em [`cache.pt-BR.md`](cache.pt-BR.md).
-- Explore o diretório `Program Examples/` para ver programas que exercitam syscalls, aritmética e controle de fluxo.
+---
 
-## Contribuições e próximos passos
+## Atalhos de Teclado (Aba Run)
 
-O Falcon é propositalmente enxuto, e contribuições são muito bem-vindas! Entre as ideias futuras estão suporte a CSR/fence,
-extensões de ponto flutuante e ferramentas extras ao redor do emulador.
+| Tecla | Ação |
+|-------|------|
+| `F5` / `Space` | Rodar / Pausar |
+| `F10` / `n` | Passo único |
+| `F9` / `b` | Alternar breakpoint no PC |
+| `f` | Ciclar velocidade: 1× → 2× → 4× → Instant |
+| `v` | Ciclar sidebar: RAM → Registradores → Stack → Breakpoints |
+| `Tab` | Alternar banco de registradores inteiros / float |
+| `t` | Alternar painel de trace de execução |
+| `g` | Saltar para endereço |
+| `x` | Alternar exibição de word hex bruto |
+| `e` / `y` | Alternar contador de execuções / badges de tipo |
+| `p` / click | Fixar / desafixar registrador |
 
-Seja preparando uma aula, corrigindo seu primeiro trabalho de assembly ou construindo um material didático, o Falcon ASM quer ser
-um espaço acolhedor para explorar o ecossistema RISC-V. Bons voos!
+---
+
+## Programas de Exemplo
+
+O diretório `Program Examples/` inclui:
+`fib.fas`, `bubble_sort_20.fas`, `quick_sort_20_push_pop.fas`, `binary_search_tree.fas`, `gcd_euclid.fas`, `fatorial.fas`, `cache_locality.fas` e mais.
+
+---
+
+## Documentação
+
+- [Tutorial (PT-BR)](Tutorial-pt.md) — passo a passo
+- [Formatos de instrução (PT-BR)](format.pt-BR.md) — layouts de bits, encoding, pseudoinstruções
+- [Guia do simulador de cache (PT-BR)](cache.pt-BR.md) — configuração, métricas, exportação
+- [Tutorial (EN)](Tutorial.md) | [Formats (EN)](format.md) | [Cache (EN)](cache.md)
+
+---
+
+## Contribuições
+
+Issues e pull requests são bem-vindos. O código é intencionalmente legível — o núcleo da CPU, o decoder e o montador têm cada um menos de ~500 linhas e seguem uma estrutura direta.
