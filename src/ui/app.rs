@@ -169,6 +169,21 @@ pub(super) struct CacheState {
     pub(super) loaded_snapshot: Option<Box<CacheResultsSnapshot>>,
     pub(super) hover_export_results: bool,
     pub(super) hover_compare: bool,
+    // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse
+    pub(super) hover_hscrollbar: bool,
+    pub(super) hscroll_hover_track_x: u16,  // track_x of hovered scrollbar
+    pub(super) hscroll_hover_track_w: u16,  // track_w of hovered scrollbar
+    pub(super) hscroll_drag: bool,
+    pub(super) hscroll_drag_start_x: u16,
+    pub(super) hscroll_start: usize,
+    pub(super) hscroll_drag_max: usize,
+    pub(super) hscroll_drag_track_w: u16,
+    // Set each frame by render (via Cell so render takes &App).
+    // tracks[0] = I-cache or primary/unified, tracks[1] = D-cache (0,0 if absent).
+    // Each entry: (track_x, track_w).
+    pub(super) hscroll_row: std::cell::Cell<u16>,
+    pub(super) hscroll_tracks: std::cell::Cell<[(u16, u16); 2]>,
+    pub(super) hscroll_max: std::cell::Cell<usize>,
 }
 
 // ── Simulation results snapshot ──────────────────────────────────────────────
@@ -210,6 +225,7 @@ pub(super) struct CpiConfig {
     pub branch_not_taken: u64,   // branch when not taken = 1
     pub jump:             u64,   // jal, jalr = 2
     pub system:           u64,   // ecall, ebreak, halt = 10
+    pub fp:               u64,   // RV32F instructions = 5
 }
 
 impl Default for CpiConfig {
@@ -218,14 +234,14 @@ impl Default for CpiConfig {
             alu: 1, mul: 3, div: 20,
             load: 0, store: 0,
             branch_taken: 3, branch_not_taken: 1,
-            jump: 2, system: 10,
+            jump: 2, system: 10, fp: 5,
         }
     }
 }
 
 impl CpiConfig {
     pub(super) fn field_names() -> &'static [&'static str] {
-        &["ALU", "MUL", "DIV", "Load+", "Store+", "Branch-T", "Branch-NT", "Jump", "System"]
+        &["ALU", "MUL", "DIV", "Load+", "Store+", "Branch-T", "Branch-NT", "Jump", "System", "FP"]
     }
 
     pub(super) fn get(&self, idx: usize) -> u64 {
@@ -233,7 +249,7 @@ impl CpiConfig {
             0 => self.alu, 1 => self.mul, 2 => self.div,
             3 => self.load, 4 => self.store,
             5 => self.branch_taken, 6 => self.branch_not_taken,
-            7 => self.jump, 8 => self.system,
+            7 => self.jump, 8 => self.system, 9 => self.fp,
             _ => 0,
         }
     }
@@ -243,7 +259,7 @@ impl CpiConfig {
             0 => self.alu = val, 1 => self.mul = val, 2 => self.div = val,
             3 => self.load = val, 4 => self.store = val,
             5 => self.branch_taken = val, 6 => self.branch_not_taken = val,
-            7 => self.jump = val, 8 => self.system = val,
+            7 => self.jump = val, 8 => self.system = val, 9 => self.fp = val,
             _ => {}
         }
     }
@@ -259,6 +275,7 @@ impl CpiConfig {
             "branch when not taken",
             "jal / jalr",
             "ecall / ebreak / halt",
+            "RV32F float instructions",
         ]
     }
 }
@@ -405,8 +422,11 @@ pub(super) struct RunState {
     pub(super) imem_drag: bool,
     pub(super) imem_drag_start_x: u16,
     pub(super) imem_width_start: u16,
+    // imem_scroll is now in VISUAL ROWS (not instruction count)
     pub(super) imem_scroll: usize,
     pub(super) hover_imem_addr: Option<u32>,
+    // Set each frame by render so scroll handlers use the correct height
+    pub(super) imem_inner_height: std::cell::Cell<usize>,
     pub(super) imem_collapsed: bool,
 
     // Details panel (collapsible)
@@ -464,6 +484,12 @@ pub(super) struct RunState {
     // Instruction list display toggles
     pub(super) show_exec_count: bool,
     pub(super) show_instr_type: bool,
+
+    // RV32F: float register sidebar
+    pub(super) show_float_regs: bool,         // toggle between int / float register view
+    pub(super) prev_f: [u32; 32],             // previous float register values (for highlighting)
+    pub(super) f_age: [u8; 32],               // highlight age for float registers (0=just changed)
+    pub(super) f_last_write_pc: [Option<u32>; 32], // last instruction that wrote each f-reg
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Default)]
@@ -603,6 +629,7 @@ impl App {
                 imem_width_start: 38,
                 imem_scroll: 0,
                 hover_imem_addr: None,
+                imem_inner_height: std::cell::Cell::new(16),
                 imem_collapsed: false,
                 details_collapsed: false,
                 console_height: 5,
@@ -629,6 +656,10 @@ impl App {
                 reg_last_write_pc: [None; 32],
                 show_bp_list: false,
                 hover_reg_row: None,
+                show_float_regs: false,
+                prev_f: [0u32; 32],
+                f_age: [255u8; 32],
+                f_last_write_pc: [None; 32],
                 cpi_config: CpiConfig::default(),
                 show_exec_count: true,
                 show_instr_type: true,
@@ -671,6 +702,17 @@ impl App {
                 loaded_snapshot: None,
                 hover_export_results: false,
                 hover_compare: false,
+                hover_hscrollbar: false,
+                hscroll_hover_track_x: 0,
+                hscroll_hover_track_w: 0,
+                hscroll_drag: false,
+                hscroll_drag_start_x: 0,
+                hscroll_start: 0,
+                hscroll_drag_max: 0,
+                hscroll_drag_track_w: 1,
+                hscroll_row: std::cell::Cell::new(0),
+                hscroll_tracks: std::cell::Cell::new([(0, 0); 2]),
+                hscroll_max: std::cell::Cell::new(0),
             },
             show_exit_popup: false,
             should_quit: false,
@@ -1116,6 +1158,83 @@ impl App {
         }
     }
 
+    // ── Instruction-memory scroll helpers (visual-row units) ─────────────────
+
+    fn imem_in_range(&self, addr: u32) -> bool {
+        if let Some(text) = &self.editor.last_ok_text {
+            let start = self.run.base_pc;
+            let end = start.saturating_add((text.len() as u32).saturating_mul(4));
+            addr >= start && addr < end
+        } else {
+            (addr as usize) < self.run.mem_size.saturating_sub(3)
+        }
+    }
+
+    /// Total visual rows in the instruction list (block_comment + labels + instruction per addr).
+    pub(super) fn imem_total_visual_rows(&self) -> usize {
+        let mut count = 0usize;
+        let mut addr = self.run.base_pc;
+        loop {
+            if !self.imem_in_range(addr) { break; }
+            if self.run.block_comments.contains_key(&addr) { count += 1; }
+            if let Some(names) = self.run.labels.get(&addr) { count += names.len(); }
+            count += 1;
+            addr = addr.wrapping_add(4);
+        }
+        count
+    }
+
+    /// Returns (start_addr, header_skip) for the current imem_scroll (visual row offset).
+    /// header_skip = how many block_comment/label rows to skip at the top of start_addr's block.
+    pub(super) fn imem_addr_skip_for_scroll(&self) -> (u32, usize) {
+        let scroll = self.run.imem_scroll;
+        let base = self.run.base_pc;
+        let mut vrow = 0usize;
+        let mut addr = base;
+        loop {
+            if !self.imem_in_range(addr) { return (base, 0); }
+            let bc = if self.run.block_comments.contains_key(&addr) { 1 } else { 0 };
+            let lbls = self.run.labels.get(&addr).map_or(0, |v| v.len());
+            let block = bc + lbls + 1;
+            if vrow + block > scroll {
+                return (addr, scroll - vrow);
+            }
+            vrow += block;
+            addr = addr.wrapping_add(4);
+        }
+    }
+
+    /// Visual row of the current PC within the full instruction list.
+    pub(super) fn imem_visual_row_of_pc(&self) -> Option<usize> {
+        let pc = self.run.cpu.pc;
+        if pc < self.run.base_pc { return None; }
+        let mut vrow = 0usize;
+        let mut addr = self.run.base_pc;
+        loop {
+            if !self.imem_in_range(addr) { return None; }
+            if self.run.block_comments.contains_key(&addr) { vrow += 1; }
+            if let Some(names) = self.run.labels.get(&addr) { vrow += names.len(); }
+            if addr == pc { return Some(vrow); }
+            vrow += 1;
+            addr = addr.wrapping_add(4);
+        }
+    }
+
+    /// Ensure PC is visible in the imem panel, updating imem_scroll if needed.
+    pub(super) fn ensure_pc_visible_in_imem(&mut self) {
+        let visible = self.run.imem_inner_height.get();
+        if visible == 0 { return; }
+        let Some(pc_vrow) = self.imem_visual_row_of_pc() else { return; };
+        let scroll = self.run.imem_scroll;
+        if pc_vrow < scroll {
+            // PC above view
+            self.run.imem_scroll = pc_vrow.saturating_sub(2);
+        } else if pc_vrow + 1 >= scroll + visible {
+            // PC at or below bottom edge
+            self.run.imem_scroll = pc_vrow.saturating_sub(visible.saturating_sub(3));
+        }
+    }
+
     fn tick(&mut self) {
         if self.run.is_running {
             match self.run.speed {
@@ -1150,12 +1269,7 @@ impl App {
         }
         // Scroll instruction list to follow PC (skipped in Instant to avoid pointless churn)
         if self.run.is_running && !matches!(self.run.speed, RunSpeed::Instant) {
-            if self.run.cpu.pc >= self.run.base_pc {
-                let pc_idx = ((self.run.cpu.pc - self.run.base_pc) / 4) as usize;
-                self.run.imem_scroll = pc_idx.saturating_sub(2);
-            } else {
-                self.run.imem_scroll = 0;
-            }
+            self.ensure_pc_visible_in_imem();
         }
         if matches!(self.tab, Tab::Editor) && self.editor.dirty {
             if let Some(t) = self.editor.last_edit_at {
@@ -1171,6 +1285,7 @@ impl App {
 
     pub(super) fn single_step(&mut self) {
         self.run.prev_x = self.run.cpu.x;
+        self.run.prev_f = self.run.cpu.f;
         self.run.prev_pc = self.run.cpu.pc;
         let step_pc = self.run.cpu.pc;
 
@@ -1218,7 +1333,15 @@ impl App {
                 self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
             }
         }
-
+        // Update float register age
+        for i in 0..32usize {
+            if self.run.cpu.f[i] != self.run.prev_f[i] {
+                self.run.f_age[i] = 0;
+                self.run.f_last_write_pc[i] = Some(step_pc);
+            } else {
+                self.run.f_age[i] = self.run.f_age[i].saturating_add(1).min(8);
+            }
+        }
         // Auto-follow SP when Stack region is active in the memory view
         if self.run.mem_region == crate::ui::app::MemRegion::Stack {
             let sp = self.run.cpu.x[2];
@@ -1234,6 +1357,10 @@ impl App {
             if !self.console.reading {
                 self.run.faulted = self.run.cpu.exit_code.is_none();
             }
+        }
+        // Keep PC visible (single-step case — running case handled in tick())
+        if !self.run.is_running {
+            self.ensure_pc_visible_in_imem();
         }
     }
 
@@ -1322,6 +1449,13 @@ fn classify_cpi_cycles(pc: u32, cpu: &crate::falcon::Cpu, mem: &crate::falcon::C
         Ok(Bge  { rs1, rs2, .. }) => if (cpu.x[rs1 as usize] as i32) >= (cpu.x[rs2 as usize] as i32) { cpi.branch_taken } else { cpi.branch_not_taken },
         Ok(Bltu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] <  cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
         Ok(Bgeu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] >= cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Flw  { .. } | Fsw    { .. } |
+           FaddS{ .. } | FsubS  { .. } | FmulS  { .. } | FdivS   { .. } | FsqrtS { .. } |
+           FminS{ .. } | FmaxS  { .. } | FsgnjS { .. } | FsgnjnS { .. } | FsgnjxS{ .. } |
+           FeqS { .. } | FltS   { .. } | FleS   { .. } |
+           FcvtWS{..}  | FcvtWuS{ .. } | FcvtSW { .. } | FcvtSWu { .. } |
+           FmvXW{ .. } | FmvWX  { .. } | FclassS{ .. } |
+           FmaddS{..}  | FmsubS { .. } | FnmsubS{ .. } | FnmaddS { .. }) => cpi.fp,
         _ => 1,
     }
 }
@@ -1347,6 +1481,13 @@ pub(super) fn classify_cpi_for_display(word: u32, _addr: u32, cpu: &crate::falco
         Ok(Bge  { rs1, rs2, .. }) => if (cpu.x[rs1 as usize] as i32) >= (cpu.x[rs2 as usize] as i32) { cpi.branch_taken } else { cpi.branch_not_taken },
         Ok(Bltu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] <  cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
         Ok(Bgeu { rs1, rs2, .. }) => if cpu.x[rs1 as usize] >= cpu.x[rs2 as usize] { cpi.branch_taken } else { cpi.branch_not_taken },
+        Ok(Flw  { .. } | Fsw    { .. } |
+           FaddS{ .. } | FsubS  { .. } | FmulS  { .. } | FdivS   { .. } | FsqrtS { .. } |
+           FminS{ .. } | FmaxS  { .. } | FsgnjS { .. } | FsgnjnS { .. } | FsgnjxS{ .. } |
+           FeqS { .. } | FltS   { .. } | FleS   { .. } |
+           FcvtWS{..}  | FcvtWuS{ .. } | FcvtSW { .. } | FcvtSWu { .. } |
+           FmvXW{ .. } | FmvWX  { .. } | FclassS{ .. } |
+           FmaddS{..}  | FmsubS { .. } | FnmsubS{ .. } | FnmaddS { .. }) => cpi.fp,
         _ => 1,
     }
 }
@@ -1368,6 +1509,13 @@ pub(super) fn cpi_class_label(word: u32) -> &'static str {
         Ok(Ecall | Ebreak | Halt) => "System",
         Ok(Beq  { .. } | Bne   { .. } | Blt   { .. } |
            Bge  { .. } | Bltu  { .. } | Bgeu  { .. }) => "Branch",
+        Ok(Flw  { .. } | Fsw    { .. } |
+           FaddS{ .. } | FsubS  { .. } | FmulS  { .. } | FdivS   { .. } | FsqrtS { .. } |
+           FminS{ .. } | FmaxS  { .. } | FsgnjS { .. } | FsgnjnS { .. } | FsgnjxS{ .. } |
+           FeqS { .. } | FltS   { .. } | FleS   { .. } |
+           FcvtWS{..}  | FcvtWuS{ .. } | FcvtSW { .. } | FcvtSWu { .. } |
+           FmvXW{ .. } | FmvWX  { .. } | FclassS{ .. } |
+           FmaddS{..}  | FmsubS { .. } | FnmsubS{ .. } | FnmaddS { .. }) => "FP",
         _ => "?",
     }
 }

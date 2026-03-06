@@ -213,6 +213,8 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
     let mut label_defs = HashMap::<String, (Section, u32)>::new();
     let mut label_source_lines = HashMap::<String, usize>::new(); // label → source line (0-based)
     let mut equates = Vec::<EquateDef>::new();
+    // fixups for `.word label` — resolved after labels map is built
+    let mut word_label_fixups: Vec<(usize, String, usize)> = Vec::new(); // (byte_offset, label_name, line_no)
 
     // Iterate over lines and collect labels and instructions
     for (line_no, raw) in &lines {
@@ -462,12 +464,17 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                     }
                 } else if let Some(rest) = line.strip_prefix(".word") {
                     for w in rest.split(',') {
-                        let v = parse_imm(w).ok_or_else(|| AsmError {
-                            line: *line_no,
-                            msg: format!("invalid .word: {w}"),
-                        })?;
-                        let bytes = (v as u32).to_le_bytes();
-                        data_bytes.extend_from_slice(&bytes);
+                        let w = w.trim();
+                        if let Some(v) = parse_imm(w) {
+                            let bytes = (v as u32).to_le_bytes();
+                            data_bytes.extend_from_slice(&bytes);
+                        } else if w.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_' || c == '.') && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+                            // label reference — emit placeholder, resolve after labels are built
+                            word_label_fixups.push((data_bytes.len(), w.to_string(), *line_no));
+                            data_bytes.extend_from_slice(&[0u8; 4]);
+                        } else {
+                            return Err(AsmError { line: *line_no, msg: format!("invalid .word: {w}") });
+                        }
                         pc_data += 4;
                     }
                 } else if let Some(rest) = line.strip_prefix(".dword") {
@@ -570,6 +577,16 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
             Section::Bss => data_base + data_size + off,
         };
         labels.insert(name, addr);
+    }
+
+    // Resolve .word label fixups now that all label addresses are known
+    for (offset, name, line_no) in &word_label_fixups {
+        let addr = labels.get(name).ok_or_else(|| AsmError {
+            line: *line_no,
+            msg: format!("undefined label in .word: {name}"),
+        })?;
+        let bytes = addr.to_le_bytes();
+        data_bytes[*offset..*offset + 4].copy_from_slice(&bytes);
     }
 
     // Resolve equates now that we know final label addresses.
@@ -874,7 +891,8 @@ fn parse_instr(
 
     use Instruction::*;
 
-    let get_reg = |t: &str| parse_reg(t).ok_or_else(|| format!("invalid register: {t}"));
+    let get_reg   = |t: &str| parse_reg(t).ok_or_else(|| format!("invalid register: {t}"));
+    let get_freg  = |t: &str| parse_freg(t).ok_or_else(|| format!("invalid float register: {t}"));
     let get_imm = |t: &str| {
         if let Some(v) = parse_imm(t) {
             return Ok(v);
@@ -1181,6 +1199,79 @@ fn parse_instr(
         "halt" => {
             if !ops.is_empty() { return Err("halt takes no operands".into()); }
             Ok(Halt)
+        }
+
+        // ────────────────── RV32F ──────────────────
+
+        // Load / Store
+        "flw" => {
+            let (rd, imm, rs1) = fp_load_like(&ops)?;
+            Ok(Flw { rd, rs1, imm })
+        }
+        "fsw" => {
+            let (rs2, imm, rs1) = fp_store_like(&ops)?;
+            Ok(Fsw { rs2, rs1, imm })
+        }
+
+        // Arithmetic (3 float regs)
+        "fadd.s" => { if ops.len()!=3{return Err("fadd.s: expected 'frd, frs1, frs2'".into());} Ok(FaddS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fsub.s" => { if ops.len()!=3{return Err("fsub.s: expected 'frd, frs1, frs2'".into());} Ok(FsubS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fmul.s" => { if ops.len()!=3{return Err("fmul.s: expected 'frd, frs1, frs2'".into());} Ok(FmulS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fdiv.s" => { if ops.len()!=3{return Err("fdiv.s: expected 'frd, frs1, frs2'".into());} Ok(FdivS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fsqrt.s" => {
+            if ops.len()!=2{return Err("fsqrt.s: expected 'frd, frs1'".into());}
+            Ok(FsqrtS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?})
+        }
+        "fmin.s" => { if ops.len()!=3{return Err("fmin.s: expected 'frd, frs1, frs2'".into());} Ok(FminS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fmax.s" => { if ops.len()!=3{return Err("fmax.s: expected 'frd, frs1, frs2'".into());} Ok(FmaxS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+
+        // Sign injection
+        "fsgnj.s"  => { if ops.len()!=3{return Err("fsgnj.s: expected 'frd, frs1, frs2'".into());} Ok(FsgnjS {rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fsgnjn.s" => { if ops.len()!=3{return Err("fsgnjn.s: expected 'frd, frs1, frs2'".into());} Ok(FsgnjnS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fsgnjx.s" => { if ops.len()!=3{return Err("fsgnjx.s: expected 'frd, frs1, frs2'".into());} Ok(FsgnjxS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+
+        // Comparison (result → integer rd)
+        "feq.s" => { if ops.len()!=3{return Err("feq.s: expected 'rd, frs1, frs2'".into());} Ok(FeqS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "flt.s" => { if ops.len()!=3{return Err("flt.s: expected 'rd, frs1, frs2'".into());} Ok(FltS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+        "fle.s" => { if ops.len()!=3{return Err("fle.s: expected 'rd, frs1, frs2'".into());} Ok(FleS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
+
+        // Conversion
+        "fcvt.w.s"  => { if ops.len()!=2{return Err("fcvt.w.s: expected 'rd, frs1'".into());}  Ok(FcvtWS {rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?}) }
+        "fcvt.wu.s" => { if ops.len()!=2{return Err("fcvt.wu.s: expected 'rd, frs1'".into());} Ok(FcvtWuS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?}) }
+        "fcvt.s.w"  => { if ops.len()!=2{return Err("fcvt.s.w: expected 'frd, rs1'".into());}  Ok(FcvtSW {rd:get_freg(&ops[0])?,rs1:get_reg(&ops[1])?}) }
+        "fcvt.s.wu" => { if ops.len()!=2{return Err("fcvt.s.wu: expected 'frd, rs1'".into());} Ok(FcvtSWu{rd:get_freg(&ops[0])?,rs1:get_reg(&ops[1])?}) }
+
+        // Move (bit-pattern)
+        "fmv.x.w" => { if ops.len()!=2{return Err("fmv.x.w: expected 'rd, frs1'".into());}  Ok(FmvXW{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?}) }
+        "fmv.w.x" => { if ops.len()!=2{return Err("fmv.w.x: expected 'frd, rs1'".into());}  Ok(FmvWX{rd:get_freg(&ops[0])?,rs1:get_reg(&ops[1])?}) }
+
+        // Classify
+        "fclass.s" => { if ops.len()!=2{return Err("fclass.s: expected 'rd, frs1'".into());} Ok(FclassS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?}) }
+
+        // Fused multiply-add (R4-type): fmadd.s frd, frs1, frs2, frs3
+        "fmadd.s"  => { if ops.len()!=4{return Err("fmadd.s: expected 'frd, frs1, frs2, frs3'".into());}  Ok(FmaddS {rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?,rs3:get_freg(&ops[3])?}) }
+        "fmsub.s"  => { if ops.len()!=4{return Err("fmsub.s: expected 'frd, frs1, frs2, frs3'".into());}  Ok(FmsubS {rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?,rs3:get_freg(&ops[3])?}) }
+        "fnmsub.s" => { if ops.len()!=4{return Err("fnmsub.s: expected 'frd, frs1, frs2, frs3'".into());} Ok(FnmsubS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?,rs3:get_freg(&ops[3])?}) }
+        "fnmadd.s" => { if ops.len()!=4{return Err("fnmadd.s: expected 'frd, frs1, frs2, frs3'".into());} Ok(FnmaddS{rd:get_freg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?,rs3:get_freg(&ops[3])?}) }
+
+        // Pseudos FP
+        "fmv.s" => {
+            // fmv.s frd, frs → fsgnj.s frd, frs, frs
+            if ops.len()!=2{return Err("fmv.s: expected 'frd, frs'".into());}
+            let rd=get_freg(&ops[0])?; let rs=get_freg(&ops[1])?;
+            Ok(FsgnjS{rd,rs1:rs,rs2:rs})
+        }
+        "fneg.s" => {
+            // fneg.s frd, frs → fsgnjn.s frd, frs, frs
+            if ops.len()!=2{return Err("fneg.s: expected 'frd, frs'".into());}
+            let rd=get_freg(&ops[0])?; let rs=get_freg(&ops[1])?;
+            Ok(FsgnjnS{rd,rs1:rs,rs2:rs})
+        }
+        "fabs.s" => {
+            // fabs.s frd, frs → fsgnjx.s frd, frs, frs
+            if ops.len()!=2{return Err("fabs.s: expected 'frd, frs'".into());}
+            let rd=get_freg(&ops[0])?; let rs=get_freg(&ops[1])?;
+            Ok(FsgnjxS{rd,rs1:rs,rs2:rs})
         }
 
         _ => Err(format!("unsupported mnemonic: {mnemonic}")),

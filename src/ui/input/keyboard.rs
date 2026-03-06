@@ -556,6 +556,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.run.show_bp_list = true;
                     }
                 }
+                // Tab (in register view): toggle between int and float registers
+                (KeyCode::Tab, Tab::Run) if app.run.show_registers && !app.run.show_bp_list => {
+                    app.run.show_float_regs = !app.run.show_float_regs;
+                }
                 // t: toggle execution trace panel
                 (KeyCode::Char('t'), Tab::Run) => {
                     app.run.show_trace = !app.run.show_trace;
@@ -1323,6 +1327,7 @@ fn parse_results_snapshot(text: &str) -> Result<CacheResultsSnapshot, String> {
         branch_not_taken: map.get("cpi.branch_not_taken").and_then(|v| v.parse().ok()).unwrap_or(1),
         jump:             map.get("cpi.jump").and_then(|v| v.parse().ok()).unwrap_or(2),
         system:           map.get("cpi.system").and_then(|v| v.parse().ok()).unwrap_or(10),
+        fp:               map.get("cpi.fp").and_then(|v| v.parse().ok()).unwrap_or(5),
     };
 
     let n_hotspots: usize = map.get("miss_hotspot_count").and_then(|v| v.parse().ok()).unwrap_or(0);

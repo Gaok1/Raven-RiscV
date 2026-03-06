@@ -123,7 +123,40 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         update_cache_run_status_hover(app, me, area);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_cache_run_status_click(app, me, area);
-            handle_cache_click(app, me, area);
+            // H-scrollbar: start drag or jump to click position
+            if matches!(app.cache.subtab, CacheSubtab::View) && app.cache.hover_hscrollbar {
+                let track_x = app.cache.hscroll_hover_track_x;
+                let track_w = app.cache.hscroll_hover_track_w;
+                let max_scroll = app.cache.hscroll_max.get();
+                // Jump to click ratio immediately
+                if track_w > 0 {
+                    let rel = me.column.saturating_sub(track_x).min(track_w - 1) as f64;
+                    let new_scroll = (rel / (track_w as f64) * max_scroll as f64) as usize;
+                    app.cache.view_h_scroll = new_scroll.min(max_scroll);
+                }
+                // Start drag state
+                app.cache.hscroll_drag = true;
+                app.cache.hscroll_drag_start_x = me.column;
+                app.cache.hscroll_start = app.cache.view_h_scroll;
+                app.cache.hscroll_drag_max = max_scroll;
+                app.cache.hscroll_drag_track_w = track_w;
+            } else {
+                handle_cache_click(app, me, area);
+            }
+        }
+        if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
+            app.cache.hscroll_drag = false;
+        }
+        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.hscroll_drag {
+            let track_w = app.cache.hscroll_drag_track_w;
+            let max_scroll = app.cache.hscroll_drag_max;
+            if track_w > 0 && max_scroll > 0 {
+                let delta = me.column as i32 - app.cache.hscroll_drag_start_x as i32;
+                let scale = max_scroll as f64 / track_w as f64;
+                let new_scroll = (app.cache.hscroll_start as i64 + (delta as f64 * scale) as i64)
+                    .max(0) as usize;
+                app.cache.view_h_scroll = new_scroll.min(max_scroll);
+            }
         }
     }
 
@@ -548,26 +581,23 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row >= inner.y
         && me.row < inner.y + inner.height
     {
-        let rows = inner.height as usize;
-        let max_scroll = if let Some(ref text) = app.editor.last_ok_text {
-            text.len().saturating_sub(rows)
-        } else {
-            (app.run.mem_size / 4).saturating_sub(rows)
-        };
+        let visible = inner.height as usize;
+        let max_scroll = app.imem_total_visual_rows().saturating_sub(visible);
         if app.run.imem_scroll > max_scroll {
             app.run.imem_scroll = max_scroll;
         }
         let target_row = (me.row - inner.y) as usize;
-        let base = app.run.base_pc.saturating_add((app.run.imem_scroll as u32) * 4);
-        app.run.hover_imem_addr = addr_at_visual_row(base, target_row, app);
+        let (base, skip) = app.imem_addr_skip_for_scroll();
+        app.run.hover_imem_addr = addr_at_visual_row(base, skip, target_row, app);
     } else {
         app.run.hover_imem_addr = None;
     }
 }
 
-/// Map a visual row within the instruction panel to the instruction address at that row,
-/// accounting for block_comment and label header rows emitted by instruction_items().
-fn addr_at_visual_row(base: u32, target_row: usize, app: &App) -> Option<u32> {
+/// Map a visual row within the displayed instruction panel to the instruction address,
+/// accounting for block_comment/label rows.  `skip` = header rows hidden at the top of
+/// the first block (matches the value returned by `imem_addr_skip_for_scroll`).
+fn addr_at_visual_row(base: u32, skip: usize, target_row: usize, app: &App) -> Option<u32> {
     let mem_end = if let Some(text) = &app.editor.last_ok_text {
         app.run.base_pc.saturating_add((text.len() as u32).saturating_mul(4))
     } else {
@@ -575,16 +605,21 @@ fn addr_at_visual_row(base: u32, target_row: usize, app: &App) -> Option<u32> {
     };
     let mut vrow = 0usize;
     let mut addr = base;
+    let mut skip_rem = skip;
     loop {
         if addr >= mem_end || (addr as usize) + 4 > app.run.mem_size {
             return None;
         }
         if app.run.block_comments.contains_key(&addr) {
-            if vrow == target_row { return Some(addr); }
-            vrow += 1;
+            if skip_rem > 0 { skip_rem -= 1; }
+            else {
+                if vrow == target_row { return Some(addr); }
+                vrow += 1;
+            }
         }
         if let Some(names) = app.run.labels.get(&addr) {
             for _ in names {
+                if skip_rem > 0 { skip_rem -= 1; continue; }
                 if vrow == target_row { return Some(addr); }
                 vrow += 1;
             }
@@ -986,18 +1021,16 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         if app.run.is_running {
             return;
         }
-        if let Some(ref text) = app.editor.last_ok_text {
-            let visible = imem.height as usize;
-            let total = text.len();
-            let max_scroll = total.saturating_sub(visible);
-            if app.run.imem_scroll > max_scroll {
-                app.run.imem_scroll = max_scroll;
-            }
-            if up {
-                app.run.imem_scroll = app.run.imem_scroll.saturating_sub(1);
-            } else {
-                app.run.imem_scroll = (app.run.imem_scroll + 1).min(max_scroll);
-            }
+        let visible = app.run.imem_inner_height.get().max(1);
+        let total = app.imem_total_visual_rows();
+        let max_scroll = total.saturating_sub(visible);
+        if app.run.imem_scroll > max_scroll {
+            app.run.imem_scroll = max_scroll;
+        }
+        if up {
+            app.run.imem_scroll = app.run.imem_scroll.saturating_sub(1);
+        } else {
+            app.run.imem_scroll = (app.run.imem_scroll + 1).min(max_scroll);
         }
     }
 }
@@ -1211,6 +1244,7 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_preset_d = None;
     app.cache.hover_config_field = None;
     app.cache.hover_cpi_field = None;
+    app.cache.hover_hscrollbar = false;
     for h in app.cache.hover_level.iter_mut() { *h = false; }
     app.cache.hover_add_level = false;
     app.cache.hover_remove_level = false;
@@ -1332,6 +1366,22 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
                 if x >= 10 && x < 22 { app.cache.hover_preset_d = Some(0); }
                 else if x >= 23 && x < 33 { app.cache.hover_preset_d = Some(1); }
                 else if x >= 34 && x < 47 { app.cache.hover_preset_d = Some(2); }
+            }
+        }
+    }
+
+    // H-scrollbar hover (View subtab only) — check both track slots
+    if matches!(app.cache.subtab, CacheSubtab::View) {
+        let sb_row = app.cache.hscroll_row.get();
+        let tracks = app.cache.hscroll_tracks.get();
+        if sb_row > 0 && me.row == sb_row {
+            for (track_x, track_w) in &tracks {
+                if *track_w > 0 && me.column >= *track_x && me.column < track_x + track_w {
+                    app.cache.hover_hscrollbar = true;
+                    app.cache.hscroll_hover_track_x = *track_x;
+                    app.cache.hscroll_hover_track_w = *track_w;
+                    break;
+                }
             }
         }
     }

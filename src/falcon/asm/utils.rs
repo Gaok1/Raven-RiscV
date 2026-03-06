@@ -212,3 +212,49 @@ pub(crate) fn store_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
     let (imm, rs1) = parse_memop(&ops[1])?;
     Ok((rs2, imm, rs1))
 }
+
+/// Parse a float register name: f0–f31, ft0–ft11, fs0–fs11, fa0–fa7
+pub(crate) fn parse_freg(s: &str) -> Option<u8> {
+    let s = s.trim().to_lowercase();
+    // f0..f31
+    if let Some(n) = s.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
+        if n < 32 { return Some(n); }
+    }
+    // ABI names (RISC-V F calling convention)
+    match s.as_str() {
+        "ft0"  => Some(0),  "ft1"  => Some(1),  "ft2"  => Some(2),  "ft3"  => Some(3),
+        "ft4"  => Some(4),  "ft5"  => Some(5),  "ft6"  => Some(6),  "ft7"  => Some(7),
+        "fs0"  => Some(8),  "fs1"  => Some(9),
+        "fa0"  => Some(10), "fa1"  => Some(11), "fa2"  => Some(12), "fa3"  => Some(13),
+        "fa4"  => Some(14), "fa5"  => Some(15), "fa6"  => Some(16), "fa7"  => Some(17),
+        "fs2"  => Some(18), "fs3"  => Some(19), "fs4"  => Some(20), "fs5"  => Some(21),
+        "fs6"  => Some(22), "fs7"  => Some(23), "fs8"  => Some(24), "fs9"  => Some(25),
+        "fs10" => Some(26), "fs11" => Some(27),
+        "ft8"  => Some(28), "ft9"  => Some(29), "ft10" => Some(30), "ft11" => Some(31),
+        _ => None,
+    }
+}
+
+/// Parse `imm(freg)` for FP loads: returns (imm, base_int_reg)
+pub(crate) fn fp_load_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
+    if ops.len() != 2 {
+        return Err("flw: expected 'frd, imm(rs1)'".into());
+    }
+    let rd = parse_freg(&ops[0]).ok_or_else(|| format!("invalid float rd: {}", ops[0]))?;
+    let (imm, rs1) = parse_memop(&ops[1])?;
+    Ok((rd, imm, rs1))
+}
+
+/// Parse `frs2, imm(rs1)` for FP stores
+pub(crate) fn fp_store_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
+    if ops.len() != 2 {
+        return Err("fsw: expected 'frs2, imm(rs1)'".into());
+    }
+    let rs2 = parse_freg(&ops[0]).ok_or_else(|| format!("invalid float rs2: {}", ops[0]))?;
+    let (imm, rs1) = parse_memop(&ops[1])?;
+    Ok((rs2, imm, rs1))
+}
+
+pub(crate) fn get_freg(s: &str) -> Result<u8, String> {
+    parse_freg(s).ok_or_else(|| format!("invalid float register: {s}"))
+}

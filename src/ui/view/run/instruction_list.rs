@@ -9,13 +9,13 @@ use super::memory::imem_address_in_range;
 pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
     let block = instruction_block(app);
     let inner = block.inner(area);
-    let base = instruction_list_base(app);
-    let items = instruction_items(inner, base, app);
+    // Tell scroll/hover handlers the actual inner height each frame
+    app.run.imem_inner_height.set(inner.height as usize);
+    let items = instruction_items(inner, app);
 
     f.render_widget(block, area);
     f.render_widget(List::new(items), inner);
     render_instruction_drag_arrow(f, area, app);
-
 }
 
 fn instruction_block(app: &App) -> Block<'static> {
@@ -32,42 +32,42 @@ fn instruction_block(app: &App) -> Block<'static> {
         .title("Instruction Memory")
 }
 
-fn instruction_list_base(app: &App) -> u32 {
-    app.run.base_pc
-        .saturating_add((app.run.imem_scroll as u32).saturating_mul(4))
-}
-
-fn instruction_items(inner: Rect, base: u32, app: &App) -> Vec<ListItem<'static>> {
+fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
+    // imem_scroll is now in visual rows; compute the starting address + how many
+    // header rows (block_comment/labels) to skip at the first block.
+    let (mut addr, mut skip) = app.imem_addr_skip_for_scroll();
     let lines = inner.height as u32;
     let mut items = Vec::new();
     let mut remaining = lines;
-    let mut addr = base;
 
     while remaining > 0 && imem_address_in_range(app, addr) {
-        // Feature 4: block comment separator
+        // Block comment separator
         if let Some(bc) = app.run.block_comments.get(&addr) {
-            if remaining == 0 { break; }
-            let is_hover = app.run.hover_imem_addr == Some(addr);
-            let bc_style = Style::default().fg(Color::Rgb(130, 220, 180))
-                .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(format!("▌ {bc}"), bc_style),
-            ])));
-            remaining -= 1;
+            if skip > 0 {
+                skip -= 1;
+            } else {
+                let is_hover = app.run.hover_imem_addr == Some(addr);
+                let bc_style = Style::default().fg(Color::Rgb(130, 220, 180))
+                    .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(format!("▌ {bc}"), bc_style),
+                ])));
+                remaining -= 1;
+                if remaining == 0 { break; }
+            }
         }
 
-        // Show label headers (one per label at this address)
+        // Label headers
         if let Some(label_names) = app.run.labels.get(&addr) {
             for name in label_names {
+                if skip > 0 { skip -= 1; continue; }
                 if remaining == 0 { break; }
                 let is_hover = app.run.hover_imem_addr == Some(addr);
                 let lbl_style = Style::default().fg(Color::Yellow)
                     .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
-                items.push(ListItem::new(
-                    Line::from(vec![
-                        Span::styled(format!("{name}:"), lbl_style),
-                    ])
-                ));
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(format!("{name}:"), lbl_style),
+                ])));
                 remaining -= 1;
             }
         }

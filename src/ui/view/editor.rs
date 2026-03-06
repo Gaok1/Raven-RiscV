@@ -830,6 +830,17 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
         "neg" | "not" => ops.len() == 2 && is_reg(&ops[0]) && is_reg(&ops[1]),
         "fence" => ops.is_empty(),
 
+        // RV32F
+        "flw" => ops.len() == 2,
+        "fsw" => ops.len() == 2,
+        "fadd.s" | "fsub.s" | "fmul.s" | "fdiv.s" | "fmin.s" | "fmax.s"
+        | "fsgnj.s" | "fsgnjn.s" | "fsgnjx.s" => ops.len() == 3,
+        "fsqrt.s" | "fmv.s" | "fneg.s" | "fabs.s" => ops.len() == 2,
+        "feq.s" | "flt.s" | "fle.s" => ops.len() == 3,
+        "fcvt.w.s" | "fcvt.wu.s" | "fcvt.s.w" | "fcvt.s.wu"
+        | "fmv.x.w" | "fmv.w.x" | "fclass.s" => ops.len() == 2,
+        "fmadd.s" | "fmsub.s" | "fnmsub.s" | "fnmadd.s" => ops.len() == 4,
+
         _ => {
             // Macro-pseudos are case-sensitive in the assembler first pass.
             match mnemonic_raw {
@@ -892,6 +903,19 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
         "ecall" => vec![vec![]],
         "ebreak" => vec![vec![]],
         "halt" => vec![vec![]],
+
+        // RV32F
+        "flw" => vec![vec!["frd", "imm(rs1)"]],
+        "fsw" => vec![vec!["frs2", "imm(rs1)"]],
+        "fadd.s" | "fsub.s" | "fmul.s" | "fdiv.s" | "fmin.s" | "fmax.s"
+        | "fsgnj.s" | "fsgnjn.s" | "fsgnjx.s" => vec![vec!["frd", "frs1", "frs2"]],
+        "fsqrt.s" | "fmv.s" | "fneg.s" | "fabs.s" => vec![vec!["frd", "frs"]],
+        "feq.s" | "flt.s" | "fle.s" => vec![vec!["rd", "frs1", "frs2"]],
+        "fcvt.w.s" | "fcvt.wu.s" => vec![vec!["rd", "frs1"]],
+        "fcvt.s.w" | "fcvt.s.wu" => vec![vec!["frd", "rs1"]],
+        "fmv.x.w" | "fclass.s" => vec![vec!["rd", "frs1"]],
+        "fmv.w.x" => vec![vec!["frd", "rs1"]],
+        "fmadd.s" | "fmsub.s" | "fnmsub.s" | "fnmadd.s" => vec![vec!["frd", "frs1", "frs2", "frs3"]],
 
         _ => match mnemonic_raw {
             "la" => vec![vec!["rd", "label"]],

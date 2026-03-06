@@ -74,7 +74,7 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
 
 fn detail_context(app: &App) -> DetailContext {
     let (addr, word, origin) = if let Some(addr) = app.run.hover_imem_addr {
-        let word = app.run.mem.load32(addr).unwrap_or(0);
+        let word = app.run.mem.peek32(addr).unwrap_or(0);
         (addr, word, "hover")
     } else if imem_address_in_range(app, app.run.cpu.pc) {
         let word = app.run.mem.load32(app.run.cpu.pc).unwrap_or(0);
@@ -613,11 +613,58 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         Ecall              => "ecall".into(),
         Ebreak | Halt      => "ebreak".into(),
         Fence              => "fence".into(),
+        // RV32F
+        Flw{rd,rs1,imm}    => format!("{:<9} {}, {imm}({})", "flw",    freg_name(rd),  reg_name(rs1)),
+        Fsw{rs2,rs1,imm}   => format!("{:<9} {}, {imm}({})", "fsw",    freg_name(rs2), reg_name(rs1)),
+        FaddS{rd,rs1,rs2}  => fmt3f("fadd.s",   rd, rs1, rs2),
+        FsubS{rd,rs1,rs2}  => fmt3f("fsub.s",   rd, rs1, rs2),
+        FmulS{rd,rs1,rs2}  => fmt3f("fmul.s",   rd, rs1, rs2),
+        FdivS{rd,rs1,rs2}  => fmt3f("fdiv.s",   rd, rs1, rs2),
+        FsqrtS{rd,rs1}     => format!("{:<9} {}, {}", "fsqrt.s", freg_name(rd), freg_name(rs1)),
+        FminS{rd,rs1,rs2}  => fmt3f("fmin.s",   rd, rs1, rs2),
+        FmaxS{rd,rs1,rs2}  => fmt3f("fmax.s",   rd, rs1, rs2),
+        FsgnjS{rd,rs1,rs2} => fmt3f("fsgnj.s",  rd, rs1, rs2),
+        FsgnjnS{rd,rs1,rs2}=> fmt3f("fsgnjn.s", rd, rs1, rs2),
+        FsgnjxS{rd,rs1,rs2}=> fmt3f("fsgnjx.s", rd, rs1, rs2),
+        FeqS{rd,rs1,rs2}   => format!("{:<9} {}, {}, {}", "feq.s",    reg_name(rd),  freg_name(rs1), freg_name(rs2)),
+        FltS{rd,rs1,rs2}   => format!("{:<9} {}, {}, {}", "flt.s",    reg_name(rd),  freg_name(rs1), freg_name(rs2)),
+        FleS{rd,rs1,rs2}   => format!("{:<9} {}, {}, {}", "fle.s",    reg_name(rd),  freg_name(rs1), freg_name(rs2)),
+        FcvtWS{rd,rs1}     => format!("{:<9} {}, {}", "fcvt.w.s",  reg_name(rd),   freg_name(rs1)),
+        FcvtWuS{rd,rs1}    => format!("{:<9} {}, {}", "fcvt.wu.s", reg_name(rd),   freg_name(rs1)),
+        FcvtSW{rd,rs1}     => format!("{:<9} {}, {}", "fcvt.s.w",  freg_name(rd),  reg_name(rs1)),
+        FcvtSWu{rd,rs1}    => format!("{:<9} {}, {}", "fcvt.s.wu", freg_name(rd),  reg_name(rs1)),
+        FmvXW{rd,rs1}      => format!("{:<9} {}, {}", "fmv.x.w",   reg_name(rd),   freg_name(rs1)),
+        FmvWX{rd,rs1}      => format!("{:<9} {}, {}", "fmv.w.x",   freg_name(rd),  reg_name(rs1)),
+        FclassS{rd,rs1}    => format!("{:<9} {}, {}", "fclass.s",  reg_name(rd),   freg_name(rs1)),
+        FmaddS{rd,rs1,rs2,rs3}  => fmt4f("fmadd.s",   rd, rs1, rs2, rs3),
+        FmsubS{rd,rs1,rs2,rs3}  => fmt4f("fmsub.s",   rd, rs1, rs2, rs3),
+        FnmsubS{rd,rs1,rs2,rs3} => fmt4f("fnmsub.s",  rd, rs1, rs2, rs3),
+        FnmaddS{rd,rs1,rs2,rs3} => fmt4f("fnmadd.s",  rd, rs1, rs2, rs3),
     }
 }
 
 fn fmt3(m: &str, rd: u8, rs1: u8, rs2: u8) -> String {
     format!("{m:<5} {}, {}, {}", reg_name(rd), reg_name(rs1), reg_name(rs2))
+}
+fn fmt3f(m: &str, rd: u8, rs1: u8, rs2: u8) -> String {
+    format!("{m:<9} {}, {}, {}", freg_name(rd), freg_name(rs1), freg_name(rs2))
+}
+fn fmt4f(m: &str, rd: u8, rs1: u8, rs2: u8, rs3: u8) -> String {
+    format!("{m:<9} {}, {}, {}, {}", freg_name(rd), freg_name(rs1), freg_name(rs2), freg_name(rs3))
+}
+fn freg_name(i: u8) -> &'static str {
+    match i {
+        0  => "ft0",  1  => "ft1",  2  => "ft2",  3  => "ft3",
+        4  => "ft4",  5  => "ft5",  6  => "ft6",  7  => "ft7",
+        8  => "fs0",  9  => "fs1",
+        10 => "fa0",  11 => "fa1",  12 => "fa2",  13 => "fa3",
+        14 => "fa4",  15 => "fa5",  16 => "fa6",  17 => "fa7",
+        18 => "fs2",  19 => "fs3",  20 => "fs4",  21 => "fs5",
+        22 => "fs6",  23 => "fs7",  24 => "fs8",  25 => "fs9",
+        26 => "fs10", 27 => "fs11",
+        28 => "ft8",  29 => "ft9",  30 => "ft10", 31 => "ft11",
+        _  => "f?",
+    }
 }
 fn fmt_ri(m: &str, rd: u8, rs1: u8, imm: i32) -> String {
     format!("{m:<5} {}, {}, {imm}", reg_name(rd), reg_name(rs1))

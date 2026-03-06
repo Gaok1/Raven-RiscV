@@ -32,6 +32,11 @@ use crate::falcon::arch::*;
     // take the upper 20 bits (aligned to 12)
     ( (imm20 as u32) & 0xFFFFF000 ) | (rd<<7) | opc
 }
+// R4-type: fmadd/fmsub/fnmsub/fnmadd (fmt=0b00 = single, rm=0 = RNE)
+#[inline] fn r4(rs3:u32, rs2:u32, rs1:u32, rd:u32, opc:u32) -> u32 {
+    (rs3<<27) | (rs2<<20) | (rs1<<15) | (rd<<7) | opc
+    // fmt bits [26:25]=0b00 (single precision), rm bits [14:12]=0b000 (RNE) — both zero
+}
 #[inline] fn j(imm_bytes:i32, rd:u32, opc:u32) -> u32 {
     // J-imm in bytes, multiple of 2
     assert!(imm_bytes % 2 == 0, "J-imm must be a multiple of 2");
@@ -107,5 +112,41 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
         Ecall => 0x0000_0073,          // SYSTEM/ECALL
         Ebreak | Halt => 0x0010_0073,  // SYSTEM/EBREAK (alias: HALT)
         Fence => 0x0000_100F,          // MISC-MEM/FENCE (iorw, iorw)
+
+        // RV32F — LOAD-FP / STORE-FP
+        Flw{rd,rs1,imm}  => i(imm, rs1 as u32, 0x2, rd as u32, OPC_FLW as u32),
+        Fsw{rs2,rs1,imm} => s(imm, rs2 as u32, rs1 as u32, 0x2, OPC_FSW as u32),
+
+        // RV32F — OP-FP (funct7 encodes operation, funct3=rm=0 for RNE)
+        FaddS {rd,rs1,rs2} => r(0x00, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FsubS {rd,rs1,rs2} => r(0x04, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FmulS {rd,rs1,rs2} => r(0x08, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FdivS {rd,rs1,rs2} => r(0x0C, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FsqrtS{rd,rs1}     => r(0x2C, 0,          rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FminS {rd,rs1,rs2} => r(0x14, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FmaxS {rd,rs1,rs2} => r(0x14, rs2 as u32, rs1 as u32, 0x1, rd as u32, OPC_FP as u32),
+
+        FsgnjS {rd,rs1,rs2} => r(0x10, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FsgnjnS{rd,rs1,rs2} => r(0x10, rs2 as u32, rs1 as u32, 0x1, rd as u32, OPC_FP as u32),
+        FsgnjxS{rd,rs1,rs2} => r(0x10, rs2 as u32, rs1 as u32, 0x2, rd as u32, OPC_FP as u32),
+
+        FeqS{rd,rs1,rs2} => r(0x50, rs2 as u32, rs1 as u32, 0x2, rd as u32, OPC_FP as u32),
+        FltS{rd,rs1,rs2} => r(0x50, rs2 as u32, rs1 as u32, 0x1, rd as u32, OPC_FP as u32),
+        FleS{rd,rs1,rs2} => r(0x50, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+
+        FcvtWS {rd,rs1} => r(0x60, 0, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FcvtWuS{rd,rs1} => r(0x60, 1, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FcvtSW {rd,rs1} => r(0x68, 0, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FcvtSWu{rd,rs1} => r(0x68, 1, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+
+        FmvXW  {rd,rs1} => r(0x70, 0, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FmvWX  {rd,rs1} => r(0x78, 0, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FclassS{rd,rs1} => r(0x70, 0, rs1 as u32, 0x1, rd as u32, OPC_FP as u32),
+
+        // RV32F — R4-type (fused multiply-add)
+        FmaddS {rd,rs1,rs2,rs3} => r4(rs3 as u32, rs2 as u32, rs1 as u32, rd as u32, OPC_FMADD  as u32),
+        FmsubS {rd,rs1,rs2,rs3} => r4(rs3 as u32, rs2 as u32, rs1 as u32, rd as u32, OPC_FMSUB  as u32),
+        FnmsubS{rd,rs1,rs2,rs3} => r4(rs3 as u32, rs2 as u32, rs1 as u32, rd as u32, OPC_FNMSUB as u32),
+        FnmaddS{rd,rs1,rs2,rs3} => r4(rs3 as u32, rs2 as u32, rs1 as u32, rd as u32, OPC_FNMADD as u32),
     })
 }

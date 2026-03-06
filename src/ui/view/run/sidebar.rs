@@ -10,7 +10,11 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if app.run.show_bp_list {
         render_bp_list(f, area, app);
     } else if app.run.show_registers {
-        render_register_table(f, area, app);
+        if app.run.show_float_regs {
+            render_float_register_table(f, area, app);
+        } else {
+            render_register_table(f, area, app);
+        }
     } else {
         render_memory_view(f, area, app);
     }
@@ -32,7 +36,7 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .border_type(BorderType::Rounded)
-        .title(format!("Registers  [p]/click=pin{cursor_info}"));
+        .title(format!("Registers  [p]=pin  [Tab]=float{cursor_info}"));
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
     let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]).block(block);
@@ -138,6 +142,61 @@ fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
         val,
         app.run.reg_age[reg_idx as usize],
     )
+}
+
+// ── Float register table (RV32F) ──────────────────────────────────────────────
+
+fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .border_type(BorderType::Rounded)
+        .title("Float Regs (f0–f31)  [Tab]=int regs");
+    let inner = block.inner(area);
+
+    let visible = inner.height.saturating_sub(1) as usize;
+    let scroll = app.run.regs_scroll.min(32usize.saturating_sub(visible));
+
+    let rows: Vec<Row<'static>> = (0u8..32u8)
+        .skip(scroll)
+        .take(visible)
+        .map(|i| {
+            let age   = app.run.f_age[i as usize];
+            let bits  = app.run.cpu.f[i as usize];
+            let val   = f32::from_bits(bits);
+            let label = format!("f{i:02} ({}) ", freg_name_short(i));
+            let value = if val.is_nan() {
+                "NaN".to_string()
+            } else if val.is_infinite() {
+                if val.is_sign_positive() { "+Inf".to_string() } else { "-Inf".to_string() }
+            } else {
+                format!("{val:.6}")
+            };
+            let style = age_style(age);
+            Row::new(vec![
+                Cell::from(label).style(style),
+                Cell::from(value).style(style),
+            ])
+        })
+        .collect();
+
+    let table = Table::new(rows, [Constraint::Length(13), Constraint::Min(0)]).block(block);
+    f.render_widget(table, area);
+}
+
+fn freg_name_short(i: u8) -> &'static str {
+    match i {
+        0  => "ft0",  1  => "ft1",  2  => "ft2",  3  => "ft3",
+        4  => "ft4",  5  => "ft5",  6  => "ft6",  7  => "ft7",
+        8  => "fs0",  9  => "fs1",
+        10 => "fa0",  11 => "fa1",  12 => "fa2",  13 => "fa3",
+        14 => "fa4",  15 => "fa5",  16 => "fa6",  17 => "fa7",
+        18 => "fs2",  19 => "fs3",  20 => "fs4",  21 => "fs5",
+        22 => "fs6",  23 => "fs7",  24 => "fs8",  25 => "fs9",
+        26 => "fs10", 27 => "fs11",
+        28 => "ft8",  29 => "ft9",  30 => "ft10", 31 => "ft11",
+        _  => "f?",
+    }
 }
 
 // ── Memory view (Data + Stack region) ────────────────────────────────────────

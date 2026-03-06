@@ -37,6 +37,9 @@ pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_l1_view(f: &mut Frame, area: Rect, app: &App) {
+    // Reset both scrollbar track slots; render_cache_matrix will fill them.
+    app.cache.hscroll_tracks.set([(0, 0); 2]);
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -328,11 +331,25 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     if need_h_scrollbar {
         let sb_y = inner.y + inner.height - 1;
         let sb_area = Rect::new(inner.x, sb_y, inner.width, 1);
+        let track_x = inner.x + 1;
+        let track_w = inner.width.saturating_sub(2);
+        // Unified/extra levels use slot 0 only
+        app.cache.hscroll_tracks.set([(track_x, track_w), (0, 0)]);
+        app.cache.hscroll_row.set(sb_y);
+        app.cache.hscroll_max.set(max_h_scroll);
+        let hovered = app.cache.hover_hscrollbar
+            && app.cache.hscroll_hover_track_x == track_x;
+        let style = if hovered {
+            Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
+        } else {
+            Style::default()
+        };
         let mut sb_state = ScrollbarState::new(max_h_scroll).position(h_scroll as usize);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .begin_symbol(Some("◄"))
-                .end_symbol(Some("►")),
+                .end_symbol(Some("►"))
+                .style(style),
             sb_area,
             &mut sb_state,
         );
@@ -530,12 +547,30 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     if need_h_scrollbar {
         let sb_y = inner.y + inner.height - 1;
         let sb_area = Rect::new(inner.x, sb_y, inner.width, 1);
+        let track_x = inner.x + 1;
+        let track_w = inner.width.saturating_sub(2);
+        // slot 0 = I-cache, slot 1 = D-cache
+        let slot = if icache { 0 } else { 1 };
+        let mut tracks = app.cache.hscroll_tracks.get();
+        tracks[slot] = (track_x, track_w);
+        app.cache.hscroll_tracks.set(tracks);
+        app.cache.hscroll_row.set(sb_y);
+        app.cache.hscroll_max.set(max_h_scroll);
+        // Highlight if this specific scrollbar is hovered
+        let hovered = app.cache.hover_hscrollbar
+            && app.cache.hscroll_hover_track_x == track_x;
+        let style = if hovered {
+            Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
+        } else {
+            Style::default()
+        };
         let mut sb_state = ScrollbarState::new(max_h_scroll)
             .position(h_scroll as usize);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .begin_symbol(Some("◄"))
-                .end_symbol(Some("►")),
+                .end_symbol(Some("►"))
+                .style(style),
             sb_area,
             &mut sb_state,
         );

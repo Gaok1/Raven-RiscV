@@ -131,6 +131,39 @@ pub fn step<B: Bus>(
             return Ok(false);
         }
         Instruction::Fence => {} // nop in single-core simulator
+
+        // RV32F
+        i @ (
+            Instruction::Flw { .. }
+                | Instruction::Fsw { .. }
+                | Instruction::FaddS { .. }
+                | Instruction::FsubS { .. }
+                | Instruction::FmulS { .. }
+                | Instruction::FdivS { .. }
+                | Instruction::FsqrtS { .. }
+                | Instruction::FminS { .. }
+                | Instruction::FmaxS { .. }
+                | Instruction::FsgnjS { .. }
+                | Instruction::FsgnjnS { .. }
+                | Instruction::FsgnjxS { .. }
+                | Instruction::FeqS { .. }
+                | Instruction::FltS { .. }
+                | Instruction::FleS { .. }
+                | Instruction::FcvtWS { .. }
+                | Instruction::FcvtWuS { .. }
+                | Instruction::FcvtSW { .. }
+                | Instruction::FcvtSWu { .. }
+                | Instruction::FmvXW { .. }
+                | Instruction::FmvWX { .. }
+                | Instruction::FclassS { .. }
+                | Instruction::FmaddS { .. }
+                | Instruction::FmsubS { .. }
+                | Instruction::FnmsubS { .. }
+                | Instruction::FnmaddS { .. }
+        ) => {
+            return exec_fp(i, cpu, mem, console);
+        }
+
         _ => {}
     }
 
@@ -326,6 +359,133 @@ fn exec_stores<B: Bus>(
             let a = cpu.read(rs1).wrapping_add(imm as u32);
             mem.store32(a, cpu.read(rs2))?;
         }
+        _ => unreachable!(),
+    }
+    Ok(true)
+}
+
+fn exec_fp<B: Bus>(
+    instr: Instruction,
+    cpu: &mut Cpu,
+    mem: &mut B,
+    _console: &mut Console,
+) -> Result<bool, FalconError> {
+    match instr {
+        // Load/Store
+        Instruction::Flw { rd, rs1, imm } => {
+            let addr = cpu.read(rs1).wrapping_add(imm as u32);
+            let bits = mem.dcache_read32(addr)?;
+            cpu.fwrite_bits(rd, bits);
+        }
+        Instruction::Fsw { rs2, rs1, imm } => {
+            let addr = cpu.read(rs1).wrapping_add(imm as u32);
+            mem.store32(addr, cpu.fread_bits(rs2))?;
+        }
+
+        // Arithmetic
+        Instruction::FaddS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) + cpu.fread(rs2)),
+        Instruction::FsubS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) - cpu.fread(rs2)),
+        Instruction::FmulS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) * cpu.fread(rs2)),
+        Instruction::FdivS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) / cpu.fread(rs2)),
+        Instruction::FsqrtS { rd, rs1 }     => cpu.fwrite(rd, cpu.fread(rs1).sqrt()),
+        Instruction::FminS { rd, rs1, rs2 } => {
+            // RISC-V fmin: if either is NaN return the other; -0.0 < +0.0
+            let a = cpu.fread(rs1);
+            let b = cpu.fread(rs2);
+            cpu.fwrite(rd, if a.is_nan() { b } else if b.is_nan() { a } else if a == 0.0 && b == 0.0 { if a.is_sign_negative() { a } else { b } } else { a.min(b) });
+        }
+        Instruction::FmaxS { rd, rs1, rs2 } => {
+            let a = cpu.fread(rs1);
+            let b = cpu.fread(rs2);
+            cpu.fwrite(rd, if a.is_nan() { b } else if b.is_nan() { a } else if a == 0.0 && b == 0.0 { if a.is_sign_positive() { a } else { b } } else { a.max(b) });
+        }
+
+        // Sign injection
+        Instruction::FsgnjS  { rd, rs1, rs2 } => {
+            let bits = (cpu.fread_bits(rs1) & 0x7FFF_FFFF) | (cpu.fread_bits(rs2) & 0x8000_0000);
+            cpu.fwrite_bits(rd, bits);
+        }
+        Instruction::FsgnjnS { rd, rs1, rs2 } => {
+            let bits = (cpu.fread_bits(rs1) & 0x7FFF_FFFF) | (!cpu.fread_bits(rs2) & 0x8000_0000);
+            cpu.fwrite_bits(rd, bits);
+        }
+        Instruction::FsgnjxS { rd, rs1, rs2 } => {
+            let bits = cpu.fread_bits(rs1) ^ (cpu.fread_bits(rs2) & 0x8000_0000);
+            cpu.fwrite_bits(rd, bits);
+        }
+
+        // Comparison (result → integer register)
+        Instruction::FeqS { rd, rs1, rs2 } => {
+            cpu.write(rd, if cpu.fread(rs1) == cpu.fread(rs2) { 1 } else { 0 });
+        }
+        Instruction::FltS { rd, rs1, rs2 } => {
+            cpu.write(rd, if cpu.fread(rs1) < cpu.fread(rs2) { 1 } else { 0 });
+        }
+        Instruction::FleS { rd, rs1, rs2 } => {
+            cpu.write(rd, if cpu.fread(rs1) <= cpu.fread(rs2) { 1 } else { 0 });
+        }
+
+        // Conversion
+        Instruction::FcvtWS  { rd, rs1 } => {
+            let v = cpu.fread(rs1);
+            let result = if v.is_nan() { i32::MAX as u32 }
+                         else { (v.clamp(i32::MIN as f32, i32::MAX as f32) as i32) as u32 };
+            cpu.write(rd, result);
+        }
+        Instruction::FcvtWuS { rd, rs1 } => {
+            let v = cpu.fread(rs1);
+            let result = if v.is_nan() || v < 0.0 { 0 }
+                         else if v >= u32::MAX as f32 { u32::MAX }
+                         else { v as u32 };
+            cpu.write(rd, result);
+        }
+        Instruction::FcvtSW  { rd, rs1 } => {
+            cpu.fwrite(rd, cpu.read(rs1) as i32 as f32);
+        }
+        Instruction::FcvtSWu { rd, rs1 } => {
+            cpu.fwrite(rd, cpu.read(rs1) as f32);
+        }
+
+        // Move (bit-pattern transfers)
+        Instruction::FmvXW { rd, rs1 } => { cpu.write(rd, cpu.fread_bits(rs1)); }
+        Instruction::FmvWX { rd, rs1 } => { cpu.fwrite_bits(rd, cpu.read(rs1)); }
+
+        // Classify
+        Instruction::FclassS { rd, rs1 } => {
+            let bits = cpu.fread_bits(rs1);
+            let exp  = (bits >> 23) & 0xFF;
+            let mant = bits & 0x007F_FFFF;
+            let sign = bits >> 31;
+            let result: u32 = match (sign, exp, mant) {
+                (1, 0xFF, m) if m != 0 => 0x100, // signaling NaN (bit 8)
+                (0, 0xFF, m) if m != 0 => 0x200, // quiet NaN (bit 9)
+                (1, 0xFF, 0)           => 0x001, // -infinity
+                (0, 0xFF, 0)           => 0x080, // +infinity
+                (1, 0,    0)           => 0x008, // -zero
+                (0, 0,    0)           => 0x010, // +zero
+                (1, 0,    _)           => 0x004, // -subnormal
+                (0, 0,    _)           => 0x020, // +subnormal
+                (1, _,    _)           => 0x002, // -normal
+                (0, _,    _)           => 0x040, // +normal
+                _                      => 0x000,
+            };
+            cpu.write(rd, result);
+        }
+
+        // Fused multiply-add
+        Instruction::FmaddS  { rd, rs1, rs2, rs3 } => {
+            cpu.fwrite(rd, cpu.fread(rs1) * cpu.fread(rs2) + cpu.fread(rs3));
+        }
+        Instruction::FmsubS  { rd, rs1, rs2, rs3 } => {
+            cpu.fwrite(rd, cpu.fread(rs1) * cpu.fread(rs2) - cpu.fread(rs3));
+        }
+        Instruction::FnmsubS { rd, rs1, rs2, rs3 } => {
+            cpu.fwrite(rd, -(cpu.fread(rs1) * cpu.fread(rs2)) + cpu.fread(rs3));
+        }
+        Instruction::FnmaddS { rd, rs1, rs2, rs3 } => {
+            cpu.fwrite(rd, -(cpu.fread(rs1) * cpu.fread(rs2)) - cpu.fread(rs3));
+        }
+
         _ => unreachable!(),
     }
     Ok(true)

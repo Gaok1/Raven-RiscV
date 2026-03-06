@@ -38,4 +38,47 @@ pub enum Instruction {
 
     // Memory ordering (RV32I base — executed as nop in single-core simulator)
     Fence,
+
+    // RV32F — floating-point extension
+    // Load/Store (I/S-type with float rd/rs2)
+    Flw  { rd:u8, rs1:u8, imm:i32 },
+    Fsw  { rs2:u8, rs1:u8, imm:i32 },
+
+    // Arithmetic (R-type, operate on f registers)
+    FaddS  { rd:u8, rs1:u8, rs2:u8 },
+    FsubS  { rd:u8, rs1:u8, rs2:u8 },
+    FmulS  { rd:u8, rs1:u8, rs2:u8 },
+    FdivS  { rd:u8, rs1:u8, rs2:u8 },
+    FsqrtS { rd:u8, rs1:u8 },
+    FminS  { rd:u8, rs1:u8, rs2:u8 },
+    FmaxS  { rd:u8, rs1:u8, rs2:u8 },
+
+    // Sign injection (used by fmv.s/fneg.s/fabs.s pseudos)
+    FsgnjS  { rd:u8, rs1:u8, rs2:u8 },
+    FsgnjnS { rd:u8, rs1:u8, rs2:u8 },
+    FsgnjxS { rd:u8, rs1:u8, rs2:u8 },
+
+    // Comparison (result in integer register)
+    FeqS { rd:u8, rs1:u8, rs2:u8 },
+    FltS { rd:u8, rs1:u8, rs2:u8 },
+    FleS { rd:u8, rs1:u8, rs2:u8 },
+
+    // Conversion
+    FcvtWS  { rd:u8, rs1:u8 }, // f32 → i32 (signed)
+    FcvtWuS { rd:u8, rs1:u8 }, // f32 → u32 (unsigned)
+    FcvtSW  { rd:u8, rs1:u8 }, // i32 → f32
+    FcvtSWu { rd:u8, rs1:u8 }, // u32 → f32
+
+    // Move (bit-pattern, between int and float register files)
+    FmvXW { rd:u8, rs1:u8 }, // float-bits → int reg
+    FmvWX { rd:u8, rs1:u8 }, // int reg → float-bits
+
+    // Classify
+    FclassS { rd:u8, rs1:u8 },
+
+    // Fused multiply-add (R4-type)
+    FmaddS  { rd:u8, rs1:u8, rs2:u8, rs3:u8 }, //  rs1*rs2 + rs3
+    FmsubS  { rd:u8, rs1:u8, rs2:u8, rs3:u8 }, //  rs1*rs2 - rs3
+    FnmsubS { rd:u8, rs1:u8, rs2:u8, rs3:u8 }, // -rs1*rs2 + rs3
+    FnmaddS { rd:u8, rs1:u8, rs2:u8, rs3:u8 }, // -rs1*rs2 - rs3
 }
