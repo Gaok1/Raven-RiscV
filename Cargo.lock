@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "falconasm"
-version = "0.1.0"
+version = "1.17.1"
 dependencies = [
  "arboard",
  "comfy-table",
