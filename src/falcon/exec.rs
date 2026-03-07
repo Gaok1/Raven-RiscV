@@ -426,13 +426,13 @@ fn exec_fp<B: Bus>(
         }
 
         // Conversion
-        Instruction::FcvtWS  { rd, rs1 } => {
+        Instruction::FcvtWS  { rd, rs1, .. } => {
             let v = cpu.fread(rs1);
             let result = if v.is_nan() { i32::MAX as u32 }
                          else { (v.clamp(i32::MIN as f32, i32::MAX as f32) as i32) as u32 };
             cpu.write(rd, result);
         }
-        Instruction::FcvtWuS { rd, rs1 } => {
+        Instruction::FcvtWuS { rd, rs1, .. } => {
             let v = cpu.fread(rs1);
             let result = if v.is_nan() || v < 0.0 { 0 }
                          else if v >= u32::MAX as f32 { u32::MAX }

@@ -6,29 +6,28 @@ use ratatui::{
 };
 
 use crate::falcon::cache::CacheController;
-use crate::ui::app::{App, CacheScope, CacheSubtab};
-use crate::ui::view::run::render_run_status;
+use crate::ui::app::{App, CacheScope, CacheSubtab, RunButton, RunSpeed};
 
 mod config;
 mod stats;
 mod view;
 
 pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
-    // Layout: level selector (1) | subtab header (3) | run controls (5) | content (min) | shared controls bar (3)
+    // Layout: level selector (1) | subtab header (3) | exec controls (4) | content (min) | shared controls bar (3)
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // level selector bar
             Constraint::Length(3), // subtab header
-            Constraint::Length(5), // run controls (always visible)
+            Constraint::Length(4), // exec controls (Speed / State / Cycles)
             Constraint::Min(0),    // content
-            Constraint::Length(3), // shared controls bar (Reset / Pause / Scope)
+            Constraint::Length(3), // shared controls bar (Reset / Export / Compare / Scope)
         ])
         .split(area);
 
     render_level_selector(f, layout[0], app);
     render_subtab_header(f, layout[1], app);
-    render_run_status(f, layout[2], app);
+    render_cache_exec_controls(f, layout[2], app);
 
     match app.cache.subtab {
         CacheSubtab::Stats  => stats::render_stats(f, layout[3], app),
@@ -37,6 +36,73 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     }
 
     render_controls_bar(f, layout[4], app);
+}
+
+fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
+    let speed_text = app.run.speed.label();
+    let speed_color = match app.run.speed {
+        RunSpeed::X1      => Color::Blue,
+        RunSpeed::X2      => Color::Cyan,
+        RunSpeed::X4      => Color::Yellow,
+        RunSpeed::Instant => Color::Magenta,
+    };
+    let (state_text, state_color) = if app.run.is_running {
+        ("RUN", Color::Green)
+    } else {
+        ("PAUSE", Color::Red)
+    };
+
+    let hover_reset = app.hover_run_button == Some(RunButton::Reset);
+    let hover_speed = app.hover_run_button == Some(RunButton::Speed);
+    let hover_state = app.hover_run_button == Some(RunButton::State);
+
+    let mk_btn = |label: &str, color: Color, hovered: bool| -> Span<'static> {
+        let base = Style::default().fg(Color::Black);
+        let style = if hovered {
+            base.bg(color).add_modifier(Modifier::ITALIC)
+        } else {
+            base.bg(color).add_modifier(Modifier::DIM)
+        };
+        Span::styled(format!("[{label}]"), style)
+    };
+
+    let total = app.run.mem.total_program_cycles();
+    let cpi   = app.run.mem.overall_cpi();
+    let instr = app.run.mem.instruction_count;
+
+    let line1 = Line::from(vec![
+        Span::raw(" "),
+        mk_btn("Reset", Color::Red, hover_reset),
+        Span::raw("  Speed "),
+        mk_btn(speed_text, speed_color, hover_speed),
+        Span::raw("  State "),
+        mk_btn(state_text, state_color, hover_state),
+        Span::styled(
+            "   r=reset  f=speed  p=pause  s=step",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+    let line2 = Line::from(vec![
+        Span::styled(format!(" Cycles:{total}"), Style::default().fg(Color::Cyan)),
+        Span::raw("  "),
+        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(Color::Magenta)),
+        Span::raw("  "),
+        Span::styled(format!("Instrs:{instr}"), Style::default().fg(Color::DarkGray)),
+    ]);
+
+    let border_color = if app.hover_run_button.is_some() {
+        Color::LightCyan
+    } else {
+        Color::DarkGray
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .border_type(BorderType::Rounded)
+        .title(Span::styled("Execution", Style::default().fg(Color::DarkGray)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 }
 
 fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
@@ -132,18 +198,6 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 
 /// Shared controls bar — visible on every Cache subtab.
 pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let reset_style = if app.cache.hover_reset {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::Black).bg(Color::Red)
-    };
-    let pause_style = if app.cache.hover_pause {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
-    } else if !app.run.is_running {
-        Style::default().fg(Color::Black).bg(Color::Green)
-    } else {
-        Style::default().fg(Color::Black).bg(Color::Blue)
-    };
     let export_style = if app.cache.hover_export_results {
         Style::default().fg(Color::Black).bg(Color::Yellow)
     } else {
@@ -157,25 +211,19 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let pause_label = if app.run.is_running { "[Pause]" } else { "[Resume]" };
-
     // Scope buttons: only shown when L1 is selected
     let show_scope = app.cache.selected_level == 0;
     let scope_i_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::ICache), app.cache.hover_scope_i);
     let scope_d_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::DCache), app.cache.hover_scope_d);
     let scope_both_style = scope_btn_style(matches!(app.cache.scope, CacheScope::Both),   app.cache.hover_scope_both);
 
-    // Layout: " [Reset]  [Pause]  [\u{2b06} Export]  [\u{2b07} Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
-    // x=1..8   x=10..17  x=19..29         x=31..42
+    // Layout: " [\u{2b06} Export]  [\u{2b07} Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
+    // x=1..11               x=13..24
     let mut line_spans = vec![
         Span::raw(" "),
-        Span::styled("[Reset]",      reset_style),
+        Span::styled("[\u{2b06} Export]",   export_style),
         Span::raw("  "),
-        Span::styled(pause_label,    pause_style),
-        Span::raw("  "),
-        Span::styled("[\u{2b06} Export]",  export_style),
-        Span::raw("  "),
-        Span::styled("[\u{2b07} Compare]", compare_style),
+        Span::styled("[\u{2b07} Compare]",  compare_style),
     ];
 
     if show_scope {
@@ -186,12 +234,12 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         line_spans.push(Span::raw(" "));
         line_spans.push(Span::styled("[Both]",    scope_both_style));
         line_spans.push(Span::styled(
-            "   r=reset  p=pause  Ctrl+R=export  Ctrl+M=compare",
+            "   Ctrl+R=export  Ctrl+M=compare",
             Style::default().fg(Color::DarkGray),
         ));
     } else {
         line_spans.push(Span::styled(
-            "   r=reset  p=pause  Ctrl+R=export  Ctrl+M=compare",
+            "   Ctrl+R=export  Ctrl+M=compare",
             Style::default().fg(Color::DarkGray),
         ));
     }

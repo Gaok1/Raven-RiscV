@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Tabs},
 };
 
-pub(super) use super::app::{App, DocsPage, EditorMode, MemRegion, RunButton, Tab};
+pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
 pub(super) use super::editor::Editor;
 
 pub mod docs;
@@ -94,7 +94,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         mode
     );
 
-    let status = Paragraph::new(status).block(Block::default().borders(Borders::ALL));
+    let status = Paragraph::new(status).style(Style::default().fg(Color::DarkGray));
     f.render_widget(status, chunks[2]);
 
     if app.show_exit_popup {
@@ -276,7 +276,9 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             vec![
                 ("[↑/↓]",          "scroll documentation"),
                 ("[PgUp/PgDn]",    "fast scroll"),
-                ("[Ctrl+F]",       "search within docs"),
+                ("[Ctrl+F]",       "open search bar (filter by name/desc)"),
+                ("[←/→]",          "navigate type filter"),
+                ("[Space]",        "toggle selected type filter / restore All"),
             ],
         ],
     }

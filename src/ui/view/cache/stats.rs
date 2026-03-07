@@ -500,6 +500,16 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         )),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
+    if inner.height < 7 { return; }
+
+    let amat = app.run.mem.extra_level_amat(extra_idx);
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!("AMAT:{amat:.2}cyc"),
+            Style::default().fg(Color::Yellow),
+        )),
+        Rect::new(inner.x, inner.y + 6, inner.width, 1),
+    );
 }
 
 fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {

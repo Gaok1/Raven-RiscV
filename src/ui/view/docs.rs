@@ -1,218 +1,292 @@
-use comfy_table::{
-    presets::ASCII_BORDERS_ONLY, Cell as ACell, ContentArrangement, Row as ARow, Table as ATable,
-};
 use ratatui::prelude::*;
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
-use super::{App, DocsPage};
+use crate::ui::app::{DocsLang, DocsPage};
+use super::App;
+
+// ── Type-filter bit constants ──────────────────────────────────────────────────
+
+const TY_R:      u16 = 1 << 0;
+const TY_M:      u16 = 1 << 1;
+const TY_I:      u16 = 1 << 2;
+const TY_LOAD:   u16 = 1 << 3;
+const TY_STORE:  u16 = 1 << 4;
+const TY_BRANCH: u16 = 1 << 5;
+const TY_U:      u16 = 1 << 6;
+const TY_JUMP:   u16 = 1 << 7;
+const TY_SYS:    u16 = 1 << 8;
+const TY_PSEUDO: u16 = 1 << 9;
+const TY_F:      u16 = 1 << 10;
+const TY_DIR:    u16 = 1 << 11;
+
+pub(crate) const ALL_MASK: u16 = 0x0FFF;
+
+/// Filter bar items: (display_label, type_bit, color).
+/// Index 0 = "All" (special — bit=0 means toggle-all), 1–12 = individual types.
+pub(crate) const FILTER_ITEMS: &[(&str, u16, Color)] = &[
+    ("All",    0,         Color::White),
+    ("R",      TY_R,      Color::Yellow),
+    ("M",      TY_M,      Color::LightRed),
+    ("I",      TY_I,      Color::Green),
+    ("Load",   TY_LOAD,   Color::Cyan),
+    ("Store",  TY_STORE,  Color::LightBlue),
+    ("Branch", TY_BRANCH, Color::Magenta),
+    ("U",      TY_U,      Color::LightYellow),
+    ("Jump",   TY_JUMP,   Color::LightCyan),
+    ("SYS",    TY_SYS,    Color::Red),
+    ("Pseudo", TY_PSEUDO, Color::LightMagenta),
+    ("F",      TY_F,      Color::LightGreen),
+    ("Dir",    TY_DIR,    Color::Gray),
+];
+
+// ── Column layout constants ────────────────────────────────────────────────────
+
+/// Width of the type badge column: "[Branch]" = 8 chars.
+const TY_W: usize = 8;
+/// Width of the mnemonic column.
+const MNE_W: usize = 13;
+/// Width of the operands column.
+const OPS_W: usize = 21;
+/// Width of the expands column (shown only on wide terminals).
+const EXP_W: usize = 26;
+/// Minimum terminal width required to show the expands column.
+const SHOW_EXP_MIN_W: usize = 95;
+
+// ── Instruction table data ─────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
 struct DocRow {
-    ty: &'static str,
+    ty:       &'static str,
     mnemonic: &'static str,
     operands: &'static str,
-    desc: &'static str,
-    expands: &'static str,
+    desc:     &'static str,
+    expands:  &'static str,
+}
+
+macro_rules! row {
+    ($ty:expr, $mne:expr, $ops:expr, $desc:expr) => {
+        DocRow { ty: $ty, mnemonic: $mne, operands: $ops, desc: $desc, expands: "" }
+    };
+    ($ty:expr, $mne:expr, $ops:expr, $desc:expr, $exp:expr) => {
+        DocRow { ty: $ty, mnemonic: $mne, operands: $ops, desc: $desc, expands: $exp }
+    };
 }
 
 const DOCS: &[DocRow] = &[
-    // ---------- R-type ----------
-    DocRow { ty: "R", mnemonic: "add", operands: "rd, rs1, rs2", desc: "rd = rs1 + rs2 (signed)", expands: "" },
-    DocRow { ty: "R", mnemonic: "sub", operands: "rd, rs1, rs2", desc: "rd = rs1 - rs2 (signed)", expands: "" },
-    DocRow { ty: "R", mnemonic: "and", operands: "rd, rs1, rs2", desc: "rd = rs1 & rs2 (bitwise)", expands: "" },
-    DocRow { ty: "R", mnemonic: "or", operands: "rd, rs1, rs2", desc: "rd = rs1 | rs2 (bitwise)", expands: "" },
-    DocRow { ty: "R", mnemonic: "xor", operands: "rd, rs1, rs2", desc: "rd = rs1 ^ rs2 (bitwise)", expands: "" },
-    DocRow { ty: "R", mnemonic: "sll", operands: "rd, rs1, rs2", desc: "rd = rs1 << (rs2 & 31)", expands: "" },
-    DocRow { ty: "R", mnemonic: "srl", operands: "rd, rs1, rs2", desc: "rd = logical rs1 >> (rs2 & 31)", expands: "" },
-    DocRow { ty: "R", mnemonic: "sra", operands: "rd, rs1, rs2", desc: "rd = arithmetic rs1 >> (rs2 & 31)", expands: "" },
-    DocRow { ty: "R", mnemonic: "slt", operands: "rd, rs1, rs2", desc: "rd = 1 if rs1 < rs2 (signed) else 0", expands: "" },
-    DocRow { ty: "R", mnemonic: "sltu", operands: "rd, rs1, rs2", desc: "rd = 1 if rs1 < rs2 (unsigned) else 0", expands: "" },
-    // ---------- M extension ----------
-    DocRow { ty: "R(M)", mnemonic: "mul", operands: "rd, rs1, rs2", desc: "rd = (rs1 * rs2) low 32b", expands: "" },
-    DocRow { ty: "R(M)", mnemonic: "mulh", operands: "rd, rs1, rs2", desc: "rd = (rs1 * rs2) high 32b signed", expands: "" },
-    DocRow { ty: "R(M)", mnemonic: "mulhsu", operands: "rd, rs1, rs2", desc: "rd = (signed rs1 * unsigned rs2) high 32b", expands: "" },
-    DocRow { ty: "R(M)", mnemonic: "mulhu", operands: "rd, rs1, rs2", desc: "rd = (rs1 * rs2) high 32b unsigned", expands: "" },
-    DocRow { ty: "R(M)", mnemonic: "div", operands: "rd, rs1, rs2", desc: "rd = rs1 / rs2 (signed)", expands: "" },
-    DocRow { ty: "R(M)", mnemonic: "divu", operands: "rd, rs1, rs2", desc: "rd = rs1 / rs2 (unsigned)", expands: "" },
-    DocRow { ty: "R(M)", mnemonic: "rem", operands: "rd, rs1, rs2", desc: "rd = rs1 % rs2 (signed)", expands: "" },
-    DocRow { ty: "R(M)", mnemonic: "remu", operands: "rd, rs1, rs2", desc: "rd = rs1 % rs2 (unsigned)", expands: "" },
-    // ---------- I-type ----------
-    DocRow { ty: "I", mnemonic: "addi", operands: "rd, rs1, imm", desc: "rd = rs1 + imm (12-bit signed)", expands: "" },
-    DocRow { ty: "I", mnemonic: "xori", operands: "rd, rs1, imm", desc: "rd = rs1 ^ imm", expands: "" },
-    DocRow { ty: "I", mnemonic: "ori", operands: "rd, rs1, imm", desc: "rd = rs1 | imm", expands: "" },
-    DocRow { ty: "I", mnemonic: "andi", operands: "rd, rs1, imm", desc: "rd = rs1 & imm", expands: "" },
-    DocRow { ty: "I", mnemonic: "slti", operands: "rd, rs1, imm", desc: "rd = 1 if rs1 < imm (signed) else 0", expands: "" },
-    DocRow { ty: "I", mnemonic: "sltiu", operands: "rd, rs1, imm", desc: "rd = 1 if rs1 < imm (unsigned) else 0", expands: "" },
-    DocRow { ty: "I", mnemonic: "slli", operands: "rd, rs1, shamt", desc: "rd = rs1 << shamt (0..31)", expands: "" },
-    DocRow { ty: "I", mnemonic: "srli", operands: "rd, rs1, shamt", desc: "rd = logical rs1 >> shamt", expands: "" },
-    DocRow { ty: "I", mnemonic: "srai", operands: "rd, rs1, shamt", desc: "rd = arithmetic rs1 >> shamt", expands: "" },
-    // ---------- Loads ----------
-    DocRow { ty: "Load", mnemonic: "lb", operands: "rd, imm(rs1)", desc: "Load 1 byte signed from memory[rs1+imm]", expands: "" },
-    DocRow { ty: "Load", mnemonic: "lh", operands: "rd, imm(rs1)", desc: "Load 2 bytes signed from memory[rs1+imm]", expands: "" },
-    DocRow { ty: "Load", mnemonic: "lw", operands: "rd, imm(rs1)", desc: "Load 4 bytes from memory[rs1+imm]", expands: "" },
-    DocRow { ty: "Load", mnemonic: "lbu", operands: "rd, imm(rs1)", desc: "Load 1 byte unsigned from memory[rs1+imm]", expands: "" },
-    DocRow { ty: "Load", mnemonic: "lhu", operands: "rd, imm(rs1)", desc: "Load 2 bytes unsigned from memory[rs1+imm]", expands: "" },
-    // ---------- Stores ----------
-    DocRow { ty: "Store", mnemonic: "sb", operands: "rs2, imm(rs1)", desc: "Store low 1 byte of rs2 to memory[rs1+imm]", expands: "" },
-    DocRow { ty: "Store", mnemonic: "sh", operands: "rs2, imm(rs1)", desc: "Store low 2 bytes of rs2 to memory[rs1+imm]", expands: "" },
-    DocRow { ty: "Store", mnemonic: "sw", operands: "rs2, imm(rs1)", desc: "Store 4 bytes of rs2 to memory[rs1+imm]", expands: "" },
-    // ---------- Branches ----------
-    DocRow { ty: "Branch", mnemonic: "beq", operands: "rs1, rs2, label", desc: "Branch if rs1==rs2. label: instruction label", expands: "" },
-    DocRow { ty: "Branch", mnemonic: "bne", operands: "rs1, rs2, label", desc: "Branch if rs1!=rs2. label: instruction label", expands: "" },
-    DocRow { ty: "Branch", mnemonic: "blt", operands: "rs1, rs2, label", desc: "Branch if rs1<rs2 (signed). label: instruction label", expands: "" },
-    DocRow { ty: "Branch", mnemonic: "bge", operands: "rs1, rs2, label", desc: "Branch if rs1>=rs2 (signed). label: instruction label", expands: "" },
-    DocRow { ty: "Branch", mnemonic: "bltu", operands: "rs1, rs2, label", desc: "Branch if rs1<rs2 (unsigned). label: instruction label", expands: "" },
-    DocRow { ty: "Branch", mnemonic: "bgeu", operands: "rs1, rs2, label", desc: "Branch if rs1>=rs2 (unsigned). label: instruction label", expands: "" },
-    // ---------- U-type ----------
-    DocRow { ty: "U", mnemonic: "lui", operands: "rd, imm20", desc: "rd = imm20 << 12 (upper 20 bits)", expands: "" },
-    DocRow { ty: "U", mnemonic: "auipc", operands: "rd, imm20", desc: "rd = PC + (imm20 << 12)", expands: "" },
-    // ---------- Jumps ----------
-    DocRow { ty: "Jump", mnemonic: "jal", operands: "label | rd, label", desc: "Jump and link. If only label is given: rd=ra", expands: "" },
-    DocRow { ty: "Jump", mnemonic: "jalr", operands: "rd, rs1, imm", desc: "Jump to rs1+imm & ~1; rd=return addr", expands: "" },
-    // ---------- System ----------
-    DocRow { ty: "SYS", mnemonic: "ecall", operands: "", desc: "System call. a7 selects service; a0 holds arg/result", expands: "" },
-    DocRow { ty: "SYS", mnemonic: "ebreak", operands: "", desc: "Stop execution (debug break)", expands: "" },
-    DocRow { ty: "SYS", mnemonic: "halt", operands: "", desc: "Stop execution (alias of ebreak)", expands: "" },
-    // ---------- Pseudo-instructions ----------
-    DocRow { ty: "Pseudo", mnemonic: "nop", operands: "", desc: "No operation", expands: "addi x0, x0, 0" },
-    DocRow { ty: "Pseudo", mnemonic: "mv", operands: "rd, rs", desc: "Move rd = rs", expands: "addi rd, rs, 0" },
-    DocRow { ty: "Pseudo", mnemonic: "li", operands: "rd, imm12", desc: "Load small immediate (12-bit) into rd", expands: "addi rd, x0, imm" },
-    DocRow { ty: "Pseudo", mnemonic: "subi", operands: "rd, rs1, imm", desc: "rd = rs1 - imm", expands: "addi rd, rs1, -imm" },
-    DocRow { ty: "Pseudo", mnemonic: "j", operands: "label", desc: "Unconditional jump to label", expands: "jal x0, label" },
-    DocRow { ty: "Pseudo", mnemonic: "call", operands: "label", desc: "Call subroutine", expands: "jal ra, label" },
-    DocRow { ty: "Pseudo", mnemonic: "jr", operands: "rs", desc: "Jump register", expands: "jalr x0, rs, 0" },
-    DocRow { ty: "Pseudo", mnemonic: "ret", operands: "", desc: "Return", expands: "jalr x0, ra, 0" },
-    DocRow { ty: "Pseudo", mnemonic: "la", operands: "rd, label", desc: "Load address of label into rd", expands: "lui rd, hi; addi rd, rd, lo" },
-    DocRow { ty: "Pseudo", mnemonic: "push", operands: "rs", desc: "sp -= 4; store rs at 4(sp)", expands: "addi sp, sp, -4; sw rs, 4(sp)" },
-    DocRow { ty: "Pseudo", mnemonic: "pop", operands: "rd", desc: "load rd from 4(sp); sp += 4", expands: "lw rd, 4(sp); addi sp, sp, 4" },
-    DocRow { ty: "Pseudo", mnemonic: "print", operands: "rd", desc: "Print integer in rd (ecall a7=1000, a0=value)", expands: "addi a7, x0, 1000; addi a0, rd, 0; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "printStr", operands: "label", desc: "Print NUL string at label without newline", expands: "addi a7, x0, 1001; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "printStrLn", operands: "label", desc: "Print NUL string at label and newline", expands: "addi a7, x0, 1002; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "read", operands: "label", desc: "Read line into memory at label; NUL-terminate", expands: "addi a7, x0, 1003; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "readByte", operands: "label", desc: "Read number and store 1 byte at label", expands: "addi a7, x0, 1010; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "readHalf", operands: "label", desc: "Read number and store 2 bytes at label (little-endian)", expands: "addi a7, x0, 1011; lui a0, hi; addi a0, a0, lo; ecall" },
-    DocRow { ty: "Pseudo", mnemonic: "readWord", operands: "label", desc: "Read number and store 4 bytes at label (little-endian)", expands: "addi a7, x0, 1012; lui a0, hi; addi a0, a0, lo; ecall" },
+    // ── R-type ──────────────────────────────────────────────────────────────────
+    row!("R", "add",    "rd, rs1, rs2",   "rd = rs1 + rs2"),
+    row!("R", "sub",    "rd, rs1, rs2",   "rd = rs1 - rs2"),
+    row!("R", "and",    "rd, rs1, rs2",   "rd = rs1 & rs2"),
+    row!("R", "or",     "rd, rs1, rs2",   "rd = rs1 | rs2"),
+    row!("R", "xor",    "rd, rs1, rs2",   "rd = rs1 ^ rs2"),
+    row!("R", "sll",    "rd, rs1, rs2",   "rd = rs1 << (rs2 & 31)"),
+    row!("R", "srl",    "rd, rs1, rs2",   "rd = logical rs1 >> (rs2 & 31)"),
+    row!("R", "sra",    "rd, rs1, rs2",   "rd = arithmetic rs1 >> (rs2 & 31)"),
+    row!("R", "slt",    "rd, rs1, rs2",   "rd = 1 if rs1 < rs2 (signed) else 0"),
+    row!("R", "sltu",   "rd, rs1, rs2",   "rd = 1 if rs1 < rs2 (unsigned) else 0"),
+    // ── M extension ─────────────────────────────────────────────────────────────
+    row!("M", "mul",    "rd, rs1, rs2",   "rd = (rs1 * rs2) low 32 bits"),
+    row!("M", "mulh",   "rd, rs1, rs2",   "rd = (rs1 * rs2) high 32 bits signed"),
+    row!("M", "mulhsu", "rd, rs1, rs2",   "rd = (signed rs1 * unsigned rs2) high 32 bits"),
+    row!("M", "mulhu",  "rd, rs1, rs2",   "rd = (rs1 * rs2) high 32 bits unsigned"),
+    row!("M", "div",    "rd, rs1, rs2",   "rd = rs1 / rs2 (signed integer division)"),
+    row!("M", "divu",   "rd, rs1, rs2",   "rd = rs1 / rs2 (unsigned)"),
+    row!("M", "rem",    "rd, rs1, rs2",   "rd = rs1 % rs2 (signed remainder)"),
+    row!("M", "remu",   "rd, rs1, rs2",   "rd = rs1 % rs2 (unsigned)"),
+    // ── I-type ──────────────────────────────────────────────────────────────────
+    row!("I", "addi",   "rd, rs1, imm",   "rd = rs1 + imm (12-bit signed)"),
+    row!("I", "xori",   "rd, rs1, imm",   "rd = rs1 ^ imm"),
+    row!("I", "ori",    "rd, rs1, imm",   "rd = rs1 | imm"),
+    row!("I", "andi",   "rd, rs1, imm",   "rd = rs1 & imm"),
+    row!("I", "slti",   "rd, rs1, imm",   "rd = 1 if rs1 < imm (signed) else 0"),
+    row!("I", "sltiu",  "rd, rs1, imm",   "rd = 1 if rs1 < imm (unsigned) else 0"),
+    row!("I", "slli",   "rd, rs1, shamt", "rd = rs1 << shamt  (shamt 0..31)"),
+    row!("I", "srli",   "rd, rs1, shamt", "rd = logical rs1 >> shamt"),
+    row!("I", "srai",   "rd, rs1, shamt", "rd = arithmetic rs1 >> shamt"),
+    // ── Loads ───────────────────────────────────────────────────────────────────
+    row!("Load", "lb",  "rd, imm(rs1)",   "Load 1 byte signed from mem[rs1+imm]"),
+    row!("Load", "lh",  "rd, imm(rs1)",   "Load 2 bytes signed from mem[rs1+imm]"),
+    row!("Load", "lw",  "rd, imm(rs1)",   "Load 4 bytes from mem[rs1+imm]"),
+    row!("Load", "lbu", "rd, imm(rs1)",   "Load 1 byte unsigned from mem[rs1+imm]"),
+    row!("Load", "lhu", "rd, imm(rs1)",   "Load 2 bytes unsigned from mem[rs1+imm]"),
+    // ── Stores ──────────────────────────────────────────────────────────────────
+    row!("Store", "sb", "rs2, imm(rs1)",  "Store low 1 byte of rs2 to mem[rs1+imm]"),
+    row!("Store", "sh", "rs2, imm(rs1)",  "Store low 2 bytes of rs2 to mem[rs1+imm]"),
+    row!("Store", "sw", "rs2, imm(rs1)",  "Store 4 bytes of rs2 to mem[rs1+imm]"),
+    // ── Branches ────────────────────────────────────────────────────────────────
+    row!("Branch", "beq",  "rs1, rs2, label", "Branch if rs1 == rs2"),
+    row!("Branch", "bne",  "rs1, rs2, label", "Branch if rs1 != rs2"),
+    row!("Branch", "blt",  "rs1, rs2, label", "Branch if rs1 < rs2 (signed)"),
+    row!("Branch", "bge",  "rs1, rs2, label", "Branch if rs1 >= rs2 (signed)"),
+    row!("Branch", "bltu", "rs1, rs2, label", "Branch if rs1 < rs2 (unsigned)"),
+    row!("Branch", "bgeu", "rs1, rs2, label", "Branch if rs1 >= rs2 (unsigned)"),
+    // ── U-type ──────────────────────────────────────────────────────────────────
+    row!("U", "lui",   "rd, imm20",       "rd = imm20 << 12  (loads upper 20 bits)"),
+    row!("U", "auipc", "rd, imm20",       "rd = PC + (imm20 << 12)"),
+    // ── Jumps ───────────────────────────────────────────────────────────────────
+    row!("Jump", "jal",  "label | rd, label", "Jump and link; rd defaults to ra"),
+    row!("Jump", "jalr", "rd, rs1, imm",      "Jump to rs1+imm & ~1; rd = return addr"),
+    // ── System ──────────────────────────────────────────────────────────────────
+    row!("SYS", "ecall",  "", "System call — a7 selects service, a0 = arg/result"),
+    row!("SYS", "ebreak", "", "Stop execution (debug breakpoint)"),
+    row!("SYS", "halt",   "", "Stop execution (alias of ebreak)"),
+    row!("SYS", "fence",  "", "Memory barrier (no-op in single-core simulation)"),
+    // ── Pseudo — basic ──────────────────────────────────────────────────────────
+    row!("Pseudo", "nop",    "",              "No operation",                        "addi x0, x0, 0"),
+    row!("Pseudo", "mv",     "rd, rs",        "rd = rs",                             "addi rd, rs, 0"),
+    row!("Pseudo", "li",     "rd, imm12",     "Load 12-bit immediate into rd",       "addi rd, x0, imm"),
+    row!("Pseudo", "subi",   "rd, rs1, imm",  "rd = rs1 - imm",                      "addi rd, rs1, -imm"),
+    row!("Pseudo", "neg",    "rd, rs",        "rd = -rs",                            "sub rd, x0, rs"),
+    row!("Pseudo", "not",    "rd, rs",        "rd = ~rs  (bitwise NOT)",             "xori rd, rs, -1"),
+    row!("Pseudo", "seqz",   "rd, rs",        "rd = 1 if rs == 0 else 0",            "sltiu rd, rs, 1"),
+    row!("Pseudo", "snez",   "rd, rs",        "rd = 1 if rs != 0 else 0",            "sltu rd, x0, rs"),
+    row!("Pseudo", "sltz",   "rd, rs",        "rd = 1 if rs < 0 else 0",             "slt rd, rs, x0"),
+    row!("Pseudo", "sgtz",   "rd, rs",        "rd = 1 if rs > 0 else 0",             "slt rd, x0, rs"),
+    // ── Pseudo — load address / control flow ────────────────────────────────────
+    row!("Pseudo", "la",     "rd, label",     "Load address of label into rd",       "lui rd, hi; addi rd, rd, lo"),
+    row!("Pseudo", "j",      "label",         "Unconditional jump to label",         "jal x0, label"),
+    row!("Pseudo", "call",   "label",         "Call subroutine at label",            "jal ra, label"),
+    row!("Pseudo", "jr",     "rs",            "Jump register (indirect)",            "jalr x0, rs, 0"),
+    row!("Pseudo", "ret",    "",              "Return from subroutine",              "jalr x0, ra, 0"),
+    // ── Pseudo — stack ──────────────────────────────────────────────────────────
+    row!("Pseudo", "push",   "rs",            "sp -= 4; store rs at 0(sp)",          "addi sp,sp,-4; sw rs,0(sp)"),
+    row!("Pseudo", "pop",    "rd",            "load rd from 0(sp); sp += 4",         "lw rd,0(sp); addi sp,sp,4"),
+    // ── Pseudo — branches vs zero (one-register) ────────────────────────────────
+    row!("Pseudo", "bez/beqz","rs, label",    "Branch if rs == 0",                   "beq rs, x0, label"),
+    row!("Pseudo", "bnez",   "rs, label",     "Branch if rs != 0",                   "bne rs, x0, label"),
+    row!("Pseudo", "bltz",   "rs, label",     "Branch if rs < 0",                    "blt rs, x0, label"),
+    row!("Pseudo", "bgez",   "rs, label",     "Branch if rs >= 0",                   "bge rs, x0, label"),
+    row!("Pseudo", "blez",   "rs, label",     "Branch if rs <= 0",                   "bge x0, rs, label"),
+    row!("Pseudo", "bgtz",   "rs, label",     "Branch if rs > 0",                    "blt x0, rs, label"),
+    // ── Pseudo — branches (two-register, swapped) ───────────────────────────────
+    row!("Pseudo", "bgt",    "rs1, rs2, label","Branch if rs1 > rs2 (signed)",       "blt rs2, rs1, label"),
+    row!("Pseudo", "ble",    "rs1, rs2, label","Branch if rs1 <= rs2 (signed)",      "bge rs2, rs1, label"),
+    row!("Pseudo", "bgtu",   "rs1, rs2, label","Branch if rs1 > rs2 (unsigned)",     "bltu rs2, rs1, label"),
+    row!("Pseudo", "bleu",   "rs1, rs2, label","Branch if rs1 <= rs2 (unsigned)",    "bgeu rs2, rs1, label"),
+    // ── Pseudo — I/O and syscall helpers ────────────────────────────────────────
+    row!("Pseudo", "print",      "rd",         "Print integer in rd (a7=1000)",       "addi a7,x0,1000; mv a0,rd; ecall"),
+    row!("Pseudo", "print_str",    "label",     "Print NUL string at label",           "strlen loop; write(a0=1,a1=buf,a2=len) [syscall 64]"),
+    row!("Pseudo", "print_str_ln","label",     "Print NUL string + newline",          "strlen loop; write buf; write '\\n' via stack [syscall 64]"),
+    row!("Pseudo", "read",        "label",     "Read up to 256 bytes from stdin",     "read(a0=0,a1=buf,a2=256) [syscall 63]"),
+    row!("Pseudo", "read_byte",   "label",     "Read decimal → store 1 byte (Falcon)","addi a7,x0,1010; la a0,label; ecall"),
+    row!("Pseudo", "read_half",   "label",     "Read decimal → store 2 bytes (Falcon)","addi a7,x0,1011; la a0,label; ecall"),
+    row!("Pseudo", "read_word",   "label",     "Read decimal → store 4 bytes (Falcon)","addi a7,x0,1012; la a0,label; ecall"),
+    row!("Pseudo", "random",      "rd",        "rd = random 32-bit word (getrandom)", "getrandom syscall via stack (4 bytes)"),
+    row!("Pseudo", "random_bytes","label, n",  "Fill n random bytes at label",        "getrandom(label, n, 0) syscall"),
+    // ── F extension — loads / stores ────────────────────────────────────────────
+    row!("F", "flw",      "frd, imm(rs1)",      "Load f32 from mem[rs1+imm] into frd"),
+    row!("F", "fsw",      "frs2, imm(rs1)",     "Store f32 in frs2 to mem[rs1+imm]"),
+    // ── F extension — arithmetic ────────────────────────────────────────────────
+    row!("F", "fadd.s",   "frd, frs1, frs2",    "frd = frs1 + frs2 (single precision)"),
+    row!("F", "fsub.s",   "frd, frs1, frs2",    "frd = frs1 - frs2"),
+    row!("F", "fmul.s",   "frd, frs1, frs2",    "frd = frs1 * frs2"),
+    row!("F", "fdiv.s",   "frd, frs1, frs2",    "frd = frs1 / frs2"),
+    row!("F", "fsqrt.s",  "frd, frs1",           "frd = sqrt(frs1)"),
+    row!("F", "fmin.s",   "frd, frs1, frs2",    "frd = min(frs1, frs2)  (IEEE 754)"),
+    row!("F", "fmax.s",   "frd, frs1, frs2",    "frd = max(frs1, frs2)  (IEEE 754)"),
+    row!("F", "fmadd.s",  "frd, frs1, frs2, frs3","frd = frs1*frs2 + frs3  (fused)"),
+    row!("F", "fmsub.s",  "frd, frs1, frs2, frs3","frd = frs1*frs2 - frs3  (fused)"),
+    row!("F", "fnmadd.s", "frd, frs1, frs2, frs3","frd = -(frs1*frs2) - frs3  (fused)"),
+    row!("F", "fnmsub.s", "frd, frs1, frs2, frs3","frd = -(frs1*frs2) + frs3  (fused)"),
+    // ── F extension — sign injection ────────────────────────────────────────────
+    row!("F", "fsgnj.s",  "frd, frs1, frs2",    "frd = |frs1| with sign of frs2"),
+    row!("F", "fsgnjn.s", "frd, frs1, frs2",    "frd = |frs1| with negated sign of frs2"),
+    row!("F", "fsgnjx.s", "frd, frs1, frs2",    "frd = |frs1| with XOR of signs"),
+    // ── F extension — compare / classify ────────────────────────────────────────
+    row!("F", "feq.s",    "rd, frs1, frs2",     "rd = 1 if frs1 == frs2 (ordered) else 0"),
+    row!("F", "flt.s",    "rd, frs1, frs2",     "rd = 1 if frs1 < frs2  (ordered) else 0"),
+    row!("F", "fle.s",    "rd, frs1, frs2",     "rd = 1 if frs1 <= frs2 (ordered) else 0"),
+    row!("F", "fclass.s", "rd, frs1",            "Classify frs1 → bitmask in rd (see ISA)"),
+    // ── F extension — conversions ────────────────────────────────────────────────
+    row!("F", "fcvt.w.s",  "rd, frs1[, rm]",    "Convert f32 → i32; rm = rounding mode"),
+    row!("F", "fcvt.wu.s", "rd, frs1[, rm]",    "Convert f32 → u32; rm = rounding mode"),
+    row!("F", "fcvt.s.w",  "frd, rs1",           "Convert i32 → f32"),
+    row!("F", "fcvt.s.wu", "frd, rs1",           "Convert u32 → f32"),
+    // ── F extension — bit moves ──────────────────────────────────────────────────
+    row!("F", "fmv.x.w",  "rd, frs1",            "Copy float bits → int register (no conversion)"),
+    row!("F", "fmv.w.x",  "frd, rs1",            "Copy int bits → float register (no conversion)"),
+    // ── F extension — pseudos ────────────────────────────────────────────────────
+    row!("F", "fmv.s",    "frd, frs",            "Copy float register",                "fsgnj.s frd, frs, frs"),
+    row!("F", "fneg.s",   "frd, frs",            "Negate: frd = -frs",                 "fsgnjn.s frd, frs, frs"),
+    row!("F", "fabs.s",   "frd, frs",            "Absolute value: frd = |frs|",        "fsgnjx.s frd, frs, frs"),
+    // ── Directives ──────────────────────────────────────────────────────────────
+    row!("Dir", ".data",    "",              "Switch to initialized data section"),
+    row!("Dir", ".text",    "",              "Switch to code section"),
+    row!("Dir", ".bss",     "",              "Switch to BSS (zero-initialized) section"),
+    row!("Dir", ".section", "name",         "Switch to named section (.text or .data)"),
+    row!("Dir", ".byte",    "val[,...]",    "Emit 1-byte integer value(s)"),
+    row!("Dir", ".half",    "val[,...]",    "Emit 2-byte value(s) little-endian"),
+    row!("Dir", ".word",    "val[,...]",    "Emit 4-byte value(s) little-endian"),
+    row!("Dir", ".dword",   "val[,...]",    "Emit 8-byte value(s) little-endian"),
+    row!("Dir", ".float",   "val[,...]",    "Emit IEEE 754 f32 value(s) (4 bytes each)"),
+    row!("Dir", ".ascii",   "\"str\"",      "Emit string bytes (no NUL terminator)"),
+    row!("Dir", ".asciz",   "\"str\"",      "Emit string bytes + NUL terminator"),
+    row!("Dir", ".string",  "\"str\"",      "Alias of .asciz"),
+    row!("Dir", ".space",   "n",            "Reserve n zero bytes"),
+    row!("Dir", ".align",   "n",            "Align PC to 2^n byte boundary"),
+    row!("Dir", ".globl",   "sym",          "Mark symbol as global / exported"),
+    row!("Dir", ".equ",     "sym, val",     "Define symbolic constant (equate)"),
 ];
 
-// ── Run Guide ─────────────────────────────────────────────────────────────────
+// ── Filtering ──────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
-struct RunRow {
-    key: &'static str,
-    feature: &'static str,
-    desc: &'static str,
-}
-
-const RUN_GUIDE: &[RunRow] = &[
-    // ── Execution ──
-    RunRow { key: "F5 / Space",   feature: "Run / Pause",         desc: "Start continuous execution or pause" },
-    RunRow { key: "F10 / Enter",  feature: "Step",                desc: "Execute one instruction" },
-    RunRow { key: "F8",           feature: "Step-over",           desc: "Step over call/jump (runs until next PC)" },
-    RunRow { key: "F9",           feature: "Breakpoint",          desc: "Toggle breakpoint at current PC" },
-    RunRow { key: "R",            feature: "Reset",               desc: "Restart program from the beginning" },
-    // ── Sidebar views ──
-    RunRow { key: "v",            feature: "View cycle",          desc: "Cycle sidebar: RAM → Registers → Stack → Breakpoints → RAM" },
-    RunRow { key: "k",            feature: "Stack view",          desc: "Jump directly to Stack sidebar view (memory ±N words around SP)" },
-    // ── Format & display ──
-    RunRow { key: "f",            feature: "Format",              desc: "Cycle memory/register display: HEX → DEC → STR" },
-    RunRow { key: "s",            feature: "Signed",              desc: "Toggle signed / unsigned decimal display" },
-    RunRow { key: "x",            feature: "Raw hex",             desc: "Toggle raw hex for instructions (bypass disassembly)" },
-    RunRow { key: "b",            feature: "Byte width",          desc: "Cycle memory-view cell width: 4 bytes → 2 → 1 → 4" },
-    // ── Navigation ──
-    RunRow { key: "g",            feature: "Goto",                desc: "Open address bar: jump instruction view to any 0xADDR" },
-    RunRow { key: "↑ / ↓",        feature: "Cursor",              desc: "Move cursor in instruction list or register list" },
-    RunRow { key: "PgUp / PgDn",  feature: "Scroll",              desc: "Scroll instruction list or memory view" },
-    RunRow { key: "Home",         feature: "Jump to PC",          desc: "Scroll instruction list back to current PC" },
-    RunRow { key: "Enter",        feature: "Follow label",        desc: "In instruction list: jump to branch/jump target" },
-    // ── Registers ──
-    RunRow { key: "p / P",        feature: "Pin register",        desc: "Pin/unpin register at cursor to top of sidebar (keyboard)" },
-    RunRow { key: "click",        feature: "Pin register",        desc: "Left-click a register row to pin/unpin it" },
-    RunRow { key: "hover",        feature: "Hover highlight",     desc: "Mouse hover highlights register row in green" },
-    RunRow { key: "t",            feature: "Trace panel",         desc: "Toggle register write-trace panel below instruction list" },
-    // ── Memory regions ──
-    RunRow { key: "1–5",          feature: "Memory region",       desc: "Jump memory view: 1=TEXT 2=DATA 3=BSS 4=HEAP 5=STACK" },
-    // ── Sidebar collapse ──
-    RunRow { key: "[ / ]",        feature: "Collapse panels",     desc: "Collapse/expand sidebar or details panel" },
-    // ── Instruction details ──
-    RunRow { key: "(auto)",       feature: "Type badge",          desc: "Details panel shows [R]/[I]/[S]/[B]/[U]/[J] for instruction format" },
-    RunRow { key: "(auto)",       feature: "Heat color",          desc: "Instruction list highlights hot instructions by exec count" },
-    RunRow { key: "(auto)",       feature: "Effective address",   desc: "Load/store shows computed effective address = rs1 + imm" },
-    RunRow { key: "(auto)",       feature: "RAW hazard",          desc: "Details panel warns if current instruction reads a register written by the previous one" },
-    RunRow { key: "(auto)",       feature: "Write trace",         desc: "Details panel shows which instruction last wrote each source register" },
-    RunRow { key: "(auto)",       feature: "Branch outcome",      desc: "Details panel shows Taken / Not taken for branch instructions" },
-    // ── Editor hints ──
-    RunRow { key: "##!",          feature: "Block comment",       desc: "Lines starting with ##! appear as annotated blocks in the instruction list" },
-];
-
-fn build_run_guide_string(width: u16) -> String {
-    let mut table = ATable::new();
-    table.load_preset(ASCII_BORDERS_ONLY);
-    table.set_content_arrangement(ContentArrangement::Dynamic);
-    if width > 0 {
-        table.set_width(width);
+fn ty_bit(ty: &str) -> u16 {
+    match ty {
+        "R"      => TY_R,
+        "M"      => TY_M,
+        "I"      => TY_I,
+        "Load"   => TY_LOAD,
+        "Store"  => TY_STORE,
+        "Branch" => TY_BRANCH,
+        "U"      => TY_U,
+        "Jump"   => TY_JUMP,
+        "SYS"    => TY_SYS,
+        "Pseudo" => TY_PSEUDO,
+        "F"      => TY_F,
+        "Dir"    => TY_DIR,
+        _        => 0,
     }
-    table.set_header(ARow::from(vec![
-        ACell::new("Key / Trigger"),
-        ACell::new("Feature"),
-        ACell::new("Description"),
-    ]));
-    for r in RUN_GUIDE {
-        table.add_row(ARow::from(vec![
-            ACell::new(r.key),
-            ACell::new(r.feature),
-            ACell::new(r.desc),
-        ]));
+}
+
+fn ty_color(ty: &str) -> Color {
+    match ty {
+        "R"      => Color::Yellow,
+        "M"      => Color::LightRed,
+        "I"      => Color::Green,
+        "Load"   => Color::Cyan,
+        "Store"  => Color::LightBlue,
+        "Branch" => Color::Magenta,
+        "U"      => Color::LightYellow,
+        "Jump"   => Color::LightCyan,
+        "SYS"    => Color::Red,
+        "Pseudo" => Color::LightMagenta,
+        "F"      => Color::LightGreen,
+        "Dir"    => Color::Gray,
+        _        => Color::White,
     }
-    table.to_string()
 }
 
-pub(crate) fn run_guide_line_count(width: u16) -> usize {
-    build_run_guide_string(width).lines().count().saturating_sub(4)
-}
-
-// ── Instruction reference ──────────────────────────────────────────────────────
-
-fn build_docs_table_string(width: u16) -> String {
-    build_docs_table_filtered(width, "")
-}
-
-fn build_docs_table_filtered(width: u16, query: &str) -> String {
+fn filtered_rows(query: &str, type_filter: u16) -> Vec<&'static DocRow> {
     let q = query.to_lowercase();
-    let filtered: Vec<&DocRow> = DOCS.iter()
-        .filter(|r| q.is_empty()
-            || r.mnemonic.to_lowercase().contains(&q)
-            || r.operands.to_lowercase().contains(&q)
-            || r.desc.to_lowercase().contains(&q)
-            || r.ty.to_lowercase().contains(&q))
-        .collect();
-
-    let mut table = ATable::new();
-    table.load_preset(ASCII_BORDERS_ONLY);
-    table.set_content_arrangement(ContentArrangement::Dynamic);
-    if width > 0 {
-        table.set_width(width);
-    }
-
-    table.set_header(ARow::from(vec![
-        ACell::new("Type"),
-        ACell::new("Mnemonic"),
-        ACell::new("Operands"),
-        ACell::new("Description"),
-        ACell::new("Expands"),
-    ]));
-
-    for r in filtered {
-        table.add_row(ARow::from(vec![
-            ACell::new(r.ty),
-            ACell::new(r.mnemonic),
-            ACell::new(r.operands),
-            ACell::new(r.desc),
-            ACell::new(r.expands),
-        ]));
-    }
-
-    table.to_string()
+    DOCS.iter()
+        .filter(|r| (type_filter & ty_bit(r.ty)) != 0)
+        .filter(|r| {
+            q.is_empty()
+                || r.mnemonic.to_lowercase().contains(&q)
+                || r.operands.to_lowercase().contains(&q)
+                || r.desc.to_lowercase().contains(&q)
+                || r.expands.to_lowercase().contains(&q)
+                || r.ty.to_lowercase().contains(&q)
+        })
+        .collect()
 }
+
+pub(crate) fn docs_body_line_count(_width: u16, query: &str, type_filter: u16) -> usize {
+    if type_filter == 0 { return 0; }
+    filtered_rows(query, type_filter).len()
+}
+
+// ── Token coloring ─────────────────────────────────────────────────────────────
 
 fn is_register_token(token: &str) -> bool {
     if let Some(n) = token.strip_prefix('x') {
@@ -220,7 +294,6 @@ fn is_register_token(token: &str) -> bool {
             return v <= 31;
         }
     }
-
     matches!(token, "ra" | "sp")
         || (token.starts_with('a') && token[1..].parse::<u8>().is_ok_and(|v| v <= 7))
         || (token.starts_with('t') && token[1..].parse::<u8>().is_ok_and(|v| v <= 6))
@@ -229,35 +302,39 @@ fn is_register_token(token: &str) -> bool {
 
 fn style_for_token(token: &str) -> Option<Style> {
     match token {
-        "rd" => Some(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        "rs1" | "rs2" | "rs" => Some(Style::default().fg(Color::Cyan)),
-        "imm" | "imm12" | "imm20" | "shamt" | "hi" | "lo" => {
+        // Integer destination register
+        "rd" | "rd2" => Some(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        // Integer source registers
+        "rs1" | "rs2" | "rs3" | "rs" | "rt" => Some(Style::default().fg(Color::Cyan)),
+        // Float destination register
+        "frd" | "frd2" => Some(Style::default().fg(Color::Yellow)),
+        // Float source registers
+        "frs" | "frs1" | "frs2" | "frs3" => Some(Style::default().fg(Color::LightYellow)),
+        // Immediates / shifts / parts
+        "imm" | "imm12" | "imm20" | "shamt" | "hi" | "lo" | "n" => {
             Some(Style::default().fg(Color::LightGreen))
         }
         "label" => Some(Style::default().fg(Color::Magenta)),
+        "rm"    => Some(Style::default().fg(Color::LightYellow)),
+        "sym"   => Some(Style::default().fg(Color::LightBlue)),
         _ if is_register_token(token) => Some(Style::default().fg(Color::LightBlue)),
         _ => None,
     }
 }
 
-fn style_table_line(line: &str) -> Line<'_> {
-    let mut spans: Vec<Span> = Vec::new();
+/// Tokenize a string and apply per-token colors, returning owned spans.
+fn color_text(s: &str) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
     let mut token = String::new();
     let mut sep = String::new();
 
-    let flush_sep = |spans: &mut Vec<Span>, sep: &mut String| {
+    let flush_sep = |spans: &mut Vec<Span<'static>>, sep: &mut String| {
         if !sep.is_empty() {
             spans.push(Span::raw(std::mem::take(sep)));
         }
     };
-    let flush_token = |spans: &mut Vec<Span>, token: &mut String| {
-        if token.is_empty() {
-            return;
-        }
+    let flush_token = |spans: &mut Vec<Span<'static>>, token: &mut String| {
+        if token.is_empty() { return; }
         let t = std::mem::take(token);
         if let Some(style) = style_for_token(&t) {
             spans.push(Span::styled(t, style));
@@ -266,7 +343,7 @@ fn style_table_line(line: &str) -> Line<'_> {
         }
     };
 
-    for ch in line.chars() {
+    for ch in s.chars() {
         if ch.is_ascii_alphanumeric() || ch == '_' {
             flush_sep(&mut spans, &mut sep);
             token.push(ch);
@@ -278,99 +355,191 @@ fn style_table_line(line: &str) -> Line<'_> {
     flush_token(&mut spans, &mut token);
     flush_sep(&mut spans, &mut sep);
 
-    Line::from(spans)
+    spans
 }
 
-pub(crate) fn docs_body_line_count(width: u16) -> usize {
-    build_docs_table_string(width)
-        .lines()
-        .count()
-        .saturating_sub(4)
-}
-
-pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
-    match app.docs.page {
-        DocsPage::RunGuide => render_run_guide(f, area, app),
-        DocsPage::InstrRef => render_instr_ref(f, area, app),
+/// Pad a string to `width` chars, or truncate with "…" if too long.
+fn pad_or_truncate(s: &str, width: usize) -> String {
+    if width == 0 { return String::new(); }
+    let len = s.chars().count();
+    if len > width {
+        let n = width.saturating_sub(1);
+        let truncated: String = s.chars().take(n).collect();
+        format!("{truncated}\u{2026}")  // …
+    } else {
+        format!("{s:<width$}")
     }
 }
 
-fn render_run_guide(f: &mut Frame, area: Rect, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
-        .split(area);
+// ── Instruction reference rendering ───────────────────────────────────────────
 
-    let header = vec![
-        Line::from(vec![
-            Span::styled("Run Tab — Controls & Features", Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow)),
-            Span::styled("  Tab=switch page  Up/Down/PgUp/PgDn scroll", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(Span::styled(
-            "(auto) = shown automatically in the details panel, no key required",
-            Style::default().fg(Color::DarkGray),
-        )),
+/// Compute layout-dependent column widths.
+fn col_widths(width: usize) -> (usize, bool) {
+    let show_exp = width >= SHOW_EXP_MIN_W;
+    // fixed overhead: TY_W + 1sep + MNE_W + 1sep + OPS_W + 1sep = 8+1+13+1+21+1 = 45
+    // with exp: 45 + 1sep + EXP_W = 45+1+26 = 72
+    let fixed = TY_W + 1 + MNE_W + 1 + OPS_W + 1;
+    let exp_overhead = if show_exp { 1 + EXP_W } else { 0 };
+    let desc_w = width.saturating_sub(fixed + exp_overhead).max(8);
+    (desc_w, show_exp)
+}
+
+fn render_col_header(width: usize) -> Line<'static> {
+    let (desc_w, show_exp) = col_widths(width);
+    let hdr_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
+    let mut spans = vec![
+        Span::styled(format!("{:<8}", "Type"),    hdr_style),
+        Span::raw(" "),
+        Span::styled(format!("{:<13}", "Mnemonic"), hdr_style),
+        Span::raw(" "),
+        Span::styled(format!("{:<21}", "Operands"), hdr_style),
+        Span::raw(" "),
+        Span::styled(pad_or_truncate("Description", desc_w), hdr_style),
     ];
-    f.render_widget(Paragraph::new(header), chunks[0]);
+    if show_exp {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(format!("{:<26}", "Expands to"), hdr_style));
+    }
+    Line::from(spans)
+}
 
-    let table_area = chunks[1];
-    if table_area.height == 0 || table_area.width == 0 { return; }
+fn render_separator(width: usize) -> Line<'static> {
+    Line::styled(
+        "─".repeat(width.min(300)),
+        Style::default().fg(Color::Rgb(60, 60, 80)),
+    )
+}
 
-    let table_str = build_run_guide_string(table_area.width);
-    render_scrollable_table(f, table_area, &table_str, app.docs.scroll);
+fn render_doc_row(row: &DocRow, desc_w: usize, show_exp: bool) -> Line<'static> {
+    let color = ty_color(row.ty);
+    let badge = format!("{:>8}", format!("[{}]", row.ty)); // 8 chars: "[Branch]", "     [R]" etc.
+    let mne   = format!("{:<13}", row.mnemonic);
+
+    let ops_len = row.operands.chars().count();
+    let mut ops_spans = color_text(row.operands);
+    if ops_len < OPS_W {
+        ops_spans.push(Span::raw(" ".repeat(OPS_W - ops_len)));
+    }
+
+    let desc = pad_or_truncate(row.desc, desc_w);
+
+    let mut spans: Vec<Span<'static>> = vec![
+        Span::styled(badge, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(mne, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+    ];
+    spans.extend(ops_spans);
+    spans.push(Span::raw(" "));
+    spans.push(Span::raw(desc));
+
+    if show_exp && !row.expands.is_empty() {
+        spans.push(Span::raw(" "));
+        let exp_text = format!("\u{2192} {}", row.expands);   // → expands
+        let exp = pad_or_truncate(&exp_text, EXP_W);
+        spans.push(Span::styled(exp, Style::default().fg(Color::Rgb(100, 100, 120))));
+    }
+
+    Line::from(spans)
+}
+
+fn render_filter_bar(f: &mut Frame, area: Rect, type_filter: u16, cursor: usize) {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    for (idx, &(label, bit, color)) in FILTER_ITEMS.iter().enumerate() {
+        let is_cursor = idx == cursor;
+        // Determine active state:
+        // "All" (idx=0) is active when all bits are on
+        let is_active = if idx == 0 {
+            type_filter == ALL_MASK
+        } else {
+            (type_filter & bit) != 0
+        };
+
+        let bullet = if is_active { "\u{25CF}" } else { "\u{25CB}" }; // ● / ○
+        let text = format!(" {bullet}{label} ");
+
+        let fg = if is_active { color } else { Color::DarkGray };
+        let mut style = Style::default().fg(fg);
+        if is_cursor {
+            style = style.bg(Color::Rgb(50, 50, 80)).add_modifier(Modifier::BOLD);
+        }
+        spans.push(Span::styled(text, style));
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+// ── Public rendering entry point ──────────────────────────────────────────────
+
+pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
+    match app.docs.page {
+        DocsPage::InstrRef   => render_instr_ref(f, area, app),
+        DocsPage::Syscalls   => render_free_page(f, area, app, syscall_lines(app.docs.lang)),
+        DocsPage::MemoryMap  => render_free_page(f, area, app, memory_map_lines(app.docs.lang)),
+    }
 }
 
 fn render_instr_ref(f: &mut Frame, area: Rect, app: &App) {
-    // Reserve 1 extra line for search bar if open
     let search_bar_h: u16 = if app.docs.search_open { 1 } else { 0 };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
-            Constraint::Length(search_bar_h),
-            Constraint::Min(0),
+            Constraint::Length(2),          // header
+            Constraint::Length(search_bar_h), // search bar
+            Constraint::Length(1),          // filter bar
+            Constraint::Min(0),             // table area
         ])
         .split(area);
 
-    let meta_area = chunks[0];
+    let meta_area   = chunks[0];
     let search_area = chunks[1];
-    let table_area = chunks[2];
+    let filter_area = chunks[2];
+    let table_area  = chunks[3];
 
-    // Show Ctrl+F hint in the header
+    // ── Header ──
     let search_hint = if app.docs.search_open { "" } else { "  Ctrl+F=search" };
+    let filter_hint = if !app.docs.search_open {
+        "  ←/→=filter  Space=toggle"
+    } else { "" };
     let meta_lines = vec![
         Line::from(vec![
-            Span::styled(
-                "Instruction Reference",
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "  Tab=switch page  Up/Down/PgUp/PgDn scroll",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled("Instruction Reference",
+                Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("  ↑/↓/PgUp/PgDn=scroll",
+                Style::default().fg(Color::DarkGray)),
             Span::styled(search_hint, Style::default().fg(Color::DarkGray)),
+            Span::styled(filter_hint, Style::default().fg(Color::DarkGray)),
+            Span::styled("  Tab=next page", Style::default().fg(Color::DarkGray)),
         ]),
-        style_table_line(
-            "Legend: rd=dest, rs1/rs2/rs=src, imm/shamt=imm, label=label • Pseudo: see Expands",
-        ),
+        Line::from(vec![
+            Span::styled("rd", Style::default().fg(Color::Yellow).bold()),
+            Span::styled("=dst  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("rs1/rs2", Style::default().fg(Color::Cyan)),
+            Span::styled("=src  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("frd", Style::default().fg(Color::Yellow)),
+            Span::styled("=float dst  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("frs1/frs2", Style::default().fg(Color::LightYellow)),
+            Span::styled("=float src  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("imm", Style::default().fg(Color::LightGreen)),
+            Span::styled("=immediate  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("label", Style::default().fg(Color::Magenta)),
+            Span::styled("=symbol", Style::default().fg(Color::DarkGray)),
+        ]),
     ];
     f.render_widget(Paragraph::new(meta_lines), meta_area);
 
-    // Render search bar
+    // ── Search bar ──
     if app.docs.search_open {
         let bar_style = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50));
-        let label_s = Style::default().fg(Color::Cyan).bg(Color::Rgb(30, 30, 50));
-        let text_s = Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 50));
-        let info_s = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50));
         let bar_line = Line::from(vec![
-            Span::styled(" Find: ", label_s),
-            Span::styled(app.docs.search_query.clone(), text_s),
-            Span::styled("  Esc=close", info_s),
+            Span::styled(" Find: ", Style::default().fg(Color::Cyan).bg(Color::Rgb(30, 30, 50))),
+            Span::styled(app.docs.search_query.clone(), Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 50))),
+            Span::styled("  Esc=close", Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50))),
         ]);
         f.render_widget(Paragraph::new(bar_line).style(bar_style), search_area);
 
-        // Set cursor in search bar
         let prefix_len = " Find: ".len() as u16;
         let cursor_x = (search_area.x + prefix_len + app.docs.search_query.chars().count() as u16)
             .min(search_area.x + search_area.width.saturating_sub(1));
@@ -379,65 +548,413 @@ fn render_instr_ref(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    if table_area.height == 0 || table_area.width == 0 {
+    // ── Filter bar ──
+    render_filter_bar(f, filter_area, app.docs.type_filter, app.docs.filter_cursor);
+
+    if table_area.height == 0 || table_area.width == 0 { return; }
+
+    // ── Table ──
+    let w = table_area.width as usize;
+    let (desc_w, show_exp) = col_widths(w);
+
+    // Split table_area into col_header (1 line) + sep (1 line) + data rows
+    let table_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),  // col header
+            Constraint::Length(1),  // separator
+            Constraint::Min(0),     // data rows
+        ])
+        .split(table_area);
+
+    f.render_widget(Paragraph::new(render_col_header(w)), table_chunks[0]);
+    f.render_widget(Paragraph::new(render_separator(w)), table_chunks[1]);
+
+    let data_area = table_chunks[2];
+    if data_area.height == 0 { return; }
+
+    let rows = if app.docs.type_filter == 0 {
+        vec![]
+    } else {
+        let q = if app.docs.search_open { app.docs.search_query.as_str() } else { "" };
+        filtered_rows(q, app.docs.type_filter)
+    };
+
+    if rows.is_empty() {
+        f.render_widget(
+            Paragraph::new(Line::styled(
+                "  (no results — adjust filter or search query)",
+                Style::default().fg(Color::DarkGray),
+            )),
+            data_area,
+        );
         return;
     }
 
-    // Use filtered table when search query is non-empty
-    let table_str = if app.docs.search_open && !app.docs.search_query.is_empty() {
-        build_docs_table_filtered(table_area.width, &app.docs.search_query)
-    } else {
-        build_docs_table_string(table_area.width)
-    };
-    render_scrollable_table(f, table_area, &table_str, app.docs.scroll);
+    let viewport_h = data_area.height as usize;
+    let max_start = rows.len().saturating_sub(viewport_h);
+    let start = app.docs.scroll.min(max_start);
+    let end = (start + viewport_h).min(rows.len());
+
+    let lines: Vec<Line<'static>> = rows[start..end]
+        .iter()
+        .map(|r| render_doc_row(r, desc_w, show_exp))
+        .collect();
+
+    f.render_widget(Paragraph::new(lines), data_area);
 }
 
-fn render_scrollable_table(f: &mut Frame, area: Rect, table_str: &str, scroll: usize) {
-    let all_lines: Vec<&str> = table_str.lines().collect();
+// ── Free-form page renderer (Syscalls / MemoryMap) ────────────────────────────
 
-    if all_lines.is_empty() {
-        return;
+/// Generic renderer for scrollable text pages with a 2-line header.
+fn render_free_page(f: &mut Frame, area: Rect, app: &App, lines: Vec<Line<'static>>) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2), // header
+            Constraint::Min(0),    // content
+        ])
+        .split(area);
+
+    // ── Header: page tabs + language indicator ──
+    let pages = [DocsPage::InstrRef, DocsPage::Syscalls, DocsPage::MemoryMap];
+    let mut tab_spans: Vec<Span<'static>> = Vec::new();
+    for page in pages {
+        let active = page == app.docs.page;
+        let label = format!(" {} ", page.label());
+        let style = if active {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        tab_spans.push(Span::styled(label, style));
+        tab_spans.push(Span::styled("│", Style::default().fg(Color::Rgb(60, 60, 80))));
     }
+    tab_spans.push(Span::styled(
+        format!("  [{}] L=toggle lang  ↑/↓/PgUp/PgDn=scroll  Tab=next page",
+                app.docs.lang.label()),
+        Style::default().fg(Color::DarkGray),
+    ));
 
-    if all_lines.len() < 4 || area.height < 4 {
-        let lines = all_lines
-            .iter()
-            .take(area.height as usize)
-            .map(|l| style_table_line(l))
-            .collect::<Vec<_>>();
-        f.render_widget(Paragraph::new(lines), area);
-        return;
+    let header_lines = vec![
+        Line::from(tab_spans),
+        Line::styled(
+            "─".repeat(area.width.min(300) as usize),
+            Style::default().fg(Color::Rgb(60, 60, 80)),
+        ),
+    ];
+    f.render_widget(Paragraph::new(header_lines), chunks[0]);
+
+    // ── Scrollable content ──
+    let content_area = chunks[1];
+    if content_area.height == 0 { return; }
+    let viewport_h = content_area.height as usize;
+    let max_start = lines.len().saturating_sub(viewport_h);
+    let start = app.docs.scroll.min(max_start);
+    let end = (start + viewport_h).min(lines.len());
+    f.render_widget(
+        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        content_area,
+    );
+}
+
+/// Total scrollable line count for free-form pages (used by clamp helpers).
+pub(crate) fn free_page_line_count(page: DocsPage, lang: DocsLang) -> usize {
+    match page {
+        DocsPage::InstrRef   => 0,
+        DocsPage::Syscalls   => syscall_lines(lang).len(),
+        DocsPage::MemoryMap  => memory_map_lines(lang).len(),
     }
+}
 
-    let header_lines = &all_lines[0..3];
-    let footer_line = all_lines[all_lines.len() - 1];
-    let body_lines = &all_lines[3..all_lines.len() - 1];
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-    let viewport_h = area.height.saturating_sub(4) as usize;
-    if viewport_h == 0 {
-        let lines = header_lines
-            .iter()
-            .map(|l| style_table_line(l))
-            .chain(std::iter::once(style_table_line(footer_line)))
-            .collect::<Vec<_>>();
-        f.render_widget(Paragraph::new(lines), area);
-        return;
+fn h1(s: &'static str) -> Line<'static> {
+    Line::from(Span::styled(s, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)))
+}
+fn h2(s: &'static str) -> Line<'static> {
+    Line::from(Span::styled(s, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+}
+fn kv(key: &'static str, val: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("  {key:<12}"), Style::default().fg(Color::Yellow)),
+        Span::styled(val, Style::default().fg(Color::White)),
+    ])
+}
+fn note(s: &'static str) -> Line<'static> {
+    Line::from(Span::styled(format!("  {s}"), Style::default().fg(Color::DarkGray)))
+}
+fn blank() -> Line<'static> { Line::raw("") }
+fn raw(s: &'static str) -> Line<'static> { Line::raw(s) }
+fn mono(s: &'static str) -> Line<'static> {
+    Line::from(Span::styled(s, Style::default().fg(Color::Rgb(180, 180, 200))))
+}
+fn trow(a7: &'static str, name: &'static str, args: &'static str, ret: &'static str, notes: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("  {a7:<6}"), Style::default().fg(Color::LightGreen)),
+        Span::styled(format!("{name:<16}"), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{args:<28}"), Style::default().fg(Color::White)),
+        Span::styled(format!("{ret:<10}"), Style::default().fg(Color::Yellow)),
+        Span::styled(notes, Style::default().fg(Color::DarkGray)),
+    ])
+}
+fn thead() -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "  a7    Name            Arguments                    Return    Notes",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+fn tsep() -> Line<'static> {
+    Line::styled(
+        "  ──────────────────────────────────────────────────────────────────────",
+        Style::default().fg(Color::Rgb(60, 60, 80)),
+    )
+}
+
+// ── Syscall reference content ─────────────────────────────────────────────────
+
+fn syscall_lines(lang: DocsLang) -> Vec<Line<'static>> {
+    match lang {
+        DocsLang::En  => syscall_lines_en(),
+        DocsLang::PtBr => syscall_lines_ptbr(),
     }
+}
 
-    let max_start = body_lines.len().saturating_sub(viewport_h);
-    let start = scroll.min(max_start);
-    let end = (start + viewport_h).min(body_lines.len());
+fn syscall_lines_en() -> Vec<Line<'static>> {
+    vec![
+        h1("FALCON — Syscall Reference"),
+        blank(),
+        note("Calling convention: a7 = syscall number · a0..a5 = arguments · a0 = return value"),
+        note("Negative return values signal errors (Linux errno convention, e.g. -9 = EBADF)."),
+        blank(),
 
-    let mut lines = Vec::with_capacity(3 + viewport_h + 1);
-    lines.extend(header_lines.iter().map(|l| style_table_line(l)));
-    lines.extend(body_lines[start..end].iter().map(|l| style_table_line(l)));
+        // ── Linux ABI ──
+        h2("Linux-compatible syscalls"),
+        blank(),
+        thead(),
+        tsep(),
+        trow("63",  "read",         "fd=a0, buf=a1, n=a2",   "bytes read",  "fd=0 (stdin) only; blocks until line ready"),
+        trow("64",  "write",        "fd=a0, buf=a1, n=a2",   "bytes written","fd=1 (stdout) or 2 (stderr)"),
+        trow("93",  "exit",         "code=a0",               "—",           "halts execution; sets exit code"),
+        trow("94",  "exit_group",   "code=a0",               "—",           "alias of exit (93)"),
+        trow("278", "getrandom",    "buf=a0, len=a1, flags=a2","len",        "fills buf with cryptographic random bytes"),
+        blank(),
+        note("Supported getrandom flags: GRND_NONBLOCK (0x1), GRND_RANDOM (0x2)."),
+        blank(),
 
-    let rendered_body = end - start;
-    for _ in rendered_body..viewport_h {
-        lines.push(Line::raw(""));
+        // ── Falcon extensions ──
+        h2("Falcon teaching extensions  (a7 ≥ 1000)"),
+        blank(),
+        thead(),
+        tsep(),
+        trow("1000", "print_int",    "a0=integer",            "—",           "prints a0 as signed decimal to console"),
+        trow("1001", "print_zstr",   "a0=addr",               "—",           "prints NUL-terminated string at addr"),
+        trow("1002", "print_zstr_ln","a0=addr",               "—",           "same as 1001 + appends newline"),
+        trow("1003", "read_line_z",  "a0=addr",               "—",           "reads console line into addr (NUL-terminated); blocks"),
+        trow("1010", "read_u8",      "a0=addr",               "—",           "reads decimal from console; stores 1 byte at addr"),
+        trow("1011", "read_u16",     "a0=addr",               "—",           "reads decimal from console; stores 2 bytes at addr"),
+        trow("1012", "read_u32",     "a0=addr",               "—",           "reads decimal from console; stores 4 bytes at addr"),
+        blank(),
+
+        // ── Usage example ──
+        h2("Example — write(1, buf, 5) via raw ecall"),
+        blank(),
+        mono("  .data"),
+        mono("  msg: .ascii \"hello\""),
+        mono("  .text"),
+        mono("      la   a1, msg      ; a1 = address of msg"),
+        mono("      li   a0, 1        ; a0 = fd 1 (stdout)"),
+        mono("      li   a2, 5        ; a2 = 5 bytes"),
+        mono("      li   a7, 64       ; a7 = write"),
+        mono("      ecall             ; a0 = bytes written (5)"),
+        blank(),
+        note("Pseudo-instructions like print, print_str, read, etc. expand to these ecalls automatically."),
+    ]
+}
+
+fn syscall_lines_ptbr() -> Vec<Line<'static>> {
+    vec![
+        h1("FALCON — Referência de Syscalls"),
+        blank(),
+        note("Convenção: a7 = número da syscall · a0..a5 = argumentos · a0 = valor de retorno"),
+        note("Retornos negativos indicam erros (convenção Linux errno, ex.: -9 = EBADF)."),
+        blank(),
+
+        // ── Linux ABI ──
+        h2("Syscalls compatíveis com Linux"),
+        blank(),
+        thead(),
+        tsep(),
+        trow("63",  "read",         "fd=a0, buf=a1, n=a2",   "bytes lidos", "fd=0 (stdin); bloqueia até linha disponível"),
+        trow("64",  "write",        "fd=a0, buf=a1, n=a2",   "bytes escritos","fd=1 (stdout) ou 2 (stderr)"),
+        trow("93",  "exit",         "code=a0",               "—",           "encerra execução; define código de saída"),
+        trow("94",  "exit_group",   "code=a0",               "—",           "alias de exit (93)"),
+        trow("278", "getrandom",    "buf=a0, len=a1, flags=a2","len",        "preenche buf com bytes aleatórios criptográficos"),
+        blank(),
+        note("Flags aceitas em getrandom: GRND_NONBLOCK (0x1), GRND_RANDOM (0x2)."),
+        blank(),
+
+        // ── Falcon extensions ──
+        h2("Extensões didáticas do Falcon  (a7 ≥ 1000)"),
+        blank(),
+        thead(),
+        tsep(),
+        trow("1000", "print_int",    "a0=inteiro",            "—",           "imprime a0 como decimal com sinal no console"),
+        trow("1001", "print_zstr",   "a0=endereço",           "—",           "imprime string terminada em NUL no endereço"),
+        trow("1002", "print_zstr_ln","a0=endereço",           "—",           "igual a 1001 + adiciona nova linha"),
+        trow("1003", "read_line_z",  "a0=endereço",           "—",           "lê linha do console em addr (NUL no fim); bloqueia"),
+        trow("1010", "read_u8",      "a0=endereço",           "—",           "lê decimal do console; armazena 1 byte em addr"),
+        trow("1011", "read_u16",     "a0=endereço",           "—",           "lê decimal do console; armazena 2 bytes em addr"),
+        trow("1012", "read_u32",     "a0=endereço",           "—",           "lê decimal do console; armazena 4 bytes em addr"),
+        blank(),
+
+        // ── Exemplo ──
+        h2("Exemplo — write(1, buf, 5) via ecall direto"),
+        blank(),
+        mono("  .data"),
+        mono("  msg: .ascii \"hello\""),
+        mono("  .text"),
+        mono("      la   a1, msg      ; a1 = endereço de msg"),
+        mono("      li   a0, 1        ; a0 = fd 1 (stdout)"),
+        mono("      li   a2, 5        ; a2 = 5 bytes"),
+        mono("      li   a7, 64       ; a7 = write"),
+        mono("      ecall             ; a0 = bytes escritos (5)"),
+        blank(),
+        note("Pseudo-instruções como print, print_str, read, etc. expandem para esses ecalls automaticamente."),
+    ]
+}
+
+// ── Memory map content ────────────────────────────────────────────────────────
+
+fn memory_map_lines(lang: DocsLang) -> Vec<Line<'static>> {
+    match lang {
+        DocsLang::En  => memory_map_lines_en(),
+        DocsLang::PtBr => memory_map_lines_ptbr(),
     }
+}
 
-    lines.push(style_table_line(footer_line));
+fn memory_map_lines_en() -> Vec<Line<'static>> {
+    vec![
+        h1("FALCON — Memory Map"),
+        blank(),
+        note("RAM = 128 KB · addresses 0x00000000 .. 0x0001FFFF · no MMU, no virtual memory"),
+        blank(),
 
-    f.render_widget(Paragraph::new(lines), area);
+        // ── ASCII diagram ──
+        h2("Layout"),
+        blank(),
+        mono("  0x00000000  ┌─────────────────────┐"),
+        mono("              │  .text  (code)       │  ← instructions start at base_pc (default 0x0)"),
+        mono("              ├─────────────────────┤"),
+        mono("  0x00001000  │  .data              │  ← initialized data  (data_base = base_pc + 0x1000)"),
+        mono("              │  .bss               │  ← zero-initialized; grows up after .data"),
+        mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
+        mono("              │   (free space)       │  ← no allocator; read/write freely with lw/sw"),
+        mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
+        mono("  0x0001FFFC  │  stack  (grows ↓)   │  ← sp starts at 0x1FFFC; push: sp -= 4"),
+        mono("              └─────────────────────┘"),
+        blank(),
+
+        // ── Sections ──
+        h2("Sections"),
+        blank(),
+        kv(".text",  "Assembled instructions, loaded at base_pc."),
+        kv(".data",  "Initialized bytes (.byte/.half/.word/.float/.ascii/.asciz)."),
+        kv(".bss",   "Zero-initialized reservation (.space N). No bytes in binary."),
+        blank(),
+
+        // ── Addresses ──
+        h2("Key addresses"),
+        blank(),
+        kv("base_pc",    "Start of .text. Configurable; default 0x00000000."),
+        kv("data_base",  "Start of .data / .bss = base_pc + 0x1000."),
+        kv("sp (initial)","0x0001FFFC (top of 128 KB RAM, word-aligned)."),
+        blank(),
+
+        // ── Free space note ──
+        h2("Free space — no heap allocator"),
+        blank(),
+        raw("  The region between bss_end and the stack is ordinary RAM with no"),
+        raw("  management. You can use it directly with sw/lw if you know the address."),
+        raw("  There is no malloc/free — FALCON has a flat, fixed 128 KB address space"),
+        raw("  with no pagination or memory protection."),
+        blank(),
+        note("Tip: use .bss labels to reserve named buffers without wasting binary space."),
+        blank(),
+
+        // ── Access example ──
+        h2("Example — using free space manually"),
+        blank(),
+        mono("  .bss"),
+        mono("  buf: .space 64      ; reserve 64 bytes (address known at assemble time)"),
+        mono("  .text"),
+        mono("      la   t0, buf    ; t0 = &buf"),
+        mono("      li   t1, 42"),
+        mono("      sw   t1, 0(t0)  ; store 42 at buf[0]"),
+        mono("      lw   t2, 0(t0)  ; load back → t2 = 42"),
+    ]
+}
+
+fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
+    vec![
+        h1("FALCON — Mapa de Memória"),
+        blank(),
+        note("RAM = 128 KB · endereços 0x00000000 .. 0x0001FFFF · sem MMU, sem memória virtual"),
+        blank(),
+
+        // ── Diagrama ASCII ──
+        h2("Layout"),
+        blank(),
+        mono("  0x00000000  ┌─────────────────────┐"),
+        mono("              │  .text  (código)     │  ← instruções começam em base_pc (padrão 0x0)"),
+        mono("              ├─────────────────────┤"),
+        mono("  0x00001000  │  .data              │  ← dados inicializados  (data_base = base_pc + 0x1000)"),
+        mono("              │  .bss               │  ← inicializada com zeros; cresce após .data"),
+        mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
+        mono("              │   (espaço livre)     │  ← sem alocador; leitura/escrita livre com lw/sw"),
+        mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
+        mono("  0x0001FFFC  │  pilha  (cresce ↓)  │  ← sp começa em 0x1FFFC; push: sp -= 4"),
+        mono("              └─────────────────────┘"),
+        blank(),
+
+        // ── Seções ──
+        h2("Seções"),
+        blank(),
+        kv(".text",  "Instruções montadas, carregadas em base_pc."),
+        kv(".data",  "Bytes inicializados (.byte/.half/.word/.float/.ascii/.asciz)."),
+        kv(".bss",   "Reserva zerada (.space N). Não ocupa espaço no binário."),
+        blank(),
+
+        // ── Endereços ──
+        h2("Endereços importantes"),
+        blank(),
+        kv("base_pc",    "Início do .text. Configurável; padrão 0x00000000."),
+        kv("data_base",  "Início do .data / .bss = base_pc + 0x1000."),
+        kv("sp (inicial)","0x0001FFFC (topo dos 128 KB de RAM, alinhado a 4 bytes)."),
+        blank(),
+
+        // ── Espaço livre ──
+        h2("Espaço livre — sem alocador de heap"),
+        blank(),
+        raw("  A região entre o fim do .bss e a pilha é RAM comum, sem gerenciamento."),
+        raw("  Você pode usá-la diretamente com sw/lw se souber o endereço."),
+        raw("  Não existe malloc/free — o FALCON tem um espaço de endereçamento"),
+        raw("  plano e fixo de 128 KB, sem paginação nem proteção de memória."),
+        blank(),
+        note("Dica: use labels no .bss para reservar buffers nomeados sem desperdiçar espaço no binário."),
+        blank(),
+
+        // ── Exemplo ──
+        h2("Exemplo — usando o espaço livre manualmente"),
+        blank(),
+        mono("  .bss"),
+        mono("  buf: .space 64      ; reserva 64 bytes (endereço conhecido na montagem)"),
+        mono("  .text"),
+        mono("      la   t0, buf    ; t0 = &buf"),
+        mono("      li   t1, 42"),
+        mono("      sw   t1, 0(t0)  ; armazena 42 em buf[0]"),
+        mono("      lw   t2, 0(t0)  ; lê de volta → t2 = 42"),
+    ]
 }

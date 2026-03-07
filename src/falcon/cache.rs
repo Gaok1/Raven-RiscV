@@ -995,7 +995,7 @@ impl CacheController {
     }
 
     /// Recursive AMAT helper for extra cache levels.
-    fn extra_level_amat(&self, idx: usize) -> f64 {
+    pub fn extra_level_amat(&self, idx: usize) -> f64 {
         let level = &self.extra_levels[idx];
         let hit_lat = level.config.hit_latency as f64;
         let total = level.stats.total_accesses();
@@ -1021,10 +1021,14 @@ impl CacheController {
         self.ram.load32(addr)
     }
 
-    /// Effective read: returns dirty D-cache value if present, else RAM.
-    /// Use this in the RUN tab memory view so write-back stores are visible.
+    /// Effective read: returns the most-recent dirty byte from the cache hierarchy,
+    /// falling back to RAM. Checks L1 D-cache first, then extra_levels in order.
+    /// No stats side-effects. Use for syscalls and the Run-tab memory view.
     pub fn effective_read8(&self, addr: u32) -> Result<u8, FalconError> {
         if let Some(v) = self.dcache.peek_dirty(addr) { return Ok(v); }
+        for level in &self.extra_levels {
+            if let Some(v) = level.peek_dirty(addr) { return Ok(v); }
+        }
         self.ram.load8(addr)
     }
     pub fn effective_read16(&self, addr: u32) -> Result<u16, FalconError> {
@@ -1061,15 +1065,17 @@ impl CacheController {
 }
 
 impl Bus for CacheController {
-    // load* = direct RAM reads (no cache tracking) — safe from &self for UI rendering
+    // load* = cache-aware reads: dirty D-cache lines take priority over RAM.
+    // This is the correct view for all runtime code (syscalls, decoders, etc.).
+    // For raw RAM (UI diff display), use peek8/peek16/peek32 directly on CacheController.
     fn load8(&self, addr: u32) -> Result<u8, FalconError> {
-        self.ram.load8(addr)
+        self.effective_read8(addr)
     }
     fn load16(&self, addr: u32) -> Result<u16, FalconError> {
-        self.ram.load16(addr)
+        self.effective_read16(addr)
     }
     fn load32(&self, addr: u32) -> Result<u32, FalconError> {
-        self.ram.load32(addr)
+        self.effective_read32(addr)
     }
 
     // store* = D-cache tracked writes (bypasses L2+ — write-through-to-RAM for evictions)

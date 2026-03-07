@@ -124,6 +124,50 @@ pub(super) enum CacheScope {
     Both,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone, Default)]
+pub(super) enum CacheDataFmt {
+    #[default] Hex,
+    DecU,
+    DecS,
+    Float,
+}
+impl CacheDataFmt {
+    pub(super) fn cycle(self) -> Self {
+        match self {
+            Self::Hex   => Self::DecU,
+            Self::DecU  => Self::DecS,
+            Self::DecS  => Self::Float,
+            Self::Float => Self::Hex,
+        }
+    }
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Hex   => "HEX",
+            Self::DecU  => "DEC-U",
+            Self::DecS  => "DEC-S",
+            Self::Float => "FLOAT",
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Default)]
+pub(super) enum CacheDataGroup {
+    #[default] B1,
+    B2,
+    B4,
+}
+impl CacheDataGroup {
+    pub(super) fn cycle(self) -> Self {
+        match self { Self::B1 => Self::B2, Self::B2 => Self::B4, Self::B4 => Self::B1 }
+    }
+    pub(super) fn label(self) -> &'static str {
+        match self { Self::B1 => "1B", Self::B2 => "2B", Self::B4 => "4B" }
+    }
+    pub(super) fn bytes(self) -> usize {
+        match self { Self::B1 => 1, Self::B2 => 2, Self::B4 => 4 }
+    }
+}
+
 pub(super) struct CacheState {
     pub(super) subtab: CacheSubtab,
     pub(super) scope: CacheScope,
@@ -139,8 +183,13 @@ pub(super) struct CacheState {
     pub(super) hover_subtab_view: bool,
     pub(super) view_scroll: usize,
     pub(super) view_h_scroll: usize,
-    pub(super) hover_reset: bool,
-    pub(super) hover_pause: bool,
+    pub(super) data_fmt: CacheDataFmt,
+    pub(super) data_group: CacheDataGroup,
+    // View legend button positions (set by render each frame, read by mouse)
+    pub(super) view_fmt_btn: std::cell::Cell<(u16, u16, u16)>,   // (y, x_start, x_end)
+    pub(super) view_group_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
+    pub(super) hover_view_fmt: bool,
+    pub(super) hover_view_group: bool,
     pub(super) hover_scope_i: bool,
     pub(super) hover_scope_d: bool,
     pub(super) hover_scope_both: bool,
@@ -344,6 +393,7 @@ pub(super) enum RunButton {
     Speed,
     ExecCount,
     InstrType,
+    Reset,
 }
 
 // ── State per tab ──────────────────────────────────────────────────────────────
@@ -490,20 +540,59 @@ pub(super) struct RunState {
     pub(super) prev_f: [u32; 32],             // previous float register values (for highlighting)
     pub(super) f_age: [u8; 32],               // highlight age for float registers (0=just changed)
     pub(super) f_last_write_pc: [Option<u32>; 32], // last instruction that wrote each f-reg
+
+    // Memory access highlight: (base_addr, size_bytes, age); age 0=just accessed, disappears at 3
+    pub(super) mem_access_log: Vec<(u32, u32, u8)>,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Default)]
-pub(super) enum DocsPage {
-    #[default]
+/// Pages in the Docs tab. Tab key cycles through them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocsPage {
     InstrRef,
-    RunGuide,
+    Syscalls,
+    MemoryMap,
+}
+
+impl DocsPage {
+    pub(super) fn next(self) -> Self {
+        match self {
+            Self::InstrRef   => Self::Syscalls,
+            Self::Syscalls   => Self::MemoryMap,
+            Self::MemoryMap  => Self::InstrRef,
+        }
+    }
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::InstrRef  => "Instr Ref",
+            Self::Syscalls  => "Syscalls",
+            Self::MemoryMap => "Memory Map",
+        }
+    }
+}
+
+/// UI language for Syscalls and MemoryMap pages. L key toggles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocsLang { En, PtBr }
+
+impl DocsLang {
+    pub(super) fn toggle(self) -> Self {
+        match self { Self::En => Self::PtBr, Self::PtBr => Self::En }
+    }
+    pub(super) fn label(self) -> &'static str {
+        match self { Self::En => "EN", Self::PtBr => "PT-BR" }
+    }
 }
 
 pub(super) struct DocsState {
+    pub(super) page: DocsPage,
+    pub(super) lang: DocsLang,
     pub(super) scroll: usize,
     pub(super) search_open: bool,
     pub(super) search_query: String,
-    pub(super) page: DocsPage,
+    /// Bitmask of visible type categories (see docs::ALL_MASK / TY_* constants).
+    pub(super) type_filter: u16,
+    /// Cursor position in the filter bar: 0 = "All", 1–12 = individual types.
+    pub(super) filter_cursor: usize,
 }
 
 // ── Top-level app ──────────────────────────────────────────────────────────────
@@ -536,6 +625,12 @@ pub struct App {
 
     // Persistent clipboard — must stay alive on Linux/X11 to retain ownership
     pub(super) clipboard: Option<Clipboard>,
+
+    // Timestamp of the last bracketed-paste event (Event::Paste). Used to
+    // suppress the arboard Ctrl+V handler if a bracketed-paste already fired
+    // within the same keypress cycle, preventing double-paste in terminals
+    // that emit both Event::Paste and a Ctrl+V key event simultaneously.
+    pub(super) last_bracketed_paste: Option<Instant>,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -663,8 +758,9 @@ impl App {
                 cpi_config: CpiConfig::default(),
                 show_exec_count: true,
                 show_instr_type: true,
+                mem_access_log: Vec::new(),
             },
-            docs: DocsState { scroll: 0, search_open: false, search_query: String::new(), page: DocsPage::InstrRef },
+            docs: DocsState { page: DocsPage::InstrRef, lang: DocsLang::En, scroll: 0, search_open: false, search_query: String::new(), type_filter: 0x0FFF, filter_cursor: 0 },
             cache: CacheState {
                 subtab: CacheSubtab::Stats,
                 scope: CacheScope::Both,
@@ -678,8 +774,12 @@ impl App {
                 hover_subtab_view: false,
                 view_scroll: 0,
                 view_h_scroll: 0,
-                hover_reset: false,
-                hover_pause: false,
+                data_fmt: CacheDataFmt::Hex,
+                data_group: CacheDataGroup::B1,
+                view_fmt_btn: std::cell::Cell::new((0, 0, 0)),
+                view_group_btn: std::cell::Cell::new((0, 0, 0)),
+                hover_view_fmt: false,
+                hover_view_group: false,
                 hover_scope_i: false,
                 hover_scope_d: false,
                 hover_scope_both: false,
@@ -725,6 +825,7 @@ impl App {
             hover_run_button: None,
             console: Console::default(),
             clipboard: Clipboard::new().ok(),
+            last_bracketed_paste: None,
         }
     }
 
@@ -767,7 +868,6 @@ impl App {
                         return;
                     }
                 }
-
                 self.run.data_base = prog.data_base;
                 self.run.mem_view_addr = prog.data_base;
                 self.run.mem_region = MemRegion::Data;
@@ -923,6 +1023,7 @@ impl App {
         self.run.reg_last_write_pc = [None; 32];
         self.run.exec_counts.clear();
         self.run.exec_trace.clear();
+        self.run.mem_access_log.clear();
         self.load_last_ok_program();
     }
 
@@ -1291,6 +1392,9 @@ impl App {
 
         // Classify instruction BEFORE stepping (registers still hold pre-step values)
         let cpi_cycles = classify_cpi_cycles(step_pc, &self.run.cpu, &self.run.mem, &self.run.cpi_config);
+        let mem_access = self.run.mem.peek32(step_pc)
+            .ok()
+            .and_then(|w| classify_mem_access(w, &self.run.cpu));
 
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
@@ -1322,6 +1426,13 @@ impl App {
         self.run.exec_trace.push_back((step_pc, disasm));
         if self.run.exec_trace.len() > 200 {
             self.run.exec_trace.pop_front();
+        }
+
+        // Update memory access log (age existing entries, insert new if load/store)
+        for entry in &mut self.run.mem_access_log { entry.2 = entry.2.saturating_add(1); }
+        self.run.mem_access_log.retain(|e| e.2 < 3);
+        if let Some((addr, size)) = mem_access {
+            self.run.mem_access_log.push((addr, size, 0));
         }
 
         // Update register age (fading highlight) and track last write PC
@@ -1420,6 +1531,45 @@ impl App {
             self.editor.buf.selection_anchor = Some((r, c));
             self.editor.buf.cursor_col = c + Editor::char_count(&word);
         }
+    }
+}
+
+/// Decode a raw instruction word and return the memory address + byte size that
+/// the instruction accesses (load or store), or `None` for non-memory instructions.
+/// Uses pre-step register values from `cpu`.
+fn classify_mem_access(word: u32, cpu: &crate::falcon::Cpu) -> Option<(u32, u32)> {
+    let opcode = word & 0x7F;
+    let funct3 = (word >> 12) & 0x7;
+    let rs1 = ((word >> 15) & 0x1F) as usize;
+
+    match opcode {
+        // LOAD (lb lh lw lbu lhu) and LOAD-FP (flw)
+        0x03 | 0x07 => {
+            let imm = ((word as i32) >> 20) as u32; // sign-extend bits[31:20]
+            let addr = cpu.x[rs1].wrapping_add(imm);
+            let size: u32 = match funct3 {
+                0 | 4 => 1,  // lb / lbu
+                1 | 5 => 2,  // lh / lhu
+                2     => 4,  // lw / flw
+                _     => return None,
+            };
+            Some((addr, size))
+        }
+        // STORE (sb sh sw) and STORE-FP (fsw)
+        0x23 | 0x27 => {
+            let imm_lo = (word >> 7) & 0x1F;
+            let imm_hi = (word >> 25) & 0x7F;
+            let imm = (((imm_hi << 5) | imm_lo) as i32).wrapping_shl(20).wrapping_shr(20) as u32;
+            let addr = cpu.x[rs1].wrapping_add(imm);
+            let size: u32 = match funct3 {
+                0 => 1, // sb / fsb (unlikely but valid)
+                1 => 2, // sh
+                2 => 4, // sw / fsw
+                _ => return None,
+            };
+            Some((addr, size))
+        }
+        _ => None,
     }
 }
 
@@ -1558,6 +1708,7 @@ fn run_inner(terminal: &mut DefaultTerminal, app: &mut App, #[allow(unused)] qui
                     Ok(Event::Paste(text)) => {
                         if matches!(app.tab, Tab::Editor) {
                             use crate::ui::input::keyboard::paste_from_terminal;
+                            app.last_bracketed_paste = Some(Instant::now());
                             paste_from_terminal(app, &text);
                         }
                     }

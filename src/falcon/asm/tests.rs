@@ -137,46 +137,42 @@ fn print_expands_correctly() {
 fn print_string_register_errors() {
     let asm = ".text\nprintString a1";
     let err = assemble(asm, 0).err().expect("expected error");
-    assert!(
-        err.msg.contains("printStr: expected 'label'")
-            || err.msg.contains("printString: expected 'label'")
-    );
+    assert!(err.msg.contains("print_str: expected 'label'"));
 }
 
 #[test]
 fn print_string_label_expands_correctly() {
+    // print_str/printString expands to: la a1, label + strlen loop + write(1, buf, len)
+    // = 11 instructions total; syscall 64 (Linux write)
     let asm = ".data\nmsg: .asciz \"hi\"\n.text\nprintString msg";
     let prog = assemble(asm, 0).expect("assemble");
-    assert_eq!(prog.text.len(), 4);
-    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1001 })
-        .expect("encode addi");
-    let expected_lui = encode(Instruction::Lui { rd: 10, imm: 0x1000 })
-        .expect("encode lui");
-    let expected_addi = encode(Instruction::Addi { rd: 10, rs1: 10, imm: 0 })
-        .expect("encode addi");
-    let expected_ecall = encode(Instruction::Ecall).expect("encode ecall");
-    assert_eq!(prog.text[0], expected_li);
-    assert_eq!(prog.text[1], expected_lui);
-    assert_eq!(prog.text[2], expected_addi);
-    assert_eq!(prog.text[3], expected_ecall);
+    assert_eq!(prog.text.len(), 11);
+    // Last 3 instructions: addi a0,x0,1 | addi a7,x0,64 | ecall
+    let expected_fd   = encode(Instruction::Addi { rd: 10, rs1: 0, imm: 1 }).unwrap();
+    let expected_sys  = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 64 }).unwrap();
+    let expected_call = encode(Instruction::Ecall).unwrap();
+    assert_eq!(prog.text[8],  expected_fd);
+    assert_eq!(prog.text[9],  expected_sys);
+    assert_eq!(prog.text[10], expected_call);
 }
 
 #[test]
 fn read_label_expands_correctly() {
+    // read expands to: addi a0,x0,0 | la a1, buf | addi a2,x0,256 | addi a7,x0,63 | ecall
+    // = 6 instructions total; syscall 63 (Linux read)
     let asm = ".data\nbuf: .space 4\n.text\nread buf";
     let prog = assemble(asm, 0).expect("assemble");
-    assert_eq!(prog.text.len(), 4);
-    let expected_li = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 1003 })
-        .expect("encode addi");
-    let expected_lui = encode(Instruction::Lui { rd: 10, imm: 0x1000 })
-        .expect("encode lui");
-    let expected_addi = encode(Instruction::Addi { rd: 10, rs1: 10, imm: 0 })
-        .expect("encode addi");
-    let expected_ecall = encode(Instruction::Ecall).expect("encode ecall");
-    assert_eq!(prog.text[0], expected_li);
-    assert_eq!(prog.text[1], expected_lui);
-    assert_eq!(prog.text[2], expected_addi);
-    assert_eq!(prog.text[3], expected_ecall);
+    assert_eq!(prog.text.len(), 6);
+    // First instruction: addi a0, x0, 0 (fd=stdin)
+    let expected_fd  = encode(Instruction::Addi { rd: 10, rs1: 0, imm: 0 }).unwrap();
+    // Last 3: addi a2,x0,256 | addi a7,x0,63 | ecall
+    let expected_cnt = encode(Instruction::Addi { rd: 12, rs1: 0, imm: 256 }).unwrap();
+    let expected_sys = encode(Instruction::Addi { rd: 17, rs1: 0, imm: 63 }).unwrap();
+    let expected_ec  = encode(Instruction::Ecall).unwrap();
+    assert_eq!(prog.text[0], expected_fd);
+    assert_eq!(prog.text[3], expected_cnt);
+    assert_eq!(prog.text[4], expected_sys);
+    assert_eq!(prog.text[5], expected_ec);
 }
 
 #[test]
@@ -253,4 +249,28 @@ fn equate_dot_expression_works_with_li() {
     let expected_li =
         encode(Instruction::Addi { rd: 10, rs1: 0, imm: 3 }).expect("encode addi");
     assert_eq!(prog.text[0], expected_li);
+}
+
+#[test]
+fn char_literal_in_addi() {
+    // addi a0, x0, '0'  →  addi a0, x0, 48
+    let prog = assemble(".text\naddi a0, x0, '0'", 0).expect("assemble");
+    assert_eq!(prog.text.len(), 1);
+    let expected = encode(Instruction::Addi { rd: 10, rs1: 0, imm: 48 }).unwrap();
+    assert_eq!(prog.text[0], expected);
+}
+
+#[test]
+fn char_literal_li_newline_escape() {
+    // li a0, '\n'  →  addi a0, x0, 10
+    let prog = assemble(".text\nli a0, '\\n'", 0).expect("assemble");
+    assert_eq!(prog.text.len(), 1);
+    let expected = encode(Instruction::Addi { rd: 10, rs1: 0, imm: 10 }).unwrap();
+    assert_eq!(prog.text[0], expected);
+}
+
+#[test]
+fn char_literal_non_ascii_error() {
+    let err = assemble(".text\nli a0, '\u{00e9}'", 0).err().expect("expected error");
+    assert!(err.msg.contains("ASCII"), "error should mention ASCII: {}", err.msg);
 }

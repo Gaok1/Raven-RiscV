@@ -64,8 +64,8 @@ pub enum Instruction {
     FleS { rd:u8, rs1:u8, rs2:u8 },
 
     // Conversion
-    FcvtWS  { rd:u8, rs1:u8 }, // f32 → i32 (signed)
-    FcvtWuS { rd:u8, rs1:u8 }, // f32 → u32 (unsigned)
+    FcvtWS  { rd:u8, rs1:u8, rm:u8 }, // f32 → i32 (signed);  rm = rounding mode (0=rne,1=rtz,2=rdn,3=rup,4=rmm,7=dyn)
+    FcvtWuS { rd:u8, rs1:u8, rm:u8 }, // f32 → u32 (unsigned); rm = rounding mode
     FcvtSW  { rd:u8, rs1:u8 }, // i32 → f32
     FcvtSWu { rd:u8, rs1:u8 }, // u32 → f32
 

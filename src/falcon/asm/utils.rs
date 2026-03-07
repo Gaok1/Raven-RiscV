@@ -94,9 +94,46 @@ pub(crate) fn parse_reg(s: &str) -> Option<u8> {
     map.get(s.as_str()).cloned()
 }
 
+/// Parse a character literal `'x'` or escape `'\n'` into its ASCII code.
+/// Returns `Ok(code)` for valid ASCII chars, `Err(msg)` for non-ASCII or bad syntax.
+pub(crate) fn parse_char_lit(s: &str) -> Result<i32, String> {
+    let inner = s
+        .strip_prefix('\'')
+        .and_then(|t| t.strip_suffix('\''))
+        .ok_or_else(|| format!("invalid character literal: {s}"))?;
+
+    let ch = match inner {
+        "\\n"  => '\n',
+        "\\t"  => '\t',
+        "\\r"  => '\r',
+        "\\0"  => '\0',
+        "\\\\" => '\\',
+        "\\'"  => '\'',
+        "\\\"" => '"',
+        _ => {
+            let mut chars = inner.chars();
+            let ch = chars.next().ok_or_else(|| format!("invalid character literal: {s}"))?;
+            if chars.next().is_some() {
+                return Err(format!("invalid character literal: {s}"));
+            }
+            ch
+        }
+    };
+
+    if ch.is_ascii() {
+        Ok(ch as i32)
+    } else {
+        Err(format!(
+            "character literal {s} is not ASCII (only ASCII 0–127 is supported)"
+        ))
+    }
+}
+
 pub(crate) fn parse_imm(s: &str) -> Option<i32> {
     let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x") {
+    if s.starts_with('\'') {
+        parse_char_lit(s).ok()
+    } else if let Some(hex) = s.strip_prefix("0x") {
         i32::from_str_radix(hex, 16).ok()
     } else {
         s.parse::<i32>().ok()
@@ -105,7 +142,9 @@ pub(crate) fn parse_imm(s: &str) -> Option<i32> {
 
 pub(crate) fn parse_imm64(s: &str) -> Option<i64> {
     let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x") {
+    if s.starts_with('\'') {
+        parse_char_lit(s).ok().map(|v| v as i64)
+    } else if let Some(hex) = s.strip_prefix("0x") {
         i64::from_str_radix(hex, 16).ok()
     } else {
         s.parse::<i64>().ok()
@@ -257,4 +296,18 @@ pub(crate) fn fp_store_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
 
 pub(crate) fn get_freg(s: &str) -> Result<u8, String> {
     parse_freg(s).ok_or_else(|| format!("invalid float register: {s}"))
+}
+
+/// Parse a floating-point rounding mode name → rm bits (RISC-V ISA encoding).
+/// rne=0, rtz=1, rdn=2, rup=3, rmm=4, dyn=7
+pub(crate) fn parse_rm(s: &str) -> Option<u8> {
+    match s.to_ascii_lowercase().as_str() {
+        "rne" => Some(0),
+        "rtz" => Some(1),
+        "rdn" => Some(2),
+        "rup" => Some(3),
+        "rmm" => Some(4),
+        "dyn" => Some(7),
+        _ => None,
+    }
 }

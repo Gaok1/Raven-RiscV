@@ -7,7 +7,7 @@ use super::errors::AsmError;
 use super::program::Program;
 use super::pseudo::{
     parse_la, parse_li, parse_pop, parse_print, parse_print_str, parse_print_strln, parse_push,
-    parse_random_byte, parse_random_bytes, parse_read, parse_read_byte, parse_read_half,
+    parse_random, parse_random_bytes, parse_read, parse_read_byte, parse_read_half,
     parse_read_word,
 };
 use super::utils::*;
@@ -376,30 +376,39 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 } else if ltrim == "print" || ltrim.starts_with("print ") {
                     items.push((pc_text, LineKind::Print(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(12);
-                } else if ltrim == "printStr" || ltrim.starts_with("printStr ")
+                } else if ltrim == "print_str" || ltrim.starts_with("print_str ")
+                    || ltrim == "printStr" || ltrim.starts_with("printStr ")
                     || ltrim == "printString" || ltrim.starts_with("printString ")
                 {
                     items.push((pc_text, LineKind::PrintStr(ltrim.to_string()), *line_no));
-                    pc_text = pc_text.wrapping_add(16);
-                } else if ltrim == "printStrLn" || ltrim.starts_with("printStrLn ") {
+                    pc_text = pc_text.wrapping_add(44); // 11 instructions
+                } else if ltrim == "print_str_ln" || ltrim.starts_with("print_str_ln ")
+                    || ltrim == "printStrLn" || ltrim.starts_with("printStrLn ")
+                {
                     items.push((pc_text, LineKind::PrintStrLn(ltrim.to_string()), *line_no));
-                    pc_text = pc_text.wrapping_add(16);
+                    pc_text = pc_text.wrapping_add(80); // 20 instructions
                 } else if ltrim == "read" || ltrim.starts_with("read ") {
                     items.push((pc_text, LineKind::Read(ltrim.to_string()), *line_no));
-                    pc_text = pc_text.wrapping_add(16);
-                } else if ltrim == "readByte" || ltrim.starts_with("readByte ") {
+                    pc_text = pc_text.wrapping_add(24); // 6 instructions
+                } else if ltrim == "read_byte" || ltrim.starts_with("read_byte ")
+                    || ltrim == "readByte" || ltrim.starts_with("readByte ")
+                {
                     items.push((pc_text, LineKind::ReadByte(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(16);
-                } else if ltrim == "readHalf" || ltrim.starts_with("readHalf ") {
+                } else if ltrim == "read_half" || ltrim.starts_with("read_half ")
+                    || ltrim == "readHalf" || ltrim.starts_with("readHalf ")
+                {
                     items.push((pc_text, LineKind::ReadHalf(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(16);
-                } else if ltrim == "readWord" || ltrim.starts_with("readWord ") {
+                } else if ltrim == "read_word" || ltrim.starts_with("read_word ")
+                    || ltrim == "readWord" || ltrim.starts_with("readWord ")
+                {
                     items.push((pc_text, LineKind::ReadWord(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(16);
-                } else if ltrim.starts_with("randomByte ") {
+                } else if ltrim.starts_with("random ") || ltrim == "random" {
                     items.push((pc_text, LineKind::RandomByte(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(32); // 8 instructions
-                } else if ltrim.starts_with("randomBytes ") {
+                } else if ltrim.starts_with("random_bytes ") || ltrim.starts_with("randomBytes ") {
                     items.push((pc_text, LineKind::RandomBytes(ltrim.to_string()), *line_no));
                     pc_text = pc_text.wrapping_add(24); // 6 instructions
                 } else {
@@ -487,6 +496,17 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                         data_bytes.extend_from_slice(&bytes);
                         pc_data += 8;
                     }
+                } else if let Some(rest) = line.strip_prefix(".float") {
+                    for f in rest.split(',') {
+                        let f = f.trim();
+                        let v: f32 = f.parse().map_err(|_| AsmError {
+                            line: *line_no,
+                            msg: format!("invalid .float: {f}"),
+                        })?;
+                        let bytes = v.to_le_bytes();
+                        data_bytes.extend_from_slice(&bytes);
+                        pc_data += 4;
+                    }
                 } else if let Some(rest) = line.strip_prefix(".ascii") {
                     let s = parse_str_lit(rest).ok_or_else(|| AsmError {
                         line: *line_no,
@@ -555,6 +575,7 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                     || line.starts_with(".half")
                     || line.starts_with(".word")
                     || line.starts_with(".dword")
+                    || line.starts_with(".float")
                     || line.starts_with(".ascii")
                     || line.starts_with(".asciz")
                     || line.starts_with(".string")
@@ -768,9 +789,11 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 }
             }
             LineKind::PrintStr(s) => {
-                // accept both 'printStr' and legacy 'printString' mnemonics
+                // normalise legacy camelCase mnemonics to the canonical snake_case form
                 let s_norm = if s.starts_with("printString") {
-                    s.replacen("printString", "printStr", 1)
+                    s.replacen("printString", "print_str", 1)
+                } else if s.starts_with("printStr") {
+                    s.replacen("printStr", "print_str", 1)
                 } else { s.clone() };
                 let insts = parse_print_str(&s_norm, &labels).map_err(|e| AsmError {
                     line: line_no,
@@ -785,7 +808,10 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 }
             }
             LineKind::PrintStrLn(s) => {
-                let insts = parse_print_strln(&s, &labels).map_err(|e| AsmError {
+                let s_norm = if s.starts_with("printStrLn") {
+                    s.replacen("printStrLn", "print_str_ln", 1)
+                } else { s.clone() };
+                let insts = parse_print_strln(&s_norm, &labels).map_err(|e| AsmError {
                     line: line_no,
                     msg: e,
                 })?;
@@ -823,7 +849,7 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                 for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
             }
             LineKind::RandomByte(s) => {
-                let insts = parse_random_byte(&s).map_err(|e| AsmError { line: line_no, msg: e })?;
+                let insts = parse_random(&s).map_err(|e| AsmError { line: line_no, msg: e })?;
                 for inst in insts { let w = encode(inst).map_err(|e| AsmError { line: line_no, msg: e.to_string() })?; words.push(w); }
             }
             LineKind::RandomBytes(s) => {
@@ -896,6 +922,9 @@ fn parse_instr(
     let get_imm = |t: &str| {
         if let Some(v) = parse_imm(t) {
             return Ok(v);
+        }
+        if t.starts_with('\'') {
+            return Err(parse_char_lit(t).unwrap_err());
         }
         if let Some(v) = consts.get(t) {
             let v_i32 = i32::try_from(*v)
@@ -1236,8 +1265,16 @@ fn parse_instr(
         "fle.s" => { if ops.len()!=3{return Err("fle.s: expected 'rd, frs1, frs2'".into());} Ok(FleS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?,rs2:get_freg(&ops[2])?}) }
 
         // Conversion
-        "fcvt.w.s"  => { if ops.len()!=2{return Err("fcvt.w.s: expected 'rd, frs1'".into());}  Ok(FcvtWS {rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?}) }
-        "fcvt.wu.s" => { if ops.len()!=2{return Err("fcvt.wu.s: expected 'rd, frs1'".into());} Ok(FcvtWuS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?}) }
+        "fcvt.w.s"  => {
+            if ops.len()<2||ops.len()>3{return Err("fcvt.w.s: expected 'rd, frs1[, rm]'".into());}
+            let rm = if ops.len()==3 { parse_rm(&ops[2]).ok_or("fcvt.w.s: unknown rounding mode; expected rne|rtz|rdn|rup|rmm|dyn")? } else { 0 };
+            Ok(FcvtWS {rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?,rm})
+        }
+        "fcvt.wu.s" => {
+            if ops.len()<2||ops.len()>3{return Err("fcvt.wu.s: expected 'rd, frs1[, rm]'".into());}
+            let rm = if ops.len()==3 { parse_rm(&ops[2]).ok_or("fcvt.wu.s: unknown rounding mode; expected rne|rtz|rdn|rup|rmm|dyn")? } else { 0 };
+            Ok(FcvtWuS{rd:get_reg(&ops[0])?,rs1:get_freg(&ops[1])?,rm})
+        }
         "fcvt.s.w"  => { if ops.len()!=2{return Err("fcvt.s.w: expected 'frd, rs1'".into());}  Ok(FcvtSW {rd:get_freg(&ops[0])?,rs1:get_reg(&ops[1])?}) }
         "fcvt.s.wu" => { if ops.len()!=2{return Err("fcvt.s.wu: expected 'frd, rs1'".into());} Ok(FcvtSWu{rd:get_freg(&ops[0])?,rs1:get_reg(&ops[1])?}) }
 

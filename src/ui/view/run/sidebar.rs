@@ -248,6 +248,16 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
 const PURPLE: Color = Color::Rgb(180, 100, 255);
 const STALE_COLOR: Color = Color::Rgb(110, 70, 160);
 
+/// Style for recently accessed memory (cyan fade, disappears after 3 steps).
+fn mem_age_style(age: u8) -> Option<Style> {
+    match age {
+        0 => Some(Style::default().fg(Color::Cyan)),
+        1 => Some(Style::default().fg(Color::Rgb(0, 180, 180))),
+        2 => Some(Style::default().fg(Color::Rgb(0, 110, 110))),
+        _ => None,
+    }
+}
+
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let sp = app.run.cpu.x[2];
     let sp_aligned = sp & !(app.run.mem_view_bytes - 1);
@@ -255,6 +265,17 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let is_stack = app.run.mem_region == MemRegion::Stack;
     let cache_loc = app.run.mem.data_cache_location(addr);
     let is_dirty = app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
+
+    // Check if any recent memory access overlaps this row's byte range
+    let row_end = addr.wrapping_add(app.run.mem_view_bytes);
+    let access_highlight = app.run.mem_access_log.iter()
+        .filter(|(a, s, _)| {
+            let end = a.wrapping_add(*s);
+            *a < row_end && end > addr
+        })
+        .map(|(_, _, age)| *age)
+        .min()
+        .and_then(mem_age_style);
 
     // Build SP annotation: offset for stack region, or ▶ sp marker otherwise
     let sp_ann = if is_stack {
@@ -273,22 +294,27 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     if !is_dirty {
         let val = format_memory_value(app, addr);
         let text = format!("  0x{addr:08x}: {val}{sp_ann}");
-        return if is_sp {
-            ListItem::new(text).style(Style::default().fg(Color::Yellow))
+        let style = if is_sp {
+            Style::default().fg(Color::Yellow)
+        } else if let Some(s) = access_highlight {
+            s
         } else {
-            ListItem::new(text)
+            Style::default()
         };
+        return ListItem::new(text).style(style);
     }
 
     let cache_val = format_memory_value(app, addr);
     let stale_val = format_stale_value(app, addr);
     let level_label = cache_loc.map(|(n, _)| format!("L{n} ")).unwrap_or_default();
 
+    // When dirty, use purple spans but tint address with access highlight if present
+    let addr_style = access_highlight.unwrap_or(Style::default().fg(PURPLE));
     let line = ratatui::text::Line::from(vec![
         ratatui::text::Span::styled("\u{25cf} ", Style::default().fg(PURPLE).bold()),
         ratatui::text::Span::styled(
             format!("{level_label}0x{addr:08x}: "),
-            Style::default().fg(PURPLE),
+            addr_style,
         ),
         ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()),
         ratatui::text::Span::styled(

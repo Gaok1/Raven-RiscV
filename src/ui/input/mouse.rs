@@ -1,5 +1,5 @@
 use crate::ui::{
-    app::{App, CacheScope, CacheSubtab, ConfigField, EditorMode, FormatMode, MemRegion, RunButton, RunSpeed, Tab},
+    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, RunButton, RunSpeed, Tab},
     editor::Editor,
 };
 use crate::ui::input::keyboard::{do_export_results, do_compare_load};
@@ -8,7 +8,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use rfd::FileDialog as OSFileDialog;
 
 use super::max_regs_scroll;
-use crate::ui::view::docs::docs_body_line_count;
+use crate::ui::view::docs::{docs_body_line_count, free_page_line_count};
 
 pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
@@ -352,6 +352,9 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                 app.run.is_running = true;
             }
         }
+        RunButton::Reset => {
+            app.restart_simulation();
+        }
     }
 }
 
@@ -378,15 +381,42 @@ fn cache_run_status_area(area: Rect) -> Rect {
 fn update_cache_run_status_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let status = cache_run_status_area(area);
     if me.row != status.y + 1 { return; }
-    app.hover_run_button = run_status_hit(app, status, me.column);
+    app.hover_run_button = cache_exec_hit(app, status, me.column);
 }
 
 fn handle_cache_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
     let status = cache_run_status_area(area);
     if me.row != status.y + 1 { return; }
-    if let Some(btn) = run_status_hit(app, status, me.column) {
+    if let Some(btn) = cache_exec_hit(app, status, me.column) {
         apply_run_button(app, btn);
     }
+}
+
+/// Hit-test for the cache exec-controls widget (Reset + Speed + State buttons).
+fn cache_exec_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
+    let speed_text = app.run.speed.label();
+    let state_text = if app.run.is_running { "RUN" } else { "PAUSE" };
+
+    let mut pos = status.x + 1; // inner x (after block border)
+    let skip  = |p: &mut u16, s: &str| { *p += s.len() as u16; };
+    let range = |p: &mut u16, label: &str| -> (u16, u16) {
+        let s = *p;
+        *p += 1 + label.len() as u16 + 1; // [label]
+        (s, *p)
+    };
+
+    // " [Reset]  Speed [X1]  State [PAUSE]  ..."
+    skip(&mut pos, " ");
+    let (reset_s, reset_e) = range(&mut pos, "Reset");
+    skip(&mut pos, "  Speed ");
+    let (speed_s, speed_e) = range(&mut pos, speed_text);
+    skip(&mut pos, "  State ");
+    let (state_s, state_e) = range(&mut pos, state_text);
+
+    if col >= reset_s && col < reset_e { Some(RunButton::Reset) }
+    else if col >= speed_s && col < speed_e { Some(RunButton::Speed) }
+    else if col >= state_s && col < state_e { Some(RunButton::State) }
+    else { None }
 }
 
 fn run_status_area(app: &App, area: Rect) -> Rect {
@@ -477,6 +507,9 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     skip(&mut pos, "  Type ");
     let (type_start, type_end) = range(&mut pos, type_text);
 
+    skip(&mut pos, "  ");
+    let (reset_start, reset_end) = range(&mut pos, "Reset");
+
     if col >= view_start && col < view_end {
         Some(RunButton::View)
     } else if !app.run.show_registers && col >= region_start && col < region_end {
@@ -499,6 +532,8 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
         Some(RunButton::ExecCount)
     } else if col >= type_start && col < type_end {
         Some(RunButton::InstrType)
+    } else if col >= reset_start && col < reset_end {
+        Some(RunButton::Reset)
     } else {
         None
     }
@@ -668,14 +703,26 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
         ])
         .split(area);
     let docs_area = root_chunks[1];
-    let table_h = docs_area.height.saturating_sub(2);
-    let viewport_h = table_h.saturating_sub(4) as usize;
-    if viewport_h == 0 {
-        app.docs.scroll = 0;
-        return;
-    }
-    let total_body = docs_body_line_count(docs_area.width);
-    let max_start = total_body.saturating_sub(viewport_h);
+
+    let max_start = match app.docs.page {
+        DocsPage::InstrRef => {
+            // header(2) + search(0|1) + filter(1) + col_hdr(1) + sep(1)
+            let search_h: u16 = if app.docs.search_open { 1 } else { 0 };
+            let fixed: u16 = 2 + search_h + 1 + 1 + 1;
+            let viewport_h = docs_area.height.saturating_sub(fixed) as usize;
+            if viewport_h == 0 { app.docs.scroll = 0; return; }
+            let q = app.docs.search_query.clone();
+            let f = app.docs.type_filter;
+            let w = docs_area.width;
+            docs_body_line_count(w, &q, f).saturating_sub(viewport_h)
+        }
+        p => {
+            // header(2) consumed by render_free_page
+            let viewport_h = docs_area.height.saturating_sub(2) as usize;
+            if viewport_h == 0 { app.docs.scroll = 0; return; }
+            free_page_line_count(p, app.docs.lang).saturating_sub(viewport_h)
+        }
+    };
     if app.docs.scroll > max_start {
         app.docs.scroll = max_start;
     }
@@ -1205,7 +1252,7 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
 
 // ── Cache tab mouse handlers ─────────────────────────────────────────────────
 
-/// Returns (level_selector, subtab_header, run_controls, content, controls_bar).
+/// Returns (level_selector, subtab_header, exec_controls, content, controls_bar).
 fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -1216,7 +1263,7 @@ fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
         .constraints([
             Constraint::Length(1), // level selector bar
             Constraint::Length(3), // subtab header
-            Constraint::Length(5), // run controls (always visible)
+            Constraint::Length(4), // exec controls (Speed / State / Cycles)
             Constraint::Min(0),    // content
             Constraint::Length(3), // shared controls bar
         ])
@@ -1231,8 +1278,6 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_subtab_stats = false;
     app.cache.hover_subtab_config = false;
     app.cache.hover_subtab_view = false;
-    app.cache.hover_reset = false;
-    app.cache.hover_pause = false;
     app.cache.hover_export_results = false;
     app.cache.hover_compare = false;
     app.cache.hover_scope_i = false;
@@ -1245,6 +1290,8 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_config_field = None;
     app.cache.hover_cpi_field = None;
     app.cache.hover_hscrollbar = false;
+    app.cache.hover_view_fmt   = false;
+    app.cache.hover_view_group = false;
     for h in app.cache.hover_level.iter_mut() { *h = false; }
     app.cache.hover_add_level = false;
     app.cache.hover_remove_level = false;
@@ -1274,18 +1321,16 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Shared controls bar — active for all subtabs
-    // Layout: " [Reset]  [Pause]  [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
-    // x=1..8  x=10..18  x=19..29         x=31..42          x=52..61  x=63..72   x=74..80
+    // Layout: " [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
+    // x=1..11               x=13..24         x=34..43  x=44..53   x=54..60
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
-        if x >= 1 && x < 8 { app.cache.hover_reset = true; }
-        else if x >= 10 && x < 19 { app.cache.hover_pause = true; }
-        else if x >= 19 && x < 31 { app.cache.hover_export_results = true; }
-        else if x >= 31 && x < 44 { app.cache.hover_compare = true; }
-        else if x >= 52 && x < 62 { app.cache.hover_scope_i = true; }
-        else if x >= 63 && x < 73 { app.cache.hover_scope_d = true; }
-        else if x >= 74 && x < 81 { app.cache.hover_scope_both = true; }
+        if x >= 1 && x < 11 { app.cache.hover_export_results = true; }
+        else if x >= 13 && x < 24 { app.cache.hover_compare = true; }
+        else if x >= 34 && x < 43 { app.cache.hover_scope_i = true; }
+        else if x >= 44 && x < 53 { app.cache.hover_scope_d = true; }
+        else if x >= 54 && x < 60 { app.cache.hover_scope_both = true; }
     }
 
     // Config panel controls
@@ -1384,6 +1429,16 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
                 }
             }
         }
+
+        // Legend bar buttons: [FMT] [GROUP]
+        let (fmt_y, fmt_x0, fmt_x1) = app.cache.view_fmt_btn.get();
+        let (grp_y, grp_x0, grp_x1) = app.cache.view_group_btn.get();
+        if fmt_x1 > fmt_x0 && me.row == fmt_y && me.column >= fmt_x0 && me.column < fmt_x1 {
+            app.cache.hover_view_fmt = true;
+        }
+        if grp_x1 > grp_x0 && me.row == grp_y && me.column >= grp_x0 && me.column < grp_x1 {
+            app.cache.hover_view_group = true;
+        }
     }
 }
 
@@ -1441,25 +1496,34 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Shared controls bar — available in all subtabs
-    // Layout: " [Reset]  [Pause]  [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]"
+    // Layout: " [Reset]  [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]"
+    // x=1..8   x=10..20              x=22..33         x=43..52  x=53..62   x=63..69
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
-        if x >= 1 && x < 8 { app.run.mem.reset_stats(); return; }
-        if x >= 10 && x < 19 {
-            if app.run.is_running {
-                app.run.is_running = false;
-            } else if !app.run.faulted {
-                app.run.is_running = true;
-            }
+        if x >= 1 && x < 11 { do_export_results(app); return; }
+        if x >= 13 && x < 24 { do_compare_load(app);  return; }
+        if app.cache.selected_level == 0 {
+            if x >= 34 && x < 43 { app.cache.scope = CacheScope::ICache; return; }
+            if x >= 44 && x < 53 { app.cache.scope = CacheScope::DCache; return; }
+            if x >= 54 && x < 60 { app.cache.scope = CacheScope::Both;   return; }
+        }
+    }
+
+    // View legend bar button clicks: [FMT] and [GROUP]
+    if matches!(app.cache.subtab, CacheSubtab::View) {
+        let (fmt_y, fmt_x0, fmt_x1) = app.cache.view_fmt_btn.get();
+        let (grp_y, grp_x0, grp_x1) = app.cache.view_group_btn.get();
+        if fmt_x1 > fmt_x0 && me.row == fmt_y && me.column >= fmt_x0 && me.column < fmt_x1 {
+            app.cache.data_fmt = app.cache.data_fmt.cycle();
             return;
         }
-        if x >= 19 && x < 31 { do_export_results(app); return; }
-        if x >= 31 && x < 44 { do_compare_load(app);   return; }
-        if app.cache.selected_level == 0 {
-            if x >= 52 && x < 62 { app.cache.scope = CacheScope::ICache; return; }
-            if x >= 63 && x < 73 { app.cache.scope = CacheScope::DCache; return; }
-            if x >= 74 && x < 81 { app.cache.scope = CacheScope::Both;   return; }
+        if grp_x1 > grp_x0 && me.row == grp_y && me.column >= grp_x0 && me.column < grp_x1 {
+            use crate::ui::app::CacheDataFmt;
+            if app.cache.data_fmt != CacheDataFmt::Float {
+                app.cache.data_group = app.cache.data_group.cycle();
+            }
+            return;
         }
     }
 

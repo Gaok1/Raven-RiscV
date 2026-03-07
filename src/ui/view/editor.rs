@@ -434,6 +434,63 @@ fn overlay_range(line: &mut Line, start: usize, end: usize, style: Style) {
     line.spans = new_spans;
 }
 
+/// Highlight the operand part of an assembler directive line.
+fn highlight_directive_rest<'a>(directive: &str, rest: &'a str) -> Vec<Span<'a>> {
+    let dir = directive.to_ascii_lowercase();
+    match dir.as_str() {
+        // Data directives: comma-separated numeric/float values
+        ".byte" | ".half" | ".word" | ".dword" | ".float" => {
+            let mut out: Vec<Span<'a>> = Vec::new();
+            // keep leading whitespace raw
+            let trimmed_start = rest.len() - rest.trim_start().len();
+            if trimmed_start > 0 {
+                out.push(Span::raw(&rest[..trimmed_start]));
+            }
+            let values = &rest[trimmed_start..];
+            // split by comma, color each token
+            let mut remaining = values;
+            loop {
+                if let Some(comma_pos) = remaining.find(',') {
+                    let tok = remaining[..comma_pos].trim();
+                    let tok_color = if tok.starts_with('"') || tok.starts_with('\'') {
+                        Color::Green
+                    } else {
+                        Color::Magenta
+                    };
+                    out.push(Span::styled(remaining[..comma_pos].to_string(), Style::default().fg(tok_color)));
+                    out.push(Span::raw(","));
+                    remaining = &remaining[comma_pos + 1..];
+                } else {
+                    let tok = remaining.trim();
+                    let tok_color = if tok.starts_with('"') || tok.starts_with('\'') {
+                        Color::Green
+                    } else {
+                        Color::Magenta
+                    };
+                    out.push(Span::styled(remaining.to_string(), Style::default().fg(tok_color)));
+                    break;
+                }
+            }
+            out
+        }
+        // String directives: everything is the string literal
+        ".ascii" | ".asciz" | ".string" => {
+            vec![Span::styled(rest.to_string(), Style::default().fg(Color::Green))]
+        }
+        // Symbol directives: the name after whitespace is a label/symbol
+        ".globl" | ".global" | ".extern" | ".weak" => {
+            let ws_end = rest.len() - rest.trim_start().len();
+            let mut out = Vec::new();
+            if ws_end > 0 {
+                out.push(Span::raw(&rest[..ws_end]));
+            }
+            out.push(Span::styled(&rest[ws_end..], Style::default().fg(Color::Yellow)));
+            out
+        }
+        _ => vec![Span::raw(rest)],
+    }
+}
+
 fn highlight_line(s: &str) -> Vec<Span<'_>> {
     use Color::*;
     if s.is_empty() {
@@ -518,7 +575,7 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
                     Style::default().fg(Color::LightYellow),
                 ));
                 if !rest.is_empty() {
-                    out.push(Span::raw(rest));
+                    out.extend(highlight_directive_rest(first, rest));
                 }
             } else {
                 out.push(Span::styled(
@@ -837,7 +894,8 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
         | "fsgnj.s" | "fsgnjn.s" | "fsgnjx.s" => ops.len() == 3,
         "fsqrt.s" | "fmv.s" | "fneg.s" | "fabs.s" => ops.len() == 2,
         "feq.s" | "flt.s" | "fle.s" => ops.len() == 3,
-        "fcvt.w.s" | "fcvt.wu.s" | "fcvt.s.w" | "fcvt.s.wu"
+        "fcvt.w.s" | "fcvt.wu.s" => ops.len() == 2 || ops.len() == 3,
+        "fcvt.s.w" | "fcvt.s.wu"
         | "fmv.x.w" | "fmv.w.x" | "fclass.s" => ops.len() == 2,
         "fmadd.s" | "fmsub.s" | "fnmsub.s" | "fnmadd.s" => ops.len() == 4,
 
@@ -848,14 +906,14 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
                 "push" => ops.len() == 1 && is_reg(&ops[0]),
                 "pop" => ops.len() == 1 && is_reg(&ops[0]),
                 "print" => ops.len() == 1 && is_reg(&ops[0]),
-                "printStr" | "printString" => ops.len() == 1 && is_label(&ops[0]),
-                "printStrLn" => ops.len() == 1 && is_label(&ops[0]),
+                "print_str" | "printStr" | "printString" => ops.len() == 1 && is_label(&ops[0]),
+                "print_str_ln" | "printStrLn" => ops.len() == 1 && is_label(&ops[0]),
                 "read" => ops.len() == 1 && is_label(&ops[0]),
-                "readByte" => ops.len() == 1 && is_label(&ops[0]),
-                "readHalf" => ops.len() == 1 && is_label(&ops[0]),
-                "readWord" => ops.len() == 1 && is_label(&ops[0]),
-                "randomByte" => ops.len() == 1 && is_reg(&ops[0]),
-                "randomBytes" => ops.len() == 2 && is_label(&ops[0]),
+                "read_byte" | "readByte" => ops.len() == 1 && is_label(&ops[0]),
+                "read_half" | "readHalf" => ops.len() == 1 && is_label(&ops[0]),
+                "read_word" | "readWord" => ops.len() == 1 && is_label(&ops[0]),
+                "random" => ops.len() == 1 && is_reg(&ops[0]),
+                "random_bytes" | "randomBytes" => ops.len() == 2 && is_label(&ops[0]),
                 _ => return None,
             }
         }
@@ -911,7 +969,7 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
         | "fsgnj.s" | "fsgnjn.s" | "fsgnjx.s" => vec![vec!["frd", "frs1", "frs2"]],
         "fsqrt.s" | "fmv.s" | "fneg.s" | "fabs.s" => vec![vec!["frd", "frs"]],
         "feq.s" | "flt.s" | "fle.s" => vec![vec!["rd", "frs1", "frs2"]],
-        "fcvt.w.s" | "fcvt.wu.s" => vec![vec!["rd", "frs1"]],
+        "fcvt.w.s" | "fcvt.wu.s" => vec![vec!["rd", "frs1"], vec!["rd", "frs1", "rm"]],
         "fcvt.s.w" | "fcvt.s.wu" => vec![vec!["frd", "rs1"]],
         "fmv.x.w" | "fclass.s" => vec![vec!["rd", "frs1"]],
         "fmv.w.x" => vec![vec!["frd", "rs1"]],
@@ -922,14 +980,14 @@ fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span
             "push" => vec![vec!["rs"]],
             "pop" => vec![vec!["rd"]],
             "print" => vec![vec!["rd"]],
-            "printStr" | "printString" => vec![vec!["label"]],
-            "printStrLn" => vec![vec!["label"]],
+            "print_str" | "printStr" | "printString" => vec![vec!["label"]],
+            "print_str_ln" | "printStrLn" => vec![vec!["label"]],
             "read" => vec![vec!["label"]],
-            "readByte" => vec![vec!["label"]],
-            "readHalf" => vec![vec!["label"]],
-            "readWord" => vec![vec!["label"]],
-            "randomByte" => vec![vec!["rd"]],
-            "randomBytes" => vec![vec!["label", "n"]],
+            "read_byte" | "readByte" => vec![vec!["label"]],
+            "read_half" | "readHalf" => vec![vec!["label"]],
+            "read_word" | "readWord" => vec![vec!["label"]],
+            "random" => vec![vec!["rd"]],
+            "random_bytes" | "randomBytes" => vec![vec!["label", "n"]],
             _ => return None,
         },
     };

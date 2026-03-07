@@ -1,4 +1,4 @@
-use crate::falcon::{self, memory::Bus};
+use crate::falcon;
 use crate::ui::app::cpi_class_label;
 use ratatui::Frame;
 use ratatui::prelude::*;
@@ -77,7 +77,7 @@ fn detail_context(app: &App) -> DetailContext {
         let word = app.run.mem.peek32(addr).unwrap_or(0);
         (addr, word, "hover")
     } else if imem_address_in_range(app, app.run.cpu.pc) {
-        let word = app.run.mem.load32(app.run.cpu.pc).unwrap_or(0);
+        let word = app.run.mem.peek32(app.run.cpu.pc).unwrap_or(0);
         (app.run.cpu.pc, word, "PC")
     } else {
         return DetailContext {
@@ -629,8 +629,8 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         FeqS{rd,rs1,rs2}   => format!("{:<9} {}, {}, {}", "feq.s",    reg_name(rd),  freg_name(rs1), freg_name(rs2)),
         FltS{rd,rs1,rs2}   => format!("{:<9} {}, {}, {}", "flt.s",    reg_name(rd),  freg_name(rs1), freg_name(rs2)),
         FleS{rd,rs1,rs2}   => format!("{:<9} {}, {}, {}", "fle.s",    reg_name(rd),  freg_name(rs1), freg_name(rs2)),
-        FcvtWS{rd,rs1}     => format!("{:<9} {}, {}", "fcvt.w.s",  reg_name(rd),   freg_name(rs1)),
-        FcvtWuS{rd,rs1}    => format!("{:<9} {}, {}", "fcvt.wu.s", reg_name(rd),   freg_name(rs1)),
+        FcvtWS{rd,rs1,..}  => format!("{:<9} {}, {}", "fcvt.w.s",  reg_name(rd),   freg_name(rs1)),
+        FcvtWuS{rd,rs1,..} => format!("{:<9} {}, {}", "fcvt.wu.s", reg_name(rd),   freg_name(rs1)),
         FcvtSW{rd,rs1}     => format!("{:<9} {}, {}", "fcvt.s.w",  freg_name(rd),  reg_name(rs1)),
         FcvtSWu{rd,rs1}    => format!("{:<9} {}, {}", "fcvt.s.wu", freg_name(rd),  reg_name(rs1)),
         FmvXW{rd,rs1}      => format!("{:<9} {}, {}", "fmv.x.w",   reg_name(rd),   freg_name(rs1)),

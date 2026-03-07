@@ -134,8 +134,8 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
         FltS{rd,rs1,rs2} => r(0x50, rs2 as u32, rs1 as u32, 0x1, rd as u32, OPC_FP as u32),
         FleS{rd,rs1,rs2} => r(0x50, rs2 as u32, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
 
-        FcvtWS {rd,rs1} => r(0x60, 0, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
-        FcvtWuS{rd,rs1} => r(0x60, 1, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
+        FcvtWS {rd,rs1,rm} => r(0x60, 0, rs1 as u32, rm as u32, rd as u32, OPC_FP as u32),
+        FcvtWuS{rd,rs1,rm} => r(0x60, 1, rs1 as u32, rm as u32, rd as u32, OPC_FP as u32),
         FcvtSW {rd,rs1} => r(0x68, 0, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
         FcvtSWu{rd,rs1} => r(0x68, 1, rs1 as u32, 0x0, rd as u32, OPC_FP as u32),
 

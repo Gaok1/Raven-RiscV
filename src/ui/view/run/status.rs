@@ -109,6 +109,13 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         app.hover_run_button == Some(RunButton::InstrType),
     ));
 
+    spans.push(Span::raw("  "));
+    spans.push(button_span(
+        "Reset",
+        Color::Red,
+        app.hover_run_button == Some(RunButton::Reset),
+    ));
+
     spans
 }
 

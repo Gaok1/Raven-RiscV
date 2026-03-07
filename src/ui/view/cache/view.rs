@@ -1,14 +1,14 @@
 // ui/view/cache/view.rs — Cache matrix visualization
-// Educational view: sets × ways matrix showing tag, dirty bit, data bytes, policy metadata.
+// Educational view: sets × ways matrix showing V/D bits, address, data bytes, policy metadata.
 //
 // Layout:
 //   ┌── Area (from mod.rs, already excludes the shared controls bar) ──────────┐
 //   │ ┌─ I-Cache / D-Cache matrix ──────────────────────────────────────────┐  │
-//   │ │ Set | Way 0                        | Way 1                          │  │
-//   │ │   0 | V -  T:00001  DE AD BE EF r:0│ . -  (empty)                  │  │
-//   │ │   1 | V D  T:00002  01 02 03 04 r:1│ V -  T:0000A  AA BB CC DD r:0 │  │
+//   │ │ Set | Way 0                           | Way 1                       │  │
+//   │ │   0 | 1 -  0x00001000  DE AD BE EF r:0│ 0 -  (empty)               │  │
+//   │ │   1 | 1 1  0x00002000  01 02 03 04 r:1│ 1 -  0x0000A000  AA BB r:0 │  │
 //   │ └─────────────────────────────────────────────────────────────────────┘  │
-//   │  V=valid  .=inv  D=dirty  r:0=MRU  r:last=evict   ↑↓  1/32 sets         │  ← legend bar
+//   │  V D=valid/dirty bits  [m:HEX] [g:1B]  r:N recency  ↑↓ ←→ N/M sets     │  ← legend bar
 //   └────────────────────────────────────────────────────────────────────────────┘
 
 use ratatui::{
@@ -19,8 +19,7 @@ use ratatui::{
 use unicode_truncate::UnicodeTruncateStr;
 
 use crate::falcon::cache::{CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy};
-use crate::falcon::memory::Bus;
-use crate::ui::app::{App, CacheScope};
+use crate::ui::app::{App, CacheDataFmt, CacheDataGroup, CacheScope};
 
 const DIRTY_COLOR: Color = Color::Rgb(180, 100, 255);
 const DIRTY_ADDR_COLOR: Color = Color::Rgb(110, 70, 160);
@@ -80,17 +79,26 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
     let policy_hint = policy_hint_str(cfg.replacement);
 
+    let (fmt_style, group_style, fmt_label, group_label) =
+        legend_button_styles(app);
+
+    // " V D=valid/dirty bits  " is 23 chars
+    let prefix_len: u16 = 23;
+    let fmt_x0 = area.x + prefix_len;
+    let fmt_x1 = fmt_x0 + fmt_label.len() as u16;
+    let group_x0 = fmt_x1 + 1;
+    let group_x1 = group_x0 + group_label.len() as u16;
+    app.cache.view_fmt_btn.set((area.y, fmt_x0, fmt_x1));
+    app.cache.view_group_btn.set((area.y, group_x0, group_x1));
+
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("V", Style::default().fg(Color::Green).bold()),
-        Span::styled("=valid", Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
-        Span::styled(".", Style::default().fg(Color::DarkGray)),
-        Span::styled("=inv", Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
-        Span::styled("D", Style::default().fg(DIRTY_COLOR).bold()),
-        Span::styled("=dirty", Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
+        Span::styled("V D", Style::default().fg(Color::Yellow)),
+        Span::styled("=valid/dirty bits  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(fmt_label, fmt_style),
+        Span::raw(" "),
+        Span::styled(group_label, group_style),
+        Span::styled("  ", Style::default()),
         Span::styled(policy_hint, Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
         Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
@@ -137,28 +145,61 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     let scroll = app.cache.view_scroll.min(num_sets.saturating_sub(1));
     let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
 
-    // Build styled line so key symbols match the colors used in the matrix
+    let (fmt_style, group_style, fmt_label, group_label) =
+        legend_button_styles(app);
+
+    // " V D=valid/dirty bits  " is 23 chars
+    let prefix_len: u16 = 23;
+    let fmt_x0 = area.x + prefix_len;
+    let fmt_x1 = fmt_x0 + fmt_label.len() as u16;
+    let group_x0 = fmt_x1 + 1;
+    let group_x1 = group_x0 + group_label.len() as u16;
+    app.cache.view_fmt_btn.set((area.y, fmt_x0, fmt_x1));
+    app.cache.view_group_btn.set((area.y, group_x0, group_x1));
+
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("V", Style::default().fg(Color::Green).bold()),
-        Span::styled("=valid", Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
-        Span::styled(".", Style::default().fg(Color::DarkGray)),
-        Span::styled("=inv", Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
-        Span::styled("D", Style::default().fg(DIRTY_COLOR).bold()),
-        Span::styled("=dirty ", Style::default().fg(Color::DarkGray)),
-        Span::styled("@addr", Style::default().fg(DIRTY_COLOR)),
-        Span::styled("=RAM base  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("XX→YY", Style::default().fg(DIRTY_ADDR_COLOR)),
-        Span::styled("=cache→stale", Style::default().fg(Color::DarkGray)),
-        Span::raw("  "),
+        Span::styled("V D", Style::default().fg(Color::Yellow)),
+        Span::styled("=valid/dirty bits  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(fmt_label, fmt_style),
+        Span::raw(" "),
+        Span::styled(group_label, group_style),
+        Span::styled("  ", Style::default()),
         Span::styled(policy_hint, Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
         Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
     ]);
 
     f.render_widget(Paragraph::new(line), area);
+}
+
+/// Returns (fmt_style, group_style, fmt_label, group_label) for legend bar buttons.
+fn legend_button_styles(app: &App) -> (Style, Style, String, String) {
+    use crate::ui::app::CacheDataFmt;
+    let fmt = app.cache.data_fmt;
+    // Include the key hint in the label: "[m:HEX]"
+    let fmt_label = format!("[m:{}]", fmt.label());
+    let is_float = fmt == CacheDataFmt::Float;
+    let group_label = if is_float {
+        "[g:4B]".to_string()
+    } else {
+        format!("[g:{}]", app.cache.data_group.label())
+    };
+
+    let fmt_style = if app.cache.hover_view_fmt {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
+    let group_style = if is_float {
+        Style::default().fg(Color::DarkGray)
+    } else if app.cache.hover_view_group {
+        Style::default().fg(Color::Black).bg(Color::Green)
+    } else {
+        Style::default().fg(Color::Green)
+    };
+
+    (fmt_style, group_style, fmt_label, group_label)
 }
 
 /// Full policy hint (for single-scope display).
@@ -236,8 +277,6 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let ways = cfg.associativity;
     let policy = cfg.replacement;
 
-    let tag_bits = 32u32.saturating_sub(cfg.offset_bits() + cfg.index_bits());
-    let tag_hex_w = ((tag_bits + 3) / 4) as usize;
     let set_col_w: usize = 5;
     let sep_w: usize = 1;
     let policy_w = match policy {
@@ -246,14 +285,29 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         ReplacementPolicy::Random => 2,
         _                         => 4,
     };
-    let cell_overhead = tag_hex_w + 8 + policy_w + 2;
+    // Fixed overhead: ○  0x00001000  = 1+2+10 = 13, + "  " before bytes + "  " before policy = 4
+    let cell_overhead = 17 + policy_w;
     let total_way_space = (inner.width as usize).saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
     let ideal_way_col_w = total_way_space / ways.max(1);
     let min_way_col_w = (cell_overhead + 2).max(28);
     let way_col_w = ideal_way_col_w.max(min_way_col_w);
-    let bytes_to_show = if way_col_w > cell_overhead {
-        ((way_col_w - cell_overhead) / 3).min(cfg.line_size).min(8)
+    let fmt   = app.cache.data_fmt;
+    let group = if fmt == CacheDataFmt::Float { CacheDataGroup::B4 } else { app.cache.data_group };
+
+    // Expand way_col_w so that all line_size bytes can fit in a single row (h-scroll if needed)
+    let (unit_chars, unit_bytes) = unit_metrics(fmt, group);
+    let units_for_all = cfg.line_size / unit_bytes.max(1);
+    let min_way_col_for_all = cell_overhead + units_for_all * unit_chars;
+    let way_col_w = way_col_w.max(min_way_col_for_all);
+
+    let bytes_per_row = if way_col_w > cell_overhead {
+        bytes_from_budget(way_col_w - cell_overhead, fmt, group, cfg.line_size)
     } else { 0 };
+    let row_height = if bytes_per_row == 0 || cfg.line_size == 0 {
+        1
+    } else {
+        cfg.line_size.div_ceil(bytes_per_row)
+    }.max(1);
     let total_content_w = set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
     let max_h_scroll = total_content_w.saturating_sub(inner.width as usize);
     let h_scroll = app.cache.view_h_scroll.min(max_h_scroll) as u16;
@@ -261,7 +315,8 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let header_h: u16 = 1;
     let scrollbar_h: u16 = if need_h_scrollbar { 1 } else { 0 };
     let rows_h = inner.height.saturating_sub(header_h + scrollbar_h);
-    let max_scroll = num_sets.saturating_sub(rows_h as usize);
+    let visible_sets = (rows_h as usize) / row_height;
+    let max_scroll = num_sets.saturating_sub(visible_sets.max(1));
     let scroll = app.cache.view_scroll.min(max_scroll);
 
     // Header
@@ -288,43 +343,43 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         );
     }
 
-    // Set rows (unified — no dirty address stale comparison needed, but D-cache IS possible for unified)
-    for row_idx in 0..rows_h {
-        let set_idx = scroll + row_idx as usize;
-        if set_idx >= num_sets { break; }
+    // Set rows (unified — D-cache lines can be dirty)
+    let mut term_row: u16 = 0;
+    'sets: for set_idx in scroll.. {
+        if set_idx >= num_sets || term_row >= rows_h { break; }
         let set = &sets_view[set_idx];
-        let y = inner.y + header_h + row_idx;
         let has_valid = set.lines.iter().any(|l| l.valid);
-        let set_label = format!("{:>width$} ", set_idx, width = set_col_w - 1);
-        let set_style = if has_valid { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) };
-        let mut spans: Vec<Span> = vec![
-            Span::styled(set_label, set_style),
-            Span::styled("|", Style::default().fg(Color::DarkGray)),
-        ];
-        for w in 0..ways {
-            // Unified caches are read-write, so stale bytes are relevant for dirty lines
-            let stale: Option<Vec<u8>> = if set.lines[w].valid && set.lines[w].dirty {
-                let ob = cfg.offset_bits();
-                let ib = cfg.index_bits();
-                let base = (set.lines[w].tag << (ob + ib)) | ((set_idx as u32) << ob);
-                Some((0..cfg.line_size)
-                    .map(|i| app.run.mem.ram.load8(base + i as u32).unwrap_or(0))
-                    .collect())
-            } else { None };
-            let cell = build_cell(
-                &set.lines[w], set, w,
-                true, // unified = can be dirty
-                policy, cfg, set_idx, tag_hex_w, bytes_to_show, way_col_w, stale.as_deref(),
-            );
-            spans.extend(cell);
-            if w + 1 < ways {
-                spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+        let set_style = if has_valid { Style::default().fg(Color::White) }
+                        else         { Style::default().fg(Color::DarkGray) };
+        for sub_row in 0..row_height {
+            if term_row >= rows_h { break 'sets; }
+            let y = inner.y + header_h + term_row;
+            let set_col = if sub_row == 0 {
+                Span::styled(format!("{:>width$} ", set_idx, width = set_col_w - 1), set_style)
+            } else {
+                Span::raw(" ".repeat(set_col_w))
+            };
+            let byte_offset = sub_row * bytes_per_row;
+            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(Color::DarkGray))];
+            for w in 0..ways {
+                let cell = build_cell(
+                    &set.lines[w], set, w,
+                    true, // unified = can be dirty
+                    policy, cfg, set_idx,
+                    bytes_per_row, byte_offset, sub_row == 0,
+                    way_col_w, fmt, group,
+                );
+                spans.extend(cell);
+                if w + 1 < ways {
+                    spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+                }
             }
+            f.render_widget(
+                Paragraph::new(Line::from(spans)).scroll((0, h_scroll)),
+                Rect::new(inner.x, y, inner.width, 1),
+            );
+            term_row += 1;
         }
-        f.render_widget(
-            Paragraph::new(Line::from(spans)).scroll((0, h_scroll)),
-            Rect::new(inner.x, y, inner.width, 1),
-        );
     }
 
     // Horizontal scrollbar
@@ -410,23 +465,18 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let ways = cfg.associativity;
     let policy = cfg.replacement;
 
-    // Tag hex width: ceil((32 - offset_bits - index_bits) / 4)
-    let tag_bits = 32u32.saturating_sub(cfg.offset_bits() + cfg.index_bits());
-    let tag_hex_w = ((tag_bits + 3) / 4) as usize;
-
     // Column widths
     let set_col_w: usize = 5; // " NNN "
     let sep_w: usize = 1;     // "|"
 
-    // How many data bytes fit in each way cell
-    // Fixed overhead: "V D  T:XXXXXX  " + policy width
+    // Fixed overhead: ○  0x00001000  = 1+2+10 = 13, + "  " before bytes + "  " before policy = 4
     let policy_w = match policy {
         ReplacementPolicy::Lfu    => 6, // "f:9999"
         ReplacementPolicy::Clock  => 4, // ">R" or "> " etc.
         ReplacementPolicy::Random => 2,
         _                         => 4, // "r:NN"
     };
-    let cell_overhead = tag_hex_w + 8 + policy_w + 2;
+    let cell_overhead = 17 + policy_w;
 
     // way_col_w: prefer fitting the screen, but guarantee a useful minimum so
     // that content is always readable and horizontal scrolling becomes possible.
@@ -436,11 +486,25 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let min_way_col_w = (cell_overhead + 2).max(28); // at least readable
     let way_col_w = ideal_way_col_w.max(min_way_col_w);
 
-    let bytes_to_show = if way_col_w > cell_overhead {
-        ((way_col_w - cell_overhead) / 3).min(cfg.line_size).min(8)
+    let fmt = app.cache.data_fmt;
+    let group = if fmt == CacheDataFmt::Float { CacheDataGroup::B4 } else { app.cache.data_group };
+
+    // Expand way_col_w so that all line_size bytes can fit in a single row (h-scroll if needed)
+    let (unit_chars, unit_bytes) = unit_metrics(fmt, group);
+    let units_for_all = cfg.line_size / unit_bytes.max(1);
+    let min_way_col_for_all = cell_overhead + units_for_all * unit_chars;
+    let way_col_w = way_col_w.max(min_way_col_for_all);
+
+    let bytes_per_row = if way_col_w > cell_overhead {
+        bytes_from_budget(way_col_w - cell_overhead, fmt, group, cfg.line_size)
     } else {
         0
     };
+    let row_height = if bytes_per_row == 0 || cfg.line_size == 0 {
+        1
+    } else {
+        cfg.line_size.div_ceil(bytes_per_row)
+    }.max(1);
 
     // Total logical content width (may exceed inner.width for large associativity)
     let total_content_w =
@@ -457,7 +521,8 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let rows_h = inner.height.saturating_sub(header_h + scrollbar_h);
 
     // Clamp vertical scroll
-    let max_scroll = num_sets.saturating_sub(rows_h as usize);
+    let visible_sets = (rows_h as usize) / row_height;
+    let max_scroll = num_sets.saturating_sub(visible_sets.max(1));
     let scroll = app.cache.view_scroll.min(max_scroll);
 
     // ── Header row ───────────────────────────────────────────────────────────
@@ -485,62 +550,44 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     }
 
     // ── Set rows ─────────────────────────────────────────────────────────────
-    for row_idx in 0..rows_h {
-        let set_idx = scroll + row_idx as usize;
-        if set_idx >= num_sets {
-            break;
-        }
+    let mut term_row: u16 = 0;
+    'sets: for set_idx in scroll.. {
+        if set_idx >= num_sets || term_row >= rows_h { break; }
         let set = &sets_view[set_idx];
-        let y = inner.y + header_h + row_idx;
-
         let has_valid = set.lines.iter().any(|l| l.valid);
-        let set_label = format!("{:>width$} ", set_idx, width = set_col_w - 1);
         let set_style = if has_valid {
             Style::default().fg(Color::White)
         } else {
             Style::default().fg(Color::DarkGray)
         };
-
-        let mut spans: Vec<Span> = vec![
-            Span::styled(set_label, set_style),
-            Span::styled("|", Style::default().fg(Color::DarkGray)),
-        ];
-
-        for w in 0..ways {
-            let stale: Option<Vec<u8>> = if !icache && set.lines[w].valid && set.lines[w].dirty {
-                let ob = cfg.offset_bits();
-                let ib = cfg.index_bits();
-                let base = (set.lines[w].tag << (ob + ib)) | ((set_idx as u32) << ob);
-                Some((0..cfg.line_size)
-                    .map(|i| app.run.mem.ram.load8(base + i as u32).unwrap_or(0))
-                    .collect())
+        for sub_row in 0..row_height {
+            if term_row >= rows_h { break 'sets; }
+            let y = inner.y + header_h + term_row;
+            let set_col = if sub_row == 0 {
+                Span::styled(format!("{:>width$} ", set_idx, width = set_col_w - 1), set_style)
             } else {
-                None
+                Span::raw(" ".repeat(set_col_w))
             };
-
-            let cell = build_cell(
-                &set.lines[w],
-                set,
-                w,
-                !icache,
-                policy,
-                cfg,
-                set_idx,
-                tag_hex_w,
-                bytes_to_show,
-                way_col_w,
-                stale.as_deref(),
-            );
-            spans.extend(cell);
-            if w + 1 < ways {
-                spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+            let byte_offset = sub_row * bytes_per_row;
+            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(Color::DarkGray))];
+            for w in 0..ways {
+                let cell = build_cell(
+                    &set.lines[w], set, w,
+                    !icache, policy, cfg, set_idx,
+                    bytes_per_row, byte_offset, sub_row == 0,
+                    way_col_w, fmt, group,
+                );
+                spans.extend(cell);
+                if w + 1 < ways {
+                    spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+                }
             }
+            f.render_widget(
+                Paragraph::new(Line::from(spans)).scroll((0, h_scroll)),
+                Rect::new(inner.x, y, inner.width, 1),
+            );
+            term_row += 1;
         }
-
-        f.render_widget(
-            Paragraph::new(Line::from(spans)).scroll((0, h_scroll)),
-            Rect::new(inner.x, y, inner.width, 1),
-        );
     }
 
     // ── Horizontal scrollbar ─────────────────────────────────────────────────
@@ -577,6 +624,106 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     }
 }
 
+// ── Cell builder helpers ───────────────────────────────────────────────────────
+
+/// Chars per display unit and bytes consumed, given format + grouping.
+fn unit_metrics(fmt: CacheDataFmt, group: CacheDataGroup) -> (usize, usize) {
+    let g = if fmt == CacheDataFmt::Float { 4 } else { group.bytes() };
+    let chars = match (fmt, g) {
+        (CacheDataFmt::Hex,  1) => 3,  // "XX "
+        (CacheDataFmt::Hex,  2) => 5,  // "XXXX "
+        (CacheDataFmt::Hex,  4) => 9,  // "XXXXXXXX "
+        (CacheDataFmt::DecU, 1) => 4,  // "NNN " (0–255)
+        (CacheDataFmt::DecU, 2) => 6,  // "NNNNN " (0–65535)
+        (CacheDataFmt::DecU, 4) => 11, // "NNNNNNNNNN " (0–4294967295)
+        (CacheDataFmt::DecS, 1) => 5,  // "-NNN " (−128–127)
+        (CacheDataFmt::DecS, 2) => 7,  // "-NNNNN " (−32768–32767)
+        (CacheDataFmt::DecS, 4) => 12, // "-NNNNNNNNNN "
+        (CacheDataFmt::Float, _) => 10, // "±NNN.NNN "
+        _ => 3,
+    };
+    (chars, g)
+}
+
+/// How many bytes fit in `budget` chars for the given format + grouping.
+fn bytes_from_budget(budget: usize, fmt: CacheDataFmt, group: CacheDataGroup, line_size: usize) -> usize {
+    let (chars, g) = unit_metrics(fmt, group);
+    let units = budget / chars;
+    (units * g).min(line_size)
+}
+
+fn read_le(data: &[u8], offset: usize, size: usize) -> u64 {
+    let mut val = 0u64;
+    for i in 0..size {
+        val |= (data.get(offset + i).copied().unwrap_or(0) as u64) << (i * 8);
+    }
+    val
+}
+
+fn render_data(data: &[u8], max_bytes: usize, fmt: CacheDataFmt, group: CacheDataGroup, tint: Option<Color>) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let dim = Style::default().fg(Color::DarkGray);
+    let g = if fmt == CacheDataFmt::Float { 4 } else { group.bytes() };
+    let n_bytes = max_bytes.min(data.len());
+    let n_units = n_bytes / g;
+
+    for i in 0..n_units {
+        let offset = i * g;
+        let (s, is_zero, neg) = match fmt {
+            CacheDataFmt::Hex => {
+                let v = read_le(data, offset, g);
+                let s = match g {
+                    1 => format!("{:02X}", v as u8),
+                    2 => format!("{:04X}", v as u16),
+                    _ => format!("{:08X}", v as u32),
+                };
+                (s, v == 0, false)
+            }
+            CacheDataFmt::DecU => {
+                let v = read_le(data, offset, g);
+                let s = match g {
+                    1 => format!("{:3}",  v as u8),
+                    2 => format!("{:5}",  v as u16),
+                    _ => format!("{:10}", v as u32),
+                };
+                (s, v == 0, false)
+            }
+            CacheDataFmt::DecS => {
+                let v = read_le(data, offset, g);
+                let (s, neg) = match g {
+                    1 => { let x = v as i8;  (format!("{x:4}"),  x < 0) }
+                    2 => { let x = v as i16; (format!("{x:6}"),  x < 0) }
+                    _ => { let x = v as i32; (format!("{x:11}"), x < 0) }
+                };
+                (s, v == 0, neg)
+            }
+            CacheDataFmt::Float => {
+                let bytes = [
+                    data.get(offset    ).copied().unwrap_or(0),
+                    data.get(offset + 1).copied().unwrap_or(0),
+                    data.get(offset + 2).copied().unwrap_or(0),
+                    data.get(offset + 3).copied().unwrap_or(0),
+                ];
+                let f = f32::from_le_bytes(bytes);
+                let s = if f.is_nan()          { "     NaN".to_string() }
+                        else if f.is_infinite() { if f > 0.0 { "    +Inf".to_string() } else { "    -Inf".to_string() } }
+                        else                    { format!("{f:8.3}") };
+                (s, f == 0.0, f < 0.0)
+            }
+        };
+
+        let style = tint.map_or_else(
+            || if is_zero { dim }
+               else if neg { Style::default().fg(Color::LightRed) }
+               else { Style::default().fg(Color::White) },
+            |c| Style::default().fg(c),
+        );
+        spans.push(Span::styled(s, style));
+        if i + 1 < n_units { spans.push(Span::raw(" ")); }
+    }
+    spans
+}
+
 // ── Cell builder ──────────────────────────────────────────────────────────────
 
 fn build_cell(
@@ -587,90 +734,108 @@ fn build_cell(
     policy: ReplacementPolicy,
     cfg: &CacheConfig,
     set_idx: usize,
-    tag_hex_w: usize,
-    bytes_to_show: usize,
+    bytes_per_row: usize,
+    byte_offset: usize,
+    is_first_row: bool,
     cell_width: usize,
-    stale: Option<&[u8]>,
+    fmt: CacheDataFmt,
+    group: CacheDataGroup,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
 
+    // ── Invalid line ─────────────────────────────────────────────────────────
     if !line.valid {
-        let s = format!("{:<width$}", ". -  (empty)", width = cell_width);
-        spans.push(Span::styled(s, Style::default().fg(Color::DarkGray)));
+        if is_first_row {
+            spans.push(Span::styled("0", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("-", Style::default().fg(Color::DarkGray)));
+            let rest = cell_width.saturating_sub(3);
+            spans.push(Span::styled(
+                format!("{:<width$}", "  (empty)", width = rest),
+                Style::default().fg(Color::DarkGray),
+            ));
+        } else {
+            spans.push(Span::raw(" ".repeat(cell_width)));
+        }
         return spans;
     }
 
-    let is_dirty_dcache = is_dcache && line.dirty;
+    // ── Valid line, continuation row ─────────────────────────────────────────
+    if !is_first_row {
+        let is_dirty = is_dcache && line.dirty;
+        // 17 chars = V(1)+sp(1)+D(1)+sp(2)+addr(10)+sp(2) — align data under first row
+        spans.push(Span::raw(" ".repeat(17)));
+        if byte_offset < line.data.len() && bytes_per_row > 0 {
+            let tint = if is_dirty { Some(DIRTY_COLOR) } else { None };
+            spans.extend(render_data(&line.data[byte_offset..], bytes_per_row, fmt, group, tint));
+        }
+        // enforce cell_width (truncate/pad handled by the common block below)
+        let used: usize = spans.iter().map(Span::width).sum();
+        if used < cell_width {
+            spans.push(Span::raw(" ".repeat(cell_width - used)));
+        } else if used > cell_width {
+            let mut out: Vec<Span<'static>> = Vec::with_capacity(spans.len());
+            let mut budget = cell_width;
+            for span in spans {
+                if budget == 0 { break; }
+                let width = span.width();
+                if width <= budget {
+                    budget -= width;
+                    out.push(span);
+                } else {
+                    let (s, actual_width) = span.content.as_ref().unicode_truncate(budget);
+                    if actual_width > 0 {
+                        out.push(Span::styled(s.to_string(), span.style));
+                    }
+                    budget -= actual_width;
+                    break;
+                }
+            }
+            if budget > 0 { out.push(Span::raw(" ".repeat(budget))); }
+            spans = out;
+        }
+        return spans;
+    }
 
-    // Valid
-    spans.push(Span::styled("V", Style::default().fg(Color::Green).bold()));
+    let is_dirty = is_dcache && line.dirty;
+    let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
+        | ((set_idx as u32) << cfg.offset_bits());
+
+    // V bit
+    spans.push(Span::styled("1", Style::default().fg(Color::Green).bold()));
     spans.push(Span::raw(" "));
 
-    // Dirty (I-cache lines are never dirty — show dim dash)
-    if is_dirty_dcache {
-        spans.push(Span::styled("D", Style::default().fg(DIRTY_COLOR).bold()));
+    // D bit
+    if is_dcache {
+        if is_dirty {
+            spans.push(Span::styled("1", Style::default().fg(DIRTY_COLOR).bold()));
+        } else {
+            spans.push(Span::styled("0", Style::default().fg(Color::DarkGray)));
+        }
     } else {
         spans.push(Span::styled("-", Style::default().fg(Color::DarkGray)));
     }
     spans.push(Span::raw("  "));
 
-    // Tag — for dirty D-cache show the RAM base address; otherwise show tag
-    let is_mru = matches!(
-        policy,
-        ReplacementPolicy::Lru | ReplacementPolicy::Mru | ReplacementPolicy::Lfu
-    ) && set.lru_order.first() == Some(&way);
-
-    if is_dirty_dcache {
-        let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
-            | ((set_idx as u32) << cfg.offset_bits());
-        let addr_str = format!("@{base:08X}");
-        spans.push(Span::styled(addr_str, Style::default().fg(DIRTY_COLOR).bold()));
+    // Address (derived from tag + set index)
+    // Cyan "MRU" highlight only for policies where recency == safety (LRU, MRU).
+    // LFU evicts by frequency, not recency — cyan highlight would be misleading there.
+    let is_mru = matches!(policy, ReplacementPolicy::Lru | ReplacementPolicy::Mru)
+        && set.lru_order.first() == Some(&way);
+    let addr_style = if is_dirty {
+        Style::default().fg(DIRTY_COLOR)
+    } else if is_mru {
+        Style::default().fg(Color::Cyan).bold()
     } else {
-        let tag_str = format!("T:{:0>width$X}", line.tag, width = tag_hex_w);
-        let tag_style = if is_mru {
-            Style::default().fg(Color::Cyan).bold()
-        } else {
-            Style::default().fg(Color::White)
-        };
-        spans.push(Span::styled(tag_str, tag_style));
-    }
+        Style::default().fg(Color::White)
+    };
+    spans.push(Span::styled(format!("0x{base:08X}"), addr_style));
 
-    // Data bytes — purple for dirty D-cache, normal otherwise
-    if bytes_to_show > 0 {
+    // Data (first row: bytes [byte_offset .. byte_offset + bytes_per_row])
+    if bytes_per_row > 0 && byte_offset < line.data.len() {
         spans.push(Span::raw("  "));
-        let n = bytes_to_show.min(line.data.len());
-        for i in 0..n {
-            let b = line.data[i];
-            let byte_style = if is_dirty_dcache {
-                Style::default().fg(DIRTY_COLOR)
-            } else if b == 0 {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            spans.push(Span::styled(format!("{b:02X}"), byte_style));
-            if i + 1 < n {
-                spans.push(Span::raw(" "));
-            }
-        }
-
-        // For dirty D-cache lines, also show stale RAM bytes
-        if is_dirty_dcache {
-            if let Some(stale_bytes) = stale {
-                spans.push(Span::styled("→", Style::default().fg(DIRTY_ADDR_COLOR)));
-                let sn = bytes_to_show.min(stale_bytes.len());
-                for i in 0..sn {
-                    let b = stale_bytes[i];
-                    spans.push(Span::styled(
-                        format!("{b:02X}"),
-                        Style::default().fg(DIRTY_ADDR_COLOR),
-                    ));
-                    if i + 1 < sn {
-                        spans.push(Span::raw(" "));
-                    }
-                }
-            }
-        }
+        let tint = if is_dirty { Some(DIRTY_COLOR) } else { None };
+        spans.extend(render_data(&line.data[byte_offset..], bytes_per_row, fmt, group, tint));
     }
 
     // Policy metadata

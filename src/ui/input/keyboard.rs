@@ -1,6 +1,6 @@
 use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets, Cache};
 use crate::ui::app::{App, CacheResultsSnapshot, CacheScope, CacheSubtab, CpiConfig, DocsPage, EditorMode, LevelSnapshot, MemRegion, RunSpeed, Tab};
-use crate::ui::view::docs::docs_body_line_count;
+use crate::ui::view::docs::{docs_body_line_count, ALL_MASK, FILTER_ITEMS};
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use rfd::FileDialog as OSFileDialog;
 use std::{collections::HashMap, io, time::Instant};
@@ -243,9 +243,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('v')) && matches!(app.tab, Tab::Editor) {
-                let text = app.clipboard.as_mut().and_then(|clip| clip.get_text().ok());
-                if let Some(text) = text {
-                    paste_editor(app, &text);
+                // Skip arboard paste if a bracketed-paste event just fired (within 100ms),
+                // to prevent double-paste in terminals that emit both Event::Paste and Ctrl+V.
+                let recent_bracketed = app.last_bracketed_paste
+                    .map_or(false, |t| t.elapsed().as_millis() < 100);
+                if !recent_bracketed {
+                    let text = app.clipboard.as_mut().and_then(|clip| clip.get_text().ok());
+                    if let Some(text) = text {
+                        paste_editor(app, &text);
+                    }
                 }
                 return Ok(false);
             }
@@ -401,9 +407,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('v')) && matches!(app.tab, Tab::Editor) {
-                let text = app.clipboard.as_mut().and_then(|clip| clip.get_text().ok());
-                if let Some(text) = text {
-                    paste_editor(app, &text);
+                // Skip arboard paste if a bracketed-paste event just fired (within 100ms),
+                // to prevent double-paste in terminals that emit both Event::Paste and Ctrl+V.
+                let recent_bracketed = app.last_bracketed_paste
+                    .map_or(false, |t| t.elapsed().as_millis() < 100);
+                if !recent_bracketed {
+                    let text = app.clipboard.as_mut().and_then(|clip| clip.get_text().ok());
+                    if let Some(text) = text {
+                        paste_editor(app, &text);
+                    }
                 }
                 return Ok(false);
             }
@@ -667,19 +679,38 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.run.mem_region = MemRegion::Custom;
                 }
 
-                // Docs page switch
+                // Docs page cycling (Tab) and language toggle (L)
                 (KeyCode::Tab, Tab::Docs) => {
-                    app.docs.page = match app.docs.page {
-                        DocsPage::InstrRef => DocsPage::RunGuide,
-                        DocsPage::RunGuide => DocsPage::InstrRef,
-                    };
+                    app.docs.page = app.docs.page.next();
                     app.docs.scroll = 0;
+                }
+                (KeyCode::Char('l'), Tab::Docs) if !app.docs.search_open => {
+                    app.docs.lang = app.docs.lang.toggle();
                 }
                 // Docs scroll
                 (KeyCode::Up, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_sub(1); clamp_docs_scroll_keyboard(app); }
                 (KeyCode::Down, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_add(1); clamp_docs_scroll_keyboard(app); }
                 (KeyCode::PageUp, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_sub(10); clamp_docs_scroll_keyboard(app); }
                 (KeyCode::PageDown, Tab::Docs) => { app.docs.scroll = app.docs.scroll.saturating_add(10); clamp_docs_scroll_keyboard(app); }
+                // Docs filter navigation (search not open)
+                (KeyCode::Left, Tab::Docs) if !app.docs.search_open => {
+                    let n = FILTER_ITEMS.len();
+                    app.docs.filter_cursor = if app.docs.filter_cursor == 0 { n - 1 } else { app.docs.filter_cursor - 1 };
+                }
+                (KeyCode::Right, Tab::Docs) if !app.docs.search_open => {
+                    let n = FILTER_ITEMS.len();
+                    app.docs.filter_cursor = (app.docs.filter_cursor + 1) % n;
+                }
+                (KeyCode::Char(' '), Tab::Docs) if !app.docs.search_open => {
+                    if app.docs.filter_cursor == 0 {
+                        // "All" toggle: restore full mask if any bit is off, otherwise do nothing useful
+                        app.docs.type_filter = ALL_MASK;
+                    } else {
+                        let bit = FILTER_ITEMS[app.docs.filter_cursor].1;
+                        app.docs.type_filter ^= bit;
+                    }
+                    app.docs.scroll = 0;
+                }
 
                 // Cache tab — CPI panel editing (when editing a CPI field)
                 (code, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.cpi_editing && app.cache.selected_level == 0 => {
@@ -793,10 +824,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('-'), Tab::Cache) | (KeyCode::Char('_'), Tab::Cache) => {
                     app.remove_last_cache_level();
                 }
-                (KeyCode::Char('r'), Tab::Cache) => {
-                    app.run.mem.reset_stats();
+                (KeyCode::Char('r'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    app.restart_simulation();
                 }
-                (KeyCode::Char('p'), Tab::Cache) => {
+                (KeyCode::Char('p'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
                     if app.run.is_running {
                         app.run.is_running = false;
                     } else if !app.run.faulted {
@@ -813,39 +844,26 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('b'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
                     app.cache.scope = CacheScope::Both;
                 }
-                // Run Controls hotkeys — mirror Run tab behaviour, available in Stats/View
-                (KeyCode::Char('v'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-                    if app.run.show_bp_list {
-                        app.run.show_bp_list = false;
-                        app.run.show_registers = true;
-                    } else if app.run.show_registers {
-                        app.run.show_registers = false;
-                    } else {
-                        app.run.show_bp_list = true;
+                // View subtab: cycle data format / byte grouping
+                (KeyCode::Char('m'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::View) => {
+                    app.cache.data_fmt = app.cache.data_fmt.cycle();
+                }
+                (KeyCode::Char('g'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::View) => {
+                    use crate::ui::app::CacheDataFmt;
+                    if app.cache.data_fmt != CacheDataFmt::Float {
+                        app.cache.data_group = app.cache.data_group.cycle();
                     }
                 }
-                (KeyCode::Char('k'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-                    if app.run.mem_region == MemRegion::Stack {
-                        app.run.mem_region = MemRegion::Data;
-                        app.run.mem_view_addr = app.run.data_base;
-                    } else {
-                        app.run.mem_region = MemRegion::Stack;
-                        let sp = app.run.cpu.x[2];
-                        app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
+                // Execution hotkeys — available in Stats/View (not Config, where letters edit fields)
+                (KeyCode::Char('s'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    if !app.run.faulted {
+                        app.single_step();
                     }
-                    app.run.show_registers = false;
-                    app.run.show_bp_list = false;
                 }
                 (KeyCode::Char('f'), Tab::Cache)
                     if !matches!(app.cache.subtab, CacheSubtab::Config) =>
                 {
                     app.run.speed = app.run.speed.cycle();
-                }
-                (KeyCode::Char('e'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-                    app.run.show_exec_count = !app.run.show_exec_count;
-                }
-                (KeyCode::Char('y'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-                    app.run.show_instr_type = !app.run.show_instr_type;
                 }
                 // Clear loaded baseline (Stats subtab only)
                 (KeyCode::Char('c'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Stats) => {
@@ -918,19 +936,22 @@ fn paste_editor(app: &mut App, text: &str) {
 }
 
 fn clamp_docs_scroll_keyboard(app: &mut App) {
-    if let Ok((w, h)) = terminal::size() {
-        let docs_area_h = h.saturating_sub(4);
-        let table_h = docs_area_h.saturating_sub(2);
-        let viewport_h = table_h.saturating_sub(4) as usize;
-        if viewport_h == 0 {
-            app.docs.scroll = 0;
-            return;
-        }
-        let total_body = docs_body_line_count(w);
-        let max_start = total_body.saturating_sub(viewport_h);
-        if app.docs.scroll > max_start {
-            app.docs.scroll = max_start;
-        }
+    use crate::ui::view::docs::free_page_line_count;
+    if let Ok((_, h)) = terminal::size() {
+        // Tab bar(3) + status(1) = 4 overhead
+        let viewport_h = h.saturating_sub(6) as usize;
+        if viewport_h == 0 { app.docs.scroll = 0; return; }
+        let total = match app.docs.page {
+            DocsPage::InstrRef => {
+                // InstrRef: header(2) + filter(1) + col_hdr(1) + sep(1) = 5 extra rows
+                let vp = viewport_h.saturating_sub(5);
+                let q = app.docs.search_query.clone();
+                docs_body_line_count(80, &q, app.docs.type_filter).saturating_sub(vp)
+            }
+            p => free_page_line_count(p, app.docs.lang)
+                    .saturating_sub(viewport_h.saturating_sub(2)),
+        };
+        if app.docs.scroll > total { app.docs.scroll = total; }
     }
 }
 

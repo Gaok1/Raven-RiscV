@@ -222,7 +222,7 @@ fn linux_getrandom<B: Bus>(
     Ok(true)
 }
 
-fn read_zstr(mem: &mut impl Bus, mut addr: u32) -> Result<Vec<u8>, FalconError> {
+fn read_zstr(mem: &impl Bus, mut addr: u32) -> Result<Vec<u8>, FalconError> {
     let mut bytes = Vec::new();
     loop {
         let b = mem.load8(addr)?;
