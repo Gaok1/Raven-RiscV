@@ -25,22 +25,22 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             kind: windows
-            bin: falconasm.exe
+            bin: raven.exe
 
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             kind: unix
-            bin: falconasm
+            bin: raven
 
           - os: macos-latest
             target: x86_64-apple-darwin
             kind: unix
-            bin: falconasm
+            bin: raven
 
           - os: macos-latest
             target: aarch64-apple-darwin
             kind: unix
-            bin: falconasm
+            bin: raven
 
     steps:
       - uses: actions/checkout@v4
@@ -62,13 +62,13 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-artifacts | Out-Null
-          Compress-Archive "target/${{ matrix.target }}/release/${{ matrix.bin }}" "release-artifacts/falconasm-${{ matrix.target }}.zip"
+          Compress-Archive "target/${{ matrix.target }}/release/${{ matrix.bin }}" "release-artifacts/raven-${{ matrix.target }}.zip"
 
       - name: Package (Unix)
         if: matrix.kind == 'unix'
         run: |
           mkdir -p release-artifacts
-          tar -czf "release-artifacts/falconasm-${{ matrix.target }}.tar.gz" \
+          tar -czf "release-artifacts/raven-${{ matrix.target }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" "${{ matrix.bin }}"
 
       - uses: actions/upload-artifact@v4
