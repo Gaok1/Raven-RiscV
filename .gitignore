@@ -1,4 +1,5 @@
 /target
+/.claude
 # Ignore generated distribution artifacts
 /dist/
 /claudeProblems
