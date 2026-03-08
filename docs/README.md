@@ -1,5 +1,7 @@
 # RAVEN — RISC-V Simulator & IDE
 
+![RAVEN in action](assets/raven-example.gif)
+
 **RAVEN** is a free, open-source RISC-V simulator and terminal IDE for students and anyone learning assembly. It covers **RV32IMF** — the full base integer set, multiply/divide, and single-precision float — and makes every part of the machine visible while your program runs.
 
 Write assembly in the built-in editor, assemble with `Ctrl+R`, and step through every instruction watching registers, memory, and the cache update in real time. Nothing is hidden.
