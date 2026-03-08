@@ -6,47 +6,30 @@ use ratatui::{
 use std::time::Instant;
 use crate::ui::theme;
 
-//  Format per data line  (total = 86 chars):
-//  [9 label] [─×19] [┤] [28 inner] [├] [─×19] [9 label]
-//   9 + 19 + 1 + 28 + 1 + 19 + 9  =  86
-//
-//  Inner chip box:
-//   "  ╔════════════════════════╗  "  →  2+1+22+1+2 = 28  ✓
-//   "  ║  [20-char content]  ║  "  →  2+1+2+20+2+1+2... = 30 — too wide
-//   Use:  " ╔════════════════════════╗ "  →  1+1+24+1+1 = 28  ✓
-//          " ║  [22-char content]  ║ "  →  1+1+2+22+2+1 = 29 — 1 off
-//   Use: inner=28, box=" ╔══════════════════════════╗" = 1+1+24+1+1 = 28 ✓
-//        content line: " ║  [20 chars]   ║ " = 1+1+2+20+3+1 = 28 ✓  (when content=20)
-//
-//  Pipeline boxes fit in 20 chars:
-//   ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐  →  3+1+3+1+3+1+3+1+3 = 19  ✓
-//   │IF│─│ID│─│EX│─│MA│  →  same                    ✓
-
+// All lines verified at exactly 77 chars.
+// Format: [8 label][──×14][┤][31 inner][├][──×14][8 label]
+// Inner chip box: "  ╔═════════════════════════╗  " = 2+1+25+1+2 = 31
+// Content lines:  "  ║<───────── 25 ─────────>║  " = 31
 const CHIP: &[&str] = &[
-    //         [9]        [───19───] ┌─top connector 30─┐ [───19───]        [9]
-    "                              ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐                              ",
-    //         [9 label]  [───19──] ┤ [────── 28 inner ──────] ├ [───19──] [9 label]
-    "   VCC    ───────────────────┤                            ├─────────────────    GND    ",
-    "   CLK    ───────────────────┤ ╔══════════════════════════╗├─────────────────   nRST   ",
-    "  XTAL    ───────────────────┤ ║  ┌──────────────────────┐║├─────────────────    IRQ   ",
-    "   nRST   ───────────────────┤ ║  │  R  ·  A  ·  V  ·  E·N│║├─────────────────    INT   ",
-    "   SDA    ───────────────────┤ ║  │  ─────────────────── │║├─────────────────   MOSI   ",
-    "   SCL    ───────────────────┤ ║  │      R  I  S  C─V    │║├─────────────────   MISO   ",
-    "    A0    ───────────────────┤ ║  │      R  V  3  2  I   │║├─────────────────    SCK   ",
-    "    A2    ───────────────────┤ ║  │      M  ·  ·  ·  F   │║├─────────────────     CS   ",
-    "    D0    ───────────────────┤ ║  └──────────────────────┘║├─────────────────     D1   ",
-    "    D2    ───────────────────┤ ║                          ║├─────────────────     D3   ",
-    "    D4    ───────────────────┤ ║  ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐   ║├─────────────────     D5   ",
-    "    D6    ───────────────────┤ ║  │F│─│D│─│E│─│M│─│W│   ║├─────────────────     D7   ",
-    "    PC    ───────────────────┤ ║  │E│ │E│ │X│ │A│ │B│   ║├─────────────────     SP   ",
-    "    RA    ───────────────────┤ ║  │T│ │C│ │E│ │  │ │ │   ║├─────────────────     T0   ",
-    "   ALU    ───────────────────┤ ║  └─┘ └─┘ └─┘ └─┘ └─┘   ║├─────────────────    MEM   ",
-    "   CSR    ───────────────────┤ ║                          ║├─────────────────     WB   ",
-    "  FETCH   ───────────────────┤ ║  ┌─────┐ ┌────┐ ┌──┐   ║├─────────────────    DBG   ",
-    "  EXEC    ───────────────────┤ ║  │REG  │ │ ALU│ │$I│   ║├─────────────────   CTRL   ",
-    "   MEM    ───────────────────┤ ║  │ x32 │ │    │ │$D│   ║├─────────────────   HALT   ",
-    "   GND    ───────────────────┤ ╚══════════════════════════╝├─────────────────    VCC   ",
-    "                              └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘                              ",
+    "                      ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐                      ",
+    "   VCC  ──────────────┤                               ├──────────────  GND   ",
+    "   CLK  ──────────────┤  ╔═════════════════════════╗  ├──────────────  nRST  ",
+    "  XTAL  ──────────────┤  ║                         ║  ├──────────────  IRQ   ",
+    "   SDA  ──────────────┤  ║   R · A · V · E · N     ║  ├──────────────  INT   ",
+    "   SCL  ──────────────┤  ║   ───────────────────   ║  ├──────────────  MOSI  ",
+    "    A0  ──────────────┤  ║       R I S C ─ V       ║  ├──────────────  MISO  ",
+    "    A2  ──────────────┤  ║      R V 3 2 I M F      ║  ├──────────────  SCK   ",
+    "    D0  ──────────────┤  ║                         ║  ├──────────────  CS    ",
+    "    D2  ──────────────┤  ║   ┌─┐ ┌─┐ ┌─┐ ┌─┐ ┌─┐  ║  ├──────────────  D1    ",
+    "    D4  ──────────────┤  ║   │F│─│D│─│E│─│M│─│W│  ║  ├──────────────  D3    ",
+    "    D6  ──────────────┤  ║   └─┘ └─┘ └─┘ └─┘ └─┘  ║  ├──────────────  D5    ",
+    "     PC ──────────────┤  ║                         ║  ├──────────────  SP    ",
+    "     RA ──────────────┤  ║   ┌────┐  ┌───┐  ┌──┐  ║  ├──────────────  T0    ",
+    "    ALU ──────────────┤  ║   │REG │  │ALU│  │$I│  ║  ├──────────────  MEM   ",
+    "    CSR ──────────────┤  ║   │ x32│  │   │  │$D│  ║  ├──────────────  WB    ",
+    "  FETCH ──────────────┤  ║   └────┘  └───┘  └──┘  ║  ├──────────────  DBG   ",
+    "   GND  ──────────────┤  ╚═════════════════════════╝  ├──────────────  VCC   ",
+    "                      └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘                      ",
 ];
 
 const SUBTITLE: &str =
@@ -61,7 +44,7 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64) {
     );
 
     let chip_h = CHIP.len() as u16;
-    let chip_w = CHIP.iter().map(|l| l.chars().count() as u16).max().unwrap_or(88);
+    let chip_w = CHIP[1].chars().count() as u16; // all lines same width
     let total_h = chip_h + 4; // chip + blank + subtitle + blank + bar
 
     let y0 = area.height.saturating_sub(total_h) / 2;
@@ -119,7 +102,7 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64) {
     }
 }
 
-/// Colorize a single chip line using the chip body boundaries.
+/// Colorize a chip line by splitting on the outermost ┤ and ├ boundaries.
 fn colorize_line(line: &str) -> Vec<Span<'static>> {
     let chars: Vec<char> = line.chars().collect();
     let lb = chars.iter().position(|&c| c == '┤').unwrap_or(0);
@@ -139,20 +122,20 @@ fn colorize_line(line: &str) -> Vec<Span<'static>> {
 
 fn color_inside(c: char) -> Color {
     match c {
-        // Double-line chip border
+        // Chip outer border (double lines) — accent violet
         '╔' | '╗' | '╚' | '╝' | '═' | '║' => theme::ACCENT,
-        // Single-line inner boxes
+        // Inner boxes (single lines) — border violet
         '┌' | '┐' | '└' | '┘' | '─' | '│' | '┬' | '┴' | '┤' | '├' => theme::BORDER_HOV,
-        // Separator dots
+        // Separator dots — dim
         '·' => theme::IDLE,
-        // Spaces keep default background
-        ' ' => theme::BG,
-        // Pipeline stage abbreviations — green
-        'F' | 'E' | 'T' | 'D' | 'C' | 'X' | 'M' | 'A' | 'W' | 'B' => theme::RUNNING,
-        // Component box labels — blue
-        'R' | 'G' | '$' | 'I' => theme::METRIC_CYC,
-        // Numbers in ISA names — amber
+        // Pipeline stages — green
+        'F' | 'D' | 'E' | 'M' | 'W' => theme::RUNNING,
+        // Component labels — blue
+        'R' | 'G' | '$' => theme::METRIC_CYC,
+        // Digits in ISA names — amber
         '0'..='9' => theme::PAUSED,
+        // Spaces — keep background clean
+        ' ' => theme::BG,
         _ => theme::TEXT,
     }
 }
