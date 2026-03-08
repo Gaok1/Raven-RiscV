@@ -6,6 +6,8 @@
 
 Write assembly in the built-in editor, assemble with `Ctrl+R`, and step through every instruction watching registers, memory, and the cache update in real time. Nothing is hidden.
 
+![RAVEN in action](docs/assets/raven-example.gif)
+
 ---
 
 ## Quick Start
