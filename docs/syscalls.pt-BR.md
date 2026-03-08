@@ -1,6 +1,6 @@
-# FALCON — Referência de Syscalls
+# RAVEN — Referência de Syscalls
 
-O FALCON usa a convenção de chamada **Linux RISC-V ABI** para `ecall`.
+O RAVEN usa a convenção de chamada **Linux RISC-V ABI** para `ecall`.
 
 ```
 a7      = número da syscall
@@ -43,7 +43,7 @@ a0      = valor de retorno  (valor negativo = -errno como u32)
 
 ### Heap manual — padrão bump allocator
 
-O FALCON **não tem `malloc`/`free`**. A região livre entre `bss_end` e o fundo da
+O RAVEN **não tem `malloc`/`free`**. A região livre entre `bss_end` e o fundo da
 pilha é RAM comum. Para alocar memória dinamicamente, guarde um ponteiro em `.data`
 e avance-o manualmente:
 
@@ -63,7 +63,7 @@ alloc:
 ```
 
 O heap cresce para **cima** (endereços crescentes), enquanto a pilha cresce para
-**baixo**. Eles colidirão se a alocação combinada exceder o espaço livre — o FALCON
+**baixo**. Eles colidirão se a alocação combinada exceder o espaço livre — o RAVEN
 não detecta isso; ocorrerá uma falha de memória ou corrupção silenciosa de dados.
 
 ```
@@ -132,7 +132,7 @@ Escreve bytes de um buffer para um descritor de arquivo.
 | `a2`       | quantidade de bytes |
 | **`a0` (ret)** | bytes escritos, ou `-errno` |
 
-**Restrições:** somente `fd=1` e `fd=2` são suportados (ambos vão para o console do FALCON).
+**Restrições:** somente `fd=1` e `fd=2` são suportados (ambos vão para o console do RAVEN).
 
 ```asm
 .data
@@ -195,7 +195,7 @@ rng_buf: .space 4
 
 ## Extensões de ensino Falcon (syscall 1000+)
 
-Estas são syscalls exclusivas do FALCON, projetadas para uso em sala de aula. São
+Estas são syscalls exclusivas do RAVEN, projetadas para uso em sala de aula. São
 mais simples que os equivalentes Linux ABI e não precisam de loop strlen nem
 argumento fd.
 
@@ -327,7 +327,7 @@ Lê um inteiro da entrada (faixa 0..4294967295) e armazena como `u32` (little-en
 
 ## Códigos de erro
 
-| Código | Nome POSIX | Significado no FALCON |
+| Código | Nome POSIX | Significado no RAVEN |
 |--------|-----------|----------------------|
 | `-5`   | `EIO`     | falha do SO em getrandom |
 | `-9`   | `EBADF`   | fd não suportado |

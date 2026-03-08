@@ -1,6 +1,6 @@
-# Guia de formato do Falcon ASM — RV32I em linguagem direta
+# Guia de formato do RAVEN — RV32I em linguagem direta
 
-Este é o guia de bolso do Falcon ASM, nosso emulador RISC-V pensado para ensino. Use-o como referência rápida.
+Este é o guia de bolso do RAVEN, nosso emulador RISC-V pensado para ensino. Use-o como referência rápida.
 
 ## Como aproveitar este documento
 
@@ -11,7 +11,7 @@ Este é o guia de bolso do Falcon ASM, nosso emulador RISC-V pensado para ensino
 
 ## Visão rápida da arquitetura
 
-O Falcon foca no subconjunto RV32I+M para que você entenda cada etapa do ciclo buscar → decodificar → executar sem distrações.
+O RAVEN foca no subconjunto RV32I+M para que você entenda cada etapa do ciclo buscar → decodificar → executar sem distrações.
 
 - **Tamanho da palavra:** 32 bits.
 - **Endianness:** sempre little-endian (`{to,from}_le_bytes`).
@@ -19,10 +19,9 @@ O Falcon foca no subconjunto RV32I+M para que você entenda cada etapa do ciclo 
 - **Registradores:** nomes `x0…x31` com os apelidos tradicionais `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Escritas em `x0/zero` são descartadas.
 
-Ainda não implementados: instruções CSR/FENCE e qualquer extensão de ponto flutuante. Manter o escopo pequeno torna o Falcon mais
-amigável para aulas e oficinas.
+Ainda não implementados: instruções CSR/FENCE. O RAVEN cobre RV32IMF — inteiros base, multiplicação/divisão e ponto flutuante de precisão simples.
 
-## Conjunto de instruções presente no Falcon
+## Conjunto de instruções presente no RAVEN
 
 | Categoria | Instruções |
 | --- | --- |
@@ -40,7 +39,7 @@ do resultado “arquitetado”. A interrupção evidencia que algo inesperado oc
 <a id="tabelas-de-codificacao"></a>
 ## Tabelas de codificação
 
-As tabelas abaixo mostram todos os layouts de 32 bits usados no Falcon. Sempre que aparecer uma observação, ela lembra o alcance
+As tabelas abaixo mostram todos os layouts de 32 bits usados no RAVEN. Sempre que aparecer uma observação, ela lembra o alcance
 do imediato ou algum detalhe importante.
 
 ### Tipo R (aritmética, lógica, multiplicação/divisão)
@@ -162,13 +161,13 @@ do imediato ou algum detalhe importante.
 
 **`JALR` (`0x67`):** usa `funct3 = 0x0`.
 
-**System (`0x73`):** o Falcon implementa dois códigos: `ECALL` (`0x00000073`) e `EBREAK` (`0x00100073`). O assembler aceita
+**System (`0x73`):** o RAVEN implementa dois códigos: `ECALL` (`0x00000073`) e `EBREAK` (`0x00100073`). O assembler aceita
 `halt` como alias de `ebreak`.
 
 <a id="comportamento-do-assembler-e-pseudoinstrucoes"></a>
 ## Comportamento do assembler e pseudoinstruções
 
-O assembler do Falcon é propositalmente simples para que você consiga acompanhar cada etapa:
+O assembler do RAVEN é propositalmente simples para que você consiga acompanhar cada etapa:
 
 - Comentários começam com `;` ou `#`.
 - Operandos são separados por vírgula (`mnemonic op1, op2, ...`).
@@ -176,7 +175,7 @@ O assembler do Falcon é propositalmente simples para que você consiga acompanh
 
 ### Referência de pseudoinstruções
 
-A tabela abaixo documenta os formatos aceitos no Falcon e a forma exata (conceitual) de expansão usada pelo assembler.
+A tabela abaixo documenta os formatos aceitos no RAVEN e a forma exata (conceitual) de expansão usada pelo assembler.
 
 | Pseudo | Formato aceito | Expansão (conceitual) | Observações |
 | --- | --- | --- | --- |

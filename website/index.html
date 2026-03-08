@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Falcon ASM — RISC-V Learning Platform</title>
+  <title>RAVEN — RISC-V Simulator &amp; Learning IDE</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -15,8 +15,7 @@
   <nav class="nav" id="nav">
     <div class="nav-inner">
       <a href="#" class="nav-logo">
-        <img src="falcon_logo.png" alt="Falcon ASM" class="nav-logo-img" />
-        <span class="logo-text">Falcon<span class="logo-asm">ASM</span></span>
+        <span class="logo-text">RAVEN</span>
       </a>
       <ul class="nav-links">
         <li><a href="#features">Features</a></li>
@@ -24,7 +23,7 @@
         <li><a href="#examples">Examples</a></li>
         <li><a href="#quickstart">Quick Start</a></li>
       </ul>
-      <a href="https://github.com/Gaok1/FALCON-ASM" class="btn btn-outline nav-cta" target="_blank" rel="noopener">
+      <a href="https://github.com/Gaok1/Raven" class="btn btn-outline nav-cta" target="_blank" rel="noopener">
         View on GitHub
       </a>
       <button class="nav-hamburger" id="navHamburger" aria-label="Open menu" aria-expanded="false">
@@ -39,7 +38,7 @@
     <a href="#cache">Cache</a>
     <a href="#examples">Examples</a>
     <a href="#quickstart">Quick Start</a>
-    <a href="https://github.com/Gaok1/FALCON-ASM" class="nav-mobile-cta" target="_blank" rel="noopener">View on GitHub ↗</a>
+    <a href="https://github.com/Gaok1/Raven" class="nav-mobile-cta" target="_blank" rel="noopener">View on GitHub ↗</a>
   </nav>
 
   <!-- HERO -->
@@ -53,18 +52,16 @@
     <div class="hero-content">
       <div class="hero-badge">
         <span class="badge-dot"></span>
-        RV32I + M · Built with Rust
+        Free · Open Source · RV32IMF
       </div>
 
       <h1 class="hero-title">
-        See every bit.<br />
-        <span class="gradient-text">Understand every step.</span>
+        Learn RISC-V by<br />
+        <span class="gradient-text">watching it run.</span>
       </h1>
 
       <p class="hero-desc">
-        Falcon ASM is a complete RISC-V platform — assembler, emulator, and cache simulator
-        in one terminal application. Write assembly, step through execution, and observe
-        exactly how your code interacts with registers, memory, and the cache hierarchy.
+        RAVEN is a free RISC-V simulator and IDE for the terminal. Write assembly, assemble with one keystroke, and step through every instruction — watching registers, memory, and the cache update in real time. Nothing is a black box.
       </p>
 
       <div class="hero-actions">
@@ -77,41 +74,234 @@
 
       <div class="hero-stats">
         <div class="stat">
-          <span class="stat-num">47</span>
-          <span class="stat-label">Instructions</span>
-        </div>
-        <div class="stat-div"></div>
-        <div class="stat">
-          <span class="stat-num">15+</span>
-          <span class="stat-label">Pseudo-instructions</span>
-        </div>
-        <div class="stat-div"></div>
-        <div class="stat">
-          <span class="stat-num">I+D</span>
-          <span class="stat-label">Cache Simulation</span>
-        </div>
-        <div class="stat-div"></div>
-        <div class="stat">
-          <span class="stat-num">RV32I</span>
+          <span class="stat-num">RV32IMF</span>
           <span class="stat-label">Architecture</span>
+        </div>
+        <div class="stat-div"></div>
+        <div class="stat">
+          <span class="stat-num">Step-by-Step</span>
+          <span class="stat-label">Debugger</span>
+        </div>
+        <div class="stat-div"></div>
+        <div class="stat">
+          <span class="stat-num">I+D Cache</span>
+          <span class="stat-label">Simulator</span>
+        </div>
+        <div class="stat-div"></div>
+        <div class="stat">
+          <span class="stat-num">Free</span>
+          <span class="stat-label">Open Source</span>
         </div>
       </div>
     </div>
 
-    <!-- FALCON VISUAL -->
+    <!-- TUI PREVIEW -->
     <div class="hero-visual">
-      <div class="falcon-wrap">
-        <div class="falcon-ring"></div>
-        <img src="falcon_logo.png" alt="Falcon ASM mascot" class="falcon-img" />
-        <div class="falcon-traces">
-          <div class="trace"></div>
-          <div class="trace"></div>
-          <div class="trace"></div>
-          <div class="trace"></div>
-          <div class="trace"></div>
-          <div class="trace"></div>
-          <div class="trace"></div>
+      <div class="tui-frame">
+
+        <!-- TABS -->
+        <div class="tui-topbar">
+          <span class="tui-tab tui-tab--active" data-tui="editor">Editor</span>
+          <span class="tui-tab" data-tui="run">Run</span>
+          <span class="tui-tab" data-tui="cache">Cache</span>
+          <span class="tui-tab" data-tui="docs">Docs</span>
+          <span class="tui-arch">RV32IMF</span>
         </div>
+
+        <!-- ── EDITOR PANEL ─────────────────────────────── -->
+        <div class="tui-panel" id="tui-editor">
+          <div class="tui-code">
+            <div class="tui-line"><span class="hl-dir">.text</span></div>
+            <div class="tui-line"><span class="hl-label">main:</span></div>
+            <div class="tui-line">
+              <span class="tui-gutter"> 1</span>
+              <span class="hl-instr">li</span>   <span class="hl-reg">a0</span>, <span class="hl-num">10</span>
+              <span class="hl-comment">; n = 10</span>
+            </div>
+            <div class="tui-line">
+              <span class="tui-gutter"> 2</span>
+              <span class="hl-instr">call</span> <span class="hl-label">fib</span>
+            </div>
+            <div class="tui-line">
+              <span class="tui-gutter"> 3</span>
+              <span class="hl-instr">ecall</span>
+            </div>
+            <div class="tui-line"></div>
+            <div class="tui-line"><span class="hl-label">fib:</span></div>
+            <div class="tui-line">
+              <span class="tui-gutter"> 5</span>
+              <span class="hl-instr">addi</span> <span class="hl-reg">sp</span>, <span class="hl-reg">sp</span>, <span class="hl-num">-8</span>
+            </div>
+            <div class="tui-line">
+              <span class="tui-gutter"> 6</span>
+              <span class="hl-instr">sw</span>   <span class="hl-reg">ra</span>, <span class="hl-num">4</span>(<span class="hl-reg">sp</span>)
+            </div>
+            <div class="tui-line">
+              <span class="tui-gutter"> 7</span>
+              <span class="hl-instr">sw</span>   <span class="hl-reg">a0</span>, <span class="hl-num">0</span>(<span class="hl-reg">sp</span>)
+            </div>
+            <div class="tui-line">
+              <span class="tui-gutter"> 8</span>
+              <span class="hl-instr">blt</span>  <span class="hl-reg">a0</span>, <span class="hl-num">2</span>, <span class="hl-label">base</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── RUN PANEL ──────────────────────────────────── -->
+        <div class="tui-panel tui-panel--hidden" id="tui-run">
+          <div class="tui-run-layout">
+
+            <!-- instruction memory -->
+            <div class="tui-imem">
+              <div class="tui-imem-label">main:</div>
+              <div class="tui-imem-row">
+                <span class="tui-addr">0x00</span>
+                <span class="tui-itext"><span class="hl-instr">li</span> <span class="hl-reg">a0</span>,<span class="hl-num">10</span></span>
+                <span class="tui-badge tui-badge--i">[I]</span>
+              </div>
+              <div class="tui-imem-row">
+                <span class="tui-addr">0x04</span>
+                <span class="tui-itext"><span class="hl-instr">call</span> <span class="hl-label">fib</span></span>
+                <span class="tui-badge tui-badge--j">[J]</span>
+              </div>
+              <div class="tui-imem-row">
+                <span class="tui-addr">0x08</span>
+                <span class="tui-itext"><span class="hl-instr">ecall</span></span>
+                <span class="tui-badge tui-badge--sys">[S]</span>
+              </div>
+              <div class="tui-imem-label">fib:</div>
+              <div class="tui-imem-row tui-imem-row--pc">
+                <span class="tui-pc-arrow">▶</span>
+                <span class="tui-addr">0x0c</span>
+                <span class="tui-itext"><span class="hl-instr">addi</span> <span class="hl-reg">sp</span>,<span class="hl-reg">sp</span>,<span class="hl-num">-8</span></span>
+                <span class="tui-badge tui-badge--i">[I]</span>
+              </div>
+              <div class="tui-imem-row">
+                <span class="tui-addr">0x10</span>
+                <span class="tui-itext"><span class="hl-instr">sw</span> <span class="hl-reg">ra</span>,<span class="hl-num">4</span>(<span class="hl-reg">sp</span>)</span>
+                <span class="tui-badge tui-badge--s">[S]</span>
+                <span class="tui-heat">×4</span>
+              </div>
+              <div class="tui-imem-row">
+                <span class="tui-addr">0x14</span>
+                <span class="tui-itext"><span class="hl-instr">sw</span> <span class="hl-reg">a0</span>,<span class="hl-num">0</span>(<span class="hl-reg">sp</span>)</span>
+                <span class="tui-badge tui-badge--s">[S]</span>
+                <span class="tui-heat">×4</span>
+              </div>
+              <div class="tui-imem-row">
+                <span class="tui-addr">0x18</span>
+                <span class="tui-itext"><span class="hl-instr">blt</span> <span class="hl-reg">a0</span>,<span class="hl-num">2</span>,<span class="hl-label">base</span></span>
+                <span class="tui-badge tui-badge--b">[B]</span>
+                <span class="tui-heat">×4</span>
+              </div>
+            </div>
+
+            <!-- instruction decoder -->
+            <div class="tui-decoder">
+              <div class="tui-dec-instr">addi sp, sp, -8</div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">type</span>
+                <span class="tui-dec-val" style="color:var(--steel)">I-type</span>
+              </div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">opcode</span>
+                <span class="tui-dec-val tui-dec-dim">001_0011</span>
+              </div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">rd</span>
+                <span class="tui-dec-val"><span class="tui-dec-reg">x2</span> <span class="tui-dec-dim">(sp)</span></span>
+              </div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">rs1</span>
+                <span class="tui-dec-val"><span class="tui-dec-reg">x2</span> <span class="tui-dec-dim">(sp)</span></span>
+              </div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">funct3</span>
+                <span class="tui-dec-val tui-dec-dim">000</span>
+              </div>
+              <div class="tui-dec-sep"></div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">imm</span>
+                <span class="tui-dec-val" style="color:var(--imm-color)">-8</span>
+              </div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">rs1 val</span>
+                <span class="tui-dec-val" style="color:var(--accent-bright)">0x7FFFFFF8</span>
+              </div>
+              <div class="tui-dec-row">
+                <span class="tui-dec-key">result</span>
+                <span class="tui-dec-val" style="color:var(--accent-bright)">0x7FFFFFF0</span>
+              </div>
+              <div class="tui-dec-sep"></div>
+              <div class="tui-dec-cpi">
+                <span style="color:var(--teal)">~1 cy</span>
+                <span class="tui-dec-dim">[ALU]</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ── CACHE PANEL ────────────────────────────────── -->
+        <div class="tui-panel tui-panel--hidden" id="tui-cache">
+          <div class="tui-cache-layout">
+            <div class="tui-cache-box">
+              <div class="tui-cache-title" style="color:var(--steel)">I-Cache</div>
+              <div class="tui-cache-row"><span>Hits</span><span class="tui-cache-val">2,048</span></div>
+              <div class="tui-cache-row"><span>Misses</span><span class="tui-cache-val">128</span></div>
+              <div class="tui-cache-row"><span>Hit rate</span><span class="tui-cache-val" style="color:var(--green)">94.1%</span></div>
+              <div class="tui-cache-row"><span>MPKI</span><span class="tui-cache-val">62.5</span></div>
+            </div>
+            <div class="tui-cache-box">
+              <div class="tui-cache-title" style="color:var(--teal)">D-Cache</div>
+              <div class="tui-cache-row"><span>Hits</span><span class="tui-cache-val">840</span></div>
+              <div class="tui-cache-row"><span>Misses</span><span class="tui-cache-val">160</span></div>
+              <div class="tui-cache-row"><span>Hit rate</span><span class="tui-cache-val" style="color:var(--amber)">84.0%</span></div>
+              <div class="tui-cache-row"><span>MPKI</span><span class="tui-cache-val">190.5</span></div>
+            </div>
+          </div>
+          <div class="tui-cache-summary">
+            <span><span class="tui-st-key">AMAT</span> <span class="tui-st-val tui-st-cyc">1.12 cy</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">IPC</span> <span class="tui-st-val tui-st-ipc">0.89</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">cycles</span> <span class="tui-st-val tui-st-cyc">1,024</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">RAM writes</span> <span class="tui-st-val" style="color:var(--dirty)">288 B</span></span>
+          </div>
+          <div class="tui-cache-config">
+            Policy: LRU &nbsp;·&nbsp; 4-way &nbsp;·&nbsp; 16 B lines &nbsp;·&nbsp; 16 sets &nbsp;·&nbsp; write-back
+          </div>
+        </div>
+
+        <!-- ── DOCS PANEL ─────────────────────────────────── -->
+        <div class="tui-panel tui-panel--hidden" id="tui-docs">
+          <div class="tui-docs-layout">
+            <div class="tui-docs-title">Instruction Reference</div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">add</span><span class="tui-docs-ops">rd, rs1, rs2</span><span class="tui-docs-desc">rd = rs1 + rs2</span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">sub</span><span class="tui-docs-ops">rd, rs1, rs2</span><span class="tui-docs-desc">rd = rs1 - rs2</span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">addi</span><span class="tui-docs-ops">rd, rs1, imm</span><span class="tui-docs-desc">rd = rs1 + imm</span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">li</span><span class="tui-docs-ops">rd, imm</span><span class="tui-docs-desc">rd = imm  <span style="color:var(--text-dim)">[pseudo]</span></span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">lw</span><span class="tui-docs-ops">rd, off(rs)</span><span class="tui-docs-desc">rd = mem[rs+off]</span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">sw</span><span class="tui-docs-ops">rs2, off(rs1)</span><span class="tui-docs-desc">mem[rs1+off] = rs2</span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">beq</span><span class="tui-docs-ops">rs1, rs2, lbl</span><span class="tui-docs-desc">if rs1 == rs2: jump</span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">jal</span><span class="tui-docs-ops">rd, lbl</span><span class="tui-docs-desc">rd = pc+4; jump</span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">call</span><span class="tui-docs-ops">lbl</span><span class="tui-docs-desc">ra = pc+4; jump  <span style="color:var(--text-dim)">[pseudo]</span></span></div>
+            <div class="tui-docs-row"><span class="tui-docs-mnem">ecall</span><span class="tui-docs-ops"></span><span class="tui-docs-desc">system call (a7 = nr)</span></div>
+          </div>
+        </div>
+
+        <!-- STATUS BAR -->
+        <div class="tui-statusbar">
+          <span class="tui-st-key">cycle</span> <span class="tui-st-val tui-st-cyc">42</span>
+          <span class="tui-st-sep">│</span>
+          <span class="tui-st-key">CPI</span> <span class="tui-st-val tui-st-cpi">1.12</span>
+          <span class="tui-st-sep">│</span>
+          <span class="tui-st-key">IPC</span> <span class="tui-st-val tui-st-ipc">0.89</span>
+          <span class="tui-st-sep">│</span>
+          <span class="tui-st-key tui-st-ok">PAUSED</span>
+        </div>
+
       </div>
     </div>
   </section>
@@ -120,9 +310,9 @@
   <section class="section" id="features">
     <div class="container">
       <div class="section-header">
-        <span class="eyebrow">Platform</span>
-        <h2>Everything you need to learn RISC-V</h2>
-        <p>Falcon ships as a complete, self-contained environment — no extra toolchains needed.</p>
+        <span class="eyebrow">Why RAVEN</span>
+        <h2>Everything a student needs — nothing more</h2>
+        <p>One terminal app. Write, assemble, run, debug, and profile your RISC-V programs without installing a toolchain.</p>
       </div>
 
       <div class="features-grid">
@@ -130,8 +320,8 @@
           <div class="feature-icon">
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="5" width="22" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 10h22M8 14h4M8 18h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
-          <h3>Integrated IDE</h3>
-          <p>Write and assemble RISC-V code in a built-in editor with syntax highlighting. Import and export <code>.asm</code>, <code>.fas</code>, and binary <code>.bin</code> files. Press <kbd>Ctrl+R</kbd> to assemble instantly.</p>
+          <h3>Write and run in the same window</h3>
+          <p>Built-in editor with syntax highlighting for instructions, registers, directives, and labels. Press <kbd>Ctrl+R</kbd> to assemble instantly — no Makefile, no terminal juggling. Import <code>.asm</code> files from other simulators or export your work as binary.</p>
           <div class="feature-tag-row">
             <span class="tag">Syntax Highlighting</span>
             <span class="tag">Import / Export</span>
@@ -143,53 +333,40 @@
           <div class="feature-icon">
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="10" stroke="currentColor" stroke-width="1.5"/><path d="M14 9v5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
-          <h3>Step-by-Step Execution</h3>
-          <p>Single-step through every instruction. Pause, rewind, and inspect how each operation mutates the machine state.</p>
+          <h3>Step through every instruction</h3>
+          <p>Run free, pause, or advance one instruction at a time. See exactly which register changes, by how much, and why. Set breakpoints on any instruction.</p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="4" y="4" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="4" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="16" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="16" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
           </div>
-          <h3>Register &amp; Memory Panels</h3>
-          <p>Live views of all 32 registers (<code>x0–x31</code> with ABI aliases) and memory contents, updated on every step.</p>
+          <h3>All 32 registers, always visible</h3>
+          <p>Integer registers shown with ABI names (<code>ra</code>, <code>sp</code>, <code>a0–a7</code>, <code>s0–s11</code>…) plus hex and decimal side by side. Recently changed registers are highlighted automatically.</p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 6h16v4H6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 10v12M14 10v12M20 10v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
-          <h3>Instruction Decoder</h3>
-          <p>See the exact bit-field layout of every instruction — opcode, rd, rs1, rs2, funct3, funct7, and immediates — decoded at a glance.</p>
+          <h3>See inside every instruction</h3>
+          <p>Each instruction is decoded into its fields: opcode, rd, rs1, rs2, funct3, funct7, sign-extended immediate. Understand encoding, not just mnemonics.</p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M5 20L10 8l5 7 4-5 4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
-          <h3>RV32I + M Coverage</h3>
-          <p>Full base integer instruction set plus multiply/divide. Arithmetic, loads, stores, branches, jumps, and system calls — all supported.</p>
-        </div>
-
-        <div class="feature-card feature-card--large">
-          <div class="feature-icon">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M6 22V8l8-4 8 4v14" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><rect x="11" y="16" width="6" height="6" rx="0.5" stroke="currentColor" stroke-width="1.5"/></svg>
-          </div>
-          <h3>Pseudo-Instructions &amp; Syscalls</h3>
-          <p>Friendly pseudo-instructions like <code>push</code>, <code>pop</code>, <code>call</code>, <code>ret</code>, <code>la</code>, <code>print</code>, <code>printStrLn</code>, and <code>read</code> expand to real ISA operations — making I/O feel natural while teaching the real ABI underneath.</p>
-          <div class="feature-tag-row">
-            <span class="tag">Linux-style ABI</span>
-            <span class="tag">Teaching extensions</span>
-            <span class="tag">ecall / ebreak</span>
-          </div>
+          <h3>Full RV32IMF — complete ISA</h3>
+          <p>Base integer (RV32I), multiply/divide (M), and single-precision float (F). Every instruction your textbook covers, plus the pseudo-instructions used in real code.</p>
         </div>
 
         <div class="feature-card feature-card--large">
           <div class="feature-icon">
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="4" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="15" y="4" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="16" width="10" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="15" y="16" width="10" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M8 7h2M20 7h2M8 19h2M20 19h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
-          <h3>Cache Simulation</h3>
-          <p>A full I-cache + D-cache simulator tracks every instruction fetch and data access. Configure sets, ways, block size, and replacement policy, then watch hit/miss statistics update in real time as your program runs. A visual matrix view exposes the exact state of every cache line.</p>
+          <h3>Make the memory hierarchy visible</h3>
+          <p>A full I-cache + D-cache simulator tracks every fetch and memory access. Configure geometry and replacement policy, then watch hit rates, AMAT, and IPC update live. Compare configurations with a built-in baseline export.</p>
           <div class="feature-tag-row">
             <span class="tag">I-Cache &amp; D-Cache</span>
             <span class="tag">LRU / LFU / Clock / FIFO / MRU / Random</span>
@@ -201,37 +378,62 @@
     </div>
   </section>
 
+  <!-- HOW IT WORKS -->
+  <section class="section section--dark">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Workflow</span>
+        <h2>Write → Run → Understand</h2>
+        <p>RAVEN is built around one loop: write code, run it, and see exactly what happens inside the machine.</p>
+      </div>
+      <div class="pipeline">
+        <div class="pipeline-step">
+          <div class="pipeline-num">01 — WRITE</div>
+          <h3>Editor Tab</h3>
+          <p>Type RISC-V assembly in the built-in editor. Syntax highlighting colours instructions, registers, labels, and directives. Ghost hints show operand syntax as you type. Press <kbd>Ctrl+R</kbd> to assemble instantly — errors show the exact line and reason.</p>
+        </div>
+        <div class="pipeline-arrow">→</div>
+        <div class="pipeline-step">
+          <div class="pipeline-num">02 — RUN</div>
+          <h3>Run Tab</h3>
+          <p>Step instruction by instruction or run free. The instruction list shows the current PC, decoded type badge, and execution heat. Registers and memory update on every step.</p>
+        </div>
+        <div class="pipeline-arrow">→</div>
+        <div class="pipeline-step">
+          <div class="pipeline-num">03 — PROFILE</div>
+          <h3>Cache Tab</h3>
+          <p>Switch to the Cache tab to see hit rates, AMAT, IPC, and a visual matrix of every cache line. Change the replacement policy and run again to compare.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- CACHE SECTION -->
   <section class="section section--dark" id="cache">
     <div class="container">
       <div class="section-header">
-        <span class="eyebrow">Cache Simulation</span>
-        <h2>Watch the cache learn your program</h2>
-        <p>Falcon's built-in cache simulator covers the full hierarchy — separate instruction and data caches, configurable geometry, and six replacement policies you can swap at runtime.</p>
+        <span class="eyebrow">Cache Simulator</span>
+        <h2>The memory hierarchy, finally visible</h2>
+        <p>Most simulators hide the cache. RAVEN exposes everything — per-access tracking, live statistics, a visual matrix of every cache line, and configurable policies so you can experiment with what you learned in class.</p>
       </div>
 
       <div class="audience-grid">
         <div class="audience-text">
           <ul class="audience-list" style="margin-top:0">
             <li>
-              <span class="al-icon">⚡</span>
-              <div><strong>Separate I-Cache &amp; D-Cache</strong> — instruction fetches and data loads/stores are tracked independently, just like a real processor. Hit rates are reported per cache.</div>
+              <div><strong>Separate I-Cache &amp; D-Cache</strong> — instruction fetches and data loads/stores tracked independently. Hit rates, miss counts, and MPKI reported per cache — just like a real processor.</div>
             </li>
             <li>
-              <span class="al-icon">🔁</span>
-              <div><strong>Six Replacement Policies</strong> — LRU, FIFO, LFU, Clock, MRU, and Random. Switch policy mid-run and immediately see how it changes the hit rate on the Stats panel.</div>
+              <div><strong>Six Replacement Policies</strong> — LRU, FIFO, LFU, Clock, MRU, Random. Swap policy mid-run and immediately see how it affects your hit rate. Perfect for comparing what your textbook describes.</div>
             </li>
             <li>
-              <span class="al-icon">📊</span>
-              <div><strong>Live Statistics</strong> — hit count, miss count, and hit-rate percentage update on every access. Pause, reset, and filter by I-cache, D-cache, or both.</div>
+              <div><strong>Configurable Geometry</strong> — sets, ways, block size, write policy, inclusion policy. Three built-in presets (Small / Medium / Large) for quick starting points.</div>
             </li>
             <li>
-              <span class="al-icon">🗺️</span>
-              <div><strong>Visual Matrix View</strong> — the View subtab renders every set and way as a colour-coded grid. Valid bit, tag, and dirty state visible per cache line.</div>
+              <div><strong>Academic Metrics</strong> — AMAT (Average Memory Access Time), IPC, CPI breakdown, and MPKI. The same numbers your architecture course asks you to calculate — computed automatically.</div>
             </li>
             <li>
-              <span class="al-icon">🔧</span>
-              <div><strong>Runtime Configuration</strong> — change sets, ways, block size, and write policy without restarting. Three built-in presets (Small / Medium / Large) for quick comparison.</div>
+              <div><strong>Visual Matrix View</strong> — every set and way rendered as a colour-coded grid. Valid, tag, dirty state visible per cache line. Scroll through the entire cache state at a glance.</div>
             </li>
           </ul>
         </div>
@@ -262,7 +464,7 @@
             <div class="ac-ellipsis">· · ·</div>
             <div class="ac-row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px">
               <span style="color:var(--text-muted);font-size:.75rem">Policy</span>
-              <span style="grid-column:2/5;color:var(--orange)">LRU · 4-way · 16 B lines · 16 sets</span>
+              <span style="grid-column:2/5;color:var(--teal)">LRU · 4-way · 16 B lines · 16 sets</span>
             </div>
           </div>
           <div class="ac-footer">
@@ -277,9 +479,9 @@
   <section class="section" id="examples">
     <div class="container">
       <div class="section-header">
-        <span class="eyebrow">Programs</span>
-        <h2>Real programs, real assembly</h2>
-        <p>Real programs included with Falcon — from recursive sorting to raw Linux I/O syscalls.</p>
+        <span class="eyebrow">Included Programs</span>
+        <h2>Real programs to run, study, and modify</h2>
+        <p>Every example in RAVEN is ready to open, step through, and experiment with. Start with these, then write your own.</p>
       </div>
 
       <div class="examples-tabs">
@@ -601,8 +803,8 @@
     <div class="container">
       <div class="section-header">
         <span class="eyebrow">Instruction Set</span>
-        <h2>Full RV32I + M coverage</h2>
-        <p>Every standard base integer instruction, plus multiply and divide extensions.</p>
+        <h2>Full RV32IMF — every instruction your course covers</h2>
+        <p>From basic arithmetic to floating-point. RAVEN supports the complete standard instruction set so you never hit a wall mid-course.</p>
       </div>
 
       <div class="isa-grid">
@@ -656,10 +858,26 @@
             <span>ECALL</span><span>EBREAK</span><span>HALT</span>
           </div>
         </div>
+        <div class="isa-category">
+          <div class="isa-cat-header">
+            <span class="isa-cat-badge isa-f">F</span>
+            <span>Float (RV32F)</span>
+          </div>
+          <div class="isa-pills">
+            <span class="isa-f-pill">FLW</span><span class="isa-f-pill">FSW</span>
+            <span class="isa-f-pill">FADD.S</span><span class="isa-f-pill">FSUB.S</span><span class="isa-f-pill">FMUL.S</span><span class="isa-f-pill">FDIV.S</span>
+            <span class="isa-f-pill">FSQRT.S</span><span class="isa-f-pill">FMIN.S</span><span class="isa-f-pill">FMAX.S</span>
+            <span class="isa-f-pill">FMADD.S</span><span class="isa-f-pill">FMSUB.S</span>
+            <span class="isa-f-pill">FEQ.S</span><span class="isa-f-pill">FLT.S</span><span class="isa-f-pill">FLE.S</span>
+            <span class="isa-f-pill">FCVT.W.S</span><span class="isa-f-pill">FCVT.S.W</span>
+            <span class="isa-f-pill">FMV.W.X</span><span class="isa-f-pill">FMV.X.W</span>
+          </div>
+        </div>
       </div>
 
       <div class="isa-legend">
         <span><span class="legend-dot isa-m-dot"></span> M extension (multiply/divide)</span>
+        <span style="margin-left:16px"><span class="legend-dot" style="background:var(--steel)"></span> F extension (single-precision float)</span>
       </div>
     </div>
   </section>
@@ -669,15 +887,15 @@
     <div class="container">
       <div class="section-header">
         <span class="eyebrow">Get Started</span>
-        <h2>Up and running in seconds</h2>
-        <p>Falcon ships as a prebuilt binary — or you can build it yourself with Cargo.</p>
+        <h2>Running in under a minute</h2>
+        <p>RAVEN is a single binary. No VM, no Docker, no toolchain setup.</p>
       </div>
 
       <div class="quickstart-grid">
         <div class="qs-option">
           <div class="qs-badge">Recommended</div>
           <h3>Download &amp; Run</h3>
-          <p>Grab the latest release for your platform and run it directly — no toolchain needed.</p>
+          <p>Grab the binary for your OS from the Releases page and run it directly — RAVEN opens immediately.</p>
           <div class="qs-steps">
             <div class="qs-step">
               <span class="qs-num">1</span>
@@ -685,33 +903,33 @@
             </div>
             <div class="qs-step">
               <span class="qs-num">2</span>
-              <div><strong>Run</strong> the executable — Falcon's IDE opens immediately.</div>
+              <div><strong>Run</strong> the executable — RAVEN's IDE opens immediately.</div>
             </div>
             <div class="qs-step">
               <span class="qs-num">3</span>
-              <div><strong>Write</strong> your first program and press <kbd>Ctrl+R</kbd> to assemble.</div>
+              <div><strong>Write</strong> assembly or open an included example and press <kbd>Ctrl+R</kbd> to assemble.</div>
             </div>
           </div>
         </div>
 
         <div class="qs-option">
           <h3>Build from Source</h3>
-          <p>Requires the Rust toolchain. Gives you the latest code and lets you embed Falcon in your own projects.</p>
+          <p>Requires Rust (rustup.rs). Gives you the latest version and full access to the source.</p>
           <div class="qs-terminal">
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
-              <span class="qs-cmd">git clone https://github.com/Gaok1/FALCON-ASM falcon-asm</span>
+              <span class="qs-cmd">git clone https://github.com/Gaok1/Raven raven</span>
             </div>
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
-              <span class="qs-cmd">cd falcon-asm</span>
+              <span class="qs-cmd">cd raven</span>
             </div>
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
               <span class="qs-cmd">cargo run</span>
             </div>
             <div class="qs-term-out">
-              <span class="qs-ok">✓</span> Falcon IDE launched
+              <span class="qs-ok">✓</span> RAVEN opens — start writing assembly
             </div>
           </div>
         </div>
@@ -725,24 +943,19 @@
       <div class="audience-grid">
         <div class="audience-text">
           <span class="eyebrow">Who is it for?</span>
-          <h2>Built for learners, teachers, and tinkerers</h2>
+          <h2>Made for computer architecture students</h2>
           <p>
-            Whether you're a student tackling your first computer architecture course, a teacher
-            looking for a zero-friction demo tool, or a hobbyist curious about how CPUs really
-            work — Falcon gives you a safe, observable playground.
+            If you're studying RISC-V — for a university course, self-study, or just curiosity — RAVEN is designed for you. Register naming, memory layout, and calling conventions follow the standard spec exactly. No surprises.
           </p>
           <ul class="audience-list">
             <li>
-              <span class="al-icon">🎓</span>
-              <div><strong>Students</strong> — Follow textbooks exactly. Falcon's register naming and little-endian layout mirror standard RISC-V courses.</div>
+              <div><strong>Students</strong> — Follow your textbook exactly. RAVEN's register ABI names, little-endian layout, and instruction encoding match the RISC-V spec and every major computer architecture textbook.</div>
             </li>
             <li>
-              <span class="al-icon">🖥️</span>
-              <div><strong>Teachers</strong> — Live-demo every pipeline stage. Assemble student assignments and step through them in class.</div>
+              <div><strong>Teachers</strong> — Live-demo pipeline stages, cache behaviour, and calling conventions without any setup. Step through student assignments during office hours.</div>
             </li>
             <li>
-              <span class="al-icon">⚙️</span>
-              <div><strong>Hobbyists</strong> — Explore the RV32I ISA without reading thousands of lines of optimization-heavy code.</div>
+              <div><strong>Self-learners</strong> — Curious how a CPU actually works? Start with a simple add, step through it, and watch the machine state change. Build up from there.</div>
             </li>
           </ul>
         </div>
@@ -751,23 +964,24 @@
             <span class="ac-dot ac-red"></span>
             <span class="ac-dot ac-yellow"></span>
             <span class="ac-dot ac-green"></span>
-            <span class="ac-title">Run Panel</span>
+            <span class="ac-title">Run › Registers</span>
           </div>
           <div class="ac-body">
             <div class="ac-row ac-row--head">
-              <span>Register</span><span>Hex</span><span>Dec</span>
+              <span>ABI</span><span style="color:var(--steel)">HEX</span><span style="color:var(--text-muted)">DEC</span>
             </div>
-            <div class="ac-row"><span class="ac-reg">zero</span><span>0x00000000</span><span>0</span></div>
-            <div class="ac-row ac-row--hi"><span class="ac-reg">ra</span><span class="ac-changed">0x00000014</span><span class="ac-changed">20</span></div>
-            <div class="ac-row"><span class="ac-reg">sp</span><span>0xFFFFFFE8</span><span>-24</span></div>
-            <div class="ac-row ac-row--hi"><span class="ac-reg">a0</span><span class="ac-changed">0x00000006</span><span class="ac-changed">6</span></div>
-            <div class="ac-row"><span class="ac-reg">a7</span><span>0x000003E8</span><span>1000</span></div>
-            <div class="ac-row ac-row--hi"><span class="ac-reg">s0</span><span class="ac-changed">0x00000008</span><span class="ac-changed">8</span></div>
-            <div class="ac-row"><span class="ac-reg">t0</span><span>0x00000001</span><span>1</span></div>
+            <div class="ac-row"><span class="ac-reg">zero</span><span>0x00000000</span><span style="color:var(--text-dim)">0</span></div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">ra</span><span class="ac-changed">0x00000028</span><span class="ac-changed">40</span></div>
+            <div class="ac-row"><span class="ac-reg">sp</span><span>0x7FFFFFF0</span><span style="color:var(--text-dim)">-16</span></div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">a0</span><span class="ac-changed">0x00000037</span><span class="ac-changed">55</span></div>
+            <div class="ac-row"><span class="ac-reg">a1</span><span>0x0000000A</span><span style="color:var(--text-dim)">10</span></div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">s0</span><span class="ac-changed">0x00000022</span><span class="ac-changed">34</span></div>
+            <div class="ac-row"><span class="ac-reg">s1</span><span>0x00000015</span><span style="color:var(--text-dim)">21</span></div>
             <div class="ac-ellipsis">· · ·</div>
           </div>
-          <div class="ac-footer">
-            <span class="ac-status">● Paused at PC 0x0000002C</span>
+          <div class="ac-footer" style="display:flex;justify-content:space-between;align-items:center">
+            <span class="ac-status">▶ PC 0x00000028</span>
+            <span style="font-family:var(--font-mono);font-size:0.68rem;color:var(--text-dim)">fib(10) = 55</span>
           </div>
         </div>
       </div>
@@ -780,33 +994,34 @@
       <div class="footer-top">
         <div class="footer-brand">
           <div class="footer-logo">
-            <img src="falcon_logo.png" alt="Falcon ASM" class="footer-logo-img" />
-            <span class="logo-text">Falcon<span class="logo-asm">ASM</span></span>
+            <span class="logo-text">RAVEN</span>
           </div>
-          <p>An approachable RISC-V emulator and teaching platform built with Rust.</p>
+          <p>A free, open-source RISC-V simulator and IDE for students, teachers, and anyone who wants to understand assembly.</p>
         </div>
         <div class="footer-links">
           <div class="fl-group">
             <h4>Resources</h4>
             <ul>
-              <li><a href="docs/Tutorial.md">Tutorial</a></li>
-              <li><a href="docs/format.md">Format Guide</a></li>
-              <li><a href="Program Examples/">Examples</a></li>
+              <li><a href="https://github.com/Gaok1/Raven/blob/main/docs/Tutorial.md" target="_blank" rel="noopener">Tutorial</a></li>
+              <li><a href="https://github.com/Gaok1/Raven/blob/main/docs/format.md" target="_blank" rel="noopener">Format Guide</a></li>
+              <li><a href="https://github.com/Gaok1/Raven/blob/main/docs/Tutorial-pt.md" target="_blank" rel="noopener">Tutorial (PT-BR)</a></li>
+              <li><a href="https://github.com/Gaok1/Raven/tree/main/Program%20Examples" target="_blank" rel="noopener">Example Programs</a></li>
             </ul>
           </div>
           <div class="fl-group">
             <h4>Project</h4>
             <ul>
-              <li><a href="https://github.com/Gaok1/FALCON-ASM" target="_blank" rel="noopener">GitHub</a></li>
-              <li><a href="LICENSE-MIT.txt">MIT License</a></li>
-              <li><a href="LICENSE-APACHE.txt">Apache 2.0</a></li>
+              <li><a href="https://github.com/Gaok1/Raven" target="_blank" rel="noopener">GitHub</a></li>
+              <li><a href="https://github.com/Gaok1/Raven/releases" target="_blank" rel="noopener">Releases</a></li>
+              <li><a href="https://github.com/Gaok1/Raven/issues" target="_blank" rel="noopener">Issues</a></li>
+              <li><a href="https://github.com/Gaok1/Raven/blob/main/LICENSE-MIT.txt" target="_blank" rel="noopener">MIT License</a></li>
             </ul>
           </div>
         </div>
       </div>
       <div class="footer-bottom">
         <span>Licensed under MIT / Apache 2.0 · Built with Rust</span>
-        <span class="footer-arch">RV32I + M · Little-endian · 32-bit</span>
+        <span class="footer-arch">RV32IMF · Little-endian · 32-bit</span>
       </div>
     </div>
   </footer>

@@ -1,6 +1,6 @@
-# FALCON — Syscall Reference
+# RAVEN — Syscall Reference
 
-FALCON uses the **Linux RISC-V ABI** calling convention for `ecall`.
+RAVEN uses the **Linux RISC-V ABI** calling convention for `ecall`.
 
 ```
 a7  = syscall number
@@ -43,7 +43,7 @@ a0  = return value  (negative value = -errno as u32)
 
 ### Manual heap — bump allocator pattern
 
-FALCON has **no `malloc`/`free`**. The free region between `bss_end` and the
+RAVEN has **no `malloc`/`free`**. The free region between `bss_end` and the
 stack bottom is plain RAM. To allocate dynamically, keep a pointer in `.data`
 and advance it manually:
 
@@ -64,7 +64,7 @@ alloc:
 
 The heap grows **upward** (toward higher addresses), while the stack grows
 **downward**. They will collide if the combined allocation exceeds free space —
-FALCON does not detect this; a memory fault or silent data corruption will occur.
+RAVEN does not detect this; a memory fault or silent data corruption will occur.
 
 ```
                     bss_end
@@ -132,7 +132,7 @@ Write bytes from a buffer to a file descriptor.
 | `a2`     | byte count |
 | **`a0` (ret)** | bytes written, or `-errno` |
 
-**Restrictions:** only `fd=1` and `fd=2` are supported (both go to the FALCON console).
+**Restrictions:** only `fd=1` and `fd=2` are supported (both go to the RAVEN console).
 
 ```asm
 .data
@@ -195,7 +195,7 @@ rng_buf: .space 4
 
 ## Falcon teaching extensions (syscall 1000+)
 
-These are FALCON-specific syscalls designed for classroom use. They are higher
+These are RAVEN-specific syscalls designed for classroom use. They are higher
 level than the Linux ABI equivalents and need no strlen loop or fd argument.
 
 ### `1000` — print integer
@@ -324,7 +324,7 @@ Parse one integer from stdin (range 0..4294967295) and store it as a `u32` (litt
 
 ## Error codes
 
-| Code | POSIX name | Meaning in FALCON |
+| Code | POSIX name | Meaning in RAVEN |
 |------|-----------|-------------------|
 | `-5`  | `EIO`    | getrandom OS failure |
 | `-9`  | `EBADF`  | unsupported fd |

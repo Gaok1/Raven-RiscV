@@ -1,6 +1,6 @@
-# Falcon ASM format guide — RV32I in plain language
+# RAVEN format guide — RV32I in plain language
 
-This is the companion reference for Falcon ASM, our teaching-friendly RISC-V emulator. Use it as a cheat sheet.
+This is the companion reference for RAVEN, our teaching-friendly RISC-V emulator. Use it as a cheat sheet.
 
 ## How to read this document
 
@@ -11,7 +11,7 @@ This is the companion reference for Falcon ASM, our teaching-friendly RISC-V emu
 
 ## Architecture snapshot
 
-Falcon focuses on a approachable RV32I+M subset so you can reason about each pipeline stage without being buried in extras.
+RAVEN focuses on a approachable RV32I+M subset so you can reason about each pipeline stage without being buried in extras.
 
 - **Word size:** 32 bits.
 - **Endianness:** little-endian throughout (`{to,from}_le_bytes`).
@@ -19,10 +19,9 @@ Falcon focuses on a approachable RV32I+M subset so you can reason about each pip
 - **Registers:** hardware names `x0…x31` with the usual aliases `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Writes to `x0/zero` are ignored.
 
-Not yet implemented: CSR/FENCE instructions and any floating-point extension. Keeping the surface area small makes Falcon easier to
-use in class or during workshops.
+Not yet implemented: CSR/FENCE instructions. RAVEN covers RV32IMF — base integer, multiply/divide, and single-precision float.
 
-## Instruction set inside Falcon
+## Instruction set inside RAVEN
 
 | Category | Instructions |
 | --- | --- |
@@ -39,7 +38,7 @@ of following the architected “divide-by-zero” results. The interruption make
 
 ## Encoding cheat sheets
 
-The tables below show all 32-bit layouts Falcon uses. When an instruction name appears in bold, read the note beneath the table for
+The tables below show all 32-bit layouts RAVEN uses. When an instruction name appears in bold, read the note beneath the table for
 a reminder about immediate ranges or special cases.
 
 ### R-type (arithmetic, logic, multiply/divide)
@@ -162,12 +161,12 @@ a reminder about immediate ranges or special cases.
 
 **`JALR` (`0x67`):** uses `funct3 = 0x0`.
 
-**System (`0x73`):** Falcon implements two encodings: `ECALL` (`0x00000073`) and `EBREAK` (`0x00100073`). The assembler accepts
+**System (`0x73`):** RAVEN implements two encodings: `ECALL` (`0x00000073`) and `EBREAK` (`0x00100073`). The assembler accepts
 `halt` as an alias for `ebreak`.
 
 ## Assembler behaviour and pseudo-instructions
 
-Falcon’s assembler is intentionally lightweight so you can follow every step:
+RAVEN’s assembler is intentionally lightweight so you can follow every step:
 
 - Comments begin with `;` or `#`.
 - Operands are comma-separated (`mnemonic op1, op2, ...`).
@@ -175,7 +174,7 @@ Falcon’s assembler is intentionally lightweight so you can follow every step:
 
 ### Pseudo-instructions reference
 
-The table below documents the pseudo forms implemented by Falcon and the exact expansion shape used by the assembler.
+The table below documents the pseudo forms implemented by RAVEN and the exact expansion shape used by the assembler.
 
 | Pseudo | Accepted format | Expansion (conceptual) | Notes |
 | --- | --- | --- | --- |
@@ -202,11 +201,11 @@ The table below documents the pseudo forms implemented by Falcon and the exact e
 > `jal` and `jalr` are real ISA instructions (not pseudos) and are also supported directly.
 > `jal` accepts both `jal label` (implicit `rd=ra`) and `jal rd, label`.
 
-If you want to inspect the final expansion in practice, assemble with `cargo run` and check the decoded instruction trace in the run view.
+If you want to inspect the final expansion in practice, assemble with `cargo run` and check the decoded instruction trace in the RAVEN run view.
 
 ## Syscalls you can try
 
-Falcon supports a tiny Linux-style ABI plus a few Falcon-only teaching extensions.
+RAVEN supports a tiny Linux-style ABI plus a few RAVEN-only teaching extensions.
 
 ### ABI (Linux-style)
 
@@ -221,13 +220,13 @@ Falcon supports a tiny Linux-style ABI plus a few Falcon-only teaching extension
 3) Execute `ecall`.
 4) Read the return value from `a0`.
 
-Falcon currently supports a very small set. When a syscall is not implemented, Falcon stops execution and prints a message in the
+RAVEN currently supports a very small set. When a syscall is not implemented, RAVEN stops execution and prints a message in the
 console so the failure is obvious during teaching.
 
 #### Return values and errors
 
 - On success, the syscall returns a non-negative value in `a0` (for example, bytes read/written).
-- On error, Falcon uses Linux-style `-errno` in `a0`. Internally that is stored as `u32` (because registers are `u32`):
+- On error, RAVEN uses Linux-style `-errno` in `a0`. Internally that is stored as `u32` (because registers are `u32`):
   `a0 = (-(errno as i32)) as u32`.
 
 ### Linux syscalls (supported subset)
@@ -244,7 +243,7 @@ console so the failure is obvious during teaching.
 
 Arguments:
 
-- `a0 = fd` (Falcon supports `1` (stdout) and `2` (stderr), both show up in the console for now)
+- `a0 = fd` (RAVEN supports `1` (stdout) and `2` (stderr), both show up in the console for now)
 - `a1 = buf` (pointer to bytes in memory)
 - `a2 = count` (how many bytes to write)
 
@@ -257,7 +256,7 @@ Short example (prints "Hello!\n" and exits):
 ```asm
 .data
 msg: .ascii "Hello!"
-.byte 10          # '\n' (Falcon does not parse escape sequences inside .ascii/.asciz)
+.byte 10          # '\n' (RAVEN does not parse escape sequences inside .ascii/.asciz)
 
 .text
     li a0, 1       # fd=stdout
@@ -275,7 +274,7 @@ msg: .ascii "Hello!"
 
 Arguments:
 
-- `a0 = fd` (Falcon supports `0` only: stdin)
+- `a0 = fd` (RAVEN supports `0` only: stdin)
 - `a1 = buf` (pointer where bytes will be written)
 - `a2 = count` (maximum bytes to read)
 
@@ -285,8 +284,8 @@ Return:
 
 Important notes (teaching simplifications):
 
-- Input is line-based via the UI console. When a line is available, Falcon appends a final `\n` and serves it as bytes.
-- If there is no input yet, Falcon pauses execution (PC does not advance) and waits for the user to provide input in the UI.
+- Input is line-based via the UI console. When a line is available, RAVEN appends a final `\n` and serves it as bytes.
+- If there is no input yet, RAVEN pauses execution (PC does not advance) and waits for the user to provide input in the UI.
 
 Short example (read and echo back):
 
@@ -323,19 +322,19 @@ Effect:
 
 - Stops the VM “normally” (this is not a fault in the UI).
 
-### Falcon extensions (used by pseudos)
+### RAVEN extensions (used by pseudos)
 
 | `a7` | Name | Used by |
 | --- | --- | --- |
-| `1000` | `falcon_print_int` | `print rd` |
-| `1001` | `falcon_print_zstr` | `printStr` / `printString` |
-| `1002` | `falcon_print_zstr_ln` | `printStrLn` |
-| `1003` | `falcon_read_line_z` | `read label` |
-| `1010` | `falcon_read_u8` | `readByte label` |
-| `1011` | `falcon_read_u16` | `readHalf label` |
-| `1012` | `falcon_read_u32` | `readWord label` |
+| `1000` | `raven_print_int` | `print rd` |
+| `1001` | `raven_print_zstr` | `printStr` / `printString` |
+| `1002` | `raven_print_zstr_ln` | `printStrLn` |
+| `1003` | `raven_read_line_z` | `read label` |
+| `1010` | `raven_read_u8` | `readByte label` |
+| `1011` | `raven_read_u16` | `readHalf label` |
+| `1012` | `raven_read_u32` | `readWord label` |
 
-For the Falcon `read*` extensions, Falcon keeps asking until a valid value fits in the requested size. Invalid input results in a friendly
+For the RAVEN `read*` extensions, RAVEN keeps asking until a valid value fits in the requested size. Invalid input results in a friendly
 error message and the program counter does **not** advance, making it clear that execution is paused.
 
 Ready for a deeper dive? Revisit the [Tutorial](Tutorial.md) for hands-on assembly walkthroughs, or explore the sample programs in

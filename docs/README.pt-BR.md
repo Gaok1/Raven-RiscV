@@ -1,8 +1,6 @@
-# FALCON ASM — Emulador e IDE RISC-V
+# RAVEN — Emulador e IDE RISC-V
 
-<img src="https://github.com/user-attachments/assets/b0a9c716-3750-4aba-85f0-6957d2b510fc" height="400"/>
-
-**FALCON ASM** é um emulador, montador e IDE RISC-V rodando no terminal, escrito em Rust. Cobre **RV32I + M + F** e foi pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa — ideal para estudantes, professores e qualquer um aprendendo assembly.
+**RAVEN** é um emulador, montador e IDE RISC-V rodando no terminal, escrito em Rust. Cobre **RV32I + M + F** e foi pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa — ideal para estudantes, professores e qualquer um aprendendo assembly.
 
 Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, inspecione registradores e memória, perfile sua hierarquia de cache e leia a documentação — sem sair do terminal.
 
@@ -69,11 +67,11 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 
 ## Início Rápido
 
-Baixe o binário mais recente em [Releases](https://github.com/Gaok1/FALCON-ASM/releases), ou compile da fonte:
+Baixe o binário mais recente em [Releases](https://github.com/Gaok1/Raven/releases), ou compile da fonte:
 
 ```bash
-git clone https://github.com/Gaok1/FALCON-ASM.git
-cd FALCON-ASM
+git clone https://github.com/Gaok1/Raven.git
+cd RAVEN
 cargo run
 ```
 

@@ -1,5 +1,5 @@
 /* =========================================================
-   FALCON ASM — Landing Page Scripts  (Red theme)
+   RAVEN — Landing Page Scripts  (Red theme)
    ========================================================= */
 
 // ── Nav scroll effect ──────────────────────────────────────
@@ -92,13 +92,25 @@ const sectionObserver = new IntersectionObserver((entries) => {
       const id = entry.target.getAttribute('id');
       navLinks.forEach(link => {
         const isActive = link.getAttribute('href') === `#${id}`;
-        link.style.color = isActive ? 'var(--red-bright)' : '';
+        link.style.color = isActive ? 'var(--accent-bright)' : '';
       });
     }
   });
 }, { threshold: 0.4 });
 
 sections.forEach(s => sectionObserver.observe(s));
+
+// ── Hero TUI tab switching ────────────────────────────────
+document.querySelectorAll('.tui-tab[data-tui]').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const target = tab.dataset.tui;
+    document.querySelectorAll('.tui-tab[data-tui]').forEach(t => t.classList.remove('tui-tab--active'));
+    document.querySelectorAll('.tui-panel').forEach(p => p.classList.add('tui-panel--hidden'));
+    tab.classList.add('tui-tab--active');
+    const panel = document.getElementById('tui-' + target);
+    if (panel) panel.classList.remove('tui-panel--hidden');
+  });
+});
 
 // ── Bit field tooltips ────────────────────────────────────
 document.querySelectorAll('.bf').forEach(bf => {
@@ -107,19 +119,3 @@ document.querySelectorAll('.bf').forEach(bf => {
     bf.querySelector('.bf-bits').textContent;
 });
 
-// ── Parallax: subtle falcon drift on mouse move ───────────
-const falconImg = document.querySelector('.falcon-img');
-if (falconImg) {
-  document.addEventListener('mousemove', (e) => {
-    const cx = window.innerWidth  / 2;
-    const cy = window.innerHeight / 2;
-    const dx = (e.clientX - cx) / cx;  // -1 to 1
-    const dy = (e.clientY - cy) / cy;
-    falconImg.style.transform =
-      `translateY(${-8 + dy * -6}px) rotateY(${dx * 4}deg)`;
-  });
-
-  document.addEventListener('mouseleave', () => {
-    falconImg.style.transform = '';
-  });
-}

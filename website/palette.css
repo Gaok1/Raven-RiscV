@@ -1,0 +1,59 @@
+/* =========================================================
+   RAVEN — Canonical Color Palette
+   Mirrors src/ui/theme.rs exactly.
+   Import this file or copy variables into your :root.
+   ========================================================= */
+:root {
+
+  /* ── Backgrounds (neutral dark, no tint) ──────────────── */
+  --bg:           #1c1c20;   /* BG         Rgb(28,  28,  32) */
+  --bg-panel:     #242428;   /* BG_PANEL   Rgb(36,  36,  40) */
+  --bg-raised:    #2c2c32;   /* BG_RAISED  Rgb(44,  44,  50) */
+  --bg-hover:     #322e42;   /* BG_HOVER   Rgb(50,  46,  66) */
+  --bg-sep:       #2e2e34;   /* BG_SEP     Rgb(46,  46,  52) */
+
+  /* ── Accent ────────────────────────────────────────────── */
+  --accent:       #915ffa;   /* VIOLET     Rgb(145, 95,  250) */
+  --accent-dim:   #6a40d0;   /* dimmer violet                 */
+  --accent-glow:  rgba(145, 95, 250, 0.35);
+
+  /* ── Interactive controls ──────────────────────────────── */
+  --idle:         #696973;   /* IDLE       Rgb(105, 105, 115) */
+  --active:       #d2d2da;   /* ACTIVE     Rgb(210, 210, 218) */
+  --hover-bg:     #915ffa;   /* HOVER_BG   = VIOLET           */
+  --hover-fg:     #ffffff;   /* HOVER_FG                      */
+
+  /* ── Semantic states ───────────────────────────────────── */
+  --running:      #58c878;   /* RUNNING    Rgb(88,  200, 120) */
+  --paused:       #dcaa37;   /* PAUSED     Rgb(220, 170, 55)  */
+  --danger:       #d24844;   /* DANGER     Rgb(210, 72,  68)  */
+
+  /* ── Borders ───────────────────────────────────────────── */
+  --border:       #3a3a42;   /* BORDER     Rgb(58,  58,  66)  */
+  --border-hov:   #915ffa;   /* BORDER_HOV = VIOLET           */
+
+  /* ── Text ──────────────────────────────────────────────── */
+  --text:         #d2d2da;   /* TEXT       Rgb(210, 210, 218) */
+  --label:        #696973;   /* LABEL      Rgb(105, 105, 115) */
+
+  /* ── Metrics ───────────────────────────────────────────── */
+  --metric-cyc:   #6eafdc;   /* METRIC_CYC Rgb(110, 175, 220) */
+  --metric-cpi:   #af87f5;   /* METRIC_CPI Rgb(175, 135, 245) */
+  --metric-ipc:   #e1b450;   /* METRIC_IPC Rgb(225, 180, 80)  */
+
+  /* ── Cache level colors ────────────────────────────────── */
+  --cache-i:      #6eafdc;   /* CACHE_I    Rgb(110, 175, 220) */
+  --cache-d:      #58c894;   /* CACHE_D    Rgb(88,  200, 148) */
+  --cache-l2:     #dcaa37;   /* CACHE_L2   Rgb(220, 170, 55)  */
+
+  /* ── Cache data visualization ──────────────────────────── */
+  --dirty:        #c369fa;   /* DIRTY      Rgb(195, 105, 250) */
+  --dirty-dim:    #6c3e94;   /* DIRTY_DIM  Rgb(108, 62,  148) */
+  --cpi-panel:    #48c3a8;   /* CPI_PANEL  Rgb(72,  195, 168) */
+
+  /* ── Syntax highlighting ───────────────────────────────── */
+  --label-y:      #dab24b;   /* LABEL_Y    Rgb(218, 178, 75)  */
+  --comment:      #628a70;   /* COMMENT    Rgb(98,  138, 112) */
+  --imm-color:    #73b2eb;   /* IMM_COLOR  Rgb(115, 178, 235) */
+
+}
