@@ -2,6 +2,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::ui::app::{DocsLang, DocsPage};
+use crate::ui::theme;
 use super::App;
 
 // ── Type-filter bit constants ──────────────────────────────────────────────────
@@ -168,9 +169,9 @@ const DOCS: &[DocRow] = &[
     row!("Pseudo", "print_str",    "label",     "Print NUL string at label",           "strlen loop; write(a0=1,a1=buf,a2=len) [syscall 64]"),
     row!("Pseudo", "print_str_ln","label",     "Print NUL string + newline",          "strlen loop; write buf; write '\\n' via stack [syscall 64]"),
     row!("Pseudo", "read",        "label",     "Read up to 256 bytes from stdin",     "read(a0=0,a1=buf,a2=256) [syscall 63]"),
-    row!("Pseudo", "read_byte",   "label",     "Read decimal → store 1 byte (Falcon)","addi a7,x0,1010; la a0,label; ecall"),
-    row!("Pseudo", "read_half",   "label",     "Read decimal → store 2 bytes (Falcon)","addi a7,x0,1011; la a0,label; ecall"),
-    row!("Pseudo", "read_word",   "label",     "Read decimal → store 4 bytes (Falcon)","addi a7,x0,1012; la a0,label; ecall"),
+    row!("Pseudo", "read_byte",   "label",     "Read decimal → store 1 byte (RAVEN)","addi a7,x0,1010; la a0,label; ecall"),
+    row!("Pseudo", "read_half",   "label",     "Read decimal → store 2 bytes (RAVEN)","addi a7,x0,1011; la a0,label; ecall"),
+    row!("Pseudo", "read_word",   "label",     "Read decimal → store 4 bytes (RAVEN)","addi a7,x0,1012; la a0,label; ecall"),
     row!("Pseudo", "random",      "rd",        "rd = random 32-bit word (getrandom)", "getrandom syscall via stack (4 bytes)"),
     row!("Pseudo", "random_bytes","label, n",  "Fill n random bytes at label",        "getrandom(label, n, 0) syscall"),
     // ── F extension — loads / stores ────────────────────────────────────────────
@@ -443,7 +444,12 @@ fn render_doc_row(row: &DocRow, desc_w: usize, show_exp: bool) -> Line<'static> 
     Line::from(spans)
 }
 
-fn render_filter_bar(f: &mut Frame, area: Rect, type_filter: u16, cursor: usize) {
+fn render_filter_bar(f: &mut Frame, area: Rect, app: &App) {
+    // Record this row's y so mouse.rs can detect clicks on it
+    app.docs.filter_bar_y.set(area.y);
+
+    let type_filter = app.docs.type_filter;
+    let cursor = app.docs.filter_cursor;
     let mut spans: Vec<Span<'static>> = Vec::new();
 
     for (idx, &(label, bit, color)) in FILTER_ITEMS.iter().enumerate() {
@@ -459,12 +465,51 @@ fn render_filter_bar(f: &mut Frame, area: Rect, type_filter: u16, cursor: usize)
         let bullet = if is_active { "\u{25CF}" } else { "\u{25CB}" }; // ● / ○
         let text = format!(" {bullet}{label} ");
 
-        let fg = if is_active { color } else { Color::DarkGray };
+        let fg = if is_active { color } else { theme::LABEL };
         let mut style = Style::default().fg(fg);
         if is_cursor {
             style = style.bg(Color::Rgb(50, 50, 80)).add_modifier(Modifier::BOLD);
         }
         spans.push(Span::styled(text, style));
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Render a single-line page-tab bar (InstrRef | Syscalls | Memory Map).
+/// Records tab_bar_y and tab_bar_xs in app.docs for mouse click handling.
+fn render_page_tabs(f: &mut Frame, area: Rect, app: &App, extra_hint: &'static str) {
+    app.docs.tab_bar_y.set(area.y);
+
+    let pages = [DocsPage::InstrRef, DocsPage::Syscalls, DocsPage::MemoryMap];
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut xs = [(0u16, 0u16); 3];
+    let mut cursor_x = area.x;
+
+    for (i, page) in pages.iter().enumerate() {
+        let active = *page == app.docs.page;
+        let label = format!(" {} ", page.label());
+        let label_w = label.chars().count() as u16;
+        let style = if active {
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::LABEL)
+        };
+        xs[i] = (cursor_x, cursor_x + label_w);
+        cursor_x += label_w;
+        spans.push(Span::styled(label, style));
+
+        // divider between tabs
+        spans.push(Span::styled("│", Style::default().fg(Color::Rgb(60, 60, 80))));
+        cursor_x += 1;
+    }
+    app.docs.tab_bar_xs.set(xs);
+
+    if !extra_hint.is_empty() {
+        spans.push(Span::styled(extra_hint, Style::default().fg(theme::LABEL)));
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -486,57 +531,70 @@ fn render_instr_ref(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),          // header
+            Constraint::Length(1),            // page tab bar (new)
+            Constraint::Length(2),            // legend header
             Constraint::Length(search_bar_h), // search bar
-            Constraint::Length(1),          // filter bar
-            Constraint::Min(0),             // table area
+            Constraint::Length(1),            // filter bar
+            Constraint::Min(0),               // table area
         ])
         .split(area);
 
-    let meta_area   = chunks[0];
-    let search_area = chunks[1];
-    let filter_area = chunks[2];
-    let table_area  = chunks[3];
+    let tab_area    = chunks[0];
+    let meta_area   = chunks[1];
+    let search_area = chunks[2];
+    let filter_area = chunks[3];
+    let table_area  = chunks[4];
 
-    // ── Header ──
-    let search_hint = if app.docs.search_open { "" } else { "  Ctrl+F=search" };
-    let filter_hint = if !app.docs.search_open {
-        "  ←/→=filter  Space=toggle"
-    } else { "" };
+    // ── Page tab bar ──
+    let search_hint = if app.docs.search_open { "  Ctrl+F=search" } else { "" };
+    let filter_hint = if !app.docs.search_open { "  ←/→=filter  Space=toggle" } else { "" };
+    let tab_hint = format!("{search_hint}{filter_hint}  ↑/↓=scroll");
+    // We can't use a &'static str here — pass empty and append hint spans manually.
+    render_page_tabs(f, tab_area, app, "");
+    // Append hints to the tab bar line without overwriting positions
+    {
+        let hint_x = {
+            let xs = app.docs.tab_bar_xs.get();
+            // after last tab (index 2): x_end + 1 for divider
+            xs[2].1 + 1
+        };
+        let hint_area = Rect::new(hint_x.min(tab_area.x + tab_area.width), tab_area.y, tab_area.width.saturating_sub(hint_x.saturating_sub(tab_area.x)), 1);
+        f.render_widget(
+            Paragraph::new(Span::styled(tab_hint, Style::default().fg(theme::LABEL))),
+            hint_area,
+        );
+    }
+
+    // ── Legend header (2 lines) ──
     let meta_lines = vec![
         Line::from(vec![
-            Span::styled("Instruction Reference",
-                Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled("  ↑/↓/PgUp/PgDn=scroll",
-                Style::default().fg(Color::DarkGray)),
-            Span::styled(search_hint, Style::default().fg(Color::DarkGray)),
-            Span::styled(filter_hint, Style::default().fg(Color::DarkGray)),
-            Span::styled("  Tab=next page", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
             Span::styled("rd", Style::default().fg(Color::Yellow).bold()),
-            Span::styled("=dst  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("=dst  ", Style::default().fg(theme::LABEL)),
             Span::styled("rs1/rs2", Style::default().fg(Color::Cyan)),
-            Span::styled("=src  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("=src  ", Style::default().fg(theme::LABEL)),
             Span::styled("frd", Style::default().fg(Color::Yellow)),
-            Span::styled("=float dst  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("=float dst  ", Style::default().fg(theme::LABEL)),
             Span::styled("frs1/frs2", Style::default().fg(Color::LightYellow)),
-            Span::styled("=float src  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("=float src  ", Style::default().fg(theme::LABEL)),
             Span::styled("imm", Style::default().fg(Color::LightGreen)),
-            Span::styled("=immediate  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("=immediate  ", Style::default().fg(theme::LABEL)),
             Span::styled("label", Style::default().fg(Color::Magenta)),
-            Span::styled("=symbol", Style::default().fg(Color::DarkGray)),
+            Span::styled("=symbol", Style::default().fg(theme::LABEL)),
         ]),
+        Line::styled(
+            "─".repeat(area.width.min(300) as usize),
+            Style::default().fg(Color::Rgb(60, 60, 80)),
+        ),
     ];
     f.render_widget(Paragraph::new(meta_lines), meta_area);
 
     // ── Search bar ──
     if app.docs.search_open {
-        let bar_style = Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50));
+        let bar_style = Style::default().fg(theme::LABEL).bg(Color::Rgb(30, 30, 50));
         let bar_line = Line::from(vec![
-            Span::styled(" Find: ", Style::default().fg(Color::Cyan).bg(Color::Rgb(30, 30, 50))),
-            Span::styled(app.docs.search_query.clone(), Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 50))),
-            Span::styled("  Esc=close", Style::default().fg(Color::DarkGray).bg(Color::Rgb(30, 30, 50))),
+            Span::styled(" Find: ", Style::default().fg(theme::ACCENT).bg(Color::Rgb(30, 30, 50))),
+            Span::styled(app.docs.search_query.clone(), Style::default().fg(theme::LABEL_Y).bg(Color::Rgb(30, 30, 50))),
+            Span::styled("  Esc=close", Style::default().fg(theme::LABEL).bg(Color::Rgb(30, 30, 50))),
         ]);
         f.render_widget(Paragraph::new(bar_line).style(bar_style), search_area);
 
@@ -549,7 +607,7 @@ fn render_instr_ref(f: &mut Frame, area: Rect, app: &App) {
     }
 
     // ── Filter bar ──
-    render_filter_bar(f, filter_area, app.docs.type_filter, app.docs.filter_cursor);
+    render_filter_bar(f, filter_area, app);
 
     if table_area.height == 0 || table_area.width == 0 { return; }
 
@@ -611,39 +669,42 @@ fn render_free_page(f: &mut Frame, area: Rect, app: &App, lines: Vec<Line<'stati
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2), // header
+            Constraint::Length(2), // header (tab bar + separator)
             Constraint::Min(0),    // content
         ])
         .split(area);
 
-    // ── Header: page tabs + language indicator ──
-    let pages = [DocsPage::InstrRef, DocsPage::Syscalls, DocsPage::MemoryMap];
-    let mut tab_spans: Vec<Span<'static>> = Vec::new();
-    for page in pages {
-        let active = page == app.docs.page;
-        let label = format!(" {} ", page.label());
-        let style = if active {
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            Style::default().fg(Color::DarkGray)
+    // ── Tab bar (line 0 of header) ──
+    let lang_hint = format!("  [{}] L=lang  ↑/↓=scroll", app.docs.lang.label());
+    // render_page_tabs takes a &'static str; we pass a static stub and append a styled hint span
+    let tab_area = Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, 1);
+    render_page_tabs(f, tab_area, app, "");
+    {
+        let hint_x = {
+            let xs = app.docs.tab_bar_xs.get();
+            xs[2].1 + 1
         };
-        tab_spans.push(Span::styled(label, style));
-        tab_spans.push(Span::styled("│", Style::default().fg(Color::Rgb(60, 60, 80))));
+        let hint_area = Rect::new(
+            hint_x.min(tab_area.x + tab_area.width),
+            tab_area.y,
+            tab_area.width.saturating_sub(hint_x.saturating_sub(tab_area.x)),
+            1,
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(lang_hint, Style::default().fg(theme::LABEL))),
+            hint_area,
+        );
     }
-    tab_spans.push(Span::styled(
-        format!("  [{}] L=toggle lang  ↑/↓/PgUp/PgDn=scroll  Tab=next page",
-                app.docs.lang.label()),
-        Style::default().fg(Color::DarkGray),
-    ));
 
-    let header_lines = vec![
-        Line::from(tab_spans),
-        Line::styled(
+    // ── Separator (line 1 of header) ──
+    let sep_area = Rect::new(chunks[0].x, chunks[0].y + 1, chunks[0].width, 1);
+    f.render_widget(
+        Paragraph::new(Line::styled(
             "─".repeat(area.width.min(300) as usize),
             Style::default().fg(Color::Rgb(60, 60, 80)),
-        ),
-    ];
-    f.render_widget(Paragraph::new(header_lines), chunks[0]);
+        )),
+        sep_area,
+    );
 
     // ── Scrollable content ──
     let content_area = chunks[1];
@@ -724,7 +785,7 @@ fn syscall_lines(lang: DocsLang) -> Vec<Line<'static>> {
 
 fn syscall_lines_en() -> Vec<Line<'static>> {
     vec![
-        h1("FALCON — Syscall Reference"),
+        h1("RAVEN — Syscall Reference"),
         blank(),
         note("Calling convention: a7 = syscall number · a0..a5 = arguments · a0 = return value"),
         note("Negative return values signal errors (Linux errno convention, e.g. -9 = EBADF)."),
@@ -744,8 +805,8 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         note("Supported getrandom flags: GRND_NONBLOCK (0x1), GRND_RANDOM (0x2)."),
         blank(),
 
-        // ── Falcon extensions ──
-        h2("Falcon teaching extensions  (a7 ≥ 1000)"),
+        // ── RAVEN extensions ──
+        h2("RAVEN teaching extensions  (a7 ≥ 1000)"),
         blank(),
         thead(),
         tsep(),
@@ -776,7 +837,7 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
 
 fn syscall_lines_ptbr() -> Vec<Line<'static>> {
     vec![
-        h1("FALCON — Referência de Syscalls"),
+        h1("RAVEN — Referência de Syscalls"),
         blank(),
         note("Convenção: a7 = número da syscall · a0..a5 = argumentos · a0 = valor de retorno"),
         note("Retornos negativos indicam erros (convenção Linux errno, ex.: -9 = EBADF)."),
@@ -796,8 +857,8 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         note("Flags aceitas em getrandom: GRND_NONBLOCK (0x1), GRND_RANDOM (0x2)."),
         blank(),
 
-        // ── Falcon extensions ──
-        h2("Extensões didáticas do Falcon  (a7 ≥ 1000)"),
+        // ── RAVEN extensions ──
+        h2("Extensões didáticas do RAVEN  (a7 ≥ 1000)"),
         blank(),
         thead(),
         tsep(),
@@ -837,7 +898,7 @@ fn memory_map_lines(lang: DocsLang) -> Vec<Line<'static>> {
 
 fn memory_map_lines_en() -> Vec<Line<'static>> {
     vec![
-        h1("FALCON — Memory Map"),
+        h1("RAVEN — Memory Map"),
         blank(),
         note("RAM = 128 KB · addresses 0x00000000 .. 0x0001FFFF · no MMU, no virtual memory"),
         blank(),
@@ -878,7 +939,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         blank(),
         raw("  The region between bss_end and the stack is ordinary RAM with no"),
         raw("  management. You can use it directly with sw/lw if you know the address."),
-        raw("  There is no malloc/free — FALCON has a flat, fixed 128 KB address space"),
+        raw("  There is no malloc/free — RAVEN has a flat, fixed 128 KB address space"),
         raw("  with no pagination or memory protection."),
         blank(),
         note("Tip: use .bss labels to reserve named buffers without wasting binary space."),
@@ -894,12 +955,33 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         mono("      li   t1, 42"),
         mono("      sw   t1, 0(t0)  ; store 42 at buf[0]"),
         mono("      lw   t2, 0(t0)  ; load back → t2 = 42"),
+        blank(),
+
+        // ── Bump allocator ──
+        h2("Manual heap — bump allocator"),
+        blank(),
+        raw("  To allocate dynamically at runtime, store a heap pointer in .data and"),
+        raw("  advance it on each allocation. The heap grows upward; the stack grows"),
+        raw("  downward — they will collide if combined use exceeds free space."),
+        blank(),
+        mono("  .data"),
+        mono("  heap_ptr: .word 0x00004000   ; initial heap base (above .bss)"),
+        blank(),
+        mono("  ; alloc(a1 = size) → a0 = pointer to allocated block"),
+        mono("  alloc:"),
+        mono("      la   t0, heap_ptr"),
+        mono("      lw   a0, 0(t0)      ; a0 = current heap_ptr (return value)"),
+        mono("      add  t1, a0, a1     ; t1 = heap_ptr + size"),
+        mono("      sw   t1, 0(t0)      ; heap_ptr += size"),
+        mono("      ret"),
+        blank(),
+        note("There is no free() — allocations are permanent for the lifetime of the program."),
     ]
 }
 
 fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
     vec![
-        h1("FALCON — Mapa de Memória"),
+        h1("RAVEN — Mapa de Memória"),
         blank(),
         note("RAM = 128 KB · endereços 0x00000000 .. 0x0001FFFF · sem MMU, sem memória virtual"),
         blank(),
@@ -940,7 +1022,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         blank(),
         raw("  A região entre o fim do .bss e a pilha é RAM comum, sem gerenciamento."),
         raw("  Você pode usá-la diretamente com sw/lw se souber o endereço."),
-        raw("  Não existe malloc/free — o FALCON tem um espaço de endereçamento"),
+        raw("  Não existe malloc/free — o RAVEN tem um espaço de endereçamento"),
         raw("  plano e fixo de 128 KB, sem paginação nem proteção de memória."),
         blank(),
         note("Dica: use labels no .bss para reservar buffers nomeados sem desperdiçar espaço no binário."),
@@ -956,5 +1038,26 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         mono("      li   t1, 42"),
         mono("      sw   t1, 0(t0)  ; armazena 42 em buf[0]"),
         mono("      lw   t2, 0(t0)  ; lê de volta → t2 = 42"),
+        blank(),
+
+        // ── Alocador bump ──
+        h2("Heap manual — alocador bump"),
+        blank(),
+        raw("  Para alocar dinamicamente em tempo de execução, armazene um ponteiro de"),
+        raw("  heap no .data e avance-o a cada alocação. O heap cresce para cima; a"),
+        raw("  pilha cresce para baixo — colidem se o uso combinado exceder o espaço livre."),
+        blank(),
+        mono("  .data"),
+        mono("  heap_ptr: .word 0x00004000   ; base inicial do heap (acima do .bss)"),
+        blank(),
+        mono("  ; alloc(a1 = tamanho) → a0 = ponteiro para o bloco alocado"),
+        mono("  alloc:"),
+        mono("      la   t0, heap_ptr"),
+        mono("      lw   a0, 0(t0)      ; a0 = heap_ptr atual (valor de retorno)"),
+        mono("      add  t1, a0, a1     ; t1 = heap_ptr + tamanho"),
+        mono("      sw   t1, 0(t0)      ; heap_ptr += tamanho"),
+        mono("      ret"),
+        blank(),
+        note("Não existe free() — as alocações são permanentes durante a execução do programa."),
     ]
 }
