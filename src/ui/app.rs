@@ -182,7 +182,8 @@ pub(super) struct CacheState {
     pub(super) hover_subtab_config: bool,
     pub(super) hover_subtab_view: bool,
     pub(super) view_scroll: usize,
-    pub(super) view_h_scroll: usize,
+    pub(super) view_h_scroll: usize,   // I-cache (or unified/L2+) horizontal scroll
+    pub(super) view_h_scroll_d: usize, // D-cache horizontal scroll (separate from I-cache)
     pub(super) data_fmt: CacheDataFmt,
     pub(super) data_group: CacheDataGroup,
     // View legend button positions (set by render each frame, read by mouse)
@@ -227,6 +228,7 @@ pub(super) struct CacheState {
     pub(super) hscroll_start: usize,
     pub(super) hscroll_drag_max: usize,
     pub(super) hscroll_drag_track_w: u16,
+    pub(super) hscroll_drag_is_dcache: bool, // true = dragging D-cache bar, false = I-cache/unified
     // Set each frame by render (via Cell so render takes &App).
     // tracks[0] = I-cache or primary/unified, tracks[1] = D-cache (0,0 if absent).
     // Each entry: (track_x, track_w).
@@ -593,6 +595,13 @@ pub(super) struct DocsState {
     pub(super) type_filter: u16,
     /// Cursor position in the filter bar: 0 = "All", 1–12 = individual types.
     pub(super) filter_cursor: usize,
+    // ── Render-side position tracking (set by render, read by mouse handler) ──
+    /// Y row of the page tab bar (relative to terminal origin).
+    pub(super) tab_bar_y: std::cell::Cell<u16>,
+    /// (x_start, x_end) for each of the 3 page tabs, relative to terminal origin.
+    pub(super) tab_bar_xs: std::cell::Cell<[(u16, u16); 3]>,
+    /// Y row of the filter bar (InstrRef page only).
+    pub(super) filter_bar_y: std::cell::Cell<u16>,
 }
 
 // ── Top-level app ──────────────────────────────────────────────────────────────
@@ -631,6 +640,9 @@ pub struct App {
     // within the same keypress cycle, preventing double-paste in terminals
     // that emit both Event::Paste and a Ctrl+V key event simultaneously.
     pub(super) last_bracketed_paste: Option<Instant>,
+
+    // Splash screen — set to Some(start_instant) on launch, cleared after 4s
+    pub(super) splash_start: Option<Instant>,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -760,7 +772,14 @@ impl App {
                 show_instr_type: true,
                 mem_access_log: Vec::new(),
             },
-            docs: DocsState { page: DocsPage::InstrRef, lang: DocsLang::En, scroll: 0, search_open: false, search_query: String::new(), type_filter: 0x0FFF, filter_cursor: 0 },
+            docs: DocsState {
+                page: DocsPage::InstrRef, lang: DocsLang::En, scroll: 0,
+                search_open: false, search_query: String::new(),
+                type_filter: 0x0FFF, filter_cursor: 0,
+                tab_bar_y: std::cell::Cell::new(0),
+                tab_bar_xs: std::cell::Cell::new([(0, 0); 3]),
+                filter_bar_y: std::cell::Cell::new(0),
+            },
             cache: CacheState {
                 subtab: CacheSubtab::Stats,
                 scope: CacheScope::Both,
@@ -774,6 +793,7 @@ impl App {
                 hover_subtab_view: false,
                 view_scroll: 0,
                 view_h_scroll: 0,
+                view_h_scroll_d: 0,
                 data_fmt: CacheDataFmt::Hex,
                 data_group: CacheDataGroup::B1,
                 view_fmt_btn: std::cell::Cell::new((0, 0, 0)),
@@ -810,6 +830,7 @@ impl App {
                 hscroll_start: 0,
                 hscroll_drag_max: 0,
                 hscroll_drag_track_w: 1,
+                hscroll_drag_is_dcache: false,
                 hscroll_row: std::cell::Cell::new(0),
                 hscroll_tracks: std::cell::Cell::new([(0, 0); 2]),
                 hscroll_max: std::cell::Cell::new(0),
@@ -826,6 +847,7 @@ impl App {
             console: Console::default(),
             clipboard: Clipboard::new().ok(),
             last_bracketed_paste: None,
+            splash_start: Some(Instant::now()),
         }
     }
 
@@ -1337,6 +1359,12 @@ impl App {
     }
 
     fn tick(&mut self) {
+        if let Some(t) = self.splash_start {
+            if t.elapsed().as_secs_f64() >= 4.0 {
+                self.splash_start = None;
+            }
+        }
+
         if self.run.is_running {
             match self.run.speed {
                 RunSpeed::X1 => {

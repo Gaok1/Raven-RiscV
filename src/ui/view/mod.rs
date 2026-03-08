@@ -4,6 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Tabs},
 };
 
+use crate::ui::theme;
 pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
 pub(super) use super::editor::Editor;
 
@@ -13,13 +14,27 @@ mod run;
 mod components;
 pub mod disasm;
 mod cache;
+mod splash;
 
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};
 use run::render_run;
 use cache::render_cache;
+use splash::render_splash;
 
 pub fn ui(f: &mut Frame, app: &App) {
+    // Splash screen takes over the full frame
+    if let Some(started) = app.splash_start {
+        render_splash(f, started, 4.0);
+        return;
+    }
+
+    // Apply app-wide dark background
+    f.render_widget(
+        Block::default().style(Style::default().bg(theme::BG)),
+        f.area(),
+    );
+
     let size = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -41,33 +56,33 @@ pub fn ui(f: &mut Frame, app: &App) {
         .map(|&tab| {
             let mut line = Line::from(tab.label());
             if Some(tab) == app.hover_tab && tab != app.tab {
-                line = line.style(Style::default().fg(Color::Black).bg(Color::Gray));
+                line = line.style(Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG));
             }
             line
         })
         .collect::<Vec<_>>();
 
     let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title("Falcon ASM"))
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme::BORDER)).title("RAVEN"))
         .highlight_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD),
         )
-        .divider(Span::styled(" │ ", Style::default().fg(Color::DarkGray)))
+        .divider(Span::styled(" │ ", Style::default().fg(theme::BORDER)))
         .select(app.tab.index());
     f.render_widget(tabs, tabs_area);
 
     // Help button [?]
     let help_style = if app.help_open {
-        Style::default().fg(Color::Black).bg(Color::LightCyan).bold()
+        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT).bold()
     } else if app.hover_help {
-        Style::default().fg(Color::Black).bg(Color::Yellow).bold()
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG).bold()
     } else {
-        Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::DIM)
+        Style::default().fg(theme::ACCENT).add_modifier(Modifier::DIM)
     };
-    let help_block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray));
+    let help_block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme::BORDER));
     let help_para = Paragraph::new(Span::styled("[?]", help_style)).block(help_block).alignment(Alignment::Center);
     f.render_widget(help_para, help_btn_area);
 
@@ -94,7 +109,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         mode
     );
 
-    let status = Paragraph::new(status).style(Style::default().fg(Color::DarkGray));
+    let status = Paragraph::new(status).style(Style::default().fg(theme::LABEL));
     f.render_widget(status, chunks[2]);
 
     if app.show_exit_popup {
@@ -115,11 +130,11 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
         Line::raw("Check your code is saved before exiting."),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("[Exit]", Style::default().fg(Color::Black).bg(Color::Red)),
+            Span::styled("[Exit]", Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::DANGER)),
             Span::raw("   "),
             Span::styled(
                 "[Cancel]",
-                Style::default().fg(Color::Black).bg(Color::Blue),
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT),
             ),
         ]),
     ];
@@ -152,8 +167,8 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::LightCyan))
-        .title(Span::styled(title, Style::default().fg(Color::LightCyan).bold()));
+        .border_style(Style::default().fg(theme::ACCENT))
+        .title(Span::styled(title, Style::default().fg(theme::ACCENT).bold()));
 
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -163,8 +178,8 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
             Line::from("")
         } else {
             Line::from(vec![
-                Span::styled(format!("{key:<18}"), Style::default().fg(Color::Yellow).bold()),
-                Span::styled(desc.to_string(), Style::default().fg(Color::White)),
+                Span::styled(format!("{key:<18}"), Style::default().fg(theme::LABEL_Y).bold()),
+                Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
             ])
         }
     }).collect();
@@ -172,19 +187,19 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
     if total > 1 {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("← → ", Style::default().fg(Color::DarkGray)),
+            Span::styled("← → ", Style::default().fg(theme::LABEL)),
             Span::styled(
                 format!("page {}/{total}   ", page + 1),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::LABEL),
             ),
-            Span::styled("Esc", Style::default().fg(Color::DarkGray)),
-            Span::styled(" close", Style::default().fg(Color::DarkGray)),
+            Span::styled("Esc", Style::default().fg(theme::LABEL)),
+            Span::styled(" close", Style::default().fg(theme::LABEL)),
         ]));
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("Esc", Style::default().fg(Color::DarkGray)),
-            Span::styled(" close", Style::default().fg(Color::DarkGray)),
+            Span::styled("Esc", Style::default().fg(theme::LABEL)),
+            Span::styled(" close", Style::default().fg(theme::LABEL)),
         ]));
     }
 

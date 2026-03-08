@@ -16,6 +16,12 @@ fn main() -> io::Result<()> {
     #[cfg(unix)]
     let quit_flag = setup_sigint();
 
+    // Send xterm-compatible maximize hint before entering raw/alternate mode.
+    // Works in most modern terminal emulators (alacritty, kitty, xterm, Windows Terminal).
+    // Silently ignored by terminals that don't support it.
+    print!("\x1b[9;1t");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+
     let mut terminal: DefaultTerminal = ratatui::init();
 
     #[cfg(unix)]
