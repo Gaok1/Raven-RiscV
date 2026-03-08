@@ -2,6 +2,7 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 
+use crate::ui::theme;
 use super::App;
 use super::instruction_details::disasm_word;
 use super::memory::imem_address_in_range;
@@ -20,9 +21,9 @@ pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
 
 fn instruction_block(app: &App) -> Block<'static> {
     let border_style = if app.run.hover_imem_bar {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::BORDER)
     };
 
     Block::default()
@@ -47,7 +48,7 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
                 skip -= 1;
             } else {
                 let is_hover = app.run.hover_imem_addr == Some(addr);
-                let bc_style = Style::default().fg(Color::Rgb(130, 220, 180))
+                let bc_style = Style::default().fg(theme::COMMENT)
                     .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
                 items.push(ListItem::new(Line::from(vec![
                     Span::styled(format!("▌ {bc}"), bc_style),
@@ -63,7 +64,7 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
                 if skip > 0 { skip -= 1; continue; }
                 if remaining == 0 { break; }
                 let is_hover = app.run.hover_imem_addr == Some(addr);
-                let lbl_style = Style::default().fg(Color::Yellow)
+                let lbl_style = Style::default().fg(theme::LABEL_Y)
                     .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
                 items.push(ListItem::new(Line::from(vec![
                     Span::styled(format!("{name}:"), lbl_style),
@@ -142,7 +143,7 @@ fn heat_color(n: u64) -> Color {
     }
 }
 
-const HOVER_BG: Color = Color::Rgb(38, 48, 72);
+const HOVER_BG: Color = theme::BG_HOVER;
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let word = app.run.mem.peek32(addr).unwrap_or(0);
@@ -222,7 +223,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
 
 fn render_instruction_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
     let style = if app.run.hover_imem_bar {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme::HOVER_BG)
     } else {
         Style::default()
     };
@@ -240,8 +241,8 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled("Trace (last executed)", Style::default().fg(Color::Magenta)));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled("Trace (last executed)", Style::default().fg(theme::ACCENT)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -254,9 +255,9 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
         .map(|(i, (addr, disasm))| {
             let style = if i + 1 == visible.min(total) {
                 // Most recent entry
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(theme::LABEL_Y)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme::LABEL)
             };
             let lbl = app.run.labels.get(addr)
                 .and_then(|v| v.first())

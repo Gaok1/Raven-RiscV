@@ -7,6 +7,7 @@ use ratatui::{
 
 use crate::falcon::cache::{CacheConfig, InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
 use crate::ui::app::{App, ConfigField, CpiConfig};
+use crate::ui::theme;
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     if app.cache.selected_level == 0 {
@@ -30,8 +31,8 @@ fn render_cpi_panel(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled("CPI Config", Style::default().fg(Color::Rgb(100, 220, 180)).bold()));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled("CPI Config", Style::default().fg(theme::CPI_PANEL).bold()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -54,23 +55,23 @@ fn render_cpi_panel(f: &mut Frame, area: Rect, app: &App) {
         let is_hov = hover == Some(i);
 
         let name_style = if is_sel {
-            Style::default().fg(Color::Black).bg(Color::Rgb(100, 220, 180)).bold()
+            Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::CPI_PANEL).bold()
         } else if is_hov {
-            Style::default().fg(Color::Rgb(100, 220, 180)).bg(Color::Rgb(30, 50, 40))
+            Style::default().fg(theme::CPI_PANEL).bg(Color::Rgb(30, 50, 40))
         } else {
-            Style::default().fg(Color::Rgb(100, 220, 180))
+            Style::default().fg(theme::CPI_PANEL)
         };
         let val_style = if is_sel && editing {
-            Style::default().fg(Color::Yellow).bold()
+            Style::default().fg(theme::LABEL_Y).bold()
         } else if is_sel || is_hov {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(theme::LABEL_Y)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme::TEXT)
         };
         let desc_style = if is_hov {
-            Style::default().fg(Color::Gray)
+            Style::default().fg(theme::LABEL)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme::BORDER)
         };
 
         let line = Line::from(vec![
@@ -102,8 +103,8 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(label, Style::default().fg(Color::Cyan).bold()));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -154,8 +155,8 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(label, Style::default().fg(Color::Cyan).bold()));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -199,12 +200,12 @@ fn render_fields(
     let mark = |ok: bool| if ok { "" } else { " ✗" };
     // Yellow = pending change from active config, White = same
     let cs = |same: bool| -> Style {
-        if !same { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::White) }
+        if !same { Style::default().fg(theme::LABEL_Y) } else { Style::default().fg(theme::TEXT) }
     };
     // Style for the active/selected field
-    let active_style = Style::default().fg(Color::Black).bg(Color::Cyan);
-    let label_active = Style::default().fg(Color::Black).bg(Color::Cyan);
-    let hover_style = Style::default().bg(Color::DarkGray);
+    let active_style = Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT);
+    let label_active = Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT);
+    let hover_style = Style::default().bg(Color::Rgb(50, 50, 60));
 
     let field_item = |field: ConfigField, label: &'static str, value: String, val_style: Style| -> ListItem<'static> {
         let mut item = if active == Some(field) {
@@ -224,7 +225,7 @@ fn render_fields(
             }
         } else {
             ListItem::new(Line::from(vec![
-                Span::styled(label, Style::default().fg(Color::Gray)),
+                Span::styled(label, Style::default().fg(theme::LABEL)),
                 Span::styled(value, val_style),
             ]))
         };
@@ -238,15 +239,15 @@ fn render_fields(
     // Sets row: show computed value or the specific validation error
     let sets_item = match &validation {
         Ok(()) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", Style::default().fg(Color::Gray)),
+            Span::styled("  Sets:          ", Style::default().fg(theme::LABEL)),
             Span::styled(
                 format!("{}", pending.num_sets()),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::BORDER),
             ),
         ])),
         Err(msg) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", Style::default().fg(Color::Gray)),
-            Span::styled(format!("✗ {msg}"), Style::default().fg(Color::Red)),
+            Span::styled("  Sets:          ", Style::default().fg(theme::LABEL)),
+            Span::styled(format!("✗ {msg}"), Style::default().fg(theme::DANGER)),
         ])),
     };
 
@@ -284,8 +285,8 @@ fn render_fields(
             cs(pending.transfer_width == current.transfer_width)),
         if is_last_level {
             ListItem::new(Line::from(vec![
-                Span::styled("  Inclusion:      ", Style::default().fg(Color::DarkGray)),
-                Span::styled("N/A (last level)", Style::default().fg(Color::DarkGray)),
+                Span::styled("  Inclusion:      ", Style::default().fg(theme::BORDER)),
+                Span::styled("N/A (last level)", Style::default().fg(theme::BORDER)),
             ]))
         } else {
             field_item(ConfigField::Inclusion, "  Inclusion:      ",
@@ -299,7 +300,7 @@ fn render_fields(
             } else {
                 "  Click/edit  ◄►=cycle  Ctrl+E=export  Ctrl+L=import"
             },
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::LABEL),
         ))),
     ];
 
@@ -325,7 +326,7 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     ]);
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(line), inner);
@@ -349,7 +350,7 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
     ]);
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(line), inner);
@@ -357,20 +358,20 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
 
 fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
     let apply_s = if app.cache.hover_apply {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::Black).bg(Color::Green)
+        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::RUNNING)
     };
     let keep_s = if app.cache.hover_apply_keep {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::Black).bg(Color::Blue)
+        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT)
     };
 
     let line = if let Some(ref err) = app.cache.config_error {
-        Line::from(Span::styled(format!(" ✗ {err}"), Style::default().fg(Color::Red)))
+        Line::from(Span::styled(format!(" ✗ {err}"), Style::default().fg(theme::DANGER)))
     } else if let Some(ref status) = app.cache.config_status {
-        Line::from(Span::styled(format!(" ✓ {status}"), Style::default().fg(Color::Green)))
+        Line::from(Span::styled(format!(" ✓ {status}"), Style::default().fg(theme::RUNNING)))
     } else {
         Line::from(vec![
             Span::raw(" "),
@@ -382,7 +383,7 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(line), inner);
@@ -390,9 +391,9 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
 
 fn preset_btn_style(hovered: bool) -> Style {
     if hovered {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(theme::ACCENT)
     }
 }
 

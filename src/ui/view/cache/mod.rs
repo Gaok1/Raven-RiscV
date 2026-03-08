@@ -6,7 +6,8 @@ use ratatui::{
 };
 
 use crate::falcon::cache::CacheController;
-use crate::ui::app::{App, CacheScope, CacheSubtab, RunButton, RunSpeed};
+use crate::ui::app::{App, CacheScope, CacheSubtab, RunButton};
+use crate::ui::theme;
 
 mod config;
 mod stats;
@@ -40,30 +41,44 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let speed_text = app.run.speed.label();
-    let speed_color = match app.run.speed {
-        RunSpeed::X1      => Color::Blue,
-        RunSpeed::X2      => Color::Cyan,
-        RunSpeed::X4      => Color::Yellow,
-        RunSpeed::Instant => Color::Magenta,
-    };
-    let (state_text, state_color) = if app.run.is_running {
-        ("RUN", Color::Green)
-    } else {
-        ("PAUSE", Color::Red)
-    };
 
     let hover_reset = app.hover_run_button == Some(RunButton::Reset);
     let hover_speed = app.hover_run_button == Some(RunButton::Speed);
     let hover_state = app.hover_run_button == Some(RunButton::State);
 
-    let mk_btn = |label: &str, color: Color, hovered: bool| -> Span<'static> {
-        let base = Style::default().fg(Color::Black);
+    let mk_toggle = |label: &str, hovered: bool| -> Span<'static> {
         let style = if hovered {
-            base.bg(color).add_modifier(Modifier::ITALIC)
+            Style::default()
+                .fg(theme::HOVER_FG)
+                .bg(theme::HOVER_BG)
+                .add_modifier(Modifier::ITALIC)
         } else {
-            base.bg(color).add_modifier(Modifier::DIM)
+            Style::default()
+                .fg(theme::ACTIVE)
+                .add_modifier(Modifier::BOLD)
         };
         Span::styled(format!("[{label}]"), style)
+    };
+
+    let mk_semantic = |label: &str, color: Color, hovered: bool| -> Span<'static> {
+        let style = if hovered {
+            Style::default()
+                .fg(theme::HOVER_FG)
+                .bg(theme::HOVER_BG)
+                .add_modifier(Modifier::ITALIC)
+        } else {
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(color)
+                .add_modifier(Modifier::BOLD)
+        };
+        Span::styled(format!("[{label}]"), style)
+    };
+
+    let (state_text, state_color) = if app.run.is_running {
+        ("RUN", theme::RUNNING)
+    } else {
+        ("PAUSE", theme::PAUSED)
     };
 
     let total = app.run.mem.total_program_cycles();
@@ -72,34 +87,29 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
 
     let line1 = Line::from(vec![
         Span::raw(" "),
-        mk_btn("Reset", Color::Red, hover_reset),
+        mk_semantic("Reset", theme::DANGER, hover_reset),
         Span::raw("  Speed "),
-        mk_btn(speed_text, speed_color, hover_speed),
+        mk_toggle(speed_text, hover_speed),
         Span::raw("  State "),
-        mk_btn(state_text, state_color, hover_state),
+        mk_semantic(state_text, state_color, hover_state),
         Span::styled(
             "   r=reset  f=speed  p=pause  s=step",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::LABEL),
         ),
     ]);
     let line2 = Line::from(vec![
-        Span::styled(format!(" Cycles:{total}"), Style::default().fg(Color::Cyan)),
+        Span::styled(format!(" Cycles:{total}"), Style::default().fg(theme::METRIC_CYC)),
         Span::raw("  "),
-        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(Color::Magenta)),
+        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(theme::METRIC_CPI)),
         Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
     ]);
 
-    let border_color = if app.hover_run_button.is_some() {
-        Color::LightCyan
-    } else {
-        Color::DarkGray
-    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
+        .border_style(Style::default().fg(theme::BORDER))
         .border_type(BorderType::Rounded)
-        .title(Span::styled("Execution", Style::default().fg(Color::DarkGray)));
+        .title(Span::styled("Execution", Style::default().fg(theme::LABEL)));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(vec![line1, line2]), inner);
@@ -131,9 +141,9 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
 
     // Add button
     let add_style = if app.cache.hover_add_level {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme::ACCENT)
     };
     spans.push(Span::styled("[+ Add]", add_style));
 
@@ -141,16 +151,16 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
     if num_extra > 0 {
         spans.push(Span::raw(" "));
         let rem_style = if app.cache.hover_remove_level {
-            Style::default().fg(Color::Black).bg(Color::Red)
+            Style::default().fg(theme::HOVER_FG).bg(theme::DANGER)
         } else {
-            Style::default().fg(Color::Red)
+            Style::default().fg(theme::DANGER)
         };
         spans.push(Span::styled("[- Remove]", rem_style));
     }
 
     spans.push(Span::styled(
         "   +/= add level  -/_ remove",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme::LABEL),
     ));
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -180,16 +190,16 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" View ",   view_style),
         Span::raw("  "),
         Span::styled(" Config ", config_style),
-        Span::styled("   Tab to switch", Style::default().fg(Color::DarkGray)),
+        Span::styled("   Tab to switch", Style::default().fg(theme::LABEL)),
     ]);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme::BORDER))
         .title(Span::styled(
             format!("Cache Simulation — {level_label}"),
-            Style::default().fg(Color::Cyan).bold(),
+            Style::default().fg(theme::ACCENT).bold(),
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -199,16 +209,16 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 /// Shared controls bar — visible on every Cache subtab.
 pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     let export_style = if app.cache.hover_export_results {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::Green)
+        Style::default().fg(theme::ACCENT)
     };
     let compare_style = if app.cache.hover_compare {
-        Style::default().fg(Color::Black).bg(Color::Yellow)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else if app.cache.loaded_snapshot.is_some() {
-        Style::default().fg(Color::LightBlue)
+        Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::IDLE)
     };
 
     // Scope buttons: only shown when L1 is selected
@@ -217,8 +227,7 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     let scope_d_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::DCache), app.cache.hover_scope_d);
     let scope_both_style = scope_btn_style(matches!(app.cache.scope, CacheScope::Both),   app.cache.hover_scope_both);
 
-    // Layout: " [\u{2b06} Export]  [\u{2b07} Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
-    // x=1..11               x=13..24
+    // Layout: " [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
     let mut line_spans = vec![
         Span::raw(" "),
         Span::styled("[\u{2b06} Export]",   export_style),
@@ -235,12 +244,12 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         line_spans.push(Span::styled("[Both]",    scope_both_style));
         line_spans.push(Span::styled(
             "   Ctrl+R=export  Ctrl+M=compare",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::LABEL),
         ));
     } else {
         line_spans.push(Span::styled(
             "   Ctrl+R=export  Ctrl+M=compare",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::LABEL),
         ));
     }
 
@@ -248,7 +257,7 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(line), inner);
@@ -256,33 +265,38 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
 
 fn level_btn_style(active: bool, hovered: bool) -> Style {
     if active {
-        Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(theme::RUNNING)
+            .add_modifier(Modifier::BOLD)
     } else if hovered {
-        Style::default().fg(Color::Black).bg(Color::Gray)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::IDLE)
     }
 }
 
 fn subtab_style(active: bool, hovered: bool) -> Style {
     if active {
         Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(theme::ACCENT)
             .add_modifier(Modifier::BOLD)
     } else if hovered {
-        Style::default().fg(Color::Black).bg(Color::Gray)
+        Style::default().fg(theme::ACTIVE).bg(Color::Rgb(60, 60, 70))
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::IDLE)
     }
 }
 
 pub(super) fn scope_btn_style(active: bool, hovered: bool) -> Style {
     if active {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(theme::ACCENT)
     } else if hovered {
-        Style::default().fg(Color::Black).bg(Color::Gray)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::IDLE)
     }
 }

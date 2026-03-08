@@ -2,9 +2,10 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
+use crate::ui::theme;
 use super::components::render_console;
 pub(super) use super::{App, MemRegion, RunButton};
-pub(super) use crate::ui::app::{FormatMode, RunSpeed};
+pub(super) use crate::ui::app::FormatMode;
 
 mod formatting;
 mod instruction_details;
@@ -79,7 +80,7 @@ fn render_collapsed(f: &mut Frame, area: Rect, label: &'static str) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
     // Render label vertically centered
@@ -87,7 +88,7 @@ fn render_collapsed(f: &mut Frame, area: Rect, label: &'static str) {
     if mid < inner.height {
         let label_area = Rect::new(inner.x, inner.y + mid, inner.width, 1);
         f.render_widget(
-            Paragraph::new(label).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(label).style(Style::default().fg(theme::LABEL)),
             label_area,
         );
     }
@@ -95,7 +96,7 @@ fn render_collapsed(f: &mut Frame, area: Rect, label: &'static str) {
 
 fn render_sidebar_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
     let style = if app.run.hover_sidebar_bar {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme::HOVER_BG)
     } else {
         Style::default()
     };

@@ -1,5 +1,6 @@
 use crate::falcon;
 use crate::ui::app::cpi_class_label;
+use crate::ui::theme;
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
@@ -104,8 +105,8 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(title, Style::default().fg(Color::White)))
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(title, Style::default().fg(theme::TEXT)))
         .title_alignment(Alignment::Left);
 
     let inner = block.inner(area);
@@ -113,11 +114,11 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
 
     let origin_span = Span::styled(
         format!(" @ 0x{:08x} ({})", ctx.addr, ctx.origin),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme::LABEL),
     );
     let word_span = Span::styled(
         format!("0x{:08x}", ctx.word),
-        Style::default().fg(Color::Rgb(120, 180, 255)),
+        Style::default().fg(theme::IMM_COLOR),
     );
     let disasm_span = Span::styled(
         ctx.disasm.clone(),
@@ -136,7 +137,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             origin_span,
         ]),
         Line::from(vec![
-            Span::styled("  word  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  word  ", Style::default().fg(theme::LABEL)),
             word_span,
             Span::styled(
                 format!("  ({:032b})", ctx.word),
@@ -144,15 +145,15 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             ),
         ]),
         Line::from(vec![
-            Span::styled("  cycles  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("~{base_cycles}"), Style::default().fg(Color::Rgb(100, 220, 180)).bold()),
-            Span::styled(format!("  [{class_label}]"), Style::default().fg(Color::DarkGray)),
+            Span::styled("  cycles  ", Style::default().fg(theme::LABEL)),
+            Span::styled(format!("~{base_cycles}"), Style::default().fg(theme::CPI_PANEL).bold()),
+            Span::styled(format!("  [{class_label}]"), Style::default().fg(theme::LABEL)),
         ]),
     ];
 
     if let Some(ref comment) = ctx.comment {
         lines.push(Line::from(vec![
-            Span::styled("  comment  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  comment  ", Style::default().fg(theme::LABEL)),
             Span::styled(comment.clone(), Style::default().fg(Color::Rgb(180, 220, 130))),
         ]));
     }
@@ -160,26 +161,26 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     if let Some((taken, target, ref label)) = ctx.jump_target {
         let label_part = label.as_deref().map(|l| format!(" <{l}>")).unwrap_or_default();
         let (arrow, color) = if taken {
-            (format!("→ 0x{target:08x}{label_part}  (taken)"), Color::Rgb(0, 210, 100))
+            (format!("→ 0x{target:08x}{label_part}  (taken)"), theme::RUNNING)
         } else {
             (format!("→ 0x{target:08x}{label_part}  (not taken)"), Color::Rgb(120, 120, 120))
         };
         let exec_count = ctx.addr.checked_add(0).and_then(|a| app.run.exec_counts.get(&a)).copied().unwrap_or(0);
         lines.push(Line::from(vec![
-            Span::styled("  target   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  target   ", Style::default().fg(theme::LABEL)),
             Span::styled(arrow, Style::default().fg(color)),
         ]));
         if exec_count > 0 {
             lines.push(Line::from(vec![
-                Span::styled("  executions ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("×{exec_count}"), Style::default().fg(Color::Cyan)),
+                Span::styled("  executions ", Style::default().fg(theme::LABEL)),
+                Span::styled(format!("×{exec_count}"), Style::default().fg(theme::METRIC_CYC)),
             ]));
         }
     } else if let Some(&count) = app.run.exec_counts.get(&ctx.addr) {
         if count > 0 {
             lines.push(Line::from(vec![
-                Span::styled("  executions ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("×{count}"), Style::default().fg(Color::Cyan)),
+                Span::styled("  executions ", Style::default().fg(theme::LABEL)),
+                Span::styled(format!("×{count}"), Style::default().fg(theme::METRIC_CYC)),
             ]));
         }
     }
@@ -194,8 +195,8 @@ fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled("Field Map", Style::default().fg(Color::DarkGray)));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled("Field Map", Style::default().fg(theme::LABEL)));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -276,8 +277,8 @@ fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disas
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled("Decoded", Style::default().fg(Color::DarkGray)));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled("Decoded", Style::default().fg(theme::LABEL)));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -301,7 +302,7 @@ fn render_decoded(f: &mut Frame, area: Rect, word: u32, format: EncFormat, disas
 
 fn kv(key: &'static str, val: String, val_color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{key:<10}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{key:<10}"), Style::default().fg(theme::LABEL)),
         Span::styled(val, Style::default().fg(val_color)),
     ])
 }
@@ -311,7 +312,7 @@ fn reg_kv(key: &'static str, reg: u8) -> Line<'static> {
 }
 
 fn imm_kv(key: &'static str, v: i32) -> Line<'static> {
-    kv(key, format!("{v}  (0x{v:x})"), Color::Rgb(120, 180, 255))
+    kv(key, format!("{v}  (0x{v:x})"), theme::IMM_COLOR)
 }
 
 fn push_fields(lines: &mut Vec<Line<'static>>, word: u32, format: EncFormat, cpu: Option<&crate::falcon::Cpu>) {
@@ -478,13 +479,13 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
 
     if !desc.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("⟹  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(desc.to_string(), Style::default().fg(Color::White)),
+            Span::styled("⟹  ", Style::default().fg(theme::LABEL)),
+            Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
         ]));
     } else if !disasm.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("⟹  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(disasm.to_string(), Style::default().fg(Color::DarkGray)),
+            Span::styled("⟹  ", Style::default().fg(theme::LABEL)),
+            Span::styled(disasm.to_string(), Style::default().fg(theme::LABEL)),
         ]));
     }
 }

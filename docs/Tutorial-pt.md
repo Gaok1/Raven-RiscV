@@ -1,17 +1,17 @@
-# FALCON-ASM Tutorial
+# RAVEN Tutorial
 
-Bem-vindo ao **tutorial da plataforma FALCON-ASM** - um guia introdutório que apresenta todas as principais funcionalidades e mecânicas da ferramenta.
+Bem-vindo ao **tutorial da plataforma RAVEN** - um guia introdutório que apresenta todas as principais funcionalidades e mecânicas da ferramenta.
 
 
 ## **1. Introdução**
 
-O **FALCON-ASM** é uma plataforma que combina **IDE** e **simulador** para facilitar o aprendizado da arquitetura **RISC-V**.
+O **RAVEN** é uma plataforma que combina **IDE** e **simulador** para facilitar o aprendizado da arquitetura **RISC-V**.
 Ela permite **escrever, montar e executar código assembly**, observando em tempo real o comportamento da **memória**, dos **registradores** e a **decodificação** de cada instrução.
 
 
 ## **2. Estrutura da Interface**
 
-A interface do FALCON é organizada em **abas**, que representam as principais etapas do ciclo de desenvolvimento:
+A interface do RAVEN é organizada em **abas**, que representam as principais etapas do ciclo de desenvolvimento:
 
 1. **Editor** - escrita e montagem do código.
 2. **Run (Simulação)** - execução passo a passo e visualização da memória e dos registradores.
@@ -32,14 +32,14 @@ Aqui, o usuário pode **escrever, montar, importar e exportar** código assembly
 * **Importação e Exportação:**
 
   * **Arquivos de texto:** `.asm` e `.FAS`
-  * **Binários:** gerados pelo próprio Falcon (.bin)
+  * **Binários:** gerados pelo próprio RAVEN (.bin)
 * **Atalho de Montagem:** `Ctrl + R` - monta o código e exibe o status da operação.
 
 <img width="1102" height="571" alt="EditorSection2" src="https://github.com/user-attachments/assets/950f8d21-0b7b-4ccf-9cc0-0035fe5cfa65" />
 
 ### **Estrutura do Código**
 
-O FALCON permite escrever instruções diretamente, sem necessidade de declarar seções.
+O RAVEN permite escrever instruções diretamente, sem necessidade de declarar seções.
 Porém, quando há necessidade de incluir dados, utilize:
 
 ```asm
@@ -170,10 +170,10 @@ Você pode editar parâmetros (size, line size, associativity) e policies, e apl
 Para mais detalhes, veja [`cache.pt-BR.md`](cache.pt-BR.md).
 
 ## **6. Executando IO**
-O FALCON-ASM foi projetado para ser intuitivo e direto, sem perder a fidelidade ao comportamento real da arquitetura RISC-V.
+O RAVEN foi projetado para ser intuitivo e direto, sem perder a fidelidade ao comportamento real da arquitetura RISC-V.
 Para reduzir o boilerplate e tornar o código mais legível, a plataforma inclui um conjunto de pseudo-instruções que simplificam operações comuns — especialmente de entrada e saída (I/O) e de manipulação da pilha (STACK).
 
-Embora todas as pseudo-instruções estejam documentadas em format.md, este capítulo apresenta um exemplo prático que demonstra como o FALCON interage com o I/O e como essas abstrações facilitam o desenvolvimento.
+Embora todas as pseudo-instruções estejam documentadas em format.md, este capítulo apresenta um exemplo prático que demonstra como o RAVEN interage com o I/O e como essas abstrações facilitam o desenvolvimento.
 
 O código abaixo ilustra o uso das pseudo-instruções de I/O (printStr, readWord, print, etc.) para criar um pequeno programa que lê dois números, soma e exibe o resultado formatado.
 ```

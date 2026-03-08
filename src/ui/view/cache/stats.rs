@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use crate::ui::app::{App, CacheScope};
+use crate::ui::theme;
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
 // Run Controls widget is rendered at the cache tab level (always visible).
@@ -55,9 +56,9 @@ fn render_l1_stats(f: &mut Frame, area: Rect, app: &App) {
 fn render_comparison_banner(f: &mut Frame, area: Rect, app: &App) {
     if let Some(snap) = &app.cache.loaded_snapshot {
         let line = Line::from(vec![
-            Span::styled(" Comparing with: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(snap.label.clone(), Style::default().fg(Color::LightBlue).bold()),
-            Span::styled("   [c] clear", Style::default().fg(Color::DarkGray)),
+            Span::styled(" Comparing with: ", Style::default().fg(theme::LABEL)),
+            Span::styled(snap.label.clone(), Style::default().fg(theme::ACCENT).bold()),
+            Span::styled("   [c] clear", Style::default().fg(theme::LABEL)),
         ]);
         f.render_widget(Paragraph::new(line), area);
     }
@@ -87,18 +88,18 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
     let d_cyc = app.run.mem.dcache.stats.total_cycles;
 
     let mut spans = vec![
-        Span::styled(" Program total \u{2014} ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("Cycles:{total}"), Style::default().fg(Color::Cyan)),
+        Span::styled(" Program total \u{2014} ", Style::default().fg(theme::LABEL)),
+        Span::styled(format!("Cycles:{total}"), Style::default().fg(theme::METRIC_CYC)),
         Span::raw("  "),
-        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(Color::Magenta)),
+        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(theme::METRIC_CPI)),
         Span::raw("  "),
-        Span::styled(format!("IPC:{ipc:.2}"), Style::default().fg(Color::LightMagenta)),
+        Span::styled(format!("IPC:{ipc:.2}"), Style::default().fg(theme::METRIC_IPC)),
         Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
         Span::raw("  "),
-        Span::styled(format!("I$:{i_cyc}"), Style::default().fg(Color::Cyan)),
+        Span::styled(format!("I$:{i_cyc}"), Style::default().fg(theme::CACHE_I)),
         Span::raw(" + "),
-        Span::styled(format!("D$:{d_cyc}"), Style::default().fg(Color::Green)),
+        Span::styled(format!("D$:{d_cyc}"), Style::default().fg(theme::CACHE_D)),
     ];
 
     for (i, lvl) in app.run.mem.extra_levels.iter().enumerate() {
@@ -106,7 +107,7 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::raw(" + "));
         spans.push(Span::styled(
             format!("{name}$:{}", lvl.stats.total_cycles),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme::CACHE_L2),
         ));
     }
 
@@ -140,18 +141,18 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     let hit_rate = stats.hit_rate();
     let hit_color = if hit_rate >= 90.0 {
-        Color::Green
+        theme::RUNNING
     } else if hit_rate >= 70.0 {
-        Color::Yellow
+        theme::PAUSED
     } else {
-        Color::Red
+        theme::DANGER
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(label, Style::default().fg(Color::Cyan).bold()));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -207,7 +208,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         stats.evictions
     );
     f.render_widget(
-        Paragraph::new(Span::styled(line3, Style::default().fg(Color::DarkGray))),
+        Paragraph::new(Span::styled(line3, Style::default().fg(theme::LABEL))),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
     );
 
@@ -222,7 +223,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         fmt_bytes(stats.ram_write_bytes)
     );
     f.render_widget(
-        Paragraph::new(Span::styled(line4, Style::default().fg(Color::Cyan))),
+        Paragraph::new(Span::styled(line4, Style::default().fg(theme::METRIC_CYC))),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
 
@@ -234,7 +235,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     if !icache {
         let line5 = format!("CPU Stores:{}", fmt_bytes(stats.bytes_stored));
         f.render_widget(
-            Paragraph::new(Span::styled(line5, Style::default().fg(Color::DarkGray))),
+            Paragraph::new(Span::styled(line5, Style::default().fg(theme::LABEL))),
             Rect::new(inner.x, inner.y + 4, inner.width, 1),
         );
     }
@@ -249,7 +250,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let cpi_contrib = if instructions == 0 { 0.0_f64 } else { cycles as f64 / instructions as f64 };
     let line6 = format!("Cycles:{cycles}  Avg:{avg:.2}c/a  CPI:{cpi_contrib:.2}");
     f.render_widget(
-        Paragraph::new(Span::styled(line6, Style::default().fg(Color::Magenta))),
+        Paragraph::new(Span::styled(line6, Style::default().fg(theme::METRIC_CPI))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
 
@@ -262,7 +263,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
     let line7 = format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc");
     f.render_widget(
-        Paragraph::new(Span::styled(line7, Style::default().fg(Color::DarkGray))),
+        Paragraph::new(Span::styled(line7, Style::default().fg(theme::LABEL))),
         Rect::new(inner.x, inner.y + 6, inner.width, 1),
     );
 
@@ -274,7 +275,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let amat = if icache { app.run.mem.icache_amat() } else { app.run.mem.dcache_amat() };
     let line8 = format!("AMAT:{amat:.2}cyc");
     f.render_widget(
-        Paragraph::new(Span::styled(line8, Style::default().fg(Color::Yellow))),
+        Paragraph::new(Span::styled(line8, Style::default().fg(theme::CACHE_L2))),
         Rect::new(inner.x, inner.y + 7, inner.width, 1),
     );
 
@@ -302,7 +303,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
             "Vs base: \u{394}Hit {sh}{d_hit:.1}%  \u{394}MPKI {sm}{d_mpki:.1}  \u{394}AMAT {sa}{d_amat:.2}c  \u{394}Cyc {sc}{d_cyc}"
         );
         f.render_widget(
-            Paragraph::new(Span::styled(line9, Style::default().fg(Color::LightBlue))),
+            Paragraph::new(Span::styled(line9, Style::default().fg(theme::ACCENT))),
             Rect::new(inner.x, inner.y + 8, inner.width, 1),
         );
     }
@@ -312,7 +313,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme::BORDER))
         .title("Hit Rate History (%)");
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -326,7 +327,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
 
     if i_data.is_empty() && d_data.is_empty() {
         let msg = Paragraph::new("No data yet — run the program to collect cache statistics.")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme::LABEL))
             .alignment(Alignment::Center);
         f.render_widget(msg, inner);
         return;
@@ -344,7 +345,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
                 .name("I-Cache")
                 .marker(symbols::Marker::Braille)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(Color::Cyan))
+                .style(Style::default().fg(theme::CACHE_I))
                 .data(&i_data),
         );
     }
@@ -354,7 +355,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
                 .name("D-Cache")
                 .marker(symbols::Marker::Braille)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(Color::Green))
+                .style(Style::default().fg(theme::CACHE_D))
                 .data(&d_data),
         );
     }
@@ -389,7 +390,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
     let chart = Chart::new(datasets)
         .x_axis(
             Axis::default()
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(theme::BORDER))
                 .bounds([x_min, x_max])
                 .labels(vec![
                     Span::raw(format!("{x_min:.0}")),
@@ -399,7 +400,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
         )
         .y_axis(
             Axis::default()
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(theme::BORDER))
                 .bounds([0.0, 100.0])
                 .labels(vec![
                     Span::raw("0%"),
@@ -420,13 +421,13 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     let instructions = app.run.mem.instruction_count;
 
     let hit_rate = stats.hit_rate();
-    let hit_color = if hit_rate >= 90.0 { Color::Green } else if hit_rate >= 70.0 { Color::Yellow } else { Color::Red };
+    let hit_color = if hit_rate >= 90.0 { theme::RUNNING } else if hit_rate >= 70.0 { theme::PAUSED } else { theme::DANGER };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(label, Style::default().fg(Color::Cyan).bold()));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -452,7 +453,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("H:{hits}  M:{misses}  MR:{miss_rate:.1}%  MPKI:{mpki:.1}"),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(theme::TEXT),
         )),
         Rect::new(inner.x, inner.y + 1, inner.width, 1),
     );
@@ -464,7 +465,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Acc:{total}  Evict:{}  WB:{}  Fills:{fills}", stats.evictions, stats.writebacks),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::LABEL),
         )),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
     );
@@ -473,7 +474,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("RAM R:{}  RAM W:{}", fmt_bytes(stats.bytes_loaded), fmt_bytes(stats.ram_write_bytes)),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(theme::METRIC_CYC),
         )),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
@@ -485,7 +486,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Cycles:{cycles}  Avg:{avg:.2}c/a  CPI:{cpi_contrib:.2}"),
-            Style::default().fg(Color::Magenta),
+            Style::default().fg(theme::METRIC_CPI),
         )),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
@@ -496,7 +497,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::LABEL),
         )),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
@@ -506,7 +507,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("AMAT:{amat:.2}cyc"),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme::CACHE_L2),
         )),
         Rect::new(inner.x, inner.y + 6, inner.width, 1),
     );
@@ -516,7 +517,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme::BORDER))
         .title("Hit Rate History (%)");
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -529,7 +530,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     if data.is_empty() {
         f.render_widget(
             Paragraph::new("No data yet — run the program to collect cache statistics.")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(theme::LABEL))
                 .alignment(Alignment::Center),
             inner,
         );
@@ -547,14 +548,14 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
             .name(level_name)
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(theme::CACHE_L2))
             .data(&data),
     ];
 
     let chart = Chart::new(datasets)
         .x_axis(
             Axis::default()
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(theme::BORDER))
                 .bounds([x_min, x_max])
                 .labels(vec![
                     Span::raw(format!("{x_min:.0}")),
@@ -564,7 +565,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
         )
         .y_axis(
             Axis::default()
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(theme::BORDER))
                 .bounds([0.0, 100.0])
                 .labels(vec![Span::raw("0%"), Span::raw("50%"), Span::raw("100%")]),
         );

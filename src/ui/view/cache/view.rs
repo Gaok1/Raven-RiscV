@@ -20,9 +20,10 @@ use unicode_truncate::UnicodeTruncateStr;
 
 use crate::falcon::cache::{CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy};
 use crate::ui::app::{App, CacheDataFmt, CacheDataGroup, CacheScope};
+use crate::ui::theme;
 
-const DIRTY_COLOR: Color = Color::Rgb(180, 100, 255);
-const DIRTY_ADDR_COLOR: Color = Color::Rgb(110, 70, 160);
+const DIRTY_COLOR: Color = theme::DIRTY;
+const DIRTY_ADDR_COLOR: Color = theme::DIRTY_DIM;
 
 pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
     if app.cache.selected_level == 0 {
@@ -93,15 +94,15 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
 
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("V D", Style::default().fg(Color::Yellow)),
-        Span::styled("=valid/dirty bits  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("V D", Style::default().fg(theme::LABEL_Y)),
+        Span::styled("=valid/dirty bits  ", Style::default().fg(theme::LABEL)),
         Span::styled(fmt_label, fmt_style),
         Span::raw(" "),
         Span::styled(group_label, group_style),
         Span::styled("  ", Style::default()),
-        Span::styled(policy_hint, Style::default().fg(Color::DarkGray)),
+        Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
-        Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
+        Span::styled(scroll_hint, Style::default().fg(theme::LABEL)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -159,15 +160,15 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
 
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("V D", Style::default().fg(Color::Yellow)),
-        Span::styled("=valid/dirty bits  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("V D", Style::default().fg(theme::LABEL_Y)),
+        Span::styled("=valid/dirty bits  ", Style::default().fg(theme::LABEL)),
         Span::styled(fmt_label, fmt_style),
         Span::raw(" "),
         Span::styled(group_label, group_style),
         Span::styled("  ", Style::default()),
-        Span::styled(policy_hint, Style::default().fg(Color::DarkGray)),
+        Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
-        Span::styled(scroll_hint, Style::default().fg(Color::DarkGray)),
+        Span::styled(scroll_hint, Style::default().fg(theme::LABEL)),
     ]);
 
     f.render_widget(Paragraph::new(line), area);
@@ -187,16 +188,16 @@ fn legend_button_styles(app: &App) -> (Style, Style, String, String) {
     };
 
     let fmt_style = if app.cache.hover_view_fmt {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(theme::ACCENT)
     };
     let group_style = if is_float {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::IDLE)
     } else if app.cache.hover_view_group {
-        Style::default().fg(Color::Black).bg(Color::Green)
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
-        Style::default().fg(Color::Green)
+        Style::default().fg(theme::CACHE_D)
     };
 
     (fmt_style, group_style, fmt_label, group_label)
@@ -253,8 +254,8 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(title, Style::default().fg(Color::Cyan).bold()));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(title, Style::default().fg(theme::ACCENT).bold()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -262,7 +263,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         if inner.height > 0 {
             f.render_widget(
                 Paragraph::new("Cache disabled — configure it in the Config tab")
-                    .style(Style::default().fg(Color::DarkGray))
+                    .style(Style::default().fg(theme::LABEL))
                     .alignment(Alignment::Center),
                 inner,
             );
@@ -324,17 +325,17 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         let mut spans: Vec<Span> = vec![
             Span::styled(
                 format!("{:^width$}", "Set", width = set_col_w),
-                Style::default().fg(Color::Yellow).bold(),
+                Style::default().fg(theme::LABEL_Y).bold(),
             ),
-            Span::styled("|", Style::default().fg(Color::DarkGray)),
+            Span::styled("|", Style::default().fg(theme::BORDER)),
         ];
         for w in 0..ways {
             spans.push(Span::styled(
                 format!("{:^width$}", format!("Way {w}"), width = way_col_w),
-                Style::default().fg(Color::Yellow).bold(),
+                Style::default().fg(theme::LABEL_Y).bold(),
             ));
             if w + 1 < ways {
-                spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
             }
         }
         f.render_widget(
@@ -349,8 +350,8 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         if set_idx >= num_sets || term_row >= rows_h { break; }
         let set = &sets_view[set_idx];
         let has_valid = set.lines.iter().any(|l| l.valid);
-        let set_style = if has_valid { Style::default().fg(Color::White) }
-                        else         { Style::default().fg(Color::DarkGray) };
+        let set_style = if has_valid { Style::default().fg(theme::TEXT) }
+                        else         { Style::default().fg(theme::LABEL) };
         for sub_row in 0..row_height {
             if term_row >= rows_h { break 'sets; }
             let y = inner.y + header_h + term_row;
@@ -360,7 +361,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
                 Span::raw(" ".repeat(set_col_w))
             };
             let byte_offset = sub_row * bytes_per_row;
-            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(Color::DarkGray))];
+            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(theme::BORDER))];
             for w in 0..ways {
                 let cell = build_cell(
                     &set.lines[w], set, w,
@@ -371,7 +372,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
-                    spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
                 }
             }
             f.render_widget(
@@ -439,8 +440,8 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(title, Style::default().fg(Color::Cyan).bold()));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(title, Style::default().fg(theme::ACCENT).bold()));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -448,7 +449,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         if inner.height > 0 {
             f.render_widget(
                 Paragraph::new("Cache disabled — configure it in the Config tab")
-                    .style(Style::default().fg(Color::DarkGray))
+                    .style(Style::default().fg(theme::LABEL))
                     .alignment(Alignment::Center),
                 inner,
             );
@@ -510,9 +511,10 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let total_content_w =
         set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
 
-    // Horizontal scroll (clamp to valid range)
+    // Horizontal scroll (each panel has its own scroll position)
     let max_h_scroll = total_content_w.saturating_sub(inner.width as usize);
-    let h_scroll = app.cache.view_h_scroll.min(max_h_scroll) as u16;
+    let raw_h_scroll = if icache { app.cache.view_h_scroll } else { app.cache.view_h_scroll_d };
+    let h_scroll = raw_h_scroll.min(max_h_scroll) as u16;
     let need_h_scrollbar = max_h_scroll > 0;
 
     // Heights: header(1) + optional scrollbar(1) + set rows (rest)
@@ -530,17 +532,17 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         let mut spans: Vec<Span> = vec![
             Span::styled(
                 format!("{:^width$}", "Set", width = set_col_w),
-                Style::default().fg(Color::Yellow).bold(),
+                Style::default().fg(theme::LABEL_Y).bold(),
             ),
-            Span::styled("|", Style::default().fg(Color::DarkGray)),
+            Span::styled("|", Style::default().fg(theme::BORDER)),
         ];
         for w in 0..ways {
             spans.push(Span::styled(
                 format!("{:^width$}", format!("Way {w}"), width = way_col_w),
-                Style::default().fg(Color::Yellow).bold(),
+                Style::default().fg(theme::LABEL_Y).bold(),
             ));
             if w + 1 < ways {
-                spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
             }
         }
         f.render_widget(
@@ -569,7 +571,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
                 Span::raw(" ".repeat(set_col_w))
             };
             let byte_offset = sub_row * bytes_per_row;
-            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(Color::DarkGray))];
+            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(theme::BORDER))];
             for w in 0..ways {
                 let cell = build_cell(
                     &set.lines[w], set, w,
@@ -579,7 +581,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
-                    spans.push(Span::styled("|", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
                 }
             }
             f.render_widget(
@@ -612,7 +614,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
             Style::default()
         };
         let mut sb_state = ScrollbarState::new(max_h_scroll)
-            .position(h_scroll as usize);
+            .position(raw_h_scroll.min(max_h_scroll));
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .begin_symbol(Some("◄"))
@@ -662,7 +664,7 @@ fn read_le(data: &[u8], offset: usize, size: usize) -> u64 {
 
 fn render_data(data: &[u8], max_bytes: usize, fmt: CacheDataFmt, group: CacheDataGroup, tint: Option<Color>) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(theme::LABEL);
     let g = if fmt == CacheDataFmt::Float { 4 } else { group.bytes() };
     let n_bytes = max_bytes.min(data.len());
     let n_units = n_bytes / g;
@@ -714,8 +716,8 @@ fn render_data(data: &[u8], max_bytes: usize, fmt: CacheDataFmt, group: CacheDat
 
         let style = tint.map_or_else(
             || if is_zero { dim }
-               else if neg { Style::default().fg(Color::LightRed) }
-               else { Style::default().fg(Color::White) },
+               else if neg { Style::default().fg(theme::DANGER) }
+               else { Style::default().fg(theme::TEXT) },
             |c| Style::default().fg(c),
         );
         spans.push(Span::styled(s, style));
@@ -746,13 +748,13 @@ fn build_cell(
     // ── Invalid line ─────────────────────────────────────────────────────────
     if !line.valid {
         if is_first_row {
-            spans.push(Span::styled("0", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("0", Style::default().fg(theme::LABEL)));
             spans.push(Span::raw(" "));
-            spans.push(Span::styled("-", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("-", Style::default().fg(theme::LABEL)));
             let rest = cell_width.saturating_sub(3);
             spans.push(Span::styled(
                 format!("{:<width$}", "  (empty)", width = rest),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::LABEL),
             ));
         } else {
             spans.push(Span::raw(" ".repeat(cell_width)));
@@ -802,7 +804,7 @@ fn build_cell(
         | ((set_idx as u32) << cfg.offset_bits());
 
     // V bit
-    spans.push(Span::styled("1", Style::default().fg(Color::Green).bold()));
+    spans.push(Span::styled("1", Style::default().fg(theme::RUNNING).bold()));
     spans.push(Span::raw(" "));
 
     // D bit
@@ -810,10 +812,10 @@ fn build_cell(
         if is_dirty {
             spans.push(Span::styled("1", Style::default().fg(DIRTY_COLOR).bold()));
         } else {
-            spans.push(Span::styled("0", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("0", Style::default().fg(theme::LABEL)));
         }
     } else {
-        spans.push(Span::styled("-", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled("-", Style::default().fg(theme::LABEL)));
     }
     spans.push(Span::raw("  "));
 
@@ -825,9 +827,9 @@ fn build_cell(
     let addr_style = if is_dirty {
         Style::default().fg(DIRTY_COLOR)
     } else if is_mru {
-        Style::default().fg(Color::Cyan).bold()
+        Style::default().fg(theme::ACCENT).bold()
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(theme::TEXT)
     };
     spans.push(Span::styled(format!("0x{base:08X}"), addr_style));
 
@@ -845,11 +847,11 @@ fn build_cell(
             let rank = set.lru_order.iter().position(|&w| w == way).unwrap_or(0);
             let n = set.lru_order.len();
             let style = if rank == 0 {
-                Style::default().fg(Color::Cyan)       // MRU = safest
+                Style::default().fg(theme::ACCENT)       // MRU = safest
             } else if rank + 1 == n {
-                Style::default().fg(Color::Red).bold() // LRU = evicted next
+                Style::default().fg(theme::DANGER).bold() // LRU = evicted next
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme::LABEL)
             };
             spans.push(Span::styled(format!("r:{rank}"), style));
         }
@@ -858,11 +860,11 @@ fn build_cell(
             let n = set.lru_order.len();
             // MRU evicts the most recently used → rank 0 is the DANGER zone
             let style = if rank == 0 {
-                Style::default().fg(Color::Red).bold() // MRU = evicted next!
+                Style::default().fg(theme::DANGER).bold() // MRU = evicted next!
             } else if rank + 1 == n {
-                Style::default().fg(Color::Cyan)       // LRU = safest for MRU
+                Style::default().fg(theme::ACCENT)        // LRU = safest for MRU
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme::LABEL)
             };
             spans.push(Span::styled(format!("r:{rank}"), style));
         }
@@ -870,11 +872,11 @@ fn build_cell(
             let pos = set.fifo_order.iter().position(|&w| w == way).unwrap_or(0);
             let n = set.fifo_order.len();
             let style = if pos == 0 {
-                Style::default().fg(Color::Cyan)       // newest
+                Style::default().fg(theme::ACCENT)        // newest
             } else if pos + 1 == n {
-                Style::default().fg(Color::Red).bold() // oldest = evicted next
+                Style::default().fg(theme::DANGER).bold() // oldest = evicted next
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme::LABEL)
             };
             spans.push(Span::styled(format!("r:{pos}"), style));
         }
@@ -882,9 +884,9 @@ fn build_cell(
             let freq = line.freq;
             let min_freq = set.lines.iter().filter(|l| l.valid).map(|l| l.freq).min().unwrap_or(0);
             let style = if freq == min_freq {
-                Style::default().fg(Color::Red).bold()
+                Style::default().fg(theme::DANGER).bold()
             } else {
-                Style::default().fg(Color::Magenta)
+                Style::default().fg(theme::DIRTY)
             };
             let freq_str = if freq >= 1_000_000 {
                 format!("f:{}M", freq / 1_000_000)
@@ -899,15 +901,15 @@ fn build_cell(
             let n = set.lines.len().max(1);
             let is_hand = (set.clock_hand % n) == way;
             let (icon, style) = match (is_hand, line.ref_bit) {
-                (true,  true)  => (">R", Style::default().fg(Color::Yellow).bold()),
-                (true,  false) => ("> ", Style::default().fg(Color::Red).bold()),
-                (false, true)  => (" R", Style::default().fg(Color::Yellow)),
-                (false, false) => ("  ", Style::default().fg(Color::DarkGray)),
+                (true,  true)  => (">R", Style::default().fg(theme::LABEL_Y).bold()),
+                (true,  false) => ("> ", Style::default().fg(theme::DANGER).bold()),
+                (false, true)  => (" R", Style::default().fg(theme::LABEL_Y)),
+                (false, false) => ("  ", Style::default().fg(theme::LABEL)),
             };
             spans.push(Span::styled(icon, style));
         }
         ReplacementPolicy::Random => {
-            spans.push(Span::styled("??", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("??", Style::default().fg(theme::LABEL)));
         }
     }
 

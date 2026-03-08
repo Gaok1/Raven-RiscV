@@ -609,21 +609,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "falconasm"
-version = "1.17.1"
-dependencies = [
- "arboard",
- "comfy-table",
- "crossterm 0.29.0",
- "getrandom 0.3.4",
- "ratatui",
- "rfd",
- "signal-hook",
- "thiserror",
- "unicode-truncate",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1491,6 +1476,21 @@ dependencies = [
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.1.14",
+]
+
+[[package]]
+name = "raven"
+version = "1.17.1"
+dependencies = [
+ "arboard",
+ "comfy-table",
+ "crossterm 0.29.0",
+ "getrandom 0.3.4",
+ "ratatui",
+ "rfd",
+ "signal-hook",
+ "thiserror",
+ "unicode-truncate",
 ]
 
 [[package]]

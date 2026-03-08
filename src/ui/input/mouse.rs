@@ -104,14 +104,29 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             if matches!(app.tab, Tab::Cache)
                 && matches!(app.cache.subtab, CacheSubtab::View)
             {
-                app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+                // Scroll the panel under the cursor: D-cache slot 1 if its track is set
+                let tracks = app.cache.hscroll_tracks.get();
+                let use_d = tracks[1].1 > 0 && me.column >= tracks[1].0
+                    && me.column < tracks[1].0 + tracks[1].1;
+                if use_d {
+                    app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_sub(3);
+                } else {
+                    app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+                }
             }
         }
         MouseEventKind::ScrollRight => {
             if matches!(app.tab, Tab::Cache)
                 && matches!(app.cache.subtab, CacheSubtab::View)
             {
-                app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+                let tracks = app.cache.hscroll_tracks.get();
+                let use_d = tracks[1].1 > 0 && me.column >= tracks[1].0
+                    && me.column < tracks[1].0 + tracks[1].1;
+                if use_d {
+                    app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_add(3);
+                } else {
+                    app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+                }
             }
         }
         _ => {}
@@ -128,16 +143,25 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 let track_x = app.cache.hscroll_hover_track_x;
                 let track_w = app.cache.hscroll_hover_track_w;
                 let max_scroll = app.cache.hscroll_max.get();
+                // Determine which panel (slot 0 = I-cache, slot 1 = D-cache)
+                let tracks = app.cache.hscroll_tracks.get();
+                let is_dcache = tracks[1].1 > 0 && track_x == tracks[1].0;
+                app.cache.hscroll_drag_is_dcache = is_dcache;
+                let cur_scroll = if is_dcache { app.cache.view_h_scroll_d } else { app.cache.view_h_scroll };
                 // Jump to click ratio immediately
                 if track_w > 0 {
                     let rel = me.column.saturating_sub(track_x).min(track_w - 1) as f64;
                     let new_scroll = (rel / (track_w as f64) * max_scroll as f64) as usize;
-                    app.cache.view_h_scroll = new_scroll.min(max_scroll);
+                    if is_dcache {
+                        app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
+                    } else {
+                        app.cache.view_h_scroll = new_scroll.min(max_scroll);
+                    }
                 }
                 // Start drag state
                 app.cache.hscroll_drag = true;
                 app.cache.hscroll_drag_start_x = me.column;
-                app.cache.hscroll_start = app.cache.view_h_scroll;
+                app.cache.hscroll_start = cur_scroll;
                 app.cache.hscroll_drag_max = max_scroll;
                 app.cache.hscroll_drag_track_w = track_w;
             } else {
@@ -155,8 +179,18 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 let scale = max_scroll as f64 / track_w as f64;
                 let new_scroll = (app.cache.hscroll_start as i64 + (delta as f64 * scale) as i64)
                     .max(0) as usize;
-                app.cache.view_h_scroll = new_scroll.min(max_scroll);
+                if app.cache.hscroll_drag_is_dcache {
+                    app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
+                } else {
+                    app.cache.view_h_scroll = new_scroll.min(max_scroll);
+                }
             }
+        }
+    }
+
+    if let Tab::Docs = app.tab {
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            handle_docs_click(app, me);
         }
     }
 
@@ -693,6 +727,59 @@ fn handle_panel_title_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
+/// Handle left-click on the Docs tab: page tabs and filter bar.
+fn handle_docs_click(app: &mut App, me: MouseEvent) {
+    use crate::ui::view::docs::{ALL_MASK, FILTER_ITEMS};
+
+    let col = me.column;
+    let row = me.row;
+
+    // ── Page tab bar ──
+    let tab_bar_y = app.docs.tab_bar_y.get();
+    if row == tab_bar_y {
+        let xs = app.docs.tab_bar_xs.get();
+        let pages = [DocsPage::InstrRef, DocsPage::Syscalls, DocsPage::MemoryMap];
+        for (i, &(x_start, x_end)) in xs.iter().enumerate() {
+            if col >= x_start && col < x_end {
+                if app.docs.page != pages[i] {
+                    app.docs.page = pages[i];
+                    app.docs.scroll = 0;
+                }
+                return;
+            }
+        }
+    }
+
+    // ── Filter bar (InstrRef only) ──
+    if matches!(app.docs.page, DocsPage::InstrRef) {
+        let filter_y = app.docs.filter_bar_y.get();
+        if row == filter_y {
+            // Compute cumulative x-ranges for each filter item
+            let mut x: u16 = 0;
+            for (idx, &(label, bit, _)) in FILTER_ITEMS.iter().enumerate() {
+                let w = (label.chars().count() + 3) as u16; // " ●Label " = label + 3
+                let x_end = x + w;
+                if col >= x && col < x_end {
+                    app.docs.filter_cursor = idx;
+                    if idx == 0 {
+                        // "All" toggle
+                        if app.docs.type_filter == ALL_MASK {
+                            app.docs.type_filter = 0;
+                        } else {
+                            app.docs.type_filter = ALL_MASK;
+                        }
+                    } else {
+                        app.docs.type_filter ^= bit;
+                    }
+                    app.docs.scroll = 0;
+                    return;
+                }
+                x = x_end;
+            }
+        }
+    }
+}
+
 fn clamp_docs_scroll(app: &mut App, area: Rect) {
     let root_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -706,9 +793,9 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
 
     let max_start = match app.docs.page {
         DocsPage::InstrRef => {
-            // header(2) + search(0|1) + filter(1) + col_hdr(1) + sep(1)
+            // tab_bar(1) + legend(2) + search(0|1) + filter(1) + col_hdr(1) + sep(1)
             let search_h: u16 = if app.docs.search_open { 1 } else { 0 };
-            let fixed: u16 = 2 + search_h + 1 + 1 + 1;
+            let fixed: u16 = 1 + 2 + search_h + 1 + 1 + 1;
             let viewport_h = docs_area.height.saturating_sub(fixed) as usize;
             if viewport_h == 0 { app.docs.scroll = 0; return; }
             let q = app.docs.search_query.clone();

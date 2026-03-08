@@ -943,8 +943,8 @@ fn clamp_docs_scroll_keyboard(app: &mut App) {
         if viewport_h == 0 { app.docs.scroll = 0; return; }
         let total = match app.docs.page {
             DocsPage::InstrRef => {
-                // InstrRef: header(2) + filter(1) + col_hdr(1) + sep(1) = 5 extra rows
-                let vp = viewport_h.saturating_sub(5);
+                // InstrRef: tab_bar(1) + legend(2) + filter(1) + col_hdr(1) + sep(1) = 6 extra rows
+                let vp = viewport_h.saturating_sub(6);
                 let q = app.docs.search_query.clone();
                 docs_body_line_count(80, &q, app.docs.type_filter).saturating_sub(vp)
             }

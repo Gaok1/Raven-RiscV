@@ -2,6 +2,7 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table};
 
+use crate::ui::theme;
 use super::{App, MemRegion};
 use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
@@ -34,7 +35,7 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme::BORDER))
         .border_type(BorderType::Rounded)
         .title(format!("Registers  [p]=pin  [Tab]=float{cursor_info}"));
     let inner = block.inner(area);
@@ -71,7 +72,7 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         rows.push(Row::new(vec![
             Cell::from("───────────────"),
             Cell::from(""),
-        ]).style(Style::default().fg(Color::DarkGray)));
+        ]).style(Style::default().fg(theme::BORDER)));
     }
 
     // ── Regular scroll section ────────────────────────────────────────────────
@@ -149,7 +150,7 @@ fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
 fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme::BORDER))
         .border_type(BorderType::Rounded)
         .title("Float Regs (f0–f31)  [Tab]=int regs");
     let inner = block.inner(area);
@@ -213,13 +214,13 @@ fn render_memory_view(f: &mut Frame, area: Rect, app: &App) {
 fn memory_block(app: &App) -> Block<'static> {
     let title = if app.run.mem_region == MemRegion::Stack {
         let sp = app.run.cpu.x[2];
-        format!("Memory [Stack]  SP=0x{sp:08x}  ● dirty")
+        format!("Memory [Stack]  SP=0x{sp:08x}")
     } else {
-        "Memory  ● = dirty cache (cache → RAM stale)".to_string()
+        "Memory".to_string()
     };
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme::BORDER))
         .border_type(BorderType::Rounded)
         .title(title)
 }
@@ -245,8 +246,8 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
         .collect()
 }
 
-const PURPLE: Color = Color::Rgb(180, 100, 255);
-const STALE_COLOR: Color = Color::Rgb(110, 70, 160);
+const PURPLE: Color = theme::DIRTY;
+const STALE_COLOR: Color = theme::DIRTY_DIM;
 
 /// Style for recently accessed memory (cyan fade, disappears after 3 steps).
 fn mem_age_style(age: u8) -> Option<Style> {
@@ -277,52 +278,82 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
         .min()
         .and_then(mem_age_style);
 
-    // Build SP annotation: offset for stack region, or ▶ sp marker otherwise
-    let sp_ann = if is_stack {
+    // SP offset annotation (trailing, only for non-SP rows in stack view)
+    let sp_offset_ann = if is_stack && !is_sp {
         let offset = addr as i64 - sp_aligned as i64;
-        if is_sp {
-            format!("  SP+0 \u{25c0}")
-        } else {
-            format!("  SP{offset:+}")
-        }
-    } else if is_sp {
-        "  \u{25b6} sp".to_string()
+        format!("  SP{offset:+}")
     } else {
         String::new()
     };
 
+    // SP leading prefix — bold marker that comes FIRST for the SP row
+    let sp_prefix: Option<ratatui::text::Span<'static>> = if is_sp {
+        Some(ratatui::text::Span::styled(
+            "\u{25b6}SP ".to_string(),
+            Style::default().fg(theme::PAUSED).bold(),
+        ))
+    } else {
+        None
+    };
+
+    // Row background: SP row always gets a highlight bg (takes priority over dirty)
+    let row_bg = if is_sp { Some(theme::BG_HOVER) } else { None };
+
     if !is_dirty {
         let val = format_memory_value(app, addr);
-        let text = format!("  0x{addr:08x}: {val}{sp_ann}");
-        let style = if is_sp {
-            Style::default().fg(Color::Yellow)
+        let addr_text = format!("0x{addr:08x}: {val}{sp_offset_ann}");
+        let fg = if is_sp {
+            theme::PAUSED
         } else if let Some(s) = access_highlight {
-            s
+            return ListItem::new(format!("  {addr_text}")).style(s);
         } else {
-            Style::default()
+            theme::TEXT
         };
-        return ListItem::new(text).style(style);
+        let line = if let Some(prefix) = sp_prefix {
+            ratatui::text::Line::from(vec![
+                ratatui::text::Span::raw(" "),
+                prefix,
+                ratatui::text::Span::styled(addr_text, Style::default().fg(fg)),
+            ])
+        } else {
+            ratatui::text::Line::from(
+                ratatui::text::Span::styled(format!("  {addr_text}"), Style::default().fg(fg))
+            )
+        };
+        let mut style = Style::default();
+        if let Some(bg) = row_bg { style = style.bg(bg); }
+        return ListItem::new(line).style(style);
     }
 
     let cache_val = format_memory_value(app, addr);
     let stale_val = format_stale_value(app, addr);
     let level_label = cache_loc.map(|(n, _)| format!("L{n} ")).unwrap_or_default();
 
-    // When dirty, use purple spans but tint address with access highlight if present
-    let addr_style = access_highlight.unwrap_or(Style::default().fg(PURPLE));
-    let line = ratatui::text::Line::from(vec![
-        ratatui::text::Span::styled("\u{25cf} ", Style::default().fg(PURPLE).bold()),
-        ratatui::text::Span::styled(
-            format!("{level_label}0x{addr:08x}: "),
-            addr_style,
-        ),
-        ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()),
-        ratatui::text::Span::styled(
-            format!("  \u{2190} RAM: {stale_val}{sp_ann}"),
-            Style::default().fg(STALE_COLOR),
-        ),
-    ]);
-    ListItem::new(line)
+    // Dirty line: SP prefix leads if this is the SP row
+    let addr_style = if is_sp {
+        Style::default().fg(PURPLE)
+    } else {
+        access_highlight.unwrap_or(Style::default().fg(PURPLE))
+    };
+    let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
+    if let Some(prefix) = sp_prefix {
+        spans.push(ratatui::text::Span::raw(" "));
+        spans.push(prefix);
+    } else {
+        spans.push(ratatui::text::Span::styled("\u{25cf} ", Style::default().fg(PURPLE).bold()));
+    }
+    spans.push(ratatui::text::Span::styled(
+        format!("{level_label}0x{addr:08x}: "),
+        addr_style,
+    ));
+    spans.push(ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()));
+    spans.push(ratatui::text::Span::styled(
+        format!("  \u{2190} RAM: {stale_val}{sp_offset_ann}"),
+        Style::default().fg(STALE_COLOR),
+    ));
+    let mut style = Style::default();
+    if let Some(bg) = row_bg { style = style.bg(bg); }
+    ListItem::new(ratatui::text::Line::from(spans)).style(style)
 }
 
 // ── Breakpoint list view (Feature 10) ─────────────────────────────────────────
@@ -331,15 +362,15 @@ fn render_bp_list(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled("Breakpoints  F9=toggle", Style::default().fg(Color::Red)));
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled("Breakpoints  F9=toggle", Style::default().fg(theme::DANGER)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if app.run.breakpoints.is_empty() {
         f.render_widget(
             Paragraph::new("No breakpoints set.\nF9 to toggle at current PC.")
-                .style(Style::default().fg(Color::DarkGray)),
+                .style(Style::default().fg(theme::LABEL)),
             inner,
         );
         return;
@@ -357,9 +388,9 @@ fn render_bp_list(f: &mut Frame, area: Rect, app: &App) {
         let is_pc = addr == app.run.cpu.pc;
         let text = format!("\u{25cf} 0x{addr:08x}{label}  {disasm}");
         let style = if is_pc {
-            Style::default().fg(Color::Black).bg(Color::Yellow)
+            Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::LABEL_Y)
         } else {
-            Style::default().fg(Color::LightRed)
+            Style::default().fg(theme::DANGER)
         };
         ListItem::new(text).style(style)
     }).collect();

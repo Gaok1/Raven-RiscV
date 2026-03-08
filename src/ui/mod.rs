@@ -3,6 +3,7 @@
 mod app;
 pub mod editor;
 mod input;
+pub mod theme;
 pub mod view;
 mod console;
 
