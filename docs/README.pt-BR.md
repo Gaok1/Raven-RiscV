@@ -1,10 +1,10 @@
 # RAVEN — Emulador e IDE RISC-V
 
-![RAVEN em ação](assets/raven-example.gif)
-
 **RAVEN** é um emulador, montador e IDE RISC-V rodando no terminal, escrito em Rust. Cobre **RV32I + M + F** e foi pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa — ideal para estudantes, professores e qualquer um aprendendo assembly.
 
 Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, inspecione registradores e memória, perfile sua hierarquia de cache e leia a documentação — sem sair do terminal.
+
+![RAVEN em ação](assets/raven-example.gif)
 
 ---
 
