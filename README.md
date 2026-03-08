@@ -1,5 +1,7 @@
 # RAVEN — RISC-V Simulator & IDE
 
+> [Leia em Português](docs/README.pt-BR.md)
+
 **RAVEN** is a free, open-source RISC-V simulator and terminal IDE for students and anyone learning assembly. It covers **RV32IMF** — the full base integer set, multiply/divide, and single-precision float — and makes every part of the machine visible while your program runs.
 
 Write assembly in the built-in editor, assemble with `Ctrl+R`, and step through every instruction watching registers, memory, and the cache update in real time. Nothing is hidden.
@@ -8,11 +10,11 @@ Write assembly in the built-in editor, assemble with `Ctrl+R`, and step through 
 
 ## Quick Start
 
-Download the latest binary from [Releases](https://github.com/Gaok1/RAVEN/releases), or build from source:
+Download the latest binary from [Releases](https://github.com/Gaok1/Raven/releases), or build from source:
 
 ```bash
-git clone https://github.com/Gaok1/RAVEN
-cd RAVEN
+git clone https://github.com/Gaok1/Raven
+cd Raven
 cargo run
 ```
 
@@ -32,7 +34,7 @@ Requires Rust 1.75+. No other dependencies.
 ### Debugger — Run Tab (Tab 2)
 - Run free, pause (`Space`/`F5`), or single-step (`n`/`F10`)
 - Breakpoints (`b`/`F9`), jump to address (`g`), execution trace (`t`)
-- All 32 integer registers with ABI names, hex + decimal, change highlighting
+- All 32 integer registers with ABI names, change highlighting
 - Float registers (`f0–f31` / ABI names), toggled with `Tab`
 - RAM view, stack view, breakpoint list — cycle with `v`
 - Instruction memory panel: type badge `[R][I][S][B][U][J]`, execution heat `×N`, branch outcome
@@ -118,9 +120,9 @@ Requires Rust 1.75+. No other dependencies.
 
 ## Docs
 
-- [Tutorial (EN)](Tutorial.md) — step-by-step first-program walkthrough
-- [Instruction formats (EN)](format.md) — bit layouts, encoding, pseudo-instructions
-- [Tutorial (PT-BR)](Tutorial-pt.md) | [Formatos (PT-BR)](format.pt-BR.md)
+- [Tutorial (EN)](docs/Tutorial.md) — step-by-step first-program walkthrough
+- [Instruction formats (EN)](docs/format.md) — bit layouts, encoding, pseudo-instructions
+- [Tutorial (PT-BR)](docs/Tutorial-pt.md) | [Formatos (PT-BR)](docs/format.pt-BR.md)
 
 ---
 
