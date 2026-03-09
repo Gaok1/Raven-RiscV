@@ -12,6 +12,9 @@ pub const OPC_JAL: u8    = 0x6F;
 pub const OPC_JALR: u8   = 0x67;
 pub const OPC_SYSTEM: u8 = 0x73;
 
+// RV32A opcode
+pub const OPC_AMO: u8 = 0x2F;
+
 // RV32F opcodes
 pub const OPC_FLW:    u8 = 0x07; // LOAD-FP  (I-type)
 pub const OPC_FSW:    u8 = 0x27; // STORE-FP (S-type)

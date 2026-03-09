@@ -148,5 +148,19 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
         FmsubS {rd,rs1,rs2,rs3} => r4(rs3 as u32, rs2 as u32, rs1 as u32, rd as u32, OPC_FMSUB  as u32),
         FnmsubS{rd,rs1,rs2,rs3} => r4(rs3 as u32, rs2 as u32, rs1 as u32, rd as u32, OPC_FNMSUB as u32),
         FnmaddS{rd,rs1,rs2,rs3} => r4(rs3 as u32, rs2 as u32, rs1 as u32, rd as u32, OPC_FNMADD as u32),
+
+        // RV32A — encode with aq=0, rl=0
+        // f7 = funct5<<2 | aq<<1 | rl  (aq=rl=0 here)
+        LrW      {rd,rs1}        => r(0x02<<2, 0,           rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        ScW      {rd,rs1,rs2}    => r(0x03<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmoswapW {rd,rs1,rs2}    => r(0x01<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmoaddW  {rd,rs1,rs2}    => r(0x00<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmoxorW  {rd,rs1,rs2}    => r(0x04<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmoandW  {rd,rs1,rs2}    => r(0x0C<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmoorW   {rd,rs1,rs2}    => r(0x08<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmomaxW  {rd,rs1,rs2}    => r(0x14<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmominW  {rd,rs1,rs2}    => r(0x10<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmomaxuW {rd,rs1,rs2}    => r(0x1C<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
+        AmominuW {rd,rs1,rs2}    => r(0x18<<2, rs2 as u32,  rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
     })
 }

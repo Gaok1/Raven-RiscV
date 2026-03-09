@@ -11,6 +11,8 @@ pub struct Cpu {
     pub stdout: Vec<u8>,
     /// Exit status when program terminates via Linux `exit`/`exit_group`.
     pub exit_code: Option<u32>,
+    /// LR/SC reservation address (None = no active reservation).
+    pub lr_reservation: Option<u32>,
 }
 
 impl Cpu {

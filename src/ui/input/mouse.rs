@@ -841,19 +841,23 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     let col = me.column;
     if col >= ibin_start && col < ibin_end {
         if let Some(path) = OSFileDialog::new()
-            .add_filter("Binary", &["bin", "img"])
+            .add_filter("ELF / Binary", &["elf", "bin", "img"])
             .pick_file()
         {
             if let Ok(bytes) = std::fs::read(path) {
                 app.load_binary(&bytes);
+                // Build editor disassembly from the already-decoded text words (ELF text
+                // segment or FALC/flat text section), not from raw file bytes.
                 use crate::ui::view::disasm::disasm_word;
-                let mut lines = Vec::new();
-                for chunk in bytes.chunks(4) {
-                    let mut b = [0u8; 4];
-                    for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
-                    let w = u32::from_le_bytes(b);
-                    lines.push(disasm_word(w));
-                }
+                let lines: Vec<String> = if let Some(ref words) = app.editor.last_ok_text {
+                    words.iter().map(|&w| disasm_word(w)).collect()
+                } else {
+                    bytes.chunks(4).map(|chunk| {
+                        let mut b = [0u8; 4];
+                        for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
+                        disasm_word(u32::from_le_bytes(b))
+                    }).collect()
+                };
                 app.editor.buf.lines = lines;
                 app.editor.buf.cursor_row = 0;
                 app.editor.buf.cursor_col = 0;

@@ -132,6 +132,23 @@ pub fn step<B: Bus>(
         }
         Instruction::Fence => {} // nop in single-core simulator
 
+        // RV32A
+        i @ (
+            Instruction::LrW { .. }
+                | Instruction::ScW { .. }
+                | Instruction::AmoswapW { .. }
+                | Instruction::AmoaddW  { .. }
+                | Instruction::AmoxorW  { .. }
+                | Instruction::AmoandW  { .. }
+                | Instruction::AmoorW   { .. }
+                | Instruction::AmomaxW  { .. }
+                | Instruction::AmominW  { .. }
+                | Instruction::AmomaxuW { .. }
+                | Instruction::AmominuW { .. }
+        ) => {
+            return exec_amo(i, cpu, mem, console);
+        }
+
         // RV32F
         i @ (
             Instruction::Flw { .. }
@@ -491,6 +508,90 @@ fn exec_fp<B: Bus>(
     Ok(true)
 }
 
+fn exec_amo<B: Bus>(
+    instr: Instruction,
+    cpu: &mut Cpu,
+    mem: &mut B,
+    _console: &mut Console,
+) -> Result<bool, FalconError> {
+    match instr {
+        Instruction::LrW { rd, rs1 } => {
+            let addr = cpu.read(rs1);
+            let val = mem.dcache_read32(addr)?;
+            cpu.write(rd, val);
+            cpu.lr_reservation = Some(addr);
+        }
+        Instruction::ScW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            if cpu.lr_reservation == Some(addr) {
+                mem.store32(addr, cpu.read(rs2))?;
+                cpu.write(rd, 0); // success
+            } else {
+                cpu.write(rd, 1); // failure
+            }
+            cpu.lr_reservation = None;
+        }
+        Instruction::AmoswapW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            mem.store32(addr, cpu.read(rs2))?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmoaddW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            mem.store32(addr, old.wrapping_add(cpu.read(rs2)))?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmoxorW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            mem.store32(addr, old ^ cpu.read(rs2))?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmoandW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            mem.store32(addr, old & cpu.read(rs2))?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmoorW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            mem.store32(addr, old | cpu.read(rs2))?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmomaxW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            let result = (old as i32).max(cpu.read(rs2) as i32) as u32;
+            mem.store32(addr, result)?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmominW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            let result = (old as i32).min(cpu.read(rs2) as i32) as u32;
+            mem.store32(addr, result)?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmomaxuW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            mem.store32(addr, old.max(cpu.read(rs2)))?;
+            cpu.write(rd, old);
+        }
+        Instruction::AmominuW { rd, rs1, rs2 } => {
+            let addr = cpu.read(rs1);
+            let old = mem.dcache_read32(addr)?;
+            mem.store32(addr, old.min(cpu.read(rs2)))?;
+            cpu.write(rd, old);
+        }
+        _ => unreachable!(),
+    }
+    Ok(true)
+}
+
 // em src/falcon/exec.rs (logo abaixo de `step`)
 #[allow(dead_code)]
 pub fn run<B: crate::falcon::memory::Bus>(
@@ -514,6 +615,102 @@ mod tests {
     use super::*;
     use crate::falcon::encoder;
     use crate::falcon::{instruction::Instruction, Ram};
+    use crate::falcon::decoder::decode;
+
+    // RV32A roundtrip: encode → decode must recover the same instruction
+    #[test]
+    fn amo_encode_decode_roundtrip() {
+        let cases: &[Instruction] = &[
+            Instruction::LrW      { rd: 1, rs1: 2 },
+            Instruction::ScW      { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmoswapW { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmoaddW  { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmoxorW  { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmoandW  { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmoorW   { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmomaxW  { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmominW  { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmomaxuW { rd: 1, rs1: 2, rs2: 3 },
+            Instruction::AmominuW { rd: 1, rs1: 2, rs2: 3 },
+        ];
+        for &instr in cases {
+            let word = encoder::encode(instr).expect("encode failed");
+            let decoded = decode(word).expect("decode failed");
+            // compare discriminant and fields via Debug string (simplest roundtrip check)
+            assert_eq!(format!("{instr:?}"), format!("{decoded:?}"), "roundtrip failed for {instr:?}");
+        }
+    }
+
+    // LR/SC: successful reservation → sc stores and returns 0
+    #[test]
+    fn lr_sc_success() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        let mut console = crate::ui::Console::default();
+
+        mem.store32(0x10, 0xABCD).unwrap();
+        cpu.write(1, 0x10); // address in x1
+
+        let lr   = encoder::encode(Instruction::LrW { rd: 2, rs1: 1 }).unwrap();
+        let sc   = encoder::encode(Instruction::ScW { rd: 3, rs1: 1, rs2: 4 }).unwrap();
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        mem.store32(0, lr).unwrap();
+        mem.store32(4, sc).unwrap();
+        mem.store32(8, halt).unwrap();
+
+        cpu.write(4, 0x1234); // value to store via sc
+
+        step(&mut cpu, &mut mem, &mut console).unwrap(); // lr.w x2, (x1)
+        assert_eq!(cpu.read(2), 0xABCD);
+        assert_eq!(cpu.lr_reservation, Some(0x10));
+
+        step(&mut cpu, &mut mem, &mut console).unwrap(); // sc.w x3, x4, (x1)
+        assert_eq!(cpu.read(3), 0); // success
+        assert_eq!(mem.load32(0x10).unwrap(), 0x1234);
+        assert_eq!(cpu.lr_reservation, None);
+    }
+
+    // SC without prior LR → failure (rd=1), memory unchanged
+    #[test]
+    fn sc_without_lr_fails() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        let mut console = crate::ui::Console::default();
+
+        mem.store32(0x10, 0xABCD).unwrap();
+        cpu.write(1, 0x10);
+        cpu.write(4, 0x1234);
+
+        let sc   = encoder::encode(Instruction::ScW { rd: 3, rs1: 1, rs2: 4 }).unwrap();
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        mem.store32(0, sc).unwrap();
+        mem.store32(4, halt).unwrap();
+
+        step(&mut cpu, &mut mem, &mut console).unwrap();
+        assert_eq!(cpu.read(3), 1); // failure
+        assert_eq!(mem.load32(0x10).unwrap(), 0xABCD); // unchanged
+    }
+
+    // AMOADD: mem[addr] += rs2, rd = old value
+    #[test]
+    fn amoadd_w() {
+        let mut cpu = Cpu::default();
+        let mut mem = Ram::new(64);
+        let mut console = crate::ui::Console::default();
+
+        mem.store32(0x10, 10).unwrap();
+        cpu.write(1, 0x10); // address
+        cpu.write(2, 5);    // operand
+
+        let amo  = encoder::encode(Instruction::AmoaddW { rd: 3, rs1: 1, rs2: 2 }).unwrap();
+        let halt = encoder::encode(Instruction::Halt).unwrap();
+        mem.store32(0, amo).unwrap();
+        mem.store32(4, halt).unwrap();
+
+        step(&mut cpu, &mut mem, &mut console).unwrap();
+        assert_eq!(cpu.read(3), 10);           // old value
+        assert_eq!(mem.load32(0x10).unwrap(), 15); // new value
+    }
 
     #[test]
     fn halt_halts() {

@@ -5,3 +5,7 @@
 /claudeProblems
 # Ignore local assignment/note files
 /atividade_final_falcon_asm*
+# Ignore issue screenshots and notes
+/Issues/
+# Ignore local ELF test binaries
+/elf-test/

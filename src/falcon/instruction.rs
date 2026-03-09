@@ -39,6 +39,19 @@ pub enum Instruction {
     // Memory ordering (RV32I base — executed as nop in single-core simulator)
     Fence,
 
+    // RV32A — atomic memory operations (single-core: no real contention)
+    LrW   { rd:u8, rs1:u8 },
+    ScW   { rd:u8, rs1:u8, rs2:u8 },
+    AmoswapW { rd:u8, rs1:u8, rs2:u8 },
+    AmoaddW  { rd:u8, rs1:u8, rs2:u8 },
+    AmoxorW  { rd:u8, rs1:u8, rs2:u8 },
+    AmoandW  { rd:u8, rs1:u8, rs2:u8 },
+    AmoorW   { rd:u8, rs1:u8, rs2:u8 },
+    AmomaxW  { rd:u8, rs1:u8, rs2:u8 },
+    AmominW  { rd:u8, rs1:u8, rs2:u8 },
+    AmomaxuW { rd:u8, rs1:u8, rs2:u8 },
+    AmominuW { rd:u8, rs1:u8, rs2:u8 },
+
     // RV32F — floating-point extension
     // Load/Store (I/S-type with float rd/rs2)
     Flw  { rd:u8, rs1:u8, imm:i32 },

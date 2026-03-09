@@ -4,6 +4,7 @@ mod stype;
 mod btype;
 mod jtype;
 mod fptype;
+mod atype;
 
 use crate::falcon::{instruction::Instruction, errors::FalconError};
 use crate::falcon::arch::*;
@@ -27,6 +28,7 @@ pub fn decode(word: u32) -> Result<Instruction, FalconError> {
         OPC_LUI    => itype::decode_lui(word),
         OPC_AUIPC  => itype::decode_auipc(word),
         OPC_SYSTEM => itype::decode_system(word),
+        OPC_AMO    => atype::decode(word),
         0x0F       => Ok(Instruction::Fence), // MISC-MEM: fence/fence.i → nop
         // RV32F
         OPC_FLW    => fptype::decode_flw(word),

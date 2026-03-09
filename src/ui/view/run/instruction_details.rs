@@ -38,7 +38,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
 pub(super) fn disasm_word(word: u32) -> String {
     match falcon::decoder::decode(word) {
         Ok(instruction) => pretty_instr(&instruction),
-        Err(error) => format!("<decode error: {error}>"),
+        Err(_) => format!(".word 0x{word:08x}"),
     }
 }
 
@@ -641,6 +641,19 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         FmsubS{rd,rs1,rs2,rs3}  => fmt4f("fmsub.s",   rd, rs1, rs2, rs3),
         FnmsubS{rd,rs1,rs2,rs3} => fmt4f("fnmsub.s",  rd, rs1, rs2, rs3),
         FnmaddS{rd,rs1,rs2,rs3} => fmt4f("fnmadd.s",  rd, rs1, rs2, rs3),
+
+        // RV32A
+        LrW      {rd,rs1}     => format!("{:<9} {}, ({})",     "lr.w",      reg_name(rd), reg_name(rs1)),
+        ScW      {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "sc.w",      reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmoswapW {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amoswap.w", reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmoaddW  {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amoadd.w",  reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmoxorW  {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amoxor.w",  reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmoandW  {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amoand.w",  reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmoorW   {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amoor.w",   reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmomaxW  {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amomax.w",  reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmominW  {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amomin.w",  reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmomaxuW {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amomaxu.w", reg_name(rd), reg_name(rs2), reg_name(rs1)),
+        AmominuW {rd,rs1,rs2} => format!("{:<9} {}, {}, ({})", "amominu.w", reg_name(rd), reg_name(rs2), reg_name(rs1)),
     }
 }
 

@@ -413,6 +413,8 @@ pub(super) struct EditorState {
     pub(super) last_ok_data: Option<Vec<u8>>,
     pub(super) last_ok_data_base: Option<u32>,
     pub(super) last_ok_bss_size: Option<u32>,
+    /// Raw ELF bytes stored for re-loading on reset (None when loaded from source/FALC/flat).
+    pub(super) last_ok_elf_bytes: Option<Vec<u8>>,
     pub(super) last_ok_comments: std::collections::HashMap<u32, String>,
     pub(super) last_ok_block_comments: std::collections::HashMap<u32, String>,
     pub(super) last_ok_labels: std::collections::HashMap<u32, Vec<String>>,
@@ -689,6 +691,7 @@ impl App {
                 last_ok_data: None,
                 last_ok_data_base: None,
                 last_ok_bss_size: None,
+                last_ok_elf_bytes: None,
                 last_ok_comments: std::collections::HashMap::new(),
                 last_ok_block_comments: std::collections::HashMap::new(),
                 last_ok_labels: std::collections::HashMap::new(),
@@ -975,6 +978,12 @@ impl App {
     }
 
     fn load_last_ok_program(&mut self) {
+        // ELF path: re-parse the original bytes so all segments are restored correctly.
+        if let Some(elf_bytes) = self.editor.last_ok_elf_bytes.clone() {
+            self.load_binary(&elf_bytes);
+            return;
+        }
+
         use falcon::program::{load_bytes, load_words, zero_bytes};
         if let (Some(ref text), Some(ref data), Some(data_base)) = (
             self.editor.last_ok_text.as_ref(),
@@ -986,7 +995,7 @@ impl App {
             self.run.cpu = Cpu::default();
             self.run.cpu.pc = self.run.base_pc;
             self.run.prev_pc = self.run.cpu.pc;
-            self.run.cpu.write(2, self.run.mem_size as u32 - 4);
+            self.run.cpu.write(2, (self.run.mem_size as u32) & !0xF);
             self.run.mem = CacheController::new(
                 self.cache.pending_icache.clone(),
                 self.cache.pending_dcache.clone(),
@@ -1050,13 +1059,11 @@ impl App {
     }
 
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
-        use falcon::program::{load_bytes, zero_bytes};
         self.run.prev_x = self.run.cpu.x;
         self.run.mem_size = 128 * 1024;
         self.run.cpu = Cpu::default();
-        self.run.cpu.pc = self.run.base_pc;
-        self.run.prev_pc = self.run.cpu.pc;
-        self.run.cpu.write(2, self.run.mem_size as u32 - 4);
+        // sp: largest 16-byte aligned address within RAM (psABI requires 16-byte alignment)
+        self.run.cpu.write(2, (self.run.mem_size as u32) & !0xF);
         self.run.mem = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
@@ -1065,71 +1072,115 @@ impl App {
         );
         self.run.faulted = false;
 
-        // Parse FALC header if present; otherwise treat whole file as legacy flat text.
-        let (text_bytes, data_bytes, bss_size): (Vec<u8>, Vec<u8>, u32) =
-            if bytes.len() >= 16 && &bytes[0..4] == b"FALC" {
-                let text_sz = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-                let data_sz = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-                let bss_sz  = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
-                let body    = &bytes[16..];
-                if body.len() < text_sz + data_sz {
-                    self.console.push_error("Binary truncated or corrupt");
+        // ── Detect format and load ───────────────────────────────────────
+        if bytes.len() >= 4 && &bytes[0..4] == b"\x7fELF" {
+            // ── ELF32 LE RISC-V ─────────────────────────────────────────
+            let info = match falcon::program::load_elf(bytes, &mut self.run.mem.ram) {
+                Ok(i) => i,
+                Err(e) => {
+                    self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
-                (body[..text_sz].to_vec(), body[text_sz..text_sz + data_sz].to_vec(), bss_sz)
-            } else {
-                // Legacy flat binary: everything is text, no data/bss.
-                (bytes.to_vec(), Vec::new(), 0)
             };
 
-        // Load sections into RAM directly (bypass cache).
-        if let Err(e) = load_bytes(&mut self.run.mem.ram, self.run.base_pc, &text_bytes) {
-            self.console.push_error(e.to_string());
-            self.run.faulted = true;
-            return;
-        }
-        if !data_bytes.is_empty() {
-            if let Err(e) = load_bytes(&mut self.run.mem.ram, self.run.data_base, &data_bytes) {
-                self.console.push_error(e.to_string());
-                self.run.faulted = true;
-                return;
-            }
-        }
-        if bss_size > 0 {
-            let bss_base = self.run.data_base + data_bytes.len() as u32;
-            if let Err(e) = zero_bytes(&mut self.run.mem.ram, bss_base, bss_size) {
-                self.console.push_error(e.to_string());
-                self.run.faulted = true;
-                return;
-            }
-        }
-        self.run.mem.invalidate_all();
-        self.run.mem.reset_stats();
+            self.run.cpu.pc        = info.entry;
+            self.run.prev_pc       = info.entry;
+            self.run.base_pc       = info.text_base;
+            self.run.data_base     = info.data_base;
+            self.run.mem_view_addr = info.data_base;
+            self.run.mem_region    = crate::ui::app::MemRegion::Data;
+            self.run.mem.invalidate_all();
+            self.run.mem.reset_stats();
 
-        // Build instruction word list from text section only (not data).
-        let mut words = Vec::with_capacity(text_bytes.len() / 4);
-        for chunk in text_bytes.chunks(4) {
-            let mut b = [0u8; 4];
-            for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
-            words.push(u32::from_le_bytes(b));
+            let mut words = Vec::with_capacity(info.text_bytes.len() / 4);
+            for chunk in info.text_bytes.chunks(4) {
+                let mut b = [0u8; 4];
+                for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
+                words.push(u32::from_le_bytes(b));
+            }
+            let entry     = info.entry;
+            let data_base = info.data_base;
+            self.editor.last_ok_text       = Some(words);
+            self.editor.last_ok_data       = Some(Vec::new());
+            self.editor.last_ok_data_base  = Some(data_base);
+            self.editor.last_ok_bss_size   = Some(0);
+            self.editor.last_ok_elf_bytes  = Some(bytes.to_vec());
+            self.editor.last_assemble_msg  = Some(format!(
+                "Loaded ELF: {} bytes, entry 0x{entry:08X} ({} instructions)",
+                info.total_bytes,
+                self.editor.last_ok_text.as_ref().map(|v| v.len()).unwrap_or(0),
+            ));
+        } else {
+            // ── FALC or flat binary ──────────────────────────────────────
+            use falcon::program::{load_bytes, zero_bytes};
+            let (text_bytes, data_bytes, bss_size): (Vec<u8>, Vec<u8>, u32) =
+                if bytes.len() >= 16 && &bytes[0..4] == b"FALC" {
+                    let text_sz = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+                    let data_sz = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+                    let bss_sz  = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+                    let body    = &bytes[16..];
+                    if body.len() < text_sz + data_sz {
+                        self.console.push_error("Binary truncated or corrupt");
+                        self.run.faulted = true;
+                        return;
+                    }
+                    (body[..text_sz].to_vec(), body[text_sz..text_sz + data_sz].to_vec(), bss_sz)
+                } else {
+                    (bytes.to_vec(), Vec::new(), 0)
+                };
+
+            if let Err(e) = load_bytes(&mut self.run.mem.ram, self.run.base_pc, &text_bytes) {
+                self.console.push_error(e.to_string());
+                self.run.faulted = true;
+                return;
+            }
+            if !data_bytes.is_empty() {
+                if let Err(e) = load_bytes(&mut self.run.mem.ram, self.run.data_base, &data_bytes) {
+                    self.console.push_error(e.to_string());
+                    self.run.faulted = true;
+                    return;
+                }
+            }
+            if bss_size > 0 {
+                let bss_base = self.run.data_base + data_bytes.len() as u32;
+                if let Err(e) = zero_bytes(&mut self.run.mem.ram, bss_base, bss_size) {
+                    self.console.push_error(e.to_string());
+                    self.run.faulted = true;
+                    return;
+                }
+            }
+
+            self.run.cpu.pc  = self.run.base_pc;
+            self.run.prev_pc = self.run.base_pc;
+            self.run.mem.invalidate_all();
+            self.run.mem.reset_stats();
+
+            let mut words = Vec::with_capacity(text_bytes.len() / 4);
+            for chunk in text_bytes.chunks(4) {
+                let mut b = [0u8; 4];
+                for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
+                words.push(u32::from_le_bytes(b));
+            }
+            let total = text_bytes.len() + data_bytes.len();
+            self.editor.last_ok_text       = Some(words);
+            self.editor.last_ok_data       = Some(data_bytes);
+            self.editor.last_ok_data_base  = Some(self.run.data_base);
+            self.editor.last_ok_bss_size   = Some(bss_size);
+            self.editor.last_ok_elf_bytes  = None;
+            self.editor.last_assemble_msg  = Some(format!(
+                "Loaded binary: {} bytes ({} instructions)",
+                total,
+                self.editor.last_ok_text.as_ref().map(|v| v.len()).unwrap_or(0),
+            ));
         }
-        let total = text_bytes.len() + data_bytes.len();
-        self.editor.last_ok_text = Some(words);
-        self.editor.last_ok_data = Some(data_bytes);
-        self.editor.last_ok_data_base = Some(self.run.data_base);
-        self.editor.last_ok_bss_size = Some(bss_size);
-        self.editor.last_assemble_msg = Some(format!(
-            "Loaded binary: {} bytes ({} instructions)",
-            total,
-            self.editor.last_ok_text.as_ref().map(|v| v.len()).unwrap_or(0)
-        ));
-        self.editor.last_compile_ok = Some(true);
-        self.editor.diag_line = None;
-        self.editor.diag_msg = None;
-        self.editor.diag_line_text = None;
-        self.run.imem_scroll = 0;
-        self.run.hover_imem_addr = None;
+
+        self.editor.last_compile_ok    = Some(true);
+        self.editor.diag_line          = None;
+        self.editor.diag_msg           = None;
+        self.editor.diag_line_text     = None;
+        self.run.imem_scroll           = 0;
+        self.run.hover_imem_addr       = None;
     }
 
     /// Commit the current numeric edit_buf into pending config for the selected level.
