@@ -842,6 +842,7 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     if col >= ibin_start && col < ibin_end {
         if let Some(path) = OSFileDialog::new()
             .add_filter("ELF / Binary", &["elf", "bin", "img"])
+            .add_filter("All Files", &["*"])
             .pick_file()
         {
             if let Ok(bytes) = std::fs::read(path) {

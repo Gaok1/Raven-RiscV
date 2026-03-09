@@ -2,7 +2,7 @@
 
 > [Leia em Português](docs/README.pt-BR.md)
 
-**RAVEN** is a free, open-source RISC-V simulator and terminal IDE for students and anyone learning assembly. It covers **RV32IMF** — the full base integer set, multiply/divide, and single-precision float — and makes every part of the machine visible while your program runs.
+**RAVEN** is a free, open-source RISC-V simulator and terminal IDE for students and anyone learning assembly. It covers **RV32IMAF** — the full base integer set, multiply/divide, atomics, and single-precision float — and makes every part of the machine visible while your program runs.
 
 Write assembly in the built-in editor, assemble with `Ctrl+R`, and step through every instruction watching registers, memory, and the cache update in real time. Nothing is hidden.
 
@@ -64,11 +64,38 @@ Requires Rust 1.75+. No other dependencies.
 |-----------|-------------|
 | RV32I | ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI, LB, LH, LW, LBU, LHU, SB, SH, SW, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR, LUI, AUIPC, ECALL, EBREAK |
 | RV32M | MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU |
+| RV32A | LR.W, SC.W, AMOSWAP.W, AMOADD.W, AMOXOR.W, AMOAND.W, AMOOR.W, AMOMAX.W, AMOMIN.W, AMOMAXU.W, AMOMINU.W |
 | RV32F | FADD.S, FSUB.S, FMUL.S, FDIV.S, FSQRT.S, FMIN.S, FMAX.S, FEQ.S, FLT.S, FLE.S, FLW, FSW, FMV.W.X, FMV.X.W, FCVT.W.S, FCVT.WU.S, FCVT.S.W, FCVT.S.WU, FCLASS.S, FMADD.S, FMSUB.S, FNMADD.S, FNMSUB.S, FNEG.S, FABS.S |
 
 **Pseudo-instructions:** `la`, `li`, `mv`, `neg`, `not`, `ret`, `call`, `push`, `pop`, `seqz`, `snez`, `beqz`, `bnez`, `bgt`, `ble`, `fmv.s`, `fneg.s`, `fabs.s`, and more.
 
 **Syscalls (`ecall`):** print integer/string, read input, exit, random bytes — Linux-compatible ABI (`a7` = syscall number).
+
+---
+
+## Loading ELF Binaries
+
+RAVEN can load and execute **ELF32 LE RISC-V** binaries compiled by any standard toolchain. It is officially compatible with:
+
+| Target | Support |
+|--------|---------|
+| `riscv32im-unknown-none-elf` | ✅ Full |
+| `riscv32ima-unknown-none-elf` | ✅ Full |
+
+### Running a Rust no_std program
+
+```bash
+# 1. Add the target (once)
+rustup target add riscv32im-unknown-none-elf
+
+# 2. Build your project
+cargo build --target riscv32im-unknown-none-elf
+
+# 3. Open RAVEN, go to the Editor tab, click [BIN] and select the ELF
+#    (found at target/riscv32im-unknown-none-elf/debug/<your-crate>)
+```
+
+The ELF is loaded at its linked virtual addresses, the PC is set to the entry point, and the disassembler shows the decoded text segment. Unknown words (data, padding) appear as `.word 0x...`.
 
 ---
 

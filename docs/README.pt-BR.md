@@ -1,6 +1,6 @@
 # RAVEN — Emulador e IDE RISC-V
 
-**RAVEN** é um emulador, montador e IDE RISC-V rodando no terminal, escrito em Rust. Cobre **RV32I + M + F** e foi pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa — ideal para estudantes, professores e qualquer um aprendendo assembly.
+**RAVEN** é um emulador, montador e IDE RISC-V rodando no terminal, escrito em Rust. Cobre **RV32I + M + A + F** e foi pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa — ideal para estudantes, professores e qualquer um aprendendo assembly.
 
 Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, inspecione registradores e memória, perfile sua hierarquia de cache e leia a documentação — sem sair do terminal.
 
@@ -13,6 +13,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 ### Cobertura do ISA
 - **RV32I** — conjunto base completo de instruções inteiras
 - **RV32M** — multiplicação e divisão inteira
+- **RV32A** — operações atômicas de memória (LR/SC, AMO)
 - **RV32F** — ponto flutuante de precisão simples (26 instruções, `f0`–`f31`, `fcsr`)
 - Conjunto rico de pseudoinstruções: `la`, `li`, `call`, `ret`, `push`, `pop`, `mv`, `neg`, `not`, `seqz`, `snez`, `beqz`, `bnez`, `bgt`, `ble`, `fmv.s`, `fneg.s`, `fabs.s`, entre outras
 - Syscalls via `ecall`: imprimir inteiro/string, ler entrada, sair, bytes aleatórios
@@ -64,6 +65,32 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 
 ### Aba Docs (Aba 4)
 - Referência de instruções e guia da aba Run embutidos no app
+
+---
+
+## Carregando Binários ELF
+
+O RAVEN carrega e executa diretamente binários **ELF32 LE RISC-V** gerados por qualquer toolchain padrão. Compatibilidade oficial:
+
+| Target | Suporte |
+|--------|---------|
+| `riscv32im-unknown-none-elf` | ✅ Completo |
+| `riscv32ima-unknown-none-elf` | ✅ Completo |
+
+### Executando um programa Rust no_std
+
+```bash
+# 1. Adicionar o target (apenas uma vez)
+rustup target add riscv32im-unknown-none-elf
+
+# 2. Compilar o projeto
+cargo build --target riscv32im-unknown-none-elf
+
+# 3. Abrir o RAVEN, ir para a aba Editor, clicar em [BIN] e selecionar o ELF
+#    (está em target/riscv32im-unknown-none-elf/debug/<nome-do-crate>)
+```
+
+O ELF é carregado nos endereços virtuais definidos pelo linker, o PC é apontado para o entry point, e o disassembler exibe o segmento de texto decodificado. Palavras não reconhecidas (dados, padding) aparecem como `.word 0x...`.
 
 ---
 
