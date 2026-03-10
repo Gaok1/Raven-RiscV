@@ -218,3 +218,30 @@ calculate:
 ```
 
 ![WindowsTerminal_e0XEHNKWAu](https://github.com/user-attachments/assets/f9b87e26-bc89-4a14-88cb-4b46bf8aed64)
+
+---
+
+## 7. Carregando Binários ELF (Rust `no_std`)
+
+O RAVEN também executa binários ELF compilados — não apenas assembly escrito no editor. Isso é útil para escrever programas em Rust e depurá-los no nível de instrução.
+
+### Requisitos
+
+- Target Rust: `riscv32im-unknown-none-elf`
+- Programa `#![no_std]` com ponto de entrada `_start`
+
+```bash
+rustup target add riscv32im-unknown-none-elf
+cargo build --release --target riscv32im-unknown-none-elf
+```
+
+Em seguida, abra o RAVEN, vá para a aba **Editor**, pressione `Ctrl+O` (ou clique em `[BIN]`) e selecione o arquivo ELF gerado.
+
+### Exemplo
+
+Um exemplo completo e funcional está disponível em [`RustCompatibleABI.rs`](RustCompatibleABI.rs). Ele demonstra:
+
+- Estrutura mínima de um programa `#![no_std]`
+- Ponto de entrada `_start`
+- Panic handler que imprime a mensagem de pânico no console do RAVEN
+- Funções auxiliares para `write` e `exit` usando a ABI de syscalls Linux para RISC-V
