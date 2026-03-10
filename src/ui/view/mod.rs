@@ -230,7 +230,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[drag]",         "resize sidebar / instruction panels"),
             ],
             vec![
-                ("[p] register",   "pin / unpin register in sidebar"),
+                ("[P] register",   "pin / unpin register in sidebar"),
                 ("[↑/↓] REGS",     "navigate register list"),
                 ("[↑/↓] RAM",      "scroll memory view"),
                 ("",               ""),
@@ -246,9 +246,10 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         ],
         Tab::Editor => vec![
             vec![
-                ("[Tab]",          "toggle Insert / Command mode"),
+                ("[Esc]",          "switch to Command mode (click editor to return)"),
                 ("[Ctrl+Z]",       "undo"),
                 ("[Ctrl+Y]",       "redo"),
+                ("[Ctrl+/]",       "toggle line comment"),
                 ("[Ctrl+F]",       "open find bar"),
                 ("[Ctrl+H]",       "open find & replace bar"),
                 ("[Ctrl+G]",       "goto line number"),

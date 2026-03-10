@@ -88,12 +88,12 @@ pub(crate) fn parse_push(s: &str) -> Result<(Instruction, Instruction), String> 
             rd: 2,
             rs1: 2,
             imm: -4,
-        }, // alocate stack space
+        }, // allocate: sp -= 4
         Instruction::Sw {
             rs2: rs,
             rs1: 2,
-            imm: 4,
-        }, //write into sp+4
+            imm: 0,
+        }, // store at new sp (standard RISC-V convention)
     ))
 }
 
@@ -108,12 +108,12 @@ pub(crate) fn parse_pop(s: &str) -> Result<(Instruction, Instruction), String> {
     }
     let rd = parse_reg(&ops[0]).ok_or("invalid rd")?;
     Ok((
-        Instruction::Lw { rd, rs1: 2, imm: 4 }, // read from sp+4
+        Instruction::Lw { rd, rs1: 2, imm: 0 }, // read from sp (standard RISC-V convention)
         Instruction::Addi {
             rd: 2,
             rs1: 2,
             imm: 4,
-        }, // deallocate stack space (sp += 4)
+        }, // deallocate: sp += 4
     ))
 }
 

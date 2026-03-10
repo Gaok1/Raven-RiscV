@@ -209,6 +209,13 @@ impl Editor {
         })
     }
 
+    pub fn delete_selection(&mut self) {
+        if let Some((start, end)) = self.selection_range() {
+            self.snapshot();
+            self.delete_range(start, end);
+        }
+    }
+
     fn delete_range(&mut self, start: (usize, usize), end: (usize, usize)) {
         let (sr, sc) = start;
         let (er, ec) = end;

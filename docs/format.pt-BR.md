@@ -188,8 +188,8 @@ A tabela abaixo documenta os formatos aceitos no RAVEN e a forma exata (conceitu
 | `jr` | `jr rs1` | `jalr x0, rs1, 0` | Salto indireto sem link. |
 | `ret` | `ret` | `jalr x0, ra, 0` | Retorna para o endereço em `ra` (`x1`). |
 | `la` | `la rd, label` | `lui rd, hi(label)` + `addi rd, rd, lo(label)` | Usa divisão hi/lo com arredondamento (`+0x800`) para caber em 12 bits com sinal no low. |
-| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 4(sp)` | Guarda o valor de `rs` na pilha em `sp` e subtrai `sp` em 4|
-| `pop` | `pop rd` | `lw rd, 4(sp)` + `addi sp, sp, 4` | Aumenta `sp` em 4 e guarda o valor em `rd`|
+| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 0(sp)` | Decrementa `sp` em 4 e armazena `rs` no novo `sp` (convenção RISC-V full-descending padrão) |
+| `pop` | `pop rd` | `lw rd, 0(sp)` + `addi sp, sp, 4` | Lê `rd` do `sp` atual e incrementa `sp` em 4 |
 | `print` | `print rd` | `addi a7, x0, 1000` + `addi a0, rd, 0` + `ecall` | Imprime valor de registrador. |
 | `printStr` | `printStr label` | `addi a7, x0, 1001` + `la a0, label` + `ecall` | Imprime string NUL-terminada (sem quebra de linha). |
 | `printString` | `printString label` | igual a `printStr label` | Alias legado aceito pelo assembler. |

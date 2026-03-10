@@ -268,6 +268,35 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
+            if ctrl && matches!(key.code, KeyCode::Char('y')) && matches!(app.tab, Tab::Editor) {
+                app.editor.buf.redo();
+                app.editor.dirty = true;
+                app.editor.last_edit_at = Some(Instant::now());
+                app.editor.diag_line = None;
+                app.editor.diag_msg = None;
+                app.editor.diag_line_text = None;
+                app.editor.last_compile_ok = None;
+                app.editor.last_assemble_msg = None;
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('x')) && matches!(app.tab, Tab::Editor) {
+                if let Some(text) = app.editor.buf.selected_text() {
+                    if let Some(clip) = app.clipboard.as_mut() {
+                        let _ = clip.set_text(text);
+                    }
+                    app.editor.buf.delete_selection();
+                    app.editor.dirty = true;
+                    app.editor.last_edit_at = Some(Instant::now());
+                    app.editor.diag_line = None;
+                    app.editor.diag_msg = None;
+                    app.editor.diag_line_text = None;
+                    app.editor.last_compile_ok = None;
+                    app.editor.last_assemble_msg = None;
+                }
+                return Ok(false);
+            }
+
             if ctrl && matches!(key.code, KeyCode::Char('a')) && matches!(app.tab, Tab::Editor) {
                 app.editor.buf.select_all();
                 return Ok(false);
@@ -330,6 +359,19 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             // F2: toggle address hints gutter
             if key.code == KeyCode::F(2) && matches!(app.tab, Tab::Editor) {
                 app.editor.show_addr_hints = !app.editor.show_addr_hints;
+                return Ok(false);
+            }
+
+            // Ctrl+/: toggle line comment
+            if ctrl && matches!(key.code, KeyCode::Char('/')) && matches!(app.tab, Tab::Editor) {
+                app.editor.buf.toggle_comment();
+                app.editor.dirty = true;
+                app.editor.last_edit_at = Some(Instant::now());
+                app.editor.diag_line = None;
+                app.editor.diag_msg = None;
+                app.editor.diag_line_text = None;
+                app.editor.last_compile_ok = None;
+                app.editor.last_assemble_msg = None;
                 return Ok(false);
             }
 
@@ -429,6 +471,35 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 app.editor.diag_line_text = None;
                 app.editor.last_compile_ok = None;
                 app.editor.last_assemble_msg = None;
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('y')) && matches!(app.tab, Tab::Editor) {
+                app.editor.buf.redo();
+                app.editor.dirty = true;
+                app.editor.last_edit_at = Some(Instant::now());
+                app.editor.diag_line = None;
+                app.editor.diag_msg = None;
+                app.editor.diag_line_text = None;
+                app.editor.last_compile_ok = None;
+                app.editor.last_assemble_msg = None;
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('x')) && matches!(app.tab, Tab::Editor) {
+                if let Some(text) = app.editor.buf.selected_text() {
+                    if let Some(clip) = app.clipboard.as_mut() {
+                        let _ = clip.set_text(text);
+                    }
+                    app.editor.buf.delete_selection();
+                    app.editor.dirty = true;
+                    app.editor.last_edit_at = Some(Instant::now());
+                    app.editor.diag_line = None;
+                    app.editor.diag_msg = None;
+                    app.editor.diag_line_text = None;
+                    app.editor.last_compile_ok = None;
+                    app.editor.last_assemble_msg = None;
+                }
                 return Ok(false);
             }
 
@@ -853,6 +924,35 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     if app.cache.data_fmt != CacheDataFmt::Float {
                         app.cache.data_group = app.cache.data_group.cycle();
                     }
+                }
+                // Sidebar / region shortcuts (same behaviour as Run tab)
+                (KeyCode::Char('v'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    if app.run.show_bp_list {
+                        app.run.show_bp_list = false;
+                        app.run.show_registers = true;
+                    } else if app.run.show_registers {
+                        app.run.show_registers = false;
+                    } else {
+                        app.run.show_bp_list = true;
+                    }
+                }
+                (KeyCode::Char('k'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    if app.run.mem_region == MemRegion::Stack {
+                        app.run.mem_region = MemRegion::Data;
+                        app.run.mem_view_addr = app.run.data_base;
+                    } else {
+                        app.run.mem_region = MemRegion::Stack;
+                        let sp = app.run.cpu.x[2];
+                        app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
+                    }
+                    app.run.show_registers = false;
+                    app.run.show_bp_list = false;
+                }
+                (KeyCode::Char('e'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    app.run.show_exec_count = !app.run.show_exec_count;
+                }
+                (KeyCode::Char('y'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                    app.run.show_instr_type = !app.run.show_instr_type;
                 }
                 // Execution hotkeys — available in Stats/View (not Config, where letters edit fields)
                 (KeyCode::Char('s'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {

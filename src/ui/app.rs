@@ -675,7 +675,7 @@ impl App {
         let base_pc = 0x0000_0000;
         cpu.pc = base_pc;
         let mem_size = 128 * 1024;
-        cpu.write(2, mem_size as u32 - 4);
+        cpu.write(2, mem_size as u32);
         let data_base = base_pc + 0x1000;
         Self {
             tab: Tab::Editor,
@@ -863,7 +863,7 @@ impl App {
         self.run.cpu = Cpu::default();
         self.run.cpu.pc = self.run.base_pc;
         self.run.prev_pc = self.run.cpu.pc;
-        self.run.cpu.write(2, self.run.mem_size as u32 - 4);
+        self.run.cpu.write(2, self.run.mem_size as u32);
         self.run.mem = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
@@ -995,7 +995,7 @@ impl App {
             self.run.cpu = Cpu::default();
             self.run.cpu.pc = self.run.base_pc;
             self.run.prev_pc = self.run.cpu.pc;
-            self.run.cpu.write(2, (self.run.mem_size as u32) & !0xF);
+            self.run.cpu.write(2, self.run.mem_size as u32);
             self.run.mem = CacheController::new(
                 self.cache.pending_icache.clone(),
                 self.cache.pending_dcache.clone(),
@@ -1062,8 +1062,7 @@ impl App {
         self.run.prev_x = self.run.cpu.x;
         self.run.mem_size = 128 * 1024;
         self.run.cpu = Cpu::default();
-        // sp: largest 16-byte aligned address within RAM (psABI requires 16-byte alignment)
-        self.run.cpu.write(2, (self.run.mem_size as u32) & !0xF);
+        self.run.cpu.write(2, self.run.mem_size as u32);
         self.run.mem = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
@@ -1468,6 +1467,16 @@ impl App {
         self.run.prev_f = self.run.cpu.f;
         self.run.prev_pc = self.run.cpu.pc;
         let step_pc = self.run.cpu.pc;
+
+        // Halt gracefully when PC leaves the loaded text segment.
+        if !self.imem_in_range(step_pc) {
+            self.console.push_error(format!(
+                "Execution reached 0x{step_pc:08X}, outside the loaded program. \
+                 Add `li a7, 93; ecall` to terminate cleanly."
+            ));
+            self.run.faulted = true;
+            return;
+        }
 
         // Classify instruction BEFORE stepping (registers still hold pre-step values)
         let cpi_cycles = classify_cpi_cycles(step_pc, &self.run.cpu, &self.run.mem, &self.run.cpi_config);

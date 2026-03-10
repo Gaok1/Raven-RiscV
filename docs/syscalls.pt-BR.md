@@ -26,10 +26,10 @@ a0      = valor de retorno  (valor negativo = -errno como u32)
             │  heap_ptr →                  │    (ex.: guarde heap_ptr em um label .data)
             │                              │
             ├  ─  ─  ─  ─  ─  ─  ─  ─  ─ ┤
-            │  pilha  (cresce ↓)           │  ← sp começa em 0x0001FFFC
+            │  pilha  (cresce ↓)           │  ← sp = 0x00020000 (um além do fim da RAM)
             │                              │    push:  addi sp, sp, -4 / sw rs, 0(sp)
-0x0001FFFC  │  sp (inicial)                │    pop:   lw rd, 0(sp)  / addi sp, sp, 4
-0x0001FFFF  └──────────────────────────────┘
+0x0001FFFF  └──────────────────────────────┘    pop:   lw rd, 0(sp)  / addi sp, sp, 4
+            sp (0x00020000) — primeiro push → sp = 0x0001FFFC
 ```
 
 ### Endereços importantes
@@ -39,7 +39,7 @@ a0      = valor de retorno  (valor negativo = -errno como u32)
 | `base_pc`  | `0x00000000` | Início do `.text` (configurável na aba Run) |
 | `data_base`| `0x00001000` | Início do `.data` / `.bss`                 |
 | `bss_end`  | dinâmico     | Primeiro byte após o `.bss`                |
-| `sp` inicial | `0x0001FFFC` | Topo dos 128 KB de RAM, alinhado a 4 bytes |
+| `sp` inicial | `0x00020000` | Um além do fim da RAM (convenção ABI RISC-V); primeiro `push` escreve em `0x0001FFFC` |
 
 ### Heap manual — padrão bump allocator
 

@@ -187,8 +187,8 @@ The table below documents the pseudo forms implemented by RAVEN and the exact ex
 | `jr` | `jr rs1` | `jalr x0, rs1, 0` | Indirect jump, no link. |
 | `ret` | `ret` | `jalr x0, ra, 0` | Return to address in `ra` (`x1`). |
 | `la` | `la rd, label` | `lui rd, hi(label)` + `addi rd, rd, lo(label)` | Uses hi/lo split with rounding (`+0x800`) so low part fits signed 12-bit. |
-| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 4(sp)` | store the `rs` value at the stack and decreases `sp` by 4 |
-| `pop` | `pop rd` | `lw rd, 4(sp)` + `addi sp, sp, 4` | increases `sp` by 4 and load the value at `rd` |
+| `push` | `push rs` | `addi sp, sp, -4` + `sw rs, 0(sp)` | Decrements `sp` by 4, then stores `rs` at the new `sp` (standard RISC-V full-descending convention) |
+| `pop` | `pop rd` | `lw rd, 0(sp)` + `addi sp, sp, 4` | Loads `rd` from the current `sp`, then increments `sp` by 4 |
 | `print` | `print rd` | `addi a7, x0, 1000` + `addi a0, rd, 0` + `ecall` | Prints register value. |
 | `printStr` | `printStr label` | `addi a7, x0, 1001` + `la a0, label` + `ecall` | Prints NUL-terminated string (no newline). |
 | `printString` | `printString label` | same as `printStr label` | Legacy alias accepted by the assembler. |

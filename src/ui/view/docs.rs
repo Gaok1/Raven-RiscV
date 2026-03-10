@@ -914,7 +914,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
         mono("              │   (free space)       │  ← no allocator; read/write freely with lw/sw"),
         mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
-        mono("  0x0001FFFC  │  stack  (grows ↓)   │  ← sp starts at 0x1FFFC; push: sp -= 4"),
+        mono("  0x0001FFFF  │  stack  (grows ↓)   │  ← sp = 0x20000 (one past end); push: sp-=4, sw rs,0(sp)"),
         mono("              └─────────────────────┘"),
         blank(),
 
@@ -931,7 +931,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         blank(),
         kv("base_pc",    "Start of .text. Configurable; default 0x00000000."),
         kv("data_base",  "Start of .data / .bss = base_pc + 0x1000."),
-        kv("sp (initial)","0x0001FFFC (top of 128 KB RAM, word-aligned)."),
+        kv("sp (initial)","0x00020000 — one past end of RAM (RISC-V ABI). First push writes to 0x1FFFC."),
         blank(),
 
         // ── Free space note ──
@@ -997,7 +997,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
         mono("              │   (espaço livre)     │  ← sem alocador; leitura/escrita livre com lw/sw"),
         mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
-        mono("  0x0001FFFC  │  pilha  (cresce ↓)  │  ← sp começa em 0x1FFFC; push: sp -= 4"),
+        mono("  0x0001FFFF  │  pilha  (cresce ↓)  │  ← sp = 0x20000 (um além do fim); push: sp-=4, sw rs,0(sp)"),
         mono("              └─────────────────────┘"),
         blank(),
 
@@ -1014,7 +1014,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         blank(),
         kv("base_pc",    "Início do .text. Configurável; padrão 0x00000000."),
         kv("data_base",  "Início do .data / .bss = base_pc + 0x1000."),
-        kv("sp (inicial)","0x0001FFFC (topo dos 128 KB de RAM, alinhado a 4 bytes)."),
+        kv("sp (inicial)","0x00020000 — um além do fim da RAM (ABI RISC-V). Primeiro push escreve em 0x1FFFC."),
         blank(),
 
         // ── Espaço livre ──

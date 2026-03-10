@@ -98,7 +98,7 @@ fn push_expands_correctly() {
     assert_eq!(prog.text.len(), 2);
     let expected_addi = encode(Instruction::Addi { rd: 2, rs1: 2, imm: -4 })
         .expect("encode addi");
-    let expected_sw = encode(Instruction::Sw { rs2: 10, rs1: 2, imm: 4 })
+    let expected_sw = encode(Instruction::Sw { rs2: 10, rs1: 2, imm: 0 })
         .expect("encode sw");
     println!("Expected SW: {}, Expected ADDI: {}", expected_sw, expected_addi);
     assert_eq!(prog.text[0], expected_addi);
@@ -110,7 +110,7 @@ fn pop_expands_correctly() {
     let asm = ".text\npop a0";
     let prog = assemble(asm, 0).expect("assemble");
     assert_eq!(prog.text.len(), 2);
-    let expected_lw = encode(Instruction::Lw { rd: 10, rs1: 2, imm: 4 })
+    let expected_lw = encode(Instruction::Lw { rd: 10, rs1: 2, imm: 0 })
         .expect("encode lw");
     let expected_addi = encode(Instruction::Addi { rd: 2, rs1: 2, imm: 4 })
         .expect("encode addi");

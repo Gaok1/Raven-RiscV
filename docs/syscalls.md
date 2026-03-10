@@ -26,10 +26,10 @@ a0  = return value  (negative value = -errno as u32)
             │  heap_ptr →                  │    (e.g. store heap_ptr in a .data label)
             │                              │
             ├  ─  ─  ─  ─  ─  ─  ─  ─  ─ ┤
-            │  stack  (grows ↓)            │  ← sp starts at 0x0001FFFC
+            │  stack  (grows ↓)            │  ← sp = 0x00020000 (one past end of RAM)
             │                              │    push:  addi sp, sp, -4 / sw rs, 0(sp)
-0x0001FFFC  │  sp (initial)                │    pop:   lw rd, 0(sp)  / addi sp, sp, 4
-0x0001FFFF  └──────────────────────────────┘
+0x0001FFFF  └──────────────────────────────┘    pop:   lw rd, 0(sp)  / addi sp, sp, 4
+            sp (0x00020000) — first push → sp = 0x0001FFFC
 ```
 
 ### Key addresses
@@ -39,7 +39,7 @@ a0  = return value  (negative value = -errno as u32)
 | `base_pc`   | `0x00000000` | Start of `.text` (configurable in Run tab) |
 | `data_base` | `0x00001000` | Start of `.data` / `.bss`               |
 | `bss_end`   | dynamic      | First byte after `.bss` (end of static data) |
-| `sp` initial | `0x0001FFFC` | Top of 128 KB RAM, word-aligned         |
+| `sp` initial | `0x00020000` | One past end of RAM (RISC-V ABI convention); first `push` writes to `0x0001FFFC` |
 
 ### Manual heap — bump allocator pattern
 
