@@ -9,3 +9,5 @@
 /Issues/
 # Ignore local ELF test binaries
 /elf-test/
+# Ignore local TCC documentation
+/docs/RAVEN_PLATAFORMA_DOCUMENTACAO.md

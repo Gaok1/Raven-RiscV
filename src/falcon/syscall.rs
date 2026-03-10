@@ -43,7 +43,9 @@ pub fn handle_syscall<B: Bus>(
         SYS_WRITE => linux_write(cpu, mem, console),
         SYS_GETRANDOM => linux_getrandom(cpu, mem, console),
         SYS_EXIT | SYS_EXIT_GROUP => {
-            cpu.exit_code = Some(cpu.read(10));
+            let code = cpu.read(10);
+            cpu.exit_code = Some(code);
+            console.push_error(format!("Exit {}", code as i32));
             Ok(false)
         }
 
