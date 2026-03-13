@@ -16,20 +16,6 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         } else {
             render_register_table(f, area, app);
         }
-    } else if !app.run.elf_sections.is_empty() {
-        // Split: memory view on top, sections viewer below
-        let sections_h = elf_sections_height(app).min(area.height.saturating_sub(8));
-        let mem_h = area.height.saturating_sub(sections_h);
-        if sections_h == 0 || mem_h < 4 {
-            render_memory_view(f, area, app);
-        } else {
-            let parts = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(mem_h), Constraint::Length(sections_h)])
-                .split(area);
-            render_memory_view(f, parts[0], app);
-            render_elf_sections(f, parts[1], app);
-        }
     } else {
         render_memory_view(f, area, app);
     }
