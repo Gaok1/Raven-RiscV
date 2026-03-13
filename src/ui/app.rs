@@ -508,6 +508,9 @@ pub(super) struct RunState {
     // Source label metadata
     pub(super) labels: std::collections::HashMap<u32, Vec<String>>,
 
+    // ELF sections for the sections viewer (empty when loaded from ASM)
+    pub(super) elf_sections: Vec<falcon::program::ElfSection>,
+
     // Execution statistics
     pub(super) exec_counts: std::collections::HashMap<u32, u64>,
     pub(super) exec_trace: std::collections::VecDeque<(u32, String)>,
@@ -756,6 +759,7 @@ impl App {
                 speed: RunSpeed::X1,
                 comments: std::collections::HashMap::new(),
                 labels: std::collections::HashMap::new(),
+                elf_sections: Vec::new(),
                 exec_counts: std::collections::HashMap::new(),
                 exec_trace: std::collections::VecDeque::new(),
                 reg_age: [255u8; 32],
@@ -1092,6 +1096,10 @@ impl App {
             self.run.mem.invalidate_all();
             self.run.mem.reset_stats();
 
+            // Populate labels and sections viewer from ELF symbol table
+            self.run.labels = info.symbols;
+            self.run.elf_sections = info.sections;
+
             let mut words = Vec::with_capacity(info.text_bytes.len() / 4);
             for chunk in info.text_bytes.chunks(4) {
                 let mut b = [0u8; 4];
@@ -1112,6 +1120,7 @@ impl App {
             ));
         } else {
             // ── FALC or flat binary ──────────────────────────────────────
+            self.run.elf_sections = Vec::new();
             use falcon::program::{load_bytes, zero_bytes};
             let (text_bytes, data_bytes, bss_size): (Vec<u8>, Vec<u8>, u32) =
                 if bytes.len() >= 16 && &bytes[0..4] == b"FALC" {

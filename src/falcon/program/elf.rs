@@ -1,5 +1,15 @@
+use std::collections::HashMap;
 use crate::falcon::{errors::FalconError, memory::Bus};
 use super::{load_bytes, zero_bytes};
+
+/// A data/rodata/bss section extracted from an ELF for the sections viewer.
+pub struct ElfSection {
+    pub name:  String,
+    pub addr:  u32,
+    pub size:  u32,
+    /// Raw bytes from the file (empty for .bss).
+    pub bytes: Vec<u8>,
+}
 
 /// Information about a loaded ELF32 image.
 pub struct ElfInfo {
@@ -14,6 +24,10 @@ pub struct ElfInfo {
     pub data_base:  u32,
     /// Total file bytes loaded into RAM.
     pub total_bytes: usize,
+    /// Symbol table: addr → list of names (STT_FUNC / STT_OBJECT, non-empty, non-`$`-prefixed).
+    pub symbols:  HashMap<u32, Vec<String>>,
+    /// Data/rodata/bss sections for the sections viewer.
+    pub sections: Vec<ElfSection>,
 }
 
 /// Parse and load an ELF32 LE RISC-V executable into `mem`.
@@ -48,6 +62,12 @@ pub fn load_elf<B: Bus>(bytes: &[u8], mem: &mut B) -> Result<ElfInfo, FalconErro
     let e_phoff     = u32le(28) as usize;
     let e_phentsize = u16le(42) as usize;
     let e_phnum     = u16le(44) as usize;
+
+    // Section header fields (non-fatal if missing/zero)
+    let e_shoff     = u32le(32) as usize;
+    let e_shentsize = u16le(46) as usize;
+    let e_shnum     = u16le(48) as usize;
+    let e_shstrndx  = u16le(50) as usize;
 
     if e_phentsize < 32 {
         return Err(FalconError::Decode("ELF program header entry too small"));
@@ -99,7 +119,125 @@ pub fn load_elf<B: Bus>(bytes: &[u8], mem: &mut B) -> Result<ElfInfo, FalconErro
         }
     }
 
-    Ok(ElfInfo { entry: e_entry, text_base, text_bytes, data_base, total_bytes })
+    // ── Parse section headers (best-effort, non-fatal) ───────────────────
+    let (symbols, sections) = parse_sections(bytes, e_shoff, e_shentsize, e_shnum, e_shstrndx);
+
+    Ok(ElfInfo { entry: e_entry, text_base, text_bytes, data_base, total_bytes, symbols, sections })
+}
+
+/// Parse section headers to extract the symbol table and data/rodata/bss sections.
+/// Returns empty maps on any structural problem (non-fatal).
+fn parse_sections(
+    bytes: &[u8],
+    e_shoff: usize,
+    e_shentsize: usize,
+    e_shnum: usize,
+    e_shstrndx: usize,
+) -> (HashMap<u32, Vec<String>>, Vec<ElfSection>) {
+    let mut symbols: HashMap<u32, Vec<String>> = HashMap::new();
+    let mut sections: Vec<ElfSection> = Vec::new();
+
+    if e_shoff == 0 || e_shentsize < 40 || e_shnum == 0 { return (symbols, sections); }
+
+    let u32le = |o: usize| -> Option<u32> {
+        bytes.get(o..o+4).map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+    };
+    let u32le_r = |o: usize| -> u32 { u32le(o).unwrap_or(0) };
+
+    // ── Read all section headers into a lightweight cache ─────────────────
+    struct Shdr { name_off: u32, sh_type: u32, addr: u32, file_off: usize, size: usize, link: u32 }
+    let mut shdrs: Vec<Shdr> = Vec::with_capacity(e_shnum);
+    for i in 0..e_shnum {
+        let base = e_shoff + i * e_shentsize;
+        if base + 40 > bytes.len() { return (symbols, sections); }
+        shdrs.push(Shdr {
+            name_off: u32le_r(base),
+            sh_type:  u32le_r(base + 4),
+            addr:     u32le_r(base + 12),
+            file_off: u32le_r(base + 16) as usize,
+            size:     u32le_r(base + 20) as usize,
+            link:     u32le_r(base + 24),
+        });
+    }
+
+    // ── Locate shstrtab (section name string table) ───────────────────────
+    let shstrtab: &[u8] = if e_shstrndx < shdrs.len() {
+        let s = &shdrs[e_shstrndx];
+        if s.file_off + s.size <= bytes.len() { &bytes[s.file_off..s.file_off + s.size] }
+        else { &[] }
+    } else { &[] };
+
+    let cstr = |strtab: &[u8], off: usize| -> String {
+        let slice = strtab.get(off..).unwrap_or(&[]);
+        let end = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+        String::from_utf8_lossy(&slice[..end]).into_owned()
+    };
+
+    // ── Find .symtab section ──────────────────────────────────────────────
+    const SHT_SYMTAB: u32 = 2;
+    const SHT_STRTAB: u32 = 3;
+    const STT_OBJECT: u8  = 1;
+    const STT_FUNC:   u8  = 2;
+
+    for (i, sh) in shdrs.iter().enumerate() {
+        if sh.sh_type == SHT_SYMTAB {
+            // Linked .strtab
+            let strtab: &[u8] = if (sh.link as usize) < shdrs.len() {
+                let st = &shdrs[sh.link as usize];
+                if st.sh_type == SHT_STRTAB && st.file_off + st.size <= bytes.len() {
+                    &bytes[st.file_off..st.file_off + st.size]
+                } else { &[] }
+            } else { &[] };
+
+            if sh.file_off + sh.size > bytes.len() { continue; }
+            let sym_data = &bytes[sh.file_off..sh.file_off + sh.size];
+            // ELF32 symbol entry = 16 bytes
+            let n = sym_data.len() / 16;
+            for j in 0..n {
+                let o = j * 16;
+                let st_name  = u32::from_le_bytes(sym_data[o..o+4].try_into().unwrap()) as usize;
+                let st_value = u32::from_le_bytes(sym_data[o+4..o+8].try_into().unwrap());
+                let st_info  = sym_data[o + 12];
+                let sym_type = st_info & 0x0F;
+                if sym_type != STT_FUNC && sym_type != STT_OBJECT { continue; }
+                if st_value == 0 { continue; }
+                let name = cstr(strtab, st_name);
+                if name.is_empty() || name.starts_with('$') { continue; }
+                symbols.entry(st_value).or_default().push(name);
+            }
+            let _ = i; // suppress unused warning
+        }
+    }
+
+    // ── Collect data/rodata/bss sections for the viewer ───────────────────
+    for sh in &shdrs {
+        if sh.addr == 0 || sh.size == 0 { continue; }
+        let name = cstr(shstrtab, sh.name_off as usize);
+        if !is_viewer_section(&name) { continue; }
+        // .bss sections have sh_type=SHT_NOBITS(8), no file bytes
+        const SHT_NOBITS: u32 = 8;
+        let sec_bytes: Vec<u8> = if sh.sh_type == SHT_NOBITS {
+            Vec::new()
+        } else if sh.file_off + sh.size <= bytes.len() {
+            bytes[sh.file_off..sh.file_off + sh.size].to_vec()
+        } else {
+            Vec::new()
+        };
+        sections.push(ElfSection { name, addr: sh.addr, size: sh.size as u32, bytes: sec_bytes });
+    }
+    // Sort by address for stable display
+    sections.sort_by_key(|s| s.addr);
+
+    (symbols, sections)
+}
+
+/// Returns true for sections that should appear in the sections viewer:
+/// .data, .rodata, .bss, and any .data.* / .rodata.* subsections.
+/// .text is excluded (already shown in disassembly).
+fn is_viewer_section(name: &str) -> bool {
+    name == ".data"   || name.starts_with(".data.")   ||
+    name == ".rodata" || name.starts_with(".rodata.")  ||
+    name == ".bss"    || name.starts_with(".bss.")
 }
 
 #[cfg(test)]
@@ -110,9 +248,9 @@ mod tests {
     fn elf_bytes() -> Vec<u8> {
         std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/elf-test/no_std"
+            "/elf-test/no_std.elf"
         ))
-        .expect("elf-test/no_std.bin not found")
+        .expect("elf-test/no_std.elf not found")
     }
 
     #[test]

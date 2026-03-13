@@ -1,6 +1,6 @@
 use crate::{
     falcon::{errors::FalconError, memory::Bus, registers::Cpu},
-    ui::Console,
+    ui::{console::ConsoleColor, Console},
 };
 
 const SYS_READ: u32 = 63;
@@ -170,7 +170,11 @@ fn linux_write<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Res
     }
 
     cpu.stdout.extend_from_slice(&bytes);
-    console_write_bytes(console, &bytes);
+    if fd == 2 {
+        console_write_bytes_colored(console, &bytes, ConsoleColor::Error);
+    } else {
+        console_write_bytes(console, &bytes);
+    }
     cpu.write(10, count as u32);
     Ok(true)
 }
@@ -250,6 +254,22 @@ fn console_write_bytes(console: &mut Console, bytes: &[u8]) {
     }
     if start < bytes.len() {
         console.append_str(&String::from_utf8_lossy(&bytes[start..]));
+    }
+}
+
+fn console_write_bytes_colored(console: &mut Console, bytes: &[u8], color: ConsoleColor) {
+    let mut start = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\n' {
+            if start < i {
+                console.append_str_colored(&String::from_utf8_lossy(&bytes[start..i]), color);
+            }
+            console.newline();
+            start = i + 1;
+        }
+    }
+    if start < bytes.len() {
+        console.append_str_colored(&String::from_utf8_lossy(&bytes[start..]), color);
     }
 }
 

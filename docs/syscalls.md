@@ -133,6 +133,7 @@ Write bytes from a buffer to a file descriptor.
 | **`a0` (ret)** | bytes written, or `-errno` |
 
 **Restrictions:** only `fd=1` and `fd=2` are supported (both go to the RAVEN console).
+Output to `fd=2` (stderr) is displayed in **red** in the console.
 
 ```asm
 .data

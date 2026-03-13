@@ -63,11 +63,15 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line> = app.console.lines[start..end]
         .iter()
         .map(|l| {
-            if l.is_error {
-                Line::styled(l.text.as_str(), Style::default().fg(Color::Red))
-            } else {
-                Line::from(l.text.as_str())
-            }
+            use crate::ui::console::ConsoleColor;
+            let style = match l.color {
+                ConsoleColor::Normal  => Style::default(),
+                ConsoleColor::Error   => Style::default().fg(Color::Red),
+                ConsoleColor::Warning => Style::default().fg(Color::Yellow),
+                ConsoleColor::Success => Style::default().fg(Color::Green),
+                ConsoleColor::Info    => Style::default().fg(Color::Cyan),
+            };
+            Line::styled(l.text.as_str(), style)
         })
         .collect();
     if app.console.reading {

@@ -5,7 +5,7 @@ pub mod editor;
 mod input;
 pub mod theme;
 pub mod view;
-mod console;
+pub mod console;
 
 pub use app::{run, App};
 pub use console::Console;

@@ -2,17 +2,33 @@
 
 use std::collections::VecDeque;
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConsoleColor {
+    #[default]
+    Normal,
+    Error,
+    Warning,
+    Success,
+    Info,
+}
+
 pub struct ConsoleLine {
     pub text: String,
-    pub is_error: bool,
+    pub color: ConsoleColor,
 }
 
 impl Default for ConsoleLine {
     fn default() -> Self {
         Self {
             text: String::new(),
-            is_error: false,
+            color: ConsoleColor::Normal,
         }
+    }
+}
+
+impl ConsoleLine {
+    pub fn is_error(&self) -> bool {
+        self.color == ConsoleColor::Error
     }
 }
 
@@ -32,17 +48,21 @@ pub struct Console {
 
 impl Console {
     pub fn push_line<S: Into<String>>(&mut self, line: S) {
-        self.lines.push(ConsoleLine { text: line.into(), is_error: false });
+        self.lines.push(ConsoleLine { text: line.into(), color: ConsoleColor::Normal });
     }
 
     pub fn push_error<S: Into<String>>(&mut self, line: S) {
-        self.lines.push(ConsoleLine { text: line.into(), is_error: true });
+        self.lines.push(ConsoleLine { text: line.into(), color: ConsoleColor::Error });
+    }
+
+    pub fn push_colored<S: Into<String>>(&mut self, line: S, color: ConsoleColor) {
+        self.lines.push(ConsoleLine { text: line.into(), color });
     }
 
     /// Provide a line of user input (displayed and queued)
     pub fn push_input<S: Into<String>>(&mut self, line: S) {
         let line = line.into();
-        self.lines.push(ConsoleLine { text: line.clone(), is_error: false });
+        self.lines.push(ConsoleLine { text: line.clone(), color: ConsoleColor::Normal });
         self.input.push_back(line);
     }
 
@@ -57,15 +77,27 @@ impl Console {
     }
 
     // Append text to the current output line (no newline). If there is no line yet,
-    // starts a new one.
+    // starts a new one. Only appends to Normal-colored lines.
     pub fn append_str(&mut self, s: &str) {
         if let Some(last) = self.lines.last_mut() {
-            if !last.is_error {
+            if last.color == ConsoleColor::Normal {
                 last.text.push_str(s);
                 return;
             }
         }
-        self.lines.push(ConsoleLine { text: s.to_string(), is_error: false });
+        self.lines.push(ConsoleLine { text: s.to_string(), color: ConsoleColor::Normal });
+    }
+
+    // Append text to the current output line with a specific color.
+    // Only appends if the last line has the same color; otherwise starts a new line.
+    pub fn append_str_colored(&mut self, s: &str, color: ConsoleColor) {
+        if let Some(last) = self.lines.last_mut() {
+            if last.color == color {
+                last.text.push_str(s);
+                return;
+            }
+        }
+        self.lines.push(ConsoleLine { text: s.to_string(), color });
     }
 
     // Start a new empty line (acts as a newline terminator for append-only output).

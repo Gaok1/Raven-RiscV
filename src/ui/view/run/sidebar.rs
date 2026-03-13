@@ -16,6 +16,20 @@ pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         } else {
             render_register_table(f, area, app);
         }
+    } else if !app.run.elf_sections.is_empty() {
+        // Split: memory view on top, sections viewer below
+        let sections_h = elf_sections_height(app).min(area.height.saturating_sub(8));
+        let mem_h = area.height.saturating_sub(sections_h);
+        if sections_h == 0 || mem_h < 4 {
+            render_memory_view(f, area, app);
+        } else {
+            let parts = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(mem_h), Constraint::Length(sections_h)])
+                .split(area);
+            render_memory_view(f, parts[0], app);
+            render_elf_sections(f, parts[1], app);
+        }
     } else {
         render_memory_view(f, area, app);
     }
@@ -401,4 +415,91 @@ fn render_bp_list(f: &mut Frame, area: Rect, app: &App) {
 #[allow(dead_code)]
 fn _unused_format(app: &App, addr: u32) -> String {
     format_u32_value(app.run.mem.peek32(addr).unwrap_or(0), app.run.fmt_mode, app.run.show_signed)
+}
+
+// ── ELF Sections viewer ───────────────────────────────────────────────────────
+
+const MAX_LINES_PER_SECTION: usize = 16;
+
+/// Compute the height (in terminal rows) needed by the sections viewer.
+fn elf_sections_height(app: &App) -> u16 {
+    // border (2) + header line per section + data lines per section
+    let mut lines = 2usize; // block border
+    for sec in &app.run.elf_sections {
+        lines += 1; // section header line
+        let data_lines = if sec.bytes.is_empty() {
+            1 // .bss: just show a single placeholder line
+        } else {
+            (sec.bytes.len() / 4).min(MAX_LINES_PER_SECTION)
+        };
+        lines += data_lines;
+    }
+    lines.min(40) as u16
+}
+
+fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .border_type(BorderType::Rounded)
+        .title("ELF Sections");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut items: Vec<ListItem<'static>> = Vec::new();
+    for sec in &app.run.elf_sections {
+        // Section header line
+        let header = format!(
+            "{:<10} 0x{:08x}  {} B",
+            sec.name, sec.addr, sec.size
+        );
+        items.push(ListItem::new(header)
+            .style(Style::default().fg(theme::LABEL_Y).add_modifier(Modifier::BOLD)));
+
+        if sec.bytes.is_empty() {
+            // .bss or no-data section
+            items.push(ListItem::new(format!(
+                "  0x{:08x}: (zeroed, {} B)", sec.addr, sec.size
+            )).style(Style::default().fg(theme::LABEL)));
+        } else {
+            let chunks = sec.bytes.chunks(4).take(MAX_LINES_PER_SECTION);
+            for (i, chunk) in chunks.enumerate() {
+                let addr = sec.addr + (i * 4) as u32;
+                let mut padded = [0u8; 4];
+                for (j, &b) in chunk.iter().enumerate() { padded[j] = b; }
+                let hex: String = chunk.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+                let hint = type_hint(chunk);
+                items.push(ListItem::new(format!("  0x{addr:08x}: {hex:<11} │ {hint}"))
+                    .style(Style::default().fg(theme::TEXT)));
+            }
+            if sec.bytes.len() / 4 > MAX_LINES_PER_SECTION {
+                items.push(ListItem::new(format!(
+                    "  … {} more bytes",
+                    sec.bytes.len() - MAX_LINES_PER_SECTION * 4
+                )).style(Style::default().fg(theme::LABEL)));
+            }
+        }
+    }
+
+    f.render_widget(List::new(items), inner);
+}
+
+/// Classify a 1-4 byte chunk for display hint.
+fn type_hint(chunk: &[u8]) -> String {
+    if chunk.len() == 4 {
+        let mut b = [0u8; 4];
+        b.copy_from_slice(chunk);
+        // Try f32
+        let v = f32::from_le_bytes(b);
+        if !v.is_nan() && !v.is_infinite() && (v == 0.0 || (v.abs() > 1e-30 && v.abs() < 1e30)) {
+            return format!("{v:.4} (f32)");
+        }
+    }
+    // Try ASCII
+    if chunk.iter().all(|&b| (0x20..=0x7E).contains(&b)) {
+        let s: String = chunk.iter().map(|&b| b as char).collect();
+        return format!("\"{}\"  (ASCII)", s);
+    }
+    // Default: raw hex
+    chunk.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
 }

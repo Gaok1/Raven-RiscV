@@ -1,0 +1,16 @@
+{
+  "rust-analyzer.cargo.allTargets": false,
+  "rust-analyzer.check.allTargets": false,
+  "rust-analyzer.cfg.setTest": false,
+  "rust-analyzer.checkOnSave": true,
+  "rust-analyzer.check.overrideCommand": [
+    "cargo",
+    "+nightly",
+    "check",
+    "-Zbuild-std=core,compiler_builtins",
+    "-Zbuild-std-features=compiler-builtins-mem",
+    "--target",
+    "riscv32im-unknown-none-elf",
+    "--message-format=json"
+  ]
+}
