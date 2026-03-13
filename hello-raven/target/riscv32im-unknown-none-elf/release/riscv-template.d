@@ -1,1 +1,0 @@
-/home/gaok1/rust/Raven/riscv-template/target/riscv32im-unknown-none-elf/release/riscv-template: /home/gaok1/rust/Raven/riscv-template/src/io.rs /home/gaok1/rust/Raven/riscv-template/src/main.rs /home/gaok1/rust/Raven/riscv-template/src/syscall.rs

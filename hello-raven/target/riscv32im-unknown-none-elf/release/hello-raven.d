@@ -1,1 +1,0 @@
-/home/gaok1/rust/Raven/hello-raven/target/riscv32im-unknown-none-elf/release/hello-raven: /home/gaok1/rust/Raven/hello-raven/src/allocator.rs /home/gaok1/rust/Raven/hello-raven/src/io.rs /home/gaok1/rust/Raven/hello-raven/src/main.rs /home/gaok1/rust/Raven/hello-raven/src/syscall.rs
