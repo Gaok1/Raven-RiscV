@@ -1065,7 +1065,7 @@ impl App {
 
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
         self.run.prev_x = self.run.cpu.x;
-        self.run.mem_size = 128 * 1024;
+        self.run.mem_size = 16 * 1024 * 1024; // 16 MB for ELF binaries (heap support)
         self.run.cpu = Cpu::default();
         self.run.cpu.write(2, self.run.mem_size as u32);
         self.run.mem = CacheController::new(

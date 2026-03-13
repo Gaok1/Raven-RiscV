@@ -1,3 +1,5 @@
+use crate::eprintln;
+
 /// Raw ecall wrappers for the Raven simulator (RISC-V 32IM no_std).
 
 /// write(fd, buf, len) — syscall 64
@@ -64,3 +66,12 @@ pub unsafe fn sys_brk(addr: usize) -> usize {
     ret
 }
 
+
+
+// ── Panic handler ─────────────────────────────────────────────────────────────
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    eprintln!("panic: {}", info);
+    sys_exit(101)
+}

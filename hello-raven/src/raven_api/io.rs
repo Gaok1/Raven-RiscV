@@ -1,5 +1,6 @@
 use core::fmt;
-use crate::syscall::{sys_write};
+
+use crate::raven_api::syscall::sys_write;
 
 // ── Writers ──────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ pub fn _eprint(args: fmt::Arguments) {
 
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => { $crate::io::_print(format_args!($($arg)*)) };
+    ($($arg:tt)*) => { $crate::raven_api::io::_print(format_args!($($arg)*)) };
 }
 
 #[macro_export]
@@ -49,7 +50,7 @@ macro_rules! println {
 
 #[macro_export]
 macro_rules! eprint {
-    ($($arg:tt)*) => { $crate::io::_eprint(format_args!($($arg)*)) };
+    ($($arg:tt)*) => { $crate::raven_api::io::_eprint(format_args!($($arg)*)) };
 }
 
 #[macro_export]

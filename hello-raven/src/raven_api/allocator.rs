@@ -1,5 +1,7 @@
 use core::alloc::{GlobalAlloc, Layout};
-use crate::syscall::sys_brk;
+
+use crate::{eprintln, raven_api::syscall::{sys_brk, sys_exit}};
+
 
 /// Bump allocator backed by the Linux `brk` syscall.
 ///
@@ -27,7 +29,7 @@ unsafe impl GlobalAlloc for BumpAlloc {
 
 #[alloc_error_handler]
 fn oom(layout: Layout) -> ! {
-    use crate::{eprintln, syscall::sys_exit};
+    
     eprintln!("OOM: size={} align={}", layout.size(), layout.align());
     sys_exit(1)
 }
