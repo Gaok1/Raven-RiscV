@@ -162,6 +162,23 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    // Imem label search bar intercept
+    if matches!(app.tab, Tab::Run) && app.run.imem_search_open {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => {
+                app.run.imem_search_open = false;
+                app.run.imem_search_query.clear();
+            }
+            KeyCode::Backspace => { app.run.imem_search_query.pop(); }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.run.imem_search_query.push(c);
+            }
+            _ => {}
+        }
+        apply_imem_search(app);
+        return Ok(false);
+    }
+
     // RAM jump bar intercept
     if matches!(app.tab, Tab::Run) && !app.run.show_registers && app.run.mem_search_open {
         match key.code {
@@ -360,6 +377,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 app.editor.goto_open = true;
                 app.editor.find_open = false;
                 app.editor.goto_query.clear();
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('g')) && matches!(app.tab, Tab::Run) {
+                app.run.imem_search_open = !app.run.imem_search_open;
+                if !app.run.imem_search_open {
+                    app.run.imem_search_query.clear();
+                }
                 return Ok(false);
             }
 
@@ -1526,6 +1551,19 @@ fn parse_results_snapshot(text: &str) -> Result<CacheResultsSnapshot, String> {
         hit_rate_history_i: hist_i,
         hit_rate_history_d: hist_d,
     })
+}
+
+fn apply_imem_search(app: &mut App) {
+    let q = app.run.imem_search_query.trim().to_lowercase();
+    if q.is_empty() { return; }
+    let mut matches: Vec<u32> = app.run.labels.iter()
+        .filter(|(_, labels)| labels.iter().any(|l| l.to_lowercase().contains(&q)))
+        .map(|(&addr, _)| addr)
+        .collect();
+    matches.sort();
+    if let Some(&addr) = matches.first() {
+        app.scroll_imem_to_addr(addr);
+    }
 }
 
 fn apply_mem_search(app: &mut App) {

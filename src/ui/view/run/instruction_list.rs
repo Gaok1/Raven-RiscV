@@ -10,13 +10,71 @@ use super::memory::imem_address_in_range;
 pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
     let block = instruction_block(app);
     let inner = block.inner(area);
+
+    // Reserve 1 line at the top for the label search bar when open
+    let (search_area, list_area) = if app.run.imem_search_open && inner.height > 2 {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(inner);
+        (Some(chunks[0]), chunks[1])
+    } else {
+        (None, inner)
+    };
+
     // Tell scroll/hover handlers the actual inner height each frame
-    app.run.imem_inner_height.set(inner.height as usize);
-    let items = instruction_items(inner, app);
+    app.run.imem_inner_height.set(list_area.height as usize);
+    let items = instruction_items(list_area, app);
 
     f.render_widget(block, area);
-    f.render_widget(List::new(items), inner);
+    f.render_widget(List::new(items), list_area);
     render_instruction_drag_arrow(f, area, app);
+
+    if let Some(bar) = search_area {
+        render_imem_search_bar(f, bar, app);
+    }
+}
+
+fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
+    let bg = Color::Rgb(20, 22, 40);
+    let q = &app.run.imem_search_query;
+
+    let q_lower = q.to_lowercase();
+    let match_count = if q.is_empty() { 0usize } else {
+        app.run.labels.values()
+            .filter(|labels| labels.iter().any(|l| l.to_lowercase().contains(&q_lower)))
+            .count()
+    };
+
+    let result_span = if q.is_empty() {
+        Span::styled("", Style::default().bg(bg))
+    } else if match_count > 0 {
+        Span::styled(
+            format!("  →  {match_count} match{}", if match_count == 1 { "" } else { "es" }),
+            Style::default().fg(theme::RUNNING).bg(bg),
+        )
+    } else {
+        Span::styled("  ✗ no match", Style::default().fg(Color::Red).bg(bg))
+    };
+
+    let line = Line::from(vec![
+        Span::styled(" Label: ", Style::default().fg(theme::ACCENT).bg(bg).bold()),
+        Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
+        result_span,
+        Span::styled("  Esc/Enter=close", Style::default().fg(theme::IDLE).bg(bg)),
+    ]);
+
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(bg)),
+        area,
+    );
+
+    let prefix = " Label: ".len() as u16;
+    let cx = (area.x + prefix + q.chars().count() as u16)
+        .min(area.x + area.width.saturating_sub(1));
+    if area.height > 0 {
+        f.set_cursor_position((cx, area.y));
+    }
 }
 
 fn instruction_block(app: &App) -> Block<'static> {

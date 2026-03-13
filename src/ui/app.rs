@@ -488,6 +488,8 @@ pub(super) struct RunState {
     // Set each frame by render so scroll handlers use the correct height
     pub(super) imem_inner_height: std::cell::Cell<usize>,
     pub(super) imem_collapsed: bool,
+    pub(super) imem_search_open: bool,
+    pub(super) imem_search_query: String,
 
     // Details panel (collapsible)
     pub(super) details_collapsed: bool,
@@ -755,6 +757,8 @@ impl App {
                 hover_imem_addr: None,
                 imem_inner_height: std::cell::Cell::new(16),
                 imem_collapsed: false,
+                imem_search_open: false,
+                imem_search_query: String::new(),
                 details_collapsed: false,
                 console_height: 5,
                 hover_console_bar: false,
@@ -1434,6 +1438,28 @@ impl App {
         } else if pc_vrow + 1 >= scroll + visible {
             // PC at or below bottom edge
             self.run.imem_scroll = pc_vrow.saturating_sub(visible.saturating_sub(3));
+        }
+    }
+
+    /// Visual row of an arbitrary address within the full instruction list.
+    pub(super) fn imem_visual_row_of_addr(&self, target: u32) -> Option<usize> {
+        if target < self.run.base_pc { return None; }
+        let mut vrow = 0usize;
+        let mut addr = self.run.base_pc;
+        loop {
+            if !self.imem_in_range(addr) { return None; }
+            if self.run.block_comments.contains_key(&addr) { vrow += 1; }
+            if let Some(names) = self.run.labels.get(&addr) { vrow += names.len(); }
+            if addr == target { return Some(vrow); }
+            vrow += 1;
+            addr = addr.wrapping_add(4);
+        }
+    }
+
+    /// Scroll the instruction memory panel to bring `addr` near the top.
+    pub(super) fn scroll_imem_to_addr(&mut self, addr: u32) {
+        if let Some(vrow) = self.imem_visual_row_of_addr(addr) {
+            self.run.imem_scroll = vrow.saturating_sub(2);
         }
     }
 
