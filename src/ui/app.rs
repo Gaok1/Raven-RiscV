@@ -460,6 +460,8 @@ pub(super) struct RunState {
     pub(super) mem_view_addr: u32,
     pub(super) mem_view_bytes: u32,
     pub(super) mem_region: MemRegion,
+    pub(super) mem_search_open: bool,
+    pub(super) mem_search_query: String,
 
     // Display options
     pub(super) show_registers: bool,
@@ -733,6 +735,8 @@ impl App {
                 mem_view_addr: data_base,
                 mem_view_bytes: 4,
                 mem_region: MemRegion::Data,
+                mem_search_open: false,
+                mem_search_query: String::new(),
                 show_registers: true,
                 fmt_mode: FormatMode::Hex,
                 show_signed: false,

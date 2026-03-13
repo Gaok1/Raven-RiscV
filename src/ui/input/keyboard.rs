@@ -162,6 +162,27 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    // RAM jump bar intercept
+    if matches!(app.tab, Tab::Run) && !app.run.show_registers && app.run.mem_search_open {
+        match key.code {
+            KeyCode::Esc => {
+                app.run.mem_search_open = false;
+                app.run.mem_search_query.clear();
+            }
+            KeyCode::Enter => {
+                app.run.mem_search_open = false;
+                // address already applied live — just close
+            }
+            KeyCode::Backspace => { app.run.mem_search_query.pop(); }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.run.mem_search_query.push(c);
+            }
+            _ => {}
+        }
+        apply_mem_search(app);
+        return Ok(false);
+    }
+
     // Docs search bar intercept
     if matches!(app.tab, Tab::Docs) && app.docs.search_open {
         match key.code {
@@ -346,6 +367,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 app.docs.search_open = !app.docs.search_open;
                 if !app.docs.search_open {
                     app.docs.search_query.clear();
+                }
+                return Ok(false);
+            }
+
+            if ctrl && matches!(key.code, KeyCode::Char('f')) && matches!(app.tab, Tab::Run)
+                && !app.run.show_registers
+            {
+                app.run.mem_search_open = !app.run.mem_search_open;
+                if !app.run.mem_search_open {
+                    app.run.mem_search_query.clear();
                 }
                 return Ok(false);
             }
@@ -1495,4 +1526,16 @@ fn parse_results_snapshot(text: &str) -> Result<CacheResultsSnapshot, String> {
         hit_rate_history_i: hist_i,
         hit_rate_history_d: hist_d,
     })
+}
+
+fn apply_mem_search(app: &mut App) {
+    let q = app.run.mem_search_query
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    if let Ok(addr) = u32::from_str_radix(q, 16) {
+        let aligned = addr & !(app.run.mem_view_bytes - 1);
+        let max = app.run.mem_size.saturating_sub(app.run.mem_view_bytes as usize) as u32;
+        app.run.mem_view_addr = aligned.min(max);
+        app.run.mem_region = crate::ui::app::MemRegion::Custom;
+    }
 }

@@ -205,10 +205,65 @@ fn freg_name_short(i: u8) -> &'static str {
 fn render_memory_view(f: &mut Frame, area: Rect, app: &App) {
     let block = memory_block(app);
     let inner = block.inner(area);
-    let items = memory_items(inner, app);
-
     f.render_widget(block, area);
-    f.render_widget(List::new(items), inner);
+
+    // Reserve 1 line at the top for the search bar when open
+    let (search_area, list_area) = if app.run.mem_search_open && inner.height > 2 {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(inner);
+        (Some(chunks[0]), chunks[1])
+    } else {
+        (None, inner)
+    };
+
+    let items = memory_items(list_area, app);
+    f.render_widget(List::new(items), list_area);
+
+    if let Some(bar) = search_area {
+        render_mem_search_bar(f, bar, app);
+    }
+}
+
+fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
+    let bg = Color::Rgb(20, 22, 40);
+    let q = &app.run.mem_search_query;
+
+    let parsed = u32::from_str_radix(
+        q.trim_start_matches("0x").trim_start_matches("0X"), 16
+    ).ok();
+
+    let valid_span = if let Some(addr) = parsed {
+        Span::styled(
+            format!("  →  0x{addr:08X}"),
+            Style::default().fg(theme::RUNNING).bg(bg),
+        )
+    } else if !q.is_empty() {
+        Span::styled("  ✗", Style::default().fg(Color::Red).bg(bg))
+    } else {
+        Span::styled("", Style::default().bg(bg))
+    };
+
+    let line = Line::from(vec![
+        Span::styled(" Go to: 0x", Style::default().fg(theme::ACCENT).bg(bg).bold()),
+        Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
+        valid_span,
+        Span::styled("  Esc=close  Enter=ok", Style::default().fg(theme::IDLE).bg(bg)),
+    ]);
+
+    f.render_widget(
+        Paragraph::new(line).style(Style::default().bg(bg)),
+        area,
+    );
+
+    // Blinking cursor after typed text
+    let prefix = " Go to: 0x".len() as u16;
+    let cx = (area.x + prefix + q.chars().count() as u16)
+        .min(area.x + area.width.saturating_sub(1));
+    if area.height > 0 {
+        f.set_cursor_position((cx, area.y));
+    }
 }
 
 fn memory_block(app: &App) -> Block<'static> {
