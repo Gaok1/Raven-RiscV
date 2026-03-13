@@ -7,6 +7,7 @@ const SYS_READ: u32 = 63;
 const SYS_WRITE: u32 = 64;
 const SYS_EXIT: u32 = 93;
 const SYS_EXIT_GROUP: u32 = 94;
+const SYS_BRK:       u32 = 214;
 const SYS_GETRANDOM: u32 = 278;
 
 const FALCON_PRINT_INT: u32 = 1000;
@@ -41,6 +42,18 @@ pub fn handle_syscall<B: Bus>(
         // --- Linux ABI subset ---
         SYS_READ => linux_read(cpu, mem, console),
         SYS_WRITE => linux_write(cpu, mem, console),
+        SYS_BRK => {
+            // brk(0) → query current break; brk(addr) → extend break to addr.
+            // Returns the new (or current) break; returns current break on failure.
+            let requested = cpu.read(10);
+            if requested == 0 || requested <= cpu.heap_break {
+                cpu.write(10, cpu.heap_break);
+            } else {
+                cpu.heap_break = requested;
+                cpu.write(10, requested);
+            }
+            Ok(true)
+        }
         SYS_GETRANDOM => linux_getrandom(cpu, mem, console),
         SYS_EXIT | SYS_EXIT_GROUP => {
             let code = cpu.read(10);

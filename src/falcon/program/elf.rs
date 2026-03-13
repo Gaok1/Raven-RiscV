@@ -24,6 +24,8 @@ pub struct ElfInfo {
     pub data_base:  u32,
     /// Total file bytes loaded into RAM.
     pub total_bytes: usize,
+    /// First address past all loaded segments — use as initial heap break.
+    pub heap_start: u32,
     /// Symbol table: addr → list of names (STT_FUNC / STT_OBJECT, non-empty, non-`$`-prefixed).
     pub symbols:  HashMap<u32, Vec<String>>,
     /// Data/rodata/bss sections for the sections viewer.
@@ -81,6 +83,7 @@ pub fn load_elf<B: Bus>(bytes: &[u8], mem: &mut B) -> Result<ElfInfo, FalconErro
     let mut text_base   = e_entry;
     let mut data_base   = e_entry; // fallback
     let mut total_bytes = 0usize;
+    let mut seg_end_max = 0u32; // highest byte past all PT_LOAD segments
 
     for i in 0..e_phnum {
         let ph = e_phoff + i * e_phentsize;
@@ -117,12 +120,19 @@ pub fn load_elf<B: Bus>(bytes: &[u8], mem: &mut B) -> Result<ElfInfo, FalconErro
         } else if data_base == e_entry && p_filesz > 0 {
             data_base = p_vaddr;
         }
+
+        // Track the end of this segment in virtual memory (for heap_start)
+        let end = p_vaddr.saturating_add(p_memsz as u32);
+        if end > seg_end_max { seg_end_max = end; }
     }
+
+    // Heap starts right after all segments, 16-byte aligned
+    let heap_start = (seg_end_max.wrapping_add(15)) & !15;
 
     // ── Parse section headers (best-effort, non-fatal) ───────────────────
     let (symbols, sections) = parse_sections(bytes, e_shoff, e_shentsize, e_shnum, e_shstrndx);
 
-    Ok(ElfInfo { entry: e_entry, text_base, text_bytes, data_base, total_bytes, symbols, sections })
+    Ok(ElfInfo { entry: e_entry, text_base, text_bytes, data_base, total_bytes, heap_start, symbols, sections })
 }
 
 /// Parse section headers to extract the symbol table and data/rodata/bss sections.

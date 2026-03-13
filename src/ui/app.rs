@@ -1055,6 +1055,7 @@ impl App {
     pub(super) fn restart_simulation(&mut self) {
         self.run.is_running = false;
         self.run.faulted = false;
+        self.run.cpu.ebreak_hit = false;
         self.run.reg_last_write_pc = [None; 32];
         self.run.exec_counts.clear();
         self.run.exec_trace.clear();
@@ -1099,6 +1100,7 @@ impl App {
             // Populate labels and sections viewer from ELF symbol table
             self.run.labels = info.symbols;
             self.run.elf_sections = info.sections;
+            self.run.cpu.heap_break = info.heap_start;
 
             let mut words = Vec::with_capacity(info.text_bytes.len() / 4);
             for chunk in info.text_bytes.chunks(4) {
@@ -1163,6 +1165,12 @@ impl App {
             self.run.prev_pc = self.run.base_pc;
             self.run.mem.invalidate_all();
             self.run.mem.reset_stats();
+
+            // Heap starts right after BSS, 16-byte aligned
+            let bss_end = self.run.data_base
+                .wrapping_add(data_bytes.len() as u32)
+                .wrapping_add(bss_size);
+            self.run.cpu.heap_break = (bss_end.wrapping_add(15)) & !15;
 
             let mut words = Vec::with_capacity(text_bytes.len() / 4);
             for chunk in text_bytes.chunks(4) {
@@ -1563,7 +1571,7 @@ impl App {
         if !alive {
             self.run.is_running = false;
             if !self.console.reading {
-                self.run.faulted = self.run.cpu.exit_code.is_none();
+                self.run.faulted = self.run.cpu.exit_code.is_none() && !self.run.cpu.ebreak_hit;
             }
         }
         // Keep PC visible (single-step case — running case handled in tick())

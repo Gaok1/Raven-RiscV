@@ -13,6 +13,10 @@ pub struct Cpu {
     pub exit_code: Option<u32>,
     /// LR/SC reservation address (None = no active reservation).
     pub lr_reservation: Option<u32>,
+    /// Set when execution paused at an `ebreak` instruction (not a fault).
+    pub ebreak_hit: bool,
+    /// Current program break (heap end). Set by the loader; advanced by SYS_BRK.
+    pub heap_break: u32,
 }
 
 impl Cpu {

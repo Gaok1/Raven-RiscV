@@ -126,8 +126,14 @@ pub fn step<B: Bus>(
             }
             return Ok(cont);
         }
-        Instruction::Ebreak | Instruction::Halt => {
-            console.push_error(format!("EBREAK/HALT at 0x{pc:08X}"));
+        Instruction::Halt => {
+            cpu.exit_code = Some(0);
+            console.push_colored(format!("Halt at 0x{pc:08X}"), crate::ui::console::ConsoleColor::Info);
+            return Ok(false);
+        }
+        Instruction::Ebreak => {
+            cpu.ebreak_hit = true;
+            console.push_colored(format!("ebreak at 0x{pc:08X}"), crate::ui::console::ConsoleColor::Warning);
             return Ok(false);
         }
         Instruction::Fence => {} // nop in single-core simulator
