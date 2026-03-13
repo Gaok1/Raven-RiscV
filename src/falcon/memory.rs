@@ -56,7 +56,8 @@ impl Ram {
 
 impl Bus for Ram {
     fn load8(&self, a: u32) -> Result<u8, FalconError> {
-        self.data.get(a as usize).copied().ok_or(FalconError::Bus("address out of bounds"))
+        self.data.get(a as usize).copied()
+            .ok_or_else(|| FalconError::Bus(format!("address 0x{a:08X} out of bounds")))
     }
     fn load16(&self, a: u32) -> Result<u16, FalconError> {
         Ok(u16::from_le_bytes([self.load8(a)?, self.load8(a + 1)?]))
@@ -74,7 +75,7 @@ impl Bus for Ram {
             *slot = v;
             Ok(())
         } else {
-            Err(FalconError::Bus("address out of bounds"))
+            Err(FalconError::Bus(format!("address 0x{a:08X} out of bounds")))
         }
     }
     fn store16(&mut self, a: u32, v: u16) -> Result<(), FalconError> {

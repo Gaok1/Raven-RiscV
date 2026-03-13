@@ -1521,7 +1521,15 @@ impl App {
         let alive = match res {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => {
-                self.console.push_error(e.to_string());
+                use crate::falcon::errors::FalconError;
+                let msg = if matches!(&e, FalconError::Bus(_)) {
+                    let ram_kb = self.run.mem_size / 1024;
+                    let suggest = if ram_kb < 1024 { "16mb" } else if ram_kb < 65536 { "128mb" } else { "512mb" };
+                    format!("{e} (RAM is {ram_kb} KB — run with --mem {suggest} to increase)")
+                } else {
+                    e.to_string()
+                };
+                self.console.push_error(msg);
                 self.run.faulted = true;
                 false
             }

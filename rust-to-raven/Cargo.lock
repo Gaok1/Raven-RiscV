@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "hello-raven"
+name = "rust-to-raven"
 version = "0.1.0"

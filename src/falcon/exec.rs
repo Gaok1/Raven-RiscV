@@ -17,7 +17,7 @@ pub fn step<B: Bus>(
             console.push_error(format!(
                 "Invalid instruction 0x{word:08X} at 0x{pc:08X}: {e}"
             ));
-            return Err(e);
+            return Ok(false);
         }
     };
     cpu.pc = pc.wrapping_add(4);

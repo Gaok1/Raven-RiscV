@@ -9,6 +9,6 @@ pub enum FalconError {
 
     /// Bus or memory access errors.
     #[error("Bus error: {0}")]
-    Bus(&'static str),
+    Bus(String),
 }
 
