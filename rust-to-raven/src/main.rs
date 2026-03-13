@@ -12,29 +12,30 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::raven_api::syscall::{sys_exit, sys_getrandom, sys_pause_sim};
-
-fn random_i32_bounded(limit: i32) -> i32 {
+#[unsafe(no_mangle)]
+fn random_i32_bounded_no_mangled(limit: i32) -> i32 {
 
     let mut bytes = [0u8; 4];
 
     let ret = unsafe { sys_getrandom(bytes.as_mut_ptr(), 4, 0) };
 
     if ret < 0 {
-        eprintln!("falha em sys_getrandom: {}", ret);
+        eprintln!("fail at sys_getrandom: {}", ret);
         sys_exit(3);
     }
 
     i32::from_ne_bytes(bytes) % limit
 
 }
-
-fn fill_random_i32(values: &mut [i32], limit: i32) {
+#[unsafe(no_mangle)]
+fn fill_random_i32_no_mangled(values: &mut [i32], limit: i32) {
     for value in values.iter_mut() {
-        *value = random_i32_bounded(limit);
+        *value = random_i32_bounded_no_mangled(limit);
     }
 }
 
-fn btree_sort(values: &[i32]) -> Vec<i32> {
+#[unsafe(no_mangle)]
+fn btree_sort_no_mangled(values: &[i32]) -> Vec<i32> {
     let mut freq = BTreeMap::<i32, usize>::new();
 
     for &value in values {
@@ -57,7 +58,8 @@ fn btree_sort(values: &[i32]) -> Vec<i32> {
     out
 }
 
-fn print_array(label: &str, values: &[i32]) {
+#[unsafe(no_mangle)]
+fn print_array_no_mangled(label: &str, values: &[i32]) {
     print!("{} [", label);
 
     for (i, value) in values.iter().enumerate() {
@@ -72,19 +74,19 @@ fn print_array(label: &str, values: &[i32]) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    println!("Exemplo: ordenacao com BTreeMap");
+    println!("Exemple: BTreeMap sorting");
 
     let mut values = vec![0i32; 20];
 
-    fill_random_i32(&mut values, 100);
+    fill_random_i32_no_mangled(&mut values, 100);
 
-    print_array("Array original:", &values);
+    print_array_no_mangled("Original array:", &values);
 
-    let sorted = btree_sort(&values);
+    let sorted = btree_sort_no_mangled(&values);
 
-    print_array("Array ordenado:", &sorted);
+    print_array_no_mangled("sorted Array:", &sorted);
 
-    println!("Fim da execucao.");
+    println!("End execution.");
     sys_pause_sim();
     sys_exit(0);
 }
