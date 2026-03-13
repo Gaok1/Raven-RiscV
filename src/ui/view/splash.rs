@@ -32,10 +32,16 @@ const CHIP: &[&str] = &[
     "                      └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘                      ",
 ];
 
-const SUBTITLE: &str =
-    "RISC-V Simulator & IDE   ·   RV32IMF   ·   128 KB RAM   ·   5-stage pipeline";
+fn format_mem(bytes: usize) -> String {
+    let kb = bytes / 1024;
+    if kb >= 1024 && kb % 1024 == 0 {
+        format!("{} MB", kb / 1024)
+    } else {
+        format!("{} KB", kb)
+    }
+}
 
-pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64) {
+pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64, mem_size: usize) {
     let area = f.area();
 
     f.render_widget(
@@ -60,12 +66,16 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64) {
     }
 
     // ── Subtitle ──────────────────────────────────────────────────────────
+    let subtitle = format!(
+        "RISC-V Simulator & IDE   ·   RV32IMF   ·   {}   ·   5-stage pipeline",
+        format_mem(mem_size)
+    );
     let sub_y = y0 + chip_h + 1;
     if sub_y < area.height {
-        let sub_x = area.width.saturating_sub(SUBTITLE.len() as u16) / 2;
+        let sub_x = area.width.saturating_sub(subtitle.len() as u16) / 2;
         f.render_widget(
-            Paragraph::new(Span::styled(SUBTITLE, Style::default().fg(theme::IDLE))),
-            Rect::new(sub_x, sub_y, SUBTITLE.len() as u16, 1),
+            Paragraph::new(Span::styled(subtitle.clone(), Style::default().fg(theme::IDLE))),
+            Rect::new(sub_x, sub_y, subtitle.len() as u16, 1),
         );
     }
 
@@ -74,18 +84,22 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64) {
     let progress = (elapsed / duration_secs).clamp(0.0, 1.0);
     let pct      = (progress * 100.0) as u16;
 
-    let label = match pct {
-        0..=9   => "  Powering on...",
-        10..=19 => "  Initializing register file  (x0–x31  ·  f0–f31  ·  pc  ·  fcsr)...",
-        20..=29 => "  Loading base ISA  (RV32I — 37 integer instructions)...",
-        30..=39 => "  Loading M extension  (multiply · divide · remainder)...",
-        40..=49 => "  Loading F extension  (26 single-precision float instructions)...",
-        50..=59 => "  Mapping address space  (0x00000000 – 0x0001FFFF  ·  128 KB  ·  no MMU)...",
-        60..=69 => "  Configuring cache hierarchy  (L1-I  ·  L1-D  ·  set-associative)...",
-        70..=79 => "  Wiring pipeline  (IF → ID → EX → MA → WB)...",
-        80..=89 => "  Initializing assembler  (pseudo-instructions · directives · labels)...",
-        90..=98 => "  Booting RISC-V core...",
-        _       => "  Ready.",
+    let label: String = match pct {
+        0..=9   => "  Powering on...".into(),
+        10..=19 => "  Initializing register file  (x0–x31  ·  f0–f31  ·  pc  ·  fcsr)...".into(),
+        20..=29 => "  Loading base ISA  (RV32I — 37 integer instructions)...".into(),
+        30..=39 => "  Loading M extension  (multiply · divide · remainder)...".into(),
+        40..=49 => "  Loading F extension  (26 single-precision float instructions)...".into(),
+        50..=59 => format!(
+            "  Mapping address space  (0x00000000 – 0x{:08X}  ·  {}  ·  no MMU)...",
+            mem_size.saturating_sub(1),
+            format_mem(mem_size),
+        ),
+        60..=69 => "  Configuring cache hierarchy  (L1-I  ·  L1-D  ·  set-associative)...".into(),
+        70..=79 => "  Wiring pipeline  (IF → ID → EX → MA → WB)...".into(),
+        80..=89 => "  Initializing assembler  (pseudo-instructions · directives · labels)...".into(),
+        90..=98 => "  Booting RISC-V core...".into(),
+        _       => "  Ready.".into(),
     };
 
     let bar_w = chip_w.min(area.width.saturating_sub(x0));

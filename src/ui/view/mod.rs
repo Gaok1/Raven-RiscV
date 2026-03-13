@@ -25,7 +25,7 @@ use splash::render_splash;
 pub fn ui(f: &mut Frame, app: &App) {
     // Splash screen takes over the full frame
     if let Some(started) = app.splash_start {
-        render_splash(f, started, 4.0);
+        render_splash(f, started, 4.0, app.run.mem_size);
         return;
     }
 
