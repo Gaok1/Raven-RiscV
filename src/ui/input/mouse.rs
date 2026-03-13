@@ -1,5 +1,5 @@
 use crate::ui::{
-    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, RunButton, RunSpeed, Tab},
+    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, RunButton, Tab},
     editor::Editor,
 };
 use crate::ui::input::keyboard::{do_export_results, do_compare_load};
@@ -377,9 +377,6 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::ExecCount => { app.run.show_exec_count = !app.run.show_exec_count; }
         RunButton::InstrType => { app.run.show_instr_type = !app.run.show_instr_type; }
         RunButton::State => {
-            if matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running {
-                return;
-            }
             if app.run.is_running {
                 app.run.is_running = false;
             } else if !app.run.faulted {

@@ -95,7 +95,7 @@ cargo build --target riscv32im-unknown-none-elf
 
 The ELF is loaded at its linked virtual addresses, the PC is set to the entry point, and the disassembler shows the decoded text segment. Unknown words (data, padding) appear as `.word 0x...`.
 
-A working example with `_start`, panic handler, and ready-to-use wrappers for `write`/`exit` is available at [`RustCompatibleABI.rs`](RustCompatibleABI.rs).
+A ready-to-use project with `_start`, panic handler, allocator, and wrappers for `write`, `read`, and `exit` is available at [`rust-to-raven/`](../rust-to-raven/).
 
 ---
 

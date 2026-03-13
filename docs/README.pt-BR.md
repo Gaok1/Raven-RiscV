@@ -92,6 +92,8 @@ cargo build --target riscv32im-unknown-none-elf
 
 O ELF é carregado nos endereços virtuais definidos pelo linker, o PC é apontado para o entry point, e o disassembler exibe o segmento de texto decodificado. Palavras não reconhecidas (dados, padding) aparecem como `.word 0x...`.
 
+Um projeto pronto para uso com `_start`, panic handler, alocador e wrappers para `write`, `read` e `exit` está disponível em [`rust-to-raven/`](../rust-to-raven/).
+
 ---
 
 ## Início Rápido

@@ -1,16 +1,41 @@
 use crate::eprintln;
 
+#[repr(i32)]
+pub enum RavenFD {
+    STDIN = 0,
+    STDOUT = 1,
+    STDERR = 2,
+}
+
+
 /// Raw ecall wrappers for the Raven simulator (RISC-V 32IM no_std).
 
-/// write(fd, buf, len) — syscall 64
+/// read(fd, buf, len) — syscall 63
 #[inline(always)]
-pub unsafe fn sys_write(fd: u32, buf: *const u8, len: usize) -> isize {
+pub unsafe fn sys_read(fd: RavenFD, buf: *mut u8, len: usize) -> isize {
     let ret: isize;
     unsafe {
         core::arch::asm!(
             "ecall",
-            in("a7") 64u32,
-            in("a0") fd,
+            in("a7") 63_u32,
+            in("a0") fd as i32,
+            in("a1") buf as usize,
+            in("a2") len,
+            lateout("a0") ret,
+        );
+    }
+    ret
+}
+
+/// write(fd, buf, len) — syscall 64
+#[inline(always)]
+pub unsafe fn sys_write(fd: RavenFD, buf: *const u8, len: usize) -> isize {
+    let ret: isize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 64_u32,
+            in("a0") fd as i32, 
             in("a1") buf as usize,
             in("a2") len,
             lateout("a0") ret,
@@ -25,7 +50,7 @@ pub fn sys_exit(code: i32) -> ! {
     unsafe {
         core::arch::asm!(
             "ecall",
-            in("a7") 93u32,
+            in("a7") 93_u32,
             in("a0") code,
             options(noreturn),
         );
@@ -39,7 +64,7 @@ pub unsafe fn sys_getrandom(buf: *mut u8, buflen: usize, flags: u32) -> isize {
     unsafe {
         core::arch::asm!(
             "ecall",
-            in("a7") 278u32,
+            in("a7") 278_u32,
             in("a0") buf as usize,
             in("a1") buflen,
             in("a2") flags,
@@ -58,7 +83,7 @@ pub unsafe fn sys_brk(addr: usize) -> usize {
     unsafe {
         core::arch::asm!(
             "ecall",
-            in("a7") 214u32,
+            in("a7") 214_u32,
             in("a0") addr,
             lateout("a0") ret,
         );
@@ -66,12 +91,16 @@ pub unsafe fn sys_brk(addr: usize) -> usize {
     ret
 }
 
-
+pub fn sys_pause_sim() {
+    unsafe {
+        core::arch::asm!("ebreak;");
+    }
+}
 
 // ── Panic handler ─────────────────────────────────────────────────────────────
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    eprintln!("panic: {}", info);
+    eprintln!("\nPanic!: {info}");
     sys_exit(101)
 }

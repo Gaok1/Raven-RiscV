@@ -360,6 +360,8 @@ pub(super) enum RunSpeed {
     X2,
     /// ~400 steps/sec — fast, visual blur
     X4,
+    /// ~800 steps/sec — very fast
+    X8,
     /// Time-budgeted bulk (8 ms/frame) — effectively instant
     Instant,
 }
@@ -370,7 +372,8 @@ impl RunSpeed {
         match self {
             Self::X1 => Self::X2,
             Self::X2 => Self::X4,
-            Self::X4 => Self::Instant,
+            Self::X4 => Self::X8,
+            Self::X8 => Self::Instant,
             Self::Instant => Self::X1,
         }
     }
@@ -379,6 +382,7 @@ impl RunSpeed {
             Self::X1 => "1x",
             Self::X2 => "2x",
             Self::X4 => "4x",
+            Self::X8 => "8x",
             Self::Instant => "GO",
         }
     }
@@ -648,6 +652,9 @@ pub struct App {
 
     // Splash screen — set to Some(start_instant) on launch, cleared after 4s
     pub(super) splash_start: Option<Instant>,
+
+    // RAM size override from --mem CLI flag. None = use per-mode defaults.
+    pub(super) ram_override: Option<usize>,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -673,11 +680,11 @@ pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(ram_override: Option<usize>) -> Self {
         let mut cpu = Cpu::default();
         let base_pc = 0x0000_0000;
         cpu.pc = base_pc;
-        let mem_size = 128 * 1024;
+        let mem_size = ram_override.unwrap_or(128 * 1024);
         cpu.write(2, mem_size as u32);
         let data_base = base_pc + 0x1000;
         Self {
@@ -854,6 +861,7 @@ impl App {
             console: Console::default(),
             clipboard: Clipboard::new().ok(),
             last_bracketed_paste: None,
+            ram_override,
             splash_start: Some(Instant::now()),
         }
     }
@@ -863,7 +871,7 @@ impl App {
         use falcon::program::{load_bytes, load_words, zero_bytes};
 
         self.run.prev_x = self.run.cpu.x;
-        self.run.mem_size = 128 * 1024;
+        self.run.mem_size = self.ram_override.unwrap_or(128 * 1024);
         self.run.cpu = Cpu::default();
         self.run.cpu.pc = self.run.base_pc;
         self.run.prev_pc = self.run.cpu.pc;
@@ -995,7 +1003,7 @@ impl App {
             self.editor.last_ok_data_base,
         ) {
             self.run.prev_x = self.run.cpu.x;
-            self.run.mem_size = 128 * 1024;
+            self.run.mem_size = self.ram_override.unwrap_or(128 * 1024);
             self.run.cpu = Cpu::default();
             self.run.cpu.pc = self.run.base_pc;
             self.run.prev_pc = self.run.cpu.pc;
@@ -1065,7 +1073,7 @@ impl App {
 
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
         self.run.prev_x = self.run.cpu.x;
-        self.run.mem_size = 16 * 1024 * 1024; // 16 MB for ELF binaries (heap support)
+        self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024); // default 16 MB for ELF (heap support)
         self.run.cpu = Cpu::default();
         self.run.cpu.write(2, self.run.mem_size as u32);
         self.run.mem = CacheController::new(
@@ -1449,6 +1457,12 @@ impl App {
                 RunSpeed::X4 => {
                     // Multiple steps per tick for high throughput (~400 steps/sec at 100 ticks/sec)
                     for _ in 0..4 {
+                        if !self.run.is_running { break; }
+                        self.single_step();
+                    }
+                }
+                RunSpeed::X8 => {
+                    for _ in 0..8 {
                         if !self.run.is_running { break; }
                         self.single_step();
                     }

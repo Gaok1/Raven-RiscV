@@ -1,5 +1,5 @@
 use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets, Cache};
-use crate::ui::app::{App, CacheResultsSnapshot, CacheScope, CacheSubtab, CpiConfig, DocsPage, EditorMode, LevelSnapshot, MemRegion, RunSpeed, Tab};
+use crate::ui::app::{App, CacheResultsSnapshot, CacheScope, CacheSubtab, CpiConfig, DocsPage, EditorMode, LevelSnapshot, MemRegion, Tab};
 use crate::ui::view::docs::{docs_body_line_count, ALL_MASK, FILTER_ITEMS};
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use rfd::FileDialog as OSFileDialog;
@@ -618,10 +618,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.run.is_running = true;
                     }
                 }
-                // Pause/resume — blocked in Instant mode while running (use R to restart)
-                (KeyCode::Char('p'), Tab::Run)
-                    if !(matches!(app.run.speed, RunSpeed::Instant) && app.run.is_running) =>
-                {
+                // Pause/resume
+                (KeyCode::Char('p'), Tab::Run) => {
                     if app.run.is_running {
                         app.run.is_running = false;
                     } else if !app.run.faulted {

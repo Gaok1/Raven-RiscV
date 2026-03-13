@@ -1,6 +1,7 @@
 use core::fmt;
 
-use crate::raven_api::syscall::sys_write;
+use crate::raven_api::syscall::{sys_read, sys_write};
+use crate::raven_api::syscall::RavenFD;
 
 // ── Writers ──────────────────────────────────────────────────────────────────
 
@@ -9,14 +10,14 @@ pub struct StderrWriter;
 
 impl fmt::Write for StdoutWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        unsafe { sys_write(1, s.as_ptr(), s.len()) };
+        unsafe { sys_write(super::syscall::RavenFD::STDOUT, s.as_ptr(), s.len()) };
         Ok(())
     }
 }
 
 impl fmt::Write for StderrWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        unsafe { sys_write(2, s.as_ptr(), s.len()) };
+        unsafe { sys_write(super::syscall::RavenFD::STDERR, s.as_ptr(), s.len()) };
         Ok(())
     }
 }
@@ -35,6 +36,26 @@ pub fn _eprint(args: fmt::Arguments) {
     StderrWriter.write_fmt(args).ok();
 }
 
+// ── Reader ────────────────────────────────────────────────────────────────────
+
+/// Reads bytes from stdin into `buf` until a newline (`\n`) or the buffer is
+/// full. The newline is **not** included. Returns the number of bytes written
+/// into `buf`.
+#[doc(hidden)]
+pub fn _read_line(buf: &mut [u8]) -> usize {
+    let mut n = 0;
+    for slot in buf.iter_mut() {
+        let mut byte = 0u8;
+        let ret = unsafe { sys_read(RavenFD::STDIN, &mut byte as *mut u8, 1) };
+        if ret <= 0 || byte == b'\n' {
+            break;
+        }
+        *slot = byte;
+        n += 1;
+    }
+    n
+}
+
 // ── Macros ────────────────────────────────────────────────────────────────────
 
 #[macro_export]
@@ -46,6 +67,19 @@ macro_rules! print {
 macro_rules! println {
     ()            => { $crate::print!("\n") };
     ($($arg:tt)*) => { $crate::print!("{}\n", format_args!($($arg)*)) };
+}
+
+/// Reads a line from stdin into a `&mut [u8]` buffer.
+/// Returns the number of bytes read (newline excluded).
+///
+/// ```no_run
+/// let mut buf = [0u8; 64];
+/// let n = read_line!(buf);
+/// let s = core::str::from_utf8(&buf[..n]).unwrap_or("");
+/// ```
+#[macro_export]
+macro_rules! read_line {
+    ($buf:expr) => { $crate::raven_api::io::_read_line(&mut $buf) };
 }
 
 #[macro_export]
