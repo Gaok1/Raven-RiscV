@@ -212,7 +212,7 @@ fn parse_sections(
                 if sym_type != STT_FUNC && sym_type != STT_OBJECT { continue; }
                 if st_value == 0 { continue; }
                 let name = cstr(strtab, st_name);
-                if name.is_empty() || name.starts_with('$') { continue; }
+                if name.is_empty() || name.starts_with('$') || name.starts_with(".L") { continue; }
                 symbols.entry(st_value).or_default().push(name);
             }
             let _ = i; // suppress unused warning
