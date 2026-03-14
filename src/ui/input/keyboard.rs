@@ -68,8 +68,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     }
 
     if app.show_exit_popup {
-        if key.code == KeyCode::Esc {
-            app.show_exit_popup = false;
+        match key.code {
+            KeyCode::Esc => app.show_exit_popup = false,
+            KeyCode::Enter | KeyCode::Char('y') => return Ok(true),
+            _ => {}
         }
         return Ok(false);
     }

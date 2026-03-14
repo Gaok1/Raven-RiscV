@@ -159,11 +159,9 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
         Line::raw(""),
         Line::from(vec![
             Span::styled("[Exit]", Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::DANGER)),
-            Span::raw("   "),
-            Span::styled(
-                "[Cancel]",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT),
-            ),
+            Span::styled("  Enter/y  ", Style::default().fg(theme::LABEL)),
+            Span::styled("[Cancel]", Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT)),
+            Span::styled("  Esc", Style::default().fg(theme::LABEL)),
         ]),
     ];
     let para = Paragraph::new(lines)
