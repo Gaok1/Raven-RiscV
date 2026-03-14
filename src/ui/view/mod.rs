@@ -148,7 +148,11 @@ pub fn ui(f: &mut Frame, app: &App) {
 fn render_exit_popup(f: &mut Frame, area: Rect) {
     let popup = centered_rect(area.width / 3, area.height / 4, area);
     f.render_widget(Clear, popup);
-    let block = Block::default().borders(Borders::ALL).title("Confirm Exit");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(theme::DANGER))
+        .title(Span::styled("Confirm Exit", Style::default().fg(theme::DANGER)));
     let lines = vec![
         Line::raw("Do you wish to exit?"),
         Line::raw("Check your code is saved before exiting."),
@@ -245,6 +249,8 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[k]",            "toggle stack region in RAM view"),
                 ("[F9]",           "toggle breakpoint at hovered / PC"),
                 ("",               ""),
+                ("[Ctrl+F]",       "jump RAM view to address (type hex, live)"),
+                ("[Ctrl+G]",       "jump instruction view to label (type name, live)"),
                 ("[t]",            "toggle instruction trace panel"),
                 ("[e]",            "toggle execution count display (×N)"),
                 ("[y]",            "toggle instruction type badge ([R],[I]…)"),

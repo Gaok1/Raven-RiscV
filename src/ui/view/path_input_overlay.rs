@@ -73,13 +73,19 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     Style::default().fg(theme::LABEL)
                 };
-                // Show just the filename part for readability
+                // Show just the filename part, truncated to fit
                 let display = std::path::Path::new(c)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .map(|n| if c.ends_with('/') { format!("{n}/") } else { n.to_string() })
                     .unwrap_or_else(|| c.clone());
-                ListItem::new(format!("  {display}")).style(style)
+                let max_w = comp_area.width.saturating_sub(4) as usize;
+                let truncated = if display.chars().count() > max_w && max_w > 3 {
+                    format!("{}…", &display[..display.char_indices().nth(max_w - 1).map_or(0, |(i, _)| i)])
+                } else {
+                    display
+                };
+                ListItem::new(format!("  {truncated}")).style(style)
             })
             .collect();
         f.render_widget(List::new(items), comp_area);
