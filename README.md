@@ -34,14 +34,14 @@ Requires Rust 1.75+. No other dependencies.
 - Go-to-definition (`F12`), label highlight, address gutter (`F2`)
 
 ### Debugger — Run Tab (Tab 2)
-- Run free, pause (`Space`/`F5`), or single-step (`n`/`F10`)
-- Breakpoints (`b`/`F9`), jump to address (`g`), execution trace (`t`)
+- Run free, pause (`Space`/`F5`), or single-step (`s`/`F10`)
+- Breakpoints (`F9`), jump to label (`Ctrl+G`), jump to RAM address (`Ctrl+F`), execution trace (`t`)
 - All 32 integer registers with ABI names, change highlighting
-- Float registers (`f0–f31` / ABI names), toggled with `Tab`
+- Float registers (`f0–f31` / ABI names), toggled with `Tab` in REGS mode
 - Sidebar cycles with `v`: **RAM → Registers → Dyn**
-  - **RAM**: scrollable memory view with region selector (Data / Stack / R/W)
-  - **Registers**: integer or float register bank with per-register age highlighting
-  - **Dyn**: self-narrating mode for single-stepping — shows the memory region written on every STORE, and the register bank on every LOAD, ALU, or branch instruction. The accessed address is always centered in the view.
+  - **RAM**: scrollable memory view; `k` cycles region: Data / Stack / R/W / **Heap** (sbrk pointer, `▶HB` marker)
+  - **Registers**: integer or float register bank with per-register age highlighting; pin with `P`
+  - **Dyn**: self-narrating mode for single-stepping — STORE → RAM centered on the written address (`▶`); LOAD / ALU / branch → register bank so you see the result
 - Instruction memory panel: type badge `[R][I][S][B][U][J]`, execution heat `×N`, branch outcome
 - Instruction decoder: full field breakdown (opcode, funct3/7, rs1/rs2/rd, immediate, sign-extended)
 
@@ -126,14 +126,15 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 | Key | Action |
 |-----|--------|
 | `F5` / `Space` | Run / Pause |
-| `F10` / `n` | Single step |
-| `F9` / `b` | Toggle breakpoint at PC |
-| `f` | Cycle speed: 1× → 2× → 4× → Instant |
+| `s` / `F10` | Single step |
+| `F9` | Toggle breakpoint at PC |
+| `f` | Cycle speed: 1× → 2× → 4× → 8× → GO |
 | `v` | Cycle sidebar: RAM → Registers → Dyn |
-| `Tab` | Toggle integer / float register bank |
+| `k` | Cycle RAM region: Data → Stack → R/W → Heap |
+| `Tab` | Toggle integer / float register bank (REGS mode) |
 | `t` | Toggle execution trace panel |
-| `g` | Jump to address |
-| `x` | Toggle raw hex word display |
+| `Ctrl+F` | Jump RAM view to address |
+| `Ctrl+G` | Jump instruction view to label |
 
 ---
 

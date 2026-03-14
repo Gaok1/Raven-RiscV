@@ -32,11 +32,13 @@ Requires Rust 1.75+. No other dependencies.
 - Go-to-definition (`F12`), label highlight, address gutter (`F2`)
 
 ### Debugger — Run Tab (Tab 2)
-- Run free, pause (`Space`/`F5`), or single-step (`n`/`F10`)
-- Breakpoints (`b`/`F9`), jump to address (`g`), execution trace (`t`)
+- Run free, pause (`Space`/`F5`), or single-step (`s`/`F10`)
+- Breakpoints (`F9`), jump to label (`Ctrl+G`), jump to RAM address (`Ctrl+F`), execution trace (`t`)
 - All 32 integer registers with ABI names, hex + decimal, change highlighting
-- Float registers (`f0–f31` / ABI names), toggled with `Tab`
-- RAM view, stack view, breakpoint list — cycle with `v`
+- Float registers (`f0–f31` / ABI names), toggled with `Tab` in REGS mode
+- Sidebar cycles with `v`: **RAM → Registers → Dyn**
+  - **RAM**: `k` cycles region: Data / Stack / R/W / Heap (sbrk pointer with `▶HB` marker)
+  - **Dyn**: STORE → RAM at written address; LOAD/ALU → register bank
 - Instruction memory panel: type badge `[R][I][S][B][U][J]`, execution heat `×N`, branch outcome
 - Instruction decoder: full field breakdown (opcode, funct3/7, rs1/rs2/rd, immediate, sign-extended)
 
@@ -121,14 +123,15 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 | Key | Action |
 |-----|--------|
 | `F5` / `Space` | Run / Pause |
-| `F10` / `n` | Single step |
-| `F9` / `b` | Toggle breakpoint at PC |
-| `f` | Cycle speed: 1× → 2× → 4× → Instant |
-| `v` | Cycle sidebar: RAM → Registers → Stack → Breakpoints |
-| `Tab` | Toggle integer / float register bank |
+| `s` / `F10` | Single step |
+| `F9` | Toggle breakpoint at PC |
+| `f` | Cycle speed: 1× → 2× → 4× → 8× → GO |
+| `v` | Cycle sidebar: RAM → Registers → Dyn |
+| `k` | Cycle RAM region: Data → Stack → R/W → Heap |
+| `Tab` | Toggle integer / float register bank (REGS mode) |
 | `t` | Toggle execution trace panel |
-| `g` | Jump to address |
-| `x` | Toggle raw hex word display |
+| `Ctrl+F` | Jump RAM view to address |
+| `Ctrl+G` | Jump instruction view to label |
 
 ---
 

@@ -45,9 +45,11 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Estimativa de CPI e classe da instrução
 
 **Sidebar de Registradores**
-- Registradores inteiros: dual-column hex + decimal, fade por idade, pin (`p`), write trace
+- Registradores inteiros: dual-column hex + decimal, fade por idade, pin (`P`), write trace
 - Registradores float: nomes ABI (`ft0`–`ft11`, `fa0`–`fa7`, `fs0`–`fs11`), alternar com `Tab`
-- Quatro modos de sidebar: visão de RAM / registradores inteiros / stack view / lista de breakpoints (`v`)
+- Sidebar cicla com `v`: **RAM → Registradores → Dyn**
+  - **RAM**: `k` cicla a região: Data / Stack / R/W / **Heap** (ponteiro sbrk, marcador `▶HB`)
+  - **Dyn**: modo auto-narrado para passo a passo — STORE → mostra RAM no endereço escrito; LOAD/ALU/branch → mostra registradores
 
 ### Aba Cache (Aba 3)
 - L1 I-cache + D-cache configuráveis + níveis extras ilimitados (L2, L3…)
@@ -115,16 +117,17 @@ Requer Rust 1.75+. Sem dependências externas além da toolchain Rust.
 | Tecla | Ação |
 |-------|------|
 | `F5` / `Space` | Rodar / Pausar |
-| `F10` / `n` | Passo único |
-| `F9` / `b` | Alternar breakpoint no PC |
-| `f` | Ciclar velocidade: 1× → 2× → 4× → Instant |
-| `v` | Ciclar sidebar: RAM → Registradores → Stack → Breakpoints |
-| `Tab` | Alternar banco de registradores inteiros / float |
+| `s` / `F10` | Passo único |
+| `F9` | Alternar breakpoint no PC |
+| `f` | Ciclar velocidade: 1× → 2× → 4× → 8× → GO |
+| `v` | Ciclar sidebar: RAM → Registradores → Dyn |
+| `k` | Ciclar região de RAM: Data → Stack → R/W → Heap |
+| `Tab` | Alternar banco int / float (no modo REGS) |
 | `t` | Alternar painel de trace de execução |
-| `g` | Saltar para endereço |
-| `x` | Alternar exibição de word hex bruto |
+| `Ctrl+F` | Saltar visão de RAM para endereço |
+| `Ctrl+G` | Saltar instrução para label |
 | `e` / `y` | Alternar contador de execuções / badges de tipo |
-| `p` / click | Fixar / desafixar registrador |
+| `P` / click | Fixar / desafixar registrador |
 
 ---
 
