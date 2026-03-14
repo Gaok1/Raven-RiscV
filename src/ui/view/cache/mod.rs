@@ -242,15 +242,6 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         line_spans.push(Span::styled("[D-Cache]", scope_d_style));
         line_spans.push(Span::raw(" "));
         line_spans.push(Span::styled("[Both]",    scope_both_style));
-        line_spans.push(Span::styled(
-            "   Ctrl+R=export  Ctrl+M=compare",
-            Style::default().fg(theme::LABEL),
-        ));
-    } else {
-        line_spans.push(Span::styled(
-            "   Ctrl+R=export  Ctrl+M=compare",
-            Style::default().fg(theme::LABEL),
-        ));
     }
 
     let line = Line::from(line_spans);

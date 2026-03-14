@@ -102,17 +102,37 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Docs => render_docs(f, chunks[1], app),
     }
 
-    let mode = match app.mode {
-        EditorMode::Insert => "INSERT",
-        EditorMode::Command => "COMMAND",
+    let (footer_text, footer_style) = match app.tab {
+        Tab::Editor => {
+            let mode = match app.mode { EditorMode::Insert => "INSERT", EditorMode::Command => "COMMAND" };
+            (
+                format!("{mode}  │  Ctrl+O=Open  Ctrl+S=Save  Ctrl+Z=Undo  Ctrl+F=Find  Ctrl+G=Goto  Ctrl+/=Comment"),
+                Style::default().fg(theme::LABEL),
+            )
+        }
+        Tab::Run => (
+            "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Stack  Ctrl+F=Jump RAM  Ctrl+G=Label  [?]=Help".to_string(),
+            Style::default().fg(theme::LABEL),
+        ),
+        Tab::Cache => {
+            if let Some(ref err) = app.cache.config_error {
+                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+            } else if let Some(ref ok) = app.cache.config_status {
+                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+            } else {
+                (
+                    "Tab=Subtabs  Ctrl+E=Export config  Ctrl+L=Import config  Ctrl+R=Results  Ctrl+M=Baseline  [?]=Help".to_string(),
+                    Style::default().fg(theme::LABEL),
+                )
+            }
+        }
+        Tab::Docs => (
+            "Ctrl+F=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language".to_string(),
+            Style::default().fg(theme::LABEL),
+        ),
     };
-    let status = format!(
-        "Mode: {}  |  Auto-assemble  |  Ctrl+O=Import  |  Ctrl+S=Export",
-        mode
-    );
 
-    let status = Paragraph::new(status).style(Style::default().fg(theme::LABEL));
-    f.render_widget(status, chunks[2]);
+    f.render_widget(Paragraph::new(footer_text).style(footer_style), chunks[2]);
 
     if app.show_exit_popup {
         render_exit_popup(f, size);
