@@ -312,7 +312,7 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
     let center = app.run.mem_region == MemRegion::Stack
         || app.run.mem_region == MemRegion::Access
         || app.run.mem_region == MemRegion::Heap
-        || matches!(app.run.dyn_mem_access, Some((_, _, true)));
+        || (app.run.show_dyn && matches!(app.run.dyn_mem_access, Some((_, _, true))));
     let base = if center {
         let half = lines / 2;
         app.run.mem_view_addr.saturating_sub(half * bytes)
