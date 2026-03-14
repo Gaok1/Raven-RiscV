@@ -239,6 +239,24 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    if ctrl && matches!(key.code, KeyCode::Char('g')) && matches!(app.tab, Tab::Run) {
+        app.run.imem_search_open = !app.run.imem_search_open;
+        if !app.run.imem_search_open {
+            app.run.imem_search_query.clear();
+        }
+        return Ok(false);
+    }
+
+    if ctrl && matches!(key.code, KeyCode::Char('f')) && matches!(app.tab, Tab::Run)
+        && !app.run.show_registers
+    {
+        app.run.mem_search_open = !app.run.mem_search_open;
+        if !app.run.mem_search_open {
+            app.run.mem_search_query.clear();
+        }
+        return Ok(false);
+    }
+
     match app.mode {
         EditorMode::Insert => {
             if key.code == KeyCode::Esc {
@@ -380,14 +398,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
-            if ctrl && matches!(key.code, KeyCode::Char('g')) && matches!(app.tab, Tab::Run) {
-                app.run.imem_search_open = !app.run.imem_search_open;
-                if !app.run.imem_search_open {
-                    app.run.imem_search_query.clear();
-                }
-                return Ok(false);
-            }
-
             if ctrl && matches!(key.code, KeyCode::Char('f')) && matches!(app.tab, Tab::Docs) {
                 app.docs.search_open = !app.docs.search_open;
                 if !app.docs.search_open {
@@ -396,15 +406,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
-            if ctrl && matches!(key.code, KeyCode::Char('f')) && matches!(app.tab, Tab::Run)
-                && !app.run.show_registers
-            {
-                app.run.mem_search_open = !app.run.mem_search_open;
-                if !app.run.mem_search_open {
-                    app.run.mem_search_query.clear();
-                }
-                return Ok(false);
-            }
 
             // F12: go to label definition
             if key.code == KeyCode::F(12) && matches!(app.tab, Tab::Editor) {
