@@ -341,6 +341,7 @@ pub(super) enum EditorMode {
 pub(super) enum MemRegion {
     Data,
     Stack,
+    Access,   // auto-follows last memory read/write
     Custom,
 }
 
@@ -537,8 +538,9 @@ pub(super) struct RunState {
     // Feature: register write trace (Feature 8)
     pub(super) reg_last_write_pc: [Option<u32>; 32],
 
-    // Feature: breakpoint list view (Feature 10)
-    pub(super) show_bp_list: bool,
+    // Feature: dynamic sidebar view (Dyn)
+    pub(super) show_dyn: bool,
+    pub(super) dyn_mem_access: Option<(u32, u32, bool)>, // last step's mem access (addr, size, is_store); None = non-mem instr
 
     // Mouse hover row in register sidebar (visual row index, 0-based within inner area)
     pub(super) hover_reg_row: Option<usize>,
@@ -821,7 +823,8 @@ impl App {
                 reg_cursor: 0,
                 block_comments: std::collections::HashMap::new(),
                 reg_last_write_pc: [None; 32],
-                show_bp_list: false,
+                show_dyn: false,
+                dyn_mem_access: None,
                 hover_reg_row: None,
                 show_float_regs: false,
                 prev_f: [0u32; 32],
@@ -1627,7 +1630,7 @@ impl App {
         // Update memory access log (age existing entries, insert new if load/store)
         for entry in &mut self.run.mem_access_log { entry.2 = entry.2.saturating_add(1); }
         self.run.mem_access_log.retain(|e| e.2 < 3);
-        if let Some((addr, size)) = mem_access {
+        if let Some((addr, size, _)) = mem_access {
             self.run.mem_access_log.push((addr, size, 0));
         }
 
@@ -1653,6 +1656,21 @@ impl App {
         if self.run.mem_region == crate::ui::app::MemRegion::Stack {
             let sp = self.run.cpu.x[2];
             self.run.mem_view_addr = sp & !(self.run.mem_view_bytes - 1);
+        }
+        // Auto-follow last memory R/W when Access region is active
+        if self.run.mem_region == crate::ui::app::MemRegion::Access {
+            if let Some((addr, _, _)) = mem_access {
+                self.run.mem_view_addr = addr & !(self.run.mem_view_bytes - 1);
+            }
+        }
+        // Dyn view: remember last access; update mem_view_addr for memory sub-view
+        self.run.dyn_mem_access = mem_access;
+        if self.run.show_dyn {
+            if let Some((addr, _, is_store)) = mem_access {
+                if is_store {
+                    self.run.mem_view_addr = addr & !(self.run.mem_view_bytes - 1);
+                }
+            }
         }
 
         // Check breakpoints: stop if the new PC is a breakpoint
@@ -1733,7 +1751,8 @@ impl App {
 /// Decode a raw instruction word and return the memory address + byte size that
 /// the instruction accesses (load or store), or `None` for non-memory instructions.
 /// Uses pre-step register values from `cpu`.
-fn classify_mem_access(word: u32, cpu: &crate::falcon::Cpu) -> Option<(u32, u32)> {
+/// Returns `Some((addr, size, is_store))` for load/store instructions.
+fn classify_mem_access(word: u32, cpu: &crate::falcon::Cpu) -> Option<(u32, u32, bool)> {
     let opcode = word & 0x7F;
     let funct3 = (word >> 12) & 0x7;
     let rs1 = ((word >> 15) & 0x1F) as usize;
@@ -1749,7 +1768,7 @@ fn classify_mem_access(word: u32, cpu: &crate::falcon::Cpu) -> Option<(u32, u32)
                 2     => 4,  // lw / flw
                 _     => return None,
             };
-            Some((addr, size))
+            Some((addr, size, false))
         }
         // STORE (sb sh sw) and STORE-FP (fsw)
         0x23 | 0x27 => {
@@ -1763,7 +1782,7 @@ fn classify_mem_access(word: u32, cpu: &crate::falcon::Cpu) -> Option<(u32, u32)
                 2 => 4, // sw / fsw
                 _ => return None,
             };
-            Some((addr, size))
+            Some((addr, size, true))
         }
         _ => None,
     }

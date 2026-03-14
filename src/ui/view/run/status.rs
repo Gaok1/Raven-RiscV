@@ -44,7 +44,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         app.hover_run_button == Some(RunButton::View),
     ));
 
-    if !app.run.show_registers && !app.run.show_bp_list {
+    if !app.run.show_registers && !app.run.show_dyn {
         spans.push(Span::raw("  Region "));
         spans.push(toggle_btn(
             region_text(app),
@@ -67,7 +67,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         sign_enabled(app) && app.hover_run_button == Some(RunButton::Sign),
     ));
 
-    if !app.run.show_registers && !app.run.show_bp_list {
+    if !app.run.show_registers && !app.run.show_dyn {
         spans.push(Span::raw("  Bytes "));
         spans.push(toggle_btn(
             bytes_text(app),
@@ -113,7 +113,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
 // ── Text helpers ────────────────────────────────────────────────────────────
 
 fn view_text(app: &App) -> &'static str {
-    if app.run.show_bp_list { "BP" }
+    if app.run.show_dyn      { "DYN" }
     else if app.run.show_registers { "REGS" }
     else { "RAM" }
 }
@@ -127,6 +127,7 @@ fn region_text(app: &App) -> &'static str {
     match app.run.mem_region {
         MemRegion::Data | MemRegion::Custom => "DATA",
         MemRegion::Stack => "STACK",
+        MemRegion::Access => "R/W",
     }
 }
 

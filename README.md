@@ -38,7 +38,10 @@ Requires Rust 1.75+. No other dependencies.
 - Breakpoints (`b`/`F9`), jump to address (`g`), execution trace (`t`)
 - All 32 integer registers with ABI names, change highlighting
 - Float registers (`f0–f31` / ABI names), toggled with `Tab`
-- RAM view, stack view, breakpoint list — cycle with `v`
+- Sidebar cycles with `v`: **RAM → Registers → Dyn**
+  - **RAM**: scrollable memory view with region selector (Data / Stack / R/W)
+  - **Registers**: integer or float register bank with per-register age highlighting
+  - **Dyn**: self-narrating mode for single-stepping — shows the memory region written on every STORE, and the register bank on every LOAD, ALU, or branch instruction. The accessed address is always centered in the view.
 - Instruction memory panel: type badge `[R][I][S][B][U][J]`, execution heat `×N`, branch outcome
 - Instruction decoder: full field breakdown (opcode, funct3/7, rs1/rs2/rd, immediate, sign-extended)
 
@@ -126,7 +129,7 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 | `F10` / `n` | Single step |
 | `F9` / `b` | Toggle breakpoint at PC |
 | `f` | Cycle speed: 1× → 2× → 4× → Instant |
-| `v` | Cycle sidebar: RAM → Registers → Stack → Breakpoints |
+| `v` | Cycle sidebar: RAM → Registers → Dyn |
 | `Tab` | Toggle integer / float register bank |
 | `t` | Toggle execution trace panel |
 | `g` | Jump to address |

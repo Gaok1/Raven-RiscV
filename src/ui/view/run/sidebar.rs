@@ -8,8 +8,16 @@ use super::formatting::{format_memory_value, format_stale_value, format_u32_valu
 use super::registers::reg_name;
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    if app.run.show_bp_list {
-        render_bp_list(f, area, app);
+    if app.run.show_dyn {
+        // STORE → show where data was written; LOAD/ALU/branch → show registers
+        let show_mem = matches!(app.run.dyn_mem_access, Some((_, _, true)));
+        if show_mem {
+            render_memory_view(f, area, app);
+        } else if app.run.show_float_regs {
+            render_float_register_table(f, area, app);
+        } else {
+            render_register_table(f, area, app);
+        }
     } else if app.run.show_registers {
         if app.run.show_float_regs {
             render_float_register_table(f, area, app);
@@ -37,7 +45,8 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::BORDER))
         .border_type(BorderType::Rounded)
-        .title(format!("Registers  [p]=pin  [Tab]=float{cursor_info}"));
+        .title(format!("Registers{}  [p]=pin  [Tab]=float{cursor_info}",
+            if app.run.show_dyn { " [Dyn]" } else { "" }));
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
     let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]).block(block);
@@ -267,11 +276,21 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn memory_block(app: &App) -> Block<'static> {
-    let title = if app.run.mem_region == MemRegion::Stack {
-        let sp = app.run.cpu.x[2];
-        format!("Memory [Stack]  SP=0x{sp:08x}")
+    let title = if app.run.show_dyn {
+        if let Some((addr, _, true)) = app.run.dyn_mem_access {
+            format!("Memory [Dyn]  @0x{addr:08x}")
+        } else {
+            "Memory [Dyn]".to_string()
+        }
     } else {
-        "Memory".to_string()
+        match app.run.mem_region {
+            MemRegion::Stack => {
+                let sp = app.run.cpu.x[2];
+                format!("Memory [Stack]  SP=0x{sp:08x}")
+            }
+            MemRegion::Access => format!("Memory [R/W]  @0x{:08x}", app.run.mem_view_addr),
+            _ => "Memory".to_string(),
+        }
     };
     Block::default()
         .borders(Borders::ALL)
@@ -285,8 +304,11 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
     let lines = inner.height as u32;
     let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
 
-    // In Stack region: center view on mem_view_addr (SP-aligned) by shifting back half
-    let base = if app.run.mem_region == MemRegion::Stack {
+    // Center the view for Stack, R/W (Access), and Dyn-store modes
+    let center = app.run.mem_region == MemRegion::Stack
+        || app.run.mem_region == MemRegion::Access
+        || matches!(app.run.dyn_mem_access, Some((_, _, true)));
+    let base = if center {
         let half = lines / 2;
         app.run.mem_view_addr.saturating_sub(half * bytes)
     } else {
@@ -409,47 +431,6 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let mut style = Style::default();
     if let Some(bg) = row_bg { style = style.bg(bg); }
     ListItem::new(ratatui::text::Line::from(spans)).style(style)
-}
-
-// ── Breakpoint list view (Feature 10) ─────────────────────────────────────────
-
-fn render_bp_list(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Breakpoints  F9=toggle", Style::default().fg(theme::DANGER)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    if app.run.breakpoints.is_empty() {
-        f.render_widget(
-            Paragraph::new("No breakpoints set.\nF9 to toggle at current PC.")
-                .style(Style::default().fg(theme::LABEL)),
-            inner,
-        );
-        return;
-    }
-
-    let mut addrs: Vec<u32> = app.run.breakpoints.iter().cloned().collect();
-    addrs.sort();
-    let items: Vec<ListItem<'static>> = addrs.iter().map(|&addr| {
-        let word = app.run.mem.peek32(addr).unwrap_or(0);
-        let disasm = super::instruction_details::disasm_word(word);
-        let label = app.run.labels.get(&addr)
-            .and_then(|v| v.first())
-            .map(|l| format!(" <{l}>"))
-            .unwrap_or_default();
-        let is_pc = addr == app.run.cpu.pc;
-        let text = format!("\u{25cf} 0x{addr:08x}{label}  {disasm}");
-        let style = if is_pc {
-            Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::LABEL_Y)
-        } else {
-            Style::default().fg(theme::DANGER)
-        };
-        ListItem::new(text).style(style)
-    }).collect();
-    f.render_widget(List::new(items), inner);
 }
 
 // Keep the old format_u32_value usage for format_memory_value compatibility

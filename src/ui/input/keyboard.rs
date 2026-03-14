@@ -733,19 +733,19 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.run.is_running = true;
                     }
                 }
-                // v: cycle sidebar view — REGS → RAM → BP → REGS
+                // v: cycle sidebar view — RAM → REGS → DYN → RAM
                 (KeyCode::Char('v'), Tab::Run) => {
-                    if app.run.show_bp_list {
-                        app.run.show_bp_list = false;
+                    if app.run.show_dyn {
+                        app.run.show_dyn = false;
                         app.run.show_registers = true;
                     } else if app.run.show_registers {
                         app.run.show_registers = false;
                     } else {
-                        app.run.show_bp_list = true;
+                        app.run.show_dyn = true;
                     }
                 }
                 // Tab (in register view): toggle between int and float registers
-                (KeyCode::Tab, Tab::Run) if app.run.show_registers && !app.run.show_bp_list => {
+                (KeyCode::Tab, Tab::Run) if app.run.show_registers && !app.run.show_dyn => {
                     app.run.show_float_regs = !app.run.show_float_regs;
                 }
                 // t: toggle execution trace panel
@@ -760,18 +760,25 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('y'), Tab::Run) => {
                     app.run.show_instr_type = !app.run.show_instr_type;
                 }
-                // k: toggle Stack region in the RAM memory view
-                (KeyCode::Char('k'), Tab::Run) => {
-                    if app.run.mem_region == MemRegion::Stack {
-                        app.run.mem_region = MemRegion::Data;
-                        app.run.mem_view_addr = app.run.data_base;
-                    } else {
-                        app.run.mem_region = MemRegion::Stack;
-                        let sp = app.run.cpu.x[2];
-                        app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
+                // k: cycle memory region DATA → STACK → R/W → DATA (only in pure RAM mode)
+                (KeyCode::Char('k'), Tab::Run)
+                    if !app.run.show_registers && !app.run.show_dyn => {
+                    match app.run.mem_region {
+                        MemRegion::Data | MemRegion::Custom => {
+                            app.run.mem_region = MemRegion::Stack;
+                            let sp = app.run.cpu.x[2];
+                            app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
+                        }
+                        MemRegion::Stack => {
+                            app.run.mem_region = MemRegion::Access;
+                        }
+                        MemRegion::Access => {
+                            app.run.mem_region = MemRegion::Data;
+                            app.run.mem_view_addr = app.run.data_base;
+                        }
                     }
                     app.run.show_registers = false;
-                    app.run.show_bp_list = false;
+                    app.run.show_dyn = false;
                 }
                 // P (shift+p): pin/unpin the currently selected register
                 (KeyCode::Char('P'), Tab::Run) if app.run.show_registers => {
@@ -1032,26 +1039,34 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 }
                 // Sidebar / region shortcuts (same behaviour as Run tab)
                 (KeyCode::Char('v'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-                    if app.run.show_bp_list {
-                        app.run.show_bp_list = false;
+                    if app.run.show_dyn {
+                        app.run.show_dyn = false;
                         app.run.show_registers = true;
                     } else if app.run.show_registers {
                         app.run.show_registers = false;
                     } else {
-                        app.run.show_bp_list = true;
+                        app.run.show_dyn = true;
                     }
                 }
-                (KeyCode::Char('k'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-                    if app.run.mem_region == MemRegion::Stack {
-                        app.run.mem_region = MemRegion::Data;
-                        app.run.mem_view_addr = app.run.data_base;
-                    } else {
-                        app.run.mem_region = MemRegion::Stack;
-                        let sp = app.run.cpu.x[2];
-                        app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
+                (KeyCode::Char('k'), Tab::Cache)
+                    if !matches!(app.cache.subtab, CacheSubtab::Config)
+                    && !app.run.show_registers && !app.run.show_dyn => {
+                    match app.run.mem_region {
+                        MemRegion::Data | MemRegion::Custom => {
+                            app.run.mem_region = MemRegion::Stack;
+                            let sp = app.run.cpu.x[2];
+                            app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
+                        }
+                        MemRegion::Stack => {
+                            app.run.mem_region = MemRegion::Access;
+                        }
+                        MemRegion::Access => {
+                            app.run.mem_region = MemRegion::Data;
+                            app.run.mem_view_addr = app.run.data_base;
+                        }
                     }
                     app.run.show_registers = false;
-                    app.run.show_bp_list = false;
+                    app.run.show_dyn = false;
                 }
                 (KeyCode::Char('e'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
                     app.run.show_exec_count = !app.run.show_exec_count;

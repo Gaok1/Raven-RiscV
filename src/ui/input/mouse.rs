@@ -323,13 +323,13 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 fn apply_run_button(app: &mut App, btn: RunButton) {
     match btn {
         RunButton::View => {
-            if app.run.show_bp_list {
-                app.run.show_bp_list = false;
+            if app.run.show_dyn {
+                app.run.show_dyn = false;
                 app.run.show_registers = true;
             } else if app.run.show_registers {
                 app.run.show_registers = false;
             } else {
-                app.run.show_bp_list = true;
+                app.run.show_dyn = true;
             }
         }
         RunButton::Format => {
@@ -357,19 +357,22 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             }
         }
         RunButton::Region => {
-            app.run.mem_region = match app.run.mem_region {
+            match app.run.mem_region {
                 MemRegion::Data | MemRegion::Custom => {
                     let sp = app.run.cpu.x[2];
                     app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
-                    MemRegion::Stack
+                    app.run.mem_region = MemRegion::Stack;
                 }
-                _ => {
+                MemRegion::Stack => {
+                    app.run.mem_region = MemRegion::Access;
+                }
+                MemRegion::Access => {
                     app.run.mem_view_addr = app.run.data_base;
-                    MemRegion::Data
+                    app.run.mem_region = MemRegion::Data;
                 }
-            };
+            }
             app.run.show_registers = false;
-            app.run.show_bp_list = false;
+            app.run.show_dyn = false;
         }
         RunButton::Speed => {
             app.run.speed = app.run.speed.cycle();
@@ -484,9 +487,9 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
         _ => "1B",
     };
     let region_text = match app.run.mem_region {
-        MemRegion::Data => "DATA",
+        MemRegion::Data | MemRegion::Custom => "DATA",
         MemRegion::Stack => "STACK",
-        MemRegion::Custom => "DATA",
+        MemRegion::Access => "R/W",
     };
     let run_text = if app.run.is_running { "RUN" } else { "PAUSE" };
 
@@ -503,7 +506,7 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     skip(&mut pos, "View ");
     let (view_start, view_end) = range(&mut pos, view_text);
 
-    let (region_start, region_end) = if !app.run.show_registers {
+    let (region_start, region_end) = if !app.run.show_registers && !app.run.show_dyn {
         skip(&mut pos, "  Region ");
         range(&mut pos, region_text)
     } else {
