@@ -15,12 +15,14 @@ mod components;
 pub mod disasm;
 mod cache;
 mod splash;
+mod path_input_overlay;
 
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};
 use run::render_run;
 use cache::render_cache;
 use splash::render_splash;
+use path_input_overlay::render_path_input;
 
 pub fn ui(f: &mut Frame, app: &App) {
     // Splash screen takes over the full frame
@@ -119,6 +121,8 @@ pub fn ui(f: &mut Frame, app: &App) {
     if app.help_open {
         render_help_popup(f, size, app);
     }
+
+    render_path_input(f, size, app);
 }
 
 fn render_exit_popup(f: &mut Frame, area: Rect) {

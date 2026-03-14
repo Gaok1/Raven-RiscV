@@ -1,5 +1,5 @@
 use crate::ui::{
-    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, RunButton, Tab},
+    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, Tab},
     editor::Editor,
 };
 use crate::ui::input::keyboard::{do_export_results, do_compare_load};
@@ -860,6 +860,8 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                 app.editor.buf.cursor_row = 0;
                 app.editor.buf.cursor_col = 0;
             }
+        } else {
+            super::keyboard::open_path_input(app, PathInputAction::OpenBin);
         }
         return;
     }
@@ -874,6 +876,8 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                 app.editor.buf.cursor_col = 0;
                 app.assemble_and_load();
             }
+        } else {
+            super::keyboard::open_path_input(app, PathInputAction::OpenFas);
         }
         return;
     }
@@ -912,6 +916,8 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
             bytes.extend_from_slice(&text_bytes);
             bytes.extend_from_slice(&data);
             let _ = std::fs::write(path, bytes);
+        } else {
+            super::keyboard::open_path_input(app, PathInputAction::SaveBin);
         }
         return;
     }
@@ -922,6 +928,8 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
             .save_file()
         {
             let _ = std::fs::write(path, app.editor.buf.text());
+        } else {
+            super::keyboard::open_path_input(app, PathInputAction::SaveFas);
         }
         return;
     }

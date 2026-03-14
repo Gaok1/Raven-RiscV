@@ -1,5 +1,5 @@
 use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets, Cache};
-use crate::ui::app::{App, CacheResultsSnapshot, CacheScope, CacheSubtab, CpiConfig, DocsPage, EditorMode, LevelSnapshot, MemRegion, Tab};
+use crate::ui::app::{App, CacheResultsSnapshot, CacheScope, CacheSubtab, CpiConfig, DocsPage, EditorMode, LevelSnapshot, MemRegion, PathInput, PathInputAction, Tab};
 use crate::ui::view::docs::{docs_body_line_count, ALL_MASK, FILTER_ITEMS};
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use rfd::FileDialog as OSFileDialog;
@@ -10,6 +10,42 @@ use super::max_regs_scroll;
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     if key.kind != KeyEventKind::Press {
+        return Ok(false);
+    }
+
+    // Path input bar intercept
+    if app.path_input.open {
+        match key.code {
+            KeyCode::Esc => {
+                app.path_input.open = false;
+                app.path_input.query.clear();
+                app.path_input.completions.clear();
+            }
+            KeyCode::Enter => {
+                let action = app.path_input.action.clone();
+                let path = std::path::PathBuf::from(app.path_input.query.trim());
+                app.path_input.open = false;
+                app.path_input.query.clear();
+                app.path_input.completions.clear();
+                dispatch_path_input(app, action, path);
+            }
+            KeyCode::Tab => {
+                if !app.path_input.completions.is_empty() {
+                    app.path_input.query = app.path_input.completions[app.path_input.completion_sel].clone();
+                    app.path_input.completion_sel = (app.path_input.completion_sel + 1) % app.path_input.completions.len();
+                    // Don't refresh — let user cycle through existing completions
+                }
+            }
+            KeyCode::Backspace => {
+                app.path_input.query.pop();
+                refresh_path_completions(&mut app.path_input);
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.path_input.query.push(c);
+                refresh_path_completions(&mut app.path_input);
+            }
+            _ => {}
+        }
         return Ok(false);
     }
 
@@ -275,6 +311,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.editor.buf.cursor_col = 0;
                         app.assemble_and_load();
                     }
+                } else {
+                    open_path_input(app, PathInputAction::OpenFas);
                 }
                 return Ok(false);
             }
@@ -285,6 +323,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     .save_file()
                 {
                     let _ = std::fs::write(path, app.editor.buf.text());
+                } else {
+                    open_path_input(app, PathInputAction::SaveFas);
                 }
                 return Ok(false);
             }
@@ -571,6 +611,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.editor.buf.cursor_col = 0;
                         app.assemble_and_load();
                     }
+                } else {
+                    open_path_input(app, PathInputAction::OpenFas);
                 }
                 return Ok(false);
             }
@@ -581,6 +623,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     .save_file()
                 {
                     let _ = std::fs::write(path, app.editor.buf.text());
+                } else {
+                    open_path_input(app, PathInputAction::SaveFas);
                 }
                 return Ok(false);
             }
@@ -606,6 +650,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                             app.cache.config_error = Some(format!("Export failed: {e}"));
                         }
                     }
+                } else {
+                    open_path_input(app, PathInputAction::SaveFcache);
                 }
                 return Ok(false);
             }
@@ -649,6 +695,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                             app.cache.config_error = Some(format!("Import failed: {e}"));
                         }
                     }
+                } else {
+                    open_path_input(app, PathInputAction::OpenFcache);
                 }
                 return Ok(false);
             }
@@ -1313,6 +1361,8 @@ pub(super) fn do_export_results(app: &mut App) {
                 app.cache.config_status = None;
             }
         }
+    } else {
+        open_path_input(app, PathInputAction::SaveResults);
     }
 }
 
@@ -1342,6 +1392,8 @@ pub(super) fn do_compare_load(app: &mut App) {
                 app.cache.config_status = None;
             }
         }
+    } else {
+        open_path_input(app, PathInputAction::OpenSnapshot);
     }
 }
 
@@ -1576,5 +1628,181 @@ fn apply_mem_search(app: &mut App) {
         let max = app.run.mem_size.saturating_sub(app.run.mem_view_bytes as usize) as u32;
         app.run.mem_view_addr = aligned.min(max);
         app.run.mem_region = crate::ui::app::MemRegion::Custom;
+    }
+}
+
+fn refresh_path_completions(input: &mut PathInput) {
+    let query = &input.query;
+    let path = std::path::Path::new(query);
+    let (dir, prefix) = if query.ends_with('/') || query.ends_with(std::path::MAIN_SEPARATOR) {
+        (path.to_path_buf(), String::new())
+    } else {
+        let parent = path.parent()
+            .map(|p| if p.as_os_str().is_empty() { std::path::Path::new(".").to_path_buf() } else { p.to_path_buf() })
+            .unwrap_or_else(|| std::path::Path::new(".").to_path_buf());
+        let pfx = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        (parent, pfx)
+    };
+    let mut completions: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_str().map(|n| n.starts_with(&prefix)).unwrap_or(false))
+        .map(|e| {
+            let p = e.path();
+            let mut s = p.to_string_lossy().to_string();
+            if p.is_dir() { s.push('/'); }
+            s
+        })
+        .collect();
+    completions.sort();
+    input.completions = completions;
+    input.completion_sel = 0;
+}
+
+pub(super) fn open_path_input(app: &mut App, action: PathInputAction) {
+    app.path_input.action = action;
+    app.path_input.open = true;
+    app.path_input.query = std::env::current_dir()
+        .map(|p| { let mut s = p.to_string_lossy().to_string(); s.push('/'); s })
+        .unwrap_or_default();
+    refresh_path_completions(&mut app.path_input);
+}
+
+fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::PathBuf) {
+    match action {
+        PathInputAction::OpenFas => {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                app.editor.buf.lines = content.lines().map(|s| s.to_string()).collect();
+                app.editor.buf.cursor_row = 0;
+                app.editor.buf.cursor_col = 0;
+                app.assemble_and_load();
+            }
+        }
+        PathInputAction::SaveFas => {
+            let _ = std::fs::write(&path, app.editor.buf.text());
+        }
+        PathInputAction::OpenBin => {
+            if let Ok(bytes) = std::fs::read(&path) {
+                app.load_binary(&bytes);
+                use crate::ui::view::disasm::disasm_word;
+                let lines: Vec<String> = if let Some(ref words) = app.editor.last_ok_text {
+                    words.iter().map(|&w| disasm_word(w)).collect()
+                } else {
+                    bytes.chunks(4).map(|chunk| {
+                        let mut b = [0u8; 4];
+                        for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
+                        disasm_word(u32::from_le_bytes(b))
+                    }).collect()
+                };
+                app.editor.buf.lines = lines;
+                app.editor.buf.cursor_row = 0;
+                app.editor.buf.cursor_col = 0;
+            }
+        }
+        PathInputAction::SaveBin => {
+            let (words, data, bss_size) = match (
+                app.editor.last_ok_text.as_ref(),
+                app.editor.last_ok_data.as_ref(),
+                app.editor.last_ok_bss_size,
+            ) {
+                (Some(t), Some(d), bss) => (t.clone(), d.clone(), bss.unwrap_or(0)),
+                _ => match crate::falcon::asm::assemble(&app.editor.buf.text(), app.run.base_pc) {
+                    Ok(p) => (p.text, p.data, p.bss_size),
+                    Err(e) => {
+                        app.console.push_error(format!("Cannot export: assemble error at line {}: {}", e.line + 1, e.msg));
+                        return;
+                    }
+                },
+            };
+            let text_bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let text_size = text_bytes.len() as u32;
+            let data_size = data.len() as u32;
+            let mut bytes: Vec<u8> = Vec::with_capacity(16 + text_bytes.len() + data.len());
+            bytes.extend_from_slice(b"FALC");
+            bytes.extend_from_slice(&text_size.to_le_bytes());
+            bytes.extend_from_slice(&data_size.to_le_bytes());
+            bytes.extend_from_slice(&bss_size.to_le_bytes());
+            bytes.extend_from_slice(&text_bytes);
+            bytes.extend_from_slice(&data);
+            let _ = std::fs::write(&path, bytes);
+        }
+        PathInputAction::OpenFcache => {
+            match std::fs::read_to_string(&path) {
+                Ok(text) => match parse_cache_configs(&text) {
+                    Ok((icfg, dcfg, extra)) => {
+                        let n_extra = extra.len();
+                        app.cache.pending_icache = icfg;
+                        app.cache.pending_dcache = dcfg;
+                        app.cache.extra_pending = extra;
+                        app.run.mem.extra_levels.clear();
+                        for cfg in &app.cache.extra_pending {
+                            app.run.mem.extra_levels.push(crate::falcon::cache::Cache::new(cfg.clone()));
+                        }
+                        app.cache.hover_level = vec![false; n_extra + 1];
+                        if app.cache.selected_level > n_extra { app.cache.selected_level = n_extra; }
+                        app.cache.config_error = None;
+                        app.cache.config_status = Some(format!("Imported from {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                    }
+                    Err(msg) => {
+                        app.cache.config_status = None;
+                        app.cache.config_error = Some(format!("Import failed: {msg}"));
+                    }
+                },
+                Err(e) => {
+                    app.cache.config_status = None;
+                    app.cache.config_error = Some(format!("Import failed: {e}"));
+                }
+            }
+        }
+        PathInputAction::SaveFcache => {
+            let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending);
+            match std::fs::write(&path, &text) {
+                Ok(()) => {
+                    app.cache.config_error = None;
+                    app.cache.config_status = Some(format!("Exported to {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                }
+                Err(e) => {
+                    app.cache.config_status = None;
+                    app.cache.config_error = Some(format!("Export failed: {e}"));
+                }
+            }
+        }
+        PathInputAction::SaveResults => {
+            let mut snap = capture_snapshot(app);
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("fstats");
+            snap.label = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let text = if ext == "csv" { serialize_results_csv(&snap) } else { serialize_results_fstats(&snap) };
+            match std::fs::write(&path, &text) {
+                Ok(()) => {
+                    app.cache.config_status = Some(format!("Results exported to {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                    app.cache.config_error = None;
+                }
+                Err(e) => {
+                    app.cache.config_error = Some(format!("Export failed: {e}"));
+                    app.cache.config_status = None;
+                }
+            }
+        }
+        PathInputAction::OpenSnapshot => {
+            match std::fs::read_to_string(&path) {
+                Ok(text) => match parse_results_snapshot(&text) {
+                    Ok(mut snap) => {
+                        snap.label = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        app.cache.loaded_snapshot = Some(Box::new(snap));
+                        app.cache.config_status = Some(format!("Baseline loaded from {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                        app.cache.config_error = None;
+                    }
+                    Err(msg) => {
+                        app.cache.config_error = Some(format!("Load failed: {msg}"));
+                        app.cache.config_status = None;
+                    }
+                },
+                Err(e) => {
+                    app.cache.config_error = Some(format!("Load failed: {e}"));
+                    app.cache.config_status = None;
+                }
+            }
+        }
     }
 }

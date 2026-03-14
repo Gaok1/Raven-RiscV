@@ -617,6 +617,41 @@ pub(super) struct DocsState {
     pub(super) filter_bar_y: std::cell::Cell<u16>,
 }
 
+// ── Path input bar ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, PartialEq, Default)]
+pub(super) enum PathInputAction {
+    #[default]
+    OpenFas,
+    SaveFas,
+    OpenBin,
+    SaveBin,
+    OpenFcache,
+    SaveFcache,
+    SaveResults,
+    OpenSnapshot,
+}
+
+pub(super) struct PathInput {
+    pub(super) open: bool,
+    pub(super) query: String,
+    pub(super) completions: Vec<String>,
+    pub(super) completion_sel: usize,
+    pub(super) action: PathInputAction,
+}
+
+impl PathInput {
+    fn new() -> Self {
+        Self {
+            open: false,
+            query: String::new(),
+            completions: Vec::new(),
+            completion_sel: 0,
+            action: PathInputAction::default(),
+        }
+    }
+}
+
 // ── Top-level app ──────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -659,6 +694,9 @@ pub struct App {
 
     // RAM size override from --mem CLI flag. None = use per-mode defaults.
     pub(super) ram_override: Option<usize>,
+
+    // TUI path input bar (fallback when OS file dialog returns None)
+    pub(super) path_input: PathInput,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -871,6 +909,7 @@ impl App {
             last_bracketed_paste: None,
             ram_override,
             splash_start: Some(Instant::now()),
+            path_input: PathInput::new(),
         }
     }
 
