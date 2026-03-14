@@ -128,6 +128,7 @@ fn region_text(app: &App) -> &'static str {
         MemRegion::Data | MemRegion::Custom => "DATA",
         MemRegion::Stack => "STACK",
         MemRegion::Access => "R/W",
+        MemRegion::Heap => "HEAP",
     }
 }
 

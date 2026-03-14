@@ -760,7 +760,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('y'), Tab::Run) => {
                     app.run.show_instr_type = !app.run.show_instr_type;
                 }
-                // k: cycle memory region DATA → STACK → R/W → DATA (only in pure RAM mode)
+                // k: cycle memory region DATA → STACK → R/W → HEAP → DATA (only in pure RAM mode)
                 (KeyCode::Char('k'), Tab::Run)
                     if !app.run.show_registers && !app.run.show_dyn => {
                     match app.run.mem_region {
@@ -773,6 +773,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                             app.run.mem_region = MemRegion::Access;
                         }
                         MemRegion::Access => {
+                            app.run.mem_region = MemRegion::Heap;
+                            let hb = app.run.cpu.heap_break;
+                            app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
+                        }
+                        MemRegion::Heap => {
                             app.run.mem_region = MemRegion::Data;
                             app.run.mem_view_addr = app.run.data_base;
                         }
@@ -1061,6 +1066,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                             app.run.mem_region = MemRegion::Access;
                         }
                         MemRegion::Access => {
+                            app.run.mem_region = MemRegion::Heap;
+                            let hb = app.run.cpu.heap_break;
+                            app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
+                        }
+                        MemRegion::Heap => {
                             app.run.mem_region = MemRegion::Data;
                             app.run.mem_view_addr = app.run.data_base;
                         }

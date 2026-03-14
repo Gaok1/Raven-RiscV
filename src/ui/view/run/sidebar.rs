@@ -289,6 +289,10 @@ fn memory_block(app: &App) -> Block<'static> {
                 format!("Memory [Stack]  SP=0x{sp:08x}")
             }
             MemRegion::Access => format!("Memory [R/W]  @0x{:08x}", app.run.mem_view_addr),
+            MemRegion::Heap => {
+                let hb = app.run.cpu.heap_break;
+                format!("Memory [Heap]  HB=0x{hb:08x}")
+            }
             _ => "Memory".to_string(),
         }
     };
@@ -304,9 +308,10 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
     let lines = inner.height as u32;
     let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
 
-    // Center the view for Stack, R/W (Access), and Dyn-store modes
+    // Center the view for Stack, R/W (Access), Heap, and Dyn-store modes
     let center = app.run.mem_region == MemRegion::Stack
         || app.run.mem_region == MemRegion::Access
+        || app.run.mem_region == MemRegion::Heap
         || matches!(app.run.dyn_mem_access, Some((_, _, true)));
     let base = if center {
         let half = lines / 2;
@@ -336,11 +341,19 @@ fn mem_age_style(age: u8) -> Option<Style> {
     }
 }
 
+const HEAP_COLOR: Color = Color::Rgb(80, 200, 120);
+
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let sp = app.run.cpu.x[2];
     let sp_aligned = sp & !(app.run.mem_view_bytes - 1);
     let is_sp = addr == sp_aligned;
     let is_stack = app.run.mem_region == MemRegion::Stack;
+
+    let hb = app.run.cpu.heap_break;
+    let hb_aligned = hb & !(app.run.mem_view_bytes - 1);
+    let is_heap_mode = app.run.mem_region == MemRegion::Heap;
+    let is_hb = addr == hb_aligned;
+
     let cache_loc = app.run.mem.data_cache_location(addr);
     let is_dirty = app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
 
@@ -363,30 +376,47 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
         String::new()
     };
 
-    // SP leading prefix — bold marker that comes FIRST for the SP row
-    let sp_prefix: Option<ratatui::text::Span<'static>> = if is_sp {
+    // HB offset annotation (trailing, only for non-HB rows in heap view)
+    let hb_offset_ann = if is_heap_mode && !is_hb {
+        let offset = addr as i64 - hb_aligned as i64;
+        format!("  HB{offset:+}")
+    } else {
+        String::new()
+    };
+
+    let trailing_ann = if !sp_offset_ann.is_empty() { sp_offset_ann }
+                       else { hb_offset_ann };
+
+    // Leading prefix — SP takes priority if both happen to coincide
+    let marker: Option<ratatui::text::Span<'static>> = if is_sp {
         Some(ratatui::text::Span::styled(
             "\u{25b6}SP ".to_string(),
             Style::default().fg(theme::PAUSED).bold(),
+        ))
+    } else if is_hb {
+        Some(ratatui::text::Span::styled(
+            "\u{25b6}HB ".to_string(),
+            Style::default().fg(HEAP_COLOR).bold(),
         ))
     } else {
         None
     };
 
-    // Row background: SP row always gets a highlight bg (takes priority over dirty)
-    let row_bg = if is_sp { Some(theme::BG_HOVER) } else { None };
+    // Row fg and background
+    let marker_fg = if is_sp { theme::PAUSED } else { HEAP_COLOR };
+    let row_bg = if is_sp || is_hb { Some(theme::BG_HOVER) } else { None };
 
     if !is_dirty {
         let val = format_memory_value(app, addr);
-        let addr_text = format!("0x{addr:08x}: {val}{sp_offset_ann}");
-        let fg = if is_sp {
-            theme::PAUSED
+        let addr_text = format!("0x{addr:08x}: {val}{trailing_ann}");
+        let fg = if is_sp || is_hb {
+            marker_fg
         } else if let Some(s) = access_highlight {
             return ListItem::new(format!("  {addr_text}")).style(s);
         } else {
             theme::TEXT
         };
-        let line = if let Some(prefix) = sp_prefix {
+        let line = if let Some(prefix) = marker {
             ratatui::text::Line::from(vec![
                 ratatui::text::Span::raw(" "),
                 prefix,
@@ -406,14 +436,13 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let stale_val = format_stale_value(app, addr);
     let level_label = cache_loc.map(|(n, _)| format!("L{n} ")).unwrap_or_default();
 
-    // Dirty line: SP prefix leads if this is the SP row
-    let addr_style = if is_sp {
+    let addr_style = if is_sp || is_hb {
         Style::default().fg(PURPLE)
     } else {
         access_highlight.unwrap_or(Style::default().fg(PURPLE))
     };
     let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
-    if let Some(prefix) = sp_prefix {
+    if let Some(prefix) = marker {
         spans.push(ratatui::text::Span::raw(" "));
         spans.push(prefix);
     } else {
@@ -425,7 +454,7 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     ));
     spans.push(ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()));
     spans.push(ratatui::text::Span::styled(
-        format!("  \u{2190} RAM: {stale_val}{sp_offset_ann}"),
+        format!("  \u{2190} RAM: {stale_val}{trailing_ann}"),
         Style::default().fg(STALE_COLOR),
     ));
     let mut style = Style::default();

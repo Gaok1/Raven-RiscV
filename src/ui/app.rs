@@ -342,6 +342,7 @@ pub(super) enum MemRegion {
     Data,
     Stack,
     Access,   // auto-follows last memory read/write
+    Heap,     // auto-follows cpu.heap_break (sbrk pointer)
     Custom,
 }
 
@@ -1662,6 +1663,11 @@ impl App {
             if let Some((addr, _, _)) = mem_access {
                 self.run.mem_view_addr = addr & !(self.run.mem_view_bytes - 1);
             }
+        }
+        // Auto-follow heap_break (sbrk pointer) when Heap region is active
+        if self.run.mem_region == crate::ui::app::MemRegion::Heap {
+            let hb = self.run.cpu.heap_break;
+            self.run.mem_view_addr = hb & !(self.run.mem_view_bytes - 1);
         }
         // Dyn view: remember last access; update mem_view_addr for memory sub-view
         self.run.dyn_mem_access = mem_access;

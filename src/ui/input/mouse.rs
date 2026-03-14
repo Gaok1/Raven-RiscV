@@ -367,6 +367,11 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                     app.run.mem_region = MemRegion::Access;
                 }
                 MemRegion::Access => {
+                    let hb = app.run.cpu.heap_break;
+                    app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
+                    app.run.mem_region = MemRegion::Heap;
+                }
+                MemRegion::Heap => {
                     app.run.mem_view_addr = app.run.data_base;
                     app.run.mem_region = MemRegion::Data;
                 }
@@ -490,6 +495,7 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
         MemRegion::Data | MemRegion::Custom => "DATA",
         MemRegion::Stack => "STACK",
         MemRegion::Access => "R/W",
+        MemRegion::Heap => "HEAP",
     };
     let run_text = if app.run.is_running { "RUN" } else { "PAUSE" };
 

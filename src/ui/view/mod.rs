@@ -111,7 +111,7 @@ pub fn ui(f: &mut Frame, app: &App) {
             )
         }
         Tab::Run => (
-            "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Stack  Ctrl+F=Jump RAM  Ctrl+G=Label  [?]=Help".to_string(),
+            "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Region  Ctrl+F=Jump RAM  Ctrl+G=Label  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
         Tab::Cache => {
@@ -244,7 +244,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[R]",            "restart from beginning"),
                 ("[f]",            "cycle execution speed (1x → 2x → 4x → 8x → GO)"),
                 ("[v]",            "cycle sidebar view: RAM → REGS → Dyn"),
-                ("[k]",            "cycle RAM region: DATA → STACK → R/W"),
+                ("[k]",            "cycle RAM region: DATA → STACK → R/W → HEAP"),
                 ("[F9]",           "toggle breakpoint at hovered / PC"),
                 ("",               ""),
                 ("[Ctrl+F]",       "jump RAM view to address (type hex, live)"),
@@ -266,7 +266,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("Type [ON/OFF]",  "show/hide instruction type badge"),
                 ("Speed [1x…GO]",  "execution speed control"),
                 ("State [RUN]",    "pause / resume execution"),
-                ("Region [DATA]",  "cycle memory region: Data → Stack → R/W"),
+                ("Region [DATA]",  "cycle memory region: Data → Stack → R/W → Heap"),
                 ("Bytes [4B]",     "bytes per memory row"),
                 ("Format [HEX]",   "display format: HEX / DEC / STR"),
                 ("Sign [SGN]",     "signed / unsigned display (DEC mode)"),
@@ -296,7 +296,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[r]",            "reset statistics"),
                 ("[p]",            "pause / resume execution"),
                 ("[v]",            "cycle sidebar view: RAM → REGS → Dyn"),
-                ("[k]",            "cycle RAM region: DATA → STACK → R/W"),
+                ("[k]",            "cycle RAM region: DATA → STACK → R/W → HEAP"),
                 ("[f]",            "cycle speed: 1x → 2x → 4x → 8x → GO"),
                 ("[e]",            "toggle exec count display"),
                 ("[y]",            "toggle instruction type badge"),
