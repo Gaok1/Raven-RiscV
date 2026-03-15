@@ -45,8 +45,11 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::BORDER))
         .border_type(BorderType::Rounded)
-        .title(format!("Registers{}  [p]=pin  [Tab]=float{cursor_info}",
-            if app.run.show_dyn { " [Dyn]" } else { "" }));
+        .title(if app.run.show_dyn {
+            format!("Registers [Dyn]{cursor_info}")
+        } else {
+            format!("Registers  [p]=pin  [Tab]=float{cursor_info}")
+        });
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
     let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]).block(block);
@@ -164,7 +167,7 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
         .title("Float Regs (f0–f31)  [Tab]=int regs");
     let inner = block.inner(area);
 
-    let visible = inner.height.saturating_sub(1) as usize;
+    let visible = inner.height.saturating_sub(2) as usize;
     let scroll = app.run.regs_scroll.min(32usize.saturating_sub(visible));
 
     let rows: Vec<Row<'static>> = (0u8..32u8)

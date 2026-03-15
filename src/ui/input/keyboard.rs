@@ -32,8 +32,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             KeyCode::Tab => {
                 if !app.path_input.completions.is_empty() {
                     app.path_input.query = app.path_input.completions[app.path_input.completion_sel].clone();
-                    app.path_input.completion_sel = (app.path_input.completion_sel + 1) % app.path_input.completions.len();
-                    // Don't refresh — let user cycle through existing completions
+                    if app.path_input.query.ends_with('/') {
+                        // Navigated into a directory — refresh to show its contents
+                        refresh_path_completions(&mut app.path_input);
+                    } else {
+                        // File completion — cycle through siblings
+                        app.path_input.completion_sel = (app.path_input.completion_sel + 1) % app.path_input.completions.len();
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -254,6 +259,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
+    // ELF prompt: intercept all keys while the popup is open.
+    if app.editor.elf_prompt_open && matches!(app.tab, Tab::Editor) {
+        if key.code == KeyCode::Esc {
+            app.editor.elf_prompt_open = false;
+        }
+        return Ok(false);
+    }
+
     if matches!(app.tab, Tab::Run) && matches!(key.code, KeyCode::Char('R')) {
         app.restart_simulation();
         return Ok(false);
@@ -299,6 +312,19 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         EditorMode::Insert => {
             if key.code == KeyCode::Esc {
                 app.mode = EditorMode::Command;
+                return Ok(false);
+            }
+
+            // ELF mode: block all editing — show prompt on any non-navigation key.
+            if matches!(app.tab, Tab::Editor) && app.editor.last_ok_elf_bytes.is_some() {
+                match key.code {
+                    KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+                    | KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End => {}
+                    _ => {
+                        app.editor.elf_prompt_open = true;
+                        return Ok(false);
+                    }
+                }
                 return Ok(false);
             }
 
@@ -480,62 +506,84 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
-            match (key.code, app.tab) {
+            let edited = match (key.code, app.tab) {
                 (code, Tab::Editor) => match code {
                     KeyCode::Left => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.move_left();
+                        false
                     }
                     KeyCode::Right => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.move_right();
+                        false
                     }
                     KeyCode::Up => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.move_up();
+                        false
                     }
                     KeyCode::Down => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.move_down();
+                        false
                     }
                     KeyCode::Home => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.move_home();
+                        false
                     }
                     KeyCode::End => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.move_end();
+                        false
                     }
                     KeyCode::PageUp => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.page_up();
+                        false
                     }
                     KeyCode::PageDown => {
                         if shift { app.editor.buf.start_selection(); } else { app.editor.buf.clear_selection(); }
                         app.editor.buf.page_down();
+                        false
                     }
-                    KeyCode::Backspace => app.editor.buf.backspace(),
-                    KeyCode::Delete => app.editor.buf.delete_char(),
-                    KeyCode::Enter => app.editor.buf.enter(),
-                    KeyCode::BackTab => app.editor.buf.shift_tab(),
-                    KeyCode::Tab => app.editor.buf.tab(),
-                    KeyCode::Char(c) => app.editor.buf.insert_char(c),
-                    _ => {}
+                    KeyCode::Backspace => { app.editor.buf.backspace(); true }
+                    KeyCode::Delete => { app.editor.buf.delete_char(); true }
+                    KeyCode::Enter => { app.editor.buf.enter(); true }
+                    KeyCode::BackTab => { app.editor.buf.shift_tab(); true }
+                    KeyCode::Tab => { app.editor.buf.tab(); true }
+                    KeyCode::Char(c) => { app.editor.buf.insert_char(c); true }
+                    _ => false,
                 },
-                _ => {}
+                _ => false,
+            };
+            if edited {
+                app.editor.dirty = true;
+                app.editor.last_edit_at = Some(Instant::now());
+                app.editor.diag_line = None;
+                app.editor.diag_msg = None;
+                app.editor.diag_line_text = None;
+                app.editor.last_compile_ok = None;
+                app.editor.last_assemble_msg = None;
             }
-            app.editor.dirty = true;
-            app.editor.last_edit_at = Some(Instant::now());
-            app.editor.diag_line = None;
-            app.editor.diag_msg = None;
-            app.editor.diag_line_text = None;
-            app.editor.last_compile_ok = None;
-            app.editor.last_assemble_msg = None;
         }
         EditorMode::Command => {
             if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
                 app.show_exit_popup = true;
                 return Ok(false);
+            }
+
+            // ELF mode: intercept editing Ctrl-keys and show prompt.
+            if matches!(app.tab, Tab::Editor) && app.editor.last_ok_elf_bytes.is_some() && ctrl {
+                match key.code {
+                    KeyCode::Char('z') | KeyCode::Char('y') | KeyCode::Char('x')
+                    | KeyCode::Char('v') | KeyCode::Char('/') => {
+                        app.editor.elf_prompt_open = true;
+                        return Ok(false);
+                    }
+                    _ => {}
+                }
             }
 
             if ctrl && matches!(key.code, KeyCode::Char('c')) && matches!(app.tab, Tab::Editor) {
@@ -737,11 +785,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('v'), Tab::Run) => {
                     if app.run.show_dyn {
                         app.run.show_dyn = false;
-                        app.run.show_registers = true;
                     } else if app.run.show_registers {
                         app.run.show_registers = false;
-                    } else {
                         app.run.show_dyn = true;
+                    } else {
+                        app.run.show_registers = true;
                     }
                 }
                 // Tab (in register view): toggle between int and float registers

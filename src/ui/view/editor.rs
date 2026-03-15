@@ -7,7 +7,12 @@ use std::collections::HashSet;
 use super::{App, Editor};
 
 pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
-    let compile_span = if let Some(msg) = &app.editor.last_assemble_msg {
+    let compile_span = if app.editor.last_ok_elf_bytes.is_some() {
+        Span::styled(
+            "ELF binary (read-only)",
+            Style::default().fg(Color::Rgb(220, 170, 55)),
+        )
+    } else if let Some(msg) = &app.editor.last_assemble_msg {
         let color = if app.editor.last_compile_ok == Some(true) {
             Color::Green
         } else {
@@ -306,7 +311,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     } else {
         let cur_row = app.editor.buf.cursor_row as u16;
         let cur_col = app.editor.buf.cursor_col as u16;
-        let gutter = (num_width + 3) as u16;
+        let gutter = (hint_w + num_width + 3) as u16;
         let cursor_x = area.x + 1 + gutter + cur_col;
         let cursor_y = area.y + 1 + (cur_row.saturating_sub(start as u16));
         if cursor_y < area.y + 1 + content_h && cursor_x < area.x + area.width {

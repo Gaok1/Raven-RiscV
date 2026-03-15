@@ -46,17 +46,29 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
         (inner, None)
     };
 
-    // Input line
+    // Input line — scroll left if the query is wider than the available space
     let q = &app.path_input.query;
+    let avail = input_area.width.saturating_sub(2) as usize; // subtract "> " prefix
+    let q_chars: Vec<char> = q.chars().collect();
+    let display_q = if q_chars.len() > avail && avail > 1 {
+        // Show the tail of the path with a "…" prefix so the user sees what they typed
+        let tail: String = q_chars[q_chars.len() - (avail - 1)..].iter().collect();
+        format!("…{tail}")
+    } else {
+        q.clone()
+    };
     let input_line = Line::from(vec![
         Span::styled("> ", Style::default().fg(theme::ACCENT).bold()),
-        Span::styled(q.clone(), Style::default().fg(theme::TEXT)),
+        Span::styled(display_q, Style::default().fg(theme::TEXT)),
     ]);
     f.render_widget(Paragraph::new(input_line), input_area);
 
-    // Blinking cursor
-    let cx = (input_area.x + 2 + q.chars().count() as u16)
-        .min(input_area.x + input_area.width.saturating_sub(1));
+    // Cursor: always at the right edge when the query is scrolled
+    let cx = if q_chars.len() >= avail {
+        input_area.x + input_area.width.saturating_sub(1)
+    } else {
+        input_area.x + 2 + q_chars.len() as u16
+    };
     if input_area.height > 0 {
         f.set_cursor_position((cx, input_area.y));
     }

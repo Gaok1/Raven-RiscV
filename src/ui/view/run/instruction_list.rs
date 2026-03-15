@@ -206,10 +206,12 @@ const HOVER_BG: Color = theme::BG_HOVER;
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let word = app.run.mem.peek32(addr).unwrap_or(0);
     let is_bp = app.run.breakpoints.contains(&addr);
-    let bp_marker = if is_bp { "●" } else { " " };
     let is_pc = addr == app.run.cpu.pc;
     let is_hover = !is_pc && app.run.hover_imem_addr == Some(addr);
-    let marker = if is_pc { "▶" } else { bp_marker };
+    let marker = if is_pc && is_bp { "●▶" }
+                 else if is_pc     { " ▶" }
+                 else if is_bp     { "● " }
+                 else              { "  " };
     let disasm = disasm_word(word);
 
     let exec_count = app.run.exec_counts.get(&addr).copied().unwrap_or(0);
@@ -222,7 +224,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         (None, None)
     };
 
-    let addr_part = format!("{marker} 0x{addr:08x}:  {disasm}");
+    let addr_part = format!("{marker}0x{addr:08x}:  {disasm}");
 
     // Build span list
     let mut spans: Vec<Span<'static>> = Vec::new();

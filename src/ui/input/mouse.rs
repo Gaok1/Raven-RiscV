@@ -3,6 +3,7 @@ use crate::ui::{
     editor::Editor,
 };
 use crate::ui::input::keyboard::{do_export_results, do_compare_load};
+use crate::ui::view::{ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use rfd::FileDialog as OSFileDialog;
@@ -22,6 +23,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     if app.help_open {
         // Clicking anywhere outside the popup closes it; click inside does page nav
         handle_help_popup_mouse(app, me, area);
+        return;
+    }
+
+    if app.editor.elf_prompt_open && matches!(app.tab, Tab::Editor) {
+        handle_elf_prompt_mouse(app, me, area);
         return;
     }
 
@@ -51,6 +57,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 if x >= pos && x < pos + w {
                     app.hover_tab = Some(tab);
                     if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                        if tab != app.tab && matches!(app.tab, Tab::Editor) && app.editor.dirty {
+                            app.assemble_and_load();
+                        }
                         app.tab = tab;
                         app.mode = EditorMode::Command;
                     }
@@ -235,15 +244,20 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         match me.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if within(me.column, me.row) {
-                    let y = (me.row - inner_top) as usize;
-                    let row = (start + y).min(app.editor.buf.lines.len().saturating_sub(1));
-                    let x = me.column.saturating_sub(inner_left + gutter) as usize;
-                    let col = x.min(Editor::char_count(&app.editor.buf.lines[row]));
-                    app.editor.buf.cursor_row = row;
-                    app.editor.buf.cursor_col = col;
-                    app.editor.buf.selection_anchor = Some((row, col));
-                    if app.mode == EditorMode::Command {
-                        app.mode = EditorMode::Insert;
+                    // ELF mode: clicking the editor body opens the prompt instead of editing.
+                    if app.editor.last_ok_elf_bytes.is_some() {
+                        app.editor.elf_prompt_open = true;
+                    } else {
+                        let y = (me.row - inner_top) as usize;
+                        let row = (start + y).min(app.editor.buf.lines.len().saturating_sub(1));
+                        let x = me.column.saturating_sub(inner_left + gutter) as usize;
+                        let col = x.min(Editor::char_count(&app.editor.buf.lines[row]));
+                        app.editor.buf.cursor_row = row;
+                        app.editor.buf.cursor_col = col;
+                        app.editor.buf.selection_anchor = Some((row, col));
+                        if app.mode == EditorMode::Command {
+                            app.mode = EditorMode::Insert;
+                        }
                     }
                 } else if app.mode == EditorMode::Insert {
                     app.mode = EditorMode::Command;
@@ -325,11 +339,11 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::View => {
             if app.run.show_dyn {
                 app.run.show_dyn = false;
-                app.run.show_registers = true;
             } else if app.run.show_registers {
                 app.run.show_registers = false;
-            } else {
                 app.run.show_dyn = true;
+            } else {
+                app.run.show_registers = true;
             }
         }
         RunButton::Format => {
@@ -525,7 +539,7 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     skip(&mut pos, "  Sign ");
     let (sign_start, sign_end) = range(&mut pos, sign_text);
 
-    let (bytes_start, bytes_end) = if !app.run.show_registers {
+    let (bytes_start, bytes_end) = if !app.run.show_registers && !app.run.show_dyn {
         skip(&mut pos, "  Bytes ");
         range(&mut pos, bytes_text)
     } else {
@@ -1344,6 +1358,67 @@ fn handle_exit_popup_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         {
             app.show_exit_popup = false;
         }
+    }
+}
+
+fn handle_elf_prompt_mouse(app: &mut App, me: MouseEvent, area: Rect) {
+    let popup_w = ELF_POPUP_W.min(area.width.saturating_sub(4));
+    let popup = centered_rect(popup_w, ELF_POPUP_H, area);
+
+    if me.kind != MouseEventKind::Down(MouseButton::Left) {
+        return;
+    }
+    // Click outside → cancel
+    if me.column < popup.x + 1
+        || me.column >= popup.x + popup.width - 1
+        || me.row < popup.y + 1
+        || me.row >= popup.y + popup.height - 1
+    {
+        app.editor.elf_prompt_open = false;
+        return;
+    }
+
+    let inner_y = me.row.saturating_sub(popup.y + 1);
+    if inner_y != ELF_BTN_ROW {
+        return;
+    }
+
+    let inner_w = popup_w.saturating_sub(2);
+    const GAP: u16 = 2;
+    let total_btns = ELF_BTN_CANCEL.len() as u16
+        + GAP
+        + ELF_BTN_EDIT.len() as u16
+        + GAP
+        + ELF_BTN_DISCARD.len() as u16;
+    let x_cancel  = popup.x + 1 + inner_w.saturating_sub(total_btns) / 2;
+    let x_edit    = x_cancel  + ELF_BTN_CANCEL.len()  as u16 + GAP;
+    let x_discard = x_edit    + ELF_BTN_EDIT.len()    as u16 + GAP;
+
+    let col = me.column;
+    if col >= x_cancel && col < x_cancel + ELF_BTN_CANCEL.len() as u16 {
+        // Cancelar
+        app.editor.elf_prompt_open = false;
+    } else if col >= x_edit && col < x_edit + ELF_BTN_EDIT.len() as u16 {
+        // Editar opcodes: unlock editor, keep current disassembly text
+        app.editor.elf_prompt_open = false;
+        app.editor.last_ok_elf_bytes = None;
+        app.editor.dirty = true;
+        app.editor.last_edit_at = Some(std::time::Instant::now());
+        app.editor.last_assemble_msg = Some("ELF unloaded — edit opcodes and save.".to_string());
+        app.mode = EditorMode::Insert;
+    } else if col >= x_discard && col < x_discard + ELF_BTN_DISCARD.len() as u16 {
+        // Descartar ELF: clear editor, unlock
+        app.editor.elf_prompt_open = false;
+        app.editor.last_ok_elf_bytes = None;
+        app.editor.buf.lines = vec![String::new()];
+        app.editor.buf.cursor_row = 0;
+        app.editor.buf.cursor_col = 0;
+        app.editor.last_ok_text = None;
+        app.editor.last_ok_data = None;
+        app.editor.last_compile_ok = None;
+        app.editor.dirty = false;
+        app.editor.last_assemble_msg = Some("ELF discarded — editor cleared.".to_string());
+        app.mode = EditorMode::Insert;
     }
 }
 

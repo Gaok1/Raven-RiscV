@@ -435,6 +435,8 @@ pub(super) struct EditorState {
     pub(super) line_to_addr: std::collections::HashMap<usize, u32>,
     pub(super) show_addr_hints: bool,
 
+    /// Popup shown when user tries to edit while an ELF binary is loaded.
+    pub(super) elf_prompt_open: bool,
     // Find bar
     pub(super) find_open: bool,
     pub(super) find_query: String,
@@ -732,7 +734,7 @@ impl App {
         let mem_size = ram_override.unwrap_or(128 * 1024);
         cpu.write(2, mem_size as u32);
         let data_base = base_pc + 0x1000;
-        Self {
+        let mut app = Self {
             tab: Tab::Editor,
             mode: EditorMode::Insert,
             editor: EditorState {
@@ -756,6 +758,7 @@ impl App {
                 label_to_line: std::collections::HashMap::new(),
                 line_to_addr: std::collections::HashMap::new(),
                 show_addr_hints: false,
+                elf_prompt_open: false,
                 find_open: false,
                 find_query: String::new(),
                 replace_open: false,
@@ -914,7 +917,9 @@ impl App {
             ram_override,
             splash_start: Some(Instant::now()),
             path_input: PathInput::new(),
-        }
+        };
+        app.assemble_and_load();
+        app
     }
 
     pub(super) fn assemble_and_load(&mut self) {
@@ -986,6 +991,7 @@ impl App {
                     prog.bss_size
                 ));
                 self.editor.last_compile_ok = Some(true);
+                self.editor.last_ok_elf_bytes = None;
                 self.editor.diag_line = None;
                 self.editor.diag_msg = None;
                 self.editor.diag_line_text = None;
@@ -1021,6 +1027,7 @@ impl App {
                     prog.bss_size
                 ));
                 self.editor.last_compile_ok = Some(true);
+                self.editor.last_ok_elf_bytes = None;
                 self.editor.diag_line = None;
                 self.editor.diag_msg = None;
                 self.editor.diag_line_text = None;
@@ -1256,6 +1263,9 @@ impl App {
         self.editor.diag_line_text     = None;
         self.run.imem_scroll           = 0;
         self.run.hover_imem_addr       = None;
+        // Lock the editor when a binary is loaded; close any stale prompt.
+        self.mode = EditorMode::Command;
+        self.editor.elf_prompt_open    = false;
     }
 
     /// Commit the current numeric edit_buf into pending config for the selected level.

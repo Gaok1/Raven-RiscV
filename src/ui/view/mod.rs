@@ -142,6 +142,10 @@ pub fn ui(f: &mut Frame, app: &App) {
         render_help_popup(f, size, app);
     }
 
+    if app.editor.elf_prompt_open && matches!(app.tab, Tab::Editor) {
+        render_elf_prompt(f, size, app);
+    }
+
     render_path_input(f, size, app);
 }
 
@@ -167,6 +171,80 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
     let para = Paragraph::new(lines)
         .block(block)
         .alignment(Alignment::Center);
+    f.render_widget(para, popup);
+}
+
+// ── ELF prompt popup ─────────────────────────────────────────────────────────
+
+pub(super) const ELF_BTN_CANCEL:  &str = "[ Cancel ]";
+pub(super) const ELF_BTN_EDIT:    &str = "[ Edit opcodes ]";
+pub(super) const ELF_BTN_DISCARD: &str = "[ Discard ELF ]";
+pub(super) const ELF_POPUP_W: u16 = 62;
+pub(super) const ELF_POPUP_H: u16 = 8;
+pub(super) const ELF_BTN_ROW: u16 = 4; // inner_y of the button row (0-indexed)
+
+fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
+    let popup_w = ELF_POPUP_W.min(area.width.saturating_sub(4));
+    let popup = centered_rect(popup_w, ELF_POPUP_H, area);
+    f.render_widget(Clear, popup);
+
+    let btn_y = popup.y + 1 + ELF_BTN_ROW; // absolute row of the button line
+    let inner_w = popup_w.saturating_sub(2);
+
+    // Compute absolute x positions for each button (left-padded to center all three)
+    const GAP: u16 = 2;
+    let total_btns = ELF_BTN_CANCEL.len() as u16
+        + GAP
+        + ELF_BTN_EDIT.len() as u16
+        + GAP
+        + ELF_BTN_DISCARD.len() as u16;
+    let btn_x0 = popup.x + 1 + inner_w.saturating_sub(total_btns) / 2;
+
+    let btn_style = |label: &str, x: u16| {
+        let hovered = app.mouse_y == btn_y
+            && app.mouse_x >= x
+            && app.mouse_x < x + label.len() as u16;
+        if hovered {
+            Style::default().fg(Color::Black).bg(theme::ACCENT)
+        } else {
+            Style::default().fg(Color::Black).bg(theme::IDLE)
+        }
+    };
+
+    let x_cancel  = btn_x0;
+    let x_edit    = x_cancel  + ELF_BTN_CANCEL.len()  as u16 + GAP;
+    let x_discard = x_edit    + ELF_BTN_EDIT.len()    as u16 + GAP;
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(theme::PAUSED))
+        .title(Span::styled(
+            " ELF Binary ",
+            Style::default().fg(theme::PAUSED).bold(),
+        ));
+
+    let lines = vec![
+        Line::raw(""),
+        Line::raw("An ELF binary is loaded — the editor is read-only."),
+        Line::raw("How would you like to proceed?"),
+        Line::raw(""),
+        Line::from(vec![
+            Span::raw(" ".repeat(inner_w.saturating_sub(total_btns) as usize / 2)),
+            Span::styled(ELF_BTN_CANCEL,  btn_style(ELF_BTN_CANCEL,  x_cancel)),
+            Span::raw("  "),
+            Span::styled(ELF_BTN_EDIT,    btn_style(ELF_BTN_EDIT,    x_edit)),
+            Span::raw("  "),
+            Span::styled(ELF_BTN_DISCARD, btn_style(ELF_BTN_DISCARD, x_discard)),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("  Esc", Style::default().fg(theme::LABEL)),
+            Span::styled(" = Cancel", Style::default().fg(theme::LABEL)),
+        ]),
+    ];
+
+    let para = Paragraph::new(lines).block(block);
     f.render_widget(para, popup);
 }
 

@@ -482,6 +482,25 @@ impl Editor {
             trimmed.is_empty() || trimmed.starts_with(';')
         });
 
+        // Compute cursor column delta from the pre-modification state of the cursor row,
+        // before the loop below mutates the lines.
+        let cursor_delta: isize = if self.cursor_row >= start_row
+            && self.cursor_row <= end_row
+            && self.cursor_row < self.lines.len()
+        {
+            if all_commented {
+                let ws_b: usize = self.lines[self.cursor_row]
+                    .chars().take_while(|c| c.is_whitespace()).map(|c| c.len_utf8()).sum();
+                let content = &self.lines[self.cursor_row][ws_b..];
+                if content.starts_with("; ") { -2 }
+                else if content.starts_with(';') { -1 }
+                else { 0 }
+            } else {
+                // Only adjust if "; " will actually be inserted (non-empty line)
+                if !self.lines[self.cursor_row].trim_start().is_empty() { 2 } else { 0 }
+            }
+        } else { 0 };
+
         for r in start_row..=end_row {
             if r >= self.lines.len() { break; }
             // Byte offset of the first non-whitespace character.
@@ -502,10 +521,9 @@ impl Editor {
                 }
             }
         }
-        // Adjust cursor column if it shifted on the cursor row
-        if self.cursor_row >= start_row && self.cursor_row <= end_row {
-            let delta: isize = if all_commented { -2 } else { 2 };
-            self.cursor_col = (self.cursor_col as isize + delta).max(0) as usize;
+        // Adjust cursor column using the delta computed before the loop.
+        if cursor_delta != 0 {
+            self.cursor_col = (self.cursor_col as isize + cursor_delta).max(0) as usize;
         }
         self.clear_selection();
     }
