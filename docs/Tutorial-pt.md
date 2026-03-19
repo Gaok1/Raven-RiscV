@@ -1,3 +1,5 @@
+> **OBSOLETO** — Este documento não é mais mantido. O tutorial interativo no próprio aplicativo (pressione `[?]` em qualquer aba) o substitui e suporta PT-BR e EN via tecla `[L]`.
+
 # RAVEN Tutorial
 
 Bem-vindo ao **tutorial da plataforma RAVEN** - um guia introdutório que apresenta todas as principais funcionalidades e mecânicas da ferramenta.
