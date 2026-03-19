@@ -140,10 +140,10 @@ O diretório `Program Examples/` inclui:
 
 ## Documentação
 
-- [Tutorial (PT-BR)](Tutorial-pt.md) — passo a passo
+- **Tutorial interativo** — pressione `[?]` em qualquer aba no Raven (alterne idioma com `[L]`)
 - [Formatos de instrução (PT-BR)](format.pt-BR.md) — layouts de bits, encoding, pseudoinstruções
 - [Guia do simulador de cache (PT-BR)](cache.pt-BR.md) — configuração, métricas, exportação
-- [Tutorial (EN)](Tutorial.md) | [Formats (EN)](format.md) | [Cache (EN)](cache.md)
+- [Formats (EN)](format.md) | [Cache (EN)](cache.md)
 
 ---
 

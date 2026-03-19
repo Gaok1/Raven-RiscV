@@ -152,9 +152,9 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 
 ## Docs
 
-- [Tutorial (EN)](Tutorial.md) — step-by-step first-program walkthrough
+- **Interactive tutorial** — press `[?]` on any tab inside Raven (EN / PT-BR toggle with `[L]`)
 - [Instruction formats (EN)](format.md) — bit layouts, encoding, pseudo-instructions
-- [Tutorial (PT-BR)](Tutorial-pt.md) | [Formatos (PT-BR)](format.pt-BR.md)
+- [Formatos (PT-BR)](format.pt-BR.md)
 
 ---
 

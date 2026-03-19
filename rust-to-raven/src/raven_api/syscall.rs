@@ -57,6 +57,20 @@ pub fn sys_exit(code: i32) -> ! {
     }
 }
 
+/// exit_group(code) — syscall 94
+/// Identical to sys_exit in Raven (single-threaded), but matches the Linux ABI.
+#[inline(always)]
+pub fn sys_exit_group(code: i32) -> ! {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 94_u32,
+            in("a0") code,
+            options(noreturn),
+        );
+    }
+}
+
 /// getrandom(buf, buflen, flags) — syscall 278
 #[inline(always)]
 pub unsafe fn sys_getrandom(buf: *mut u8, buflen: usize, flags: u32) -> isize {
@@ -94,6 +108,94 @@ pub unsafe fn sys_brk(addr: usize) -> usize {
 pub fn sys_pause_sim() {
     unsafe {
         core::arch::asm!("ebreak;");
+    }
+}
+
+// ── Falcon teaching extensions (syscalls 1000–1012) ───────────────────────────
+// Raven-specific shortcuts — no strlen loop, no fd argument.
+
+/// Print signed 32-bit integer to console (no newline). — syscall 1000
+#[inline(always)]
+pub fn falcon_print_int(n: i32) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1000_u32,
+            in("a0") n,
+        );
+    }
+}
+
+/// Print NUL-terminated string (no newline). — syscall 1001
+#[inline(always)]
+pub fn falcon_print_str(s: *const u8) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1001_u32,
+            in("a0") s as usize,
+        );
+    }
+}
+
+/// Print NUL-terminated string followed by newline. — syscall 1002
+#[inline(always)]
+pub fn falcon_println_str(s: *const u8) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1002_u32,
+            in("a0") s as usize,
+        );
+    }
+}
+
+/// Read one line from console into buf (NUL-terminated, newline excluded).
+/// Caller must ensure the buffer is large enough. — syscall 1003
+#[inline(always)]
+pub fn falcon_read_line(buf: *mut u8) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1003_u32,
+            in("a0") buf as usize,
+        );
+    }
+}
+
+/// Read one u8 from stdin and store at *dst (decimal or 0x hex). — syscall 1010
+#[inline(always)]
+pub fn falcon_read_u8(dst: *mut u8) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1010_u32,
+            in("a0") dst as usize,
+        );
+    }
+}
+
+/// Read one u16 from stdin and store at *dst (little-endian). — syscall 1011
+#[inline(always)]
+pub fn falcon_read_u16(dst: *mut u16) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1011_u32,
+            in("a0") dst as usize,
+        );
+    }
+}
+
+/// Read one u32 from stdin and store at *dst (little-endian). — syscall 1012
+#[inline(always)]
+pub fn falcon_read_u32(dst: *mut u32) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1012_u32,
+            in("a0") dst as usize,
+        );
     }
 }
 

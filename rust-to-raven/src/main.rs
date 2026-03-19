@@ -6,88 +6,48 @@ extern crate alloc;
 
 mod raven_api;
 
-use alloc::alloc::Layout;
-use alloc::collections::BTreeMap;
-use alloc::vec;
-use alloc::vec::Vec;
+use crate::raven_api::syscall::{sys_exit, sys_pause_sim};
 
-use crate::raven_api::syscall::{sys_exit, sys_getrandom, sys_pause_sim};
-#[unsafe(no_mangle)]
-fn random_i32_bounded_no_mangled(limit: i32) -> i32 {
-
-    let mut bytes = [0u8; 4];
-
-    let ret = unsafe { sys_getrandom(bytes.as_mut_ptr(), 4, 0) };
-
-    if ret < 0 {
-        eprintln!("fail at sys_getrandom: {}", ret);
-        sys_exit(3);
-    }
-
-    i32::from_ne_bytes(bytes) % limit
-
-}
-#[unsafe(no_mangle)]
-fn fill_random_i32_no_mangled(values: &mut [i32], limit: i32) {
-    for value in values.iter_mut() {
-        *value = random_i32_bounded_no_mangled(limit);
-    }
-}
-
-#[unsafe(no_mangle)]
-fn btree_sort_no_mangled(values: &[i32]) -> Vec<i32> {
-    let mut freq = BTreeMap::<i32, usize>::new();
-
-    for &value in values {
-        match freq.get_mut(&value) {
-            Some(count) => *count += 1,
-            None => {
-                freq.insert(value, 1);
-            }
-        }
-    }
-
-    let mut out = Vec::with_capacity(values.len());
-
-    for (value, count) in freq.iter() {
-        for _ in 0..*count {
-            out.push(*value);
-        }
-    }
-
-    out
-}
-
-#[unsafe(no_mangle)]
-fn print_array_no_mangled(label: &str, values: &[i32]) {
-    print!("{} [", label);
-
-    for (i, value) in values.iter().enumerate() {
-        if i > 0 {
-            print!(", ");
-        }
-        print!("{}", value);
-    }
-
-    println!("]");
-}
+// Guessing game — demonstrates:
+//   read_int!()      parse a signed integer from stdin
+//   rand_range!()    random u32 in [lo, hi)
+//   println!()       formatted output to stdout
+//   eprintln!()      formatted output to stderr (shown in red in Raven)
+//   sys_pause_sim()  freeze execution so you can inspect state in Raven
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    println!("Exemple: BTreeMap sorting");
+    println!("=== Guess the number! ===");
+    println!("I picked a number between 1 and 100.\n");
 
-    let mut values = vec![0i32; 20];
+    let secret = rand_range!(1u32, 101u32); // [1, 100]
+    eprintln!("[debug] secret = {secret}");  // visible on stderr (red in console)
 
-    fill_random_i32_no_mangled(&mut values, 100);
+    let mut attempts = 0u32;
 
-    print_array_no_mangled("Original array:", &values);
+    loop {
+        print!("Your guess: ");
+        let guess = read_int!();
+        attempts += 1;
 
-    let sorted = btree_sort_no_mangled(&values);
+        if !(1..=100).contains(&guess) {
+            println!("  Out of range! Try between 1 and 100.");
+            continue;
+        }
 
-    print_array_no_mangled("sorted Array:", &sorted);
+        let guess = guess as u32;
 
-    println!("End execution.");
-    sys_pause_sim();
+        if guess < secret {
+            println!("  Too low!");
+        } else if guess > secret {
+            println!("  Too high!");
+        } else {
+            println!("\nCorrect! You got it in {attempts} attempt(s).");
+            println!("The number {secret} in binary: {secret:032b}");
+            break;
+        }
+    }
+
+    sys_pause_sim(); // inspect registers and memory before exit
     sys_exit(0);
 }
-

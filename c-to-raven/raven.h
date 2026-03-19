@@ -58,6 +58,16 @@ static inline void sys_exit(int code) {
     __builtin_unreachable();
 }
 
+// exit_group(code) — syscall 94 (terminates all threads; behaves identically to
+// sys_exit in Raven since it is single-threaded, but matches the Linux ABI).
+__attribute__((noreturn))
+static inline void sys_exit_group(int code) {
+    register int _a7 __asm__("a7") = 94;
+    register int _a0 __asm__("a0") = code;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+    __builtin_unreachable();
+}
+
 static inline int sys_getrandom(void *buf, int len, unsigned int flags) {
     register int          _a7 __asm__("a7") = SYS_GETRANDOM;
     register void        *_a0 __asm__("a0") = buf;
@@ -176,6 +186,41 @@ static inline char *strrchr(const char *s, int c) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RANDOM UTILITIES  (backed by getrandom — cryptographic quality)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Return a uniformly random 32-bit unsigned integer.
+static inline unsigned int rand_u32(void) {
+    unsigned int v;
+    sys_getrandom(&v, (int)sizeof(v), 0);
+    return v;
+}
+
+// Return a uniformly random byte (0–255).
+static inline unsigned char rand_u8(void) {
+    unsigned char v;
+    sys_getrandom(&v, 1, 0);
+    return v;
+}
+
+// Return a random unsigned int in [lo, hi).  Returns lo if hi <= lo.
+// Note: uses modulo reduction — fine for teaching, not cryptographic use.
+static inline unsigned int rand_range(unsigned int lo, unsigned int hi) {
+    if (hi <= lo) return lo;
+    return lo + rand_u32() % (hi - lo);
+}
+
+// Return a random int in [-2147483648, 2147483647].
+static inline int rand_i32(void) {
+    return (int)rand_u32();
+}
+
+// Return 0 or 1 with equal probability.
+static inline int rand_bool(void) {
+    return (int)(rand_u8() & 1u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MATH UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -262,6 +307,14 @@ static inline void print_bool(int v) {
     print_str(v ? "true" : "false");
 }
 
+// Read a single byte from stdin. Returns the character as unsigned char cast
+// to int, or -1 on EOF / error (same convention as C's getchar).
+static inline int read_char(void) {
+    unsigned char c;
+    int n = sys_read(STDIN, &c, 1);
+    return n > 0 ? (int)c : -1;
+}
+
 // Read a line from stdin. Stops on newline or EOF. Always null-terminates.
 // Returns number of bytes read (not counting the '\0').
 static inline int read_line(char *buf, int max) {
@@ -284,6 +337,41 @@ static inline int read_int(void) {
     for (; buf[i] >= '0' && buf[i] <= '9'; i++)
         result = result * 10 + (buf[i] - '0');
     return sign * result;
+}
+
+// Read an unsigned decimal integer from stdin.
+static inline unsigned int read_uint(void) {
+    char buf[24];
+    read_line(buf, sizeof(buf));
+    unsigned int result = 0;
+    for (int i = 0; buf[i] >= '0' && buf[i] <= '9'; i++)
+        result = result * 10u + (unsigned int)(buf[i] - '0');
+    return result;
+}
+
+// Print unsigned int as 32-bit binary, grouped by byte: "10110011 00101010 ..."
+static inline void print_bin(unsigned int n) {
+    for (int i = 31; i >= 0; i--) {
+        print_char('0' + (char)((n >> i) & 1));
+        if (i > 0 && i % 8 == 0) print_char(' ');
+    }
+}
+
+// Stderr convenience helpers for debugging.
+static inline void eprint_char(char c)       { sys_write(STDERR, &c, 1); }
+static inline void eprint_str(const char *s) { sys_write(STDERR, s, (int)strlen(s)); }
+static inline void eprint_ln(void)           { eprint_char('\n'); }
+static inline void eprint_uint(unsigned int n) {
+    char buf[12];
+    int i = 11;
+    buf[i] = '\0';
+    if (n == 0) { eprint_char('0'); return; }
+    while (n > 0) { buf[--i] = '0' + (char)(n % 10); n /= 10; }
+    eprint_str(buf + i);
+}
+static inline void eprint_int(int n) {
+    if (n < 0) { eprint_char('-'); eprint_uint((unsigned int)(-n)); }
+    else        { eprint_uint((unsigned int)n); }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -415,4 +503,68 @@ static inline size_t raven_heap_free(void) {
         b = b->next;
     }
     return total;
+}
+
+// Return total bytes currently in use on the heap.
+static inline size_t raven_heap_used(void) {
+    return RAVEN_HEAP_SIZE - sizeof(_rh_block_t) - raven_heap_free();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FALCON TEACHING EXTENSIONS  (syscalls 1000–1012)
+//
+// These are Raven-specific shortcuts — simpler than the Linux ABI wrappers
+// above because they need no strlen loop or fd argument.  Useful in very
+// small programs where you want the minimal call sequence.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Print signed 32-bit integer to console (no newline).  — syscall 1000
+static inline void falcon_print_int(int n) {
+    register int _a7 __asm__("a7") = 1000;
+    register int _a0 __asm__("a0") = n;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Print NUL-terminated string (no newline).  — syscall 1001
+static inline void falcon_print_str(const char *s) {
+    register int          _a7 __asm__("a7") = 1001;
+    register const char  *_a0 __asm__("a0") = s;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Print NUL-terminated string followed by newline.  — syscall 1002
+static inline void falcon_println_str(const char *s) {
+    register int          _a7 __asm__("a7") = 1002;
+    register const char  *_a0 __asm__("a0") = s;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Read one line from console into buf (NUL-terminated, newline excluded).
+// Caller must ensure buf is large enough.  — syscall 1003
+static inline void falcon_read_line(char *buf) {
+    register int   _a7 __asm__("a7") = 1003;
+    register char *_a0 __asm__("a0") = buf;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Read one unsigned byte from stdin and store it at *dst.  — syscall 1010
+// Accepts decimal or 0x-prefixed hex; range 0..255.
+static inline void falcon_read_u8(unsigned char *dst) {
+    register int            _a7 __asm__("a7") = 1010;
+    register unsigned char *_a0 __asm__("a0") = dst;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Read one unsigned 16-bit integer from stdin and store it at *dst.  — syscall 1011
+static inline void falcon_read_u16(unsigned short *dst) {
+    register int             _a7 __asm__("a7") = 1011;
+    register unsigned short *_a0 __asm__("a0") = dst;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Read one unsigned 32-bit integer from stdin and store it at *dst.  — syscall 1012
+static inline void falcon_read_u32(unsigned int *dst) {
+    register int           _a7 __asm__("a7") = 1012;
+    register unsigned int *_a0 __asm__("a0") = dst;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
 }

@@ -7,7 +7,7 @@ Este é o guia de bolso do RAVEN, nosso emulador RISC-V pensado para ensino. Use
 - Cada seção mantém as tabelas essenciais, acompanhadas de explicações em português claro.
 - Vá direto para [Tabelas de codificação](#tabelas-de-codificacao) quando só precisar rever o arranjo dos bits.
 - Quer entender as diretivas do assembler? Pule para [Comportamento do assembler e pseudoinstruções](#comportamento-do-assembler-e-pseudoinstrucoes).
-- Prefere aprender praticando? Leia junto com o [Tutorial-pt](Tutorial-pt.md) e teste os trechos de código conforme avança.
+- Prefere aprender praticando? Use o tutorial interativo `[?]` dentro do Raven e teste os trechos de código conforme avança.
 
 ## Visão rápida da arquitetura
 
@@ -337,5 +337,5 @@ Efeito:
 Nas extensões `read*` do Falcon, ele insiste até receber um valor válido para o tamanho pedido. Entradas inválidas geram uma mensagem
 amigável e o PC **não** avança, destacando que a execução está em pausa.
 
-Pronto para ir além? Retorne ao [Tutorial-pt](Tutorial-pt.md) para ver exemplos guiados ou explore `Program Examples/` e enxergue
+Pronto para ir além? Abra o tutorial interativo `[?]` no Raven para ver exemplos guiados ou explore `Program Examples/` e enxergue
 essas codificações em programas reais.
