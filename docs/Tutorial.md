@@ -1,3 +1,5 @@
+> **DEPRECATED** — This document is no longer maintained. The interactive in-app tutorial (press `[?]` on any tab) replaces it and supports both EN and PT-BR via the `[L]` toggle.
+
 # RAVEN Tutorial
 
 Welcome to the RAVEN platform tutorial — an introductory guide to the main features and workflow of the tool.
