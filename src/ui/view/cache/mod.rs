@@ -93,7 +93,11 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("  State "),
         mk_semantic(state_text, state_color, hover_state),
         Span::styled(
-            "   r=reset  f=speed  p=pause  s=step",
+            if matches!(app.cache.subtab, crate::ui::app::CacheSubtab::Stats) {
+                "   r=reset  f=speed  p=pause  s=capture  ↑↓=history  D=del"
+            } else {
+                "   r=reset  f=speed  p=pause  s=step"
+            },
             Style::default().fg(theme::LABEL),
         ),
     ]);
@@ -208,32 +212,41 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 
 /// Shared controls bar — visible on every Cache subtab.
 pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let export_style = if app.cache.hover_export_results {
+    let export_results_style = if app.cache.hover_export_results {
         Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
         Style::default().fg(theme::ACCENT)
     };
-    let compare_style = if app.cache.hover_compare {
+    let import_cfg_style = if app.cache.hover_import_cfg {
         Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else if app.cache.loaded_snapshot.is_some() {
-        Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme::IDLE)
+        Style::default().fg(Color::Rgb(80, 160, 220))
+    };
+    let export_cfg_style = if app.cache.hover_export_cfg {
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
+    } else {
+        Style::default().fg(Color::Rgb(80, 160, 220))
     };
 
     // Scope buttons: only shown when L1 is selected
     let show_scope = app.cache.selected_level == 0;
+    let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
     let scope_i_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::ICache), app.cache.hover_scope_i);
     let scope_d_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::DCache), app.cache.hover_scope_d);
     let scope_both_style = scope_btn_style(matches!(app.cache.scope, CacheScope::Both),   app.cache.hover_scope_both);
 
-    // Layout: " [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
+    // Layout: " [⬆ Results]  [⬇ Import cfg]  [⬆ Export cfg]    View: [I-Cache] [D-Cache] [Both]"
     let mut line_spans = vec![
         Span::raw(" "),
-        Span::styled("[\u{2b06} Export]",   export_style),
-        Span::raw("  "),
-        Span::styled("[\u{2b07} Compare]",  compare_style),
+        Span::styled("[\u{2b06} Results]", export_results_style),
     ];
+
+    if show_cfg_btns {
+        line_spans.push(Span::raw("  "));
+        line_spans.push(Span::styled("[\u{2b07} Import cfg]", import_cfg_style));
+        line_spans.push(Span::raw("  "));
+        line_spans.push(Span::styled("[\u{2b06} Export cfg]", export_cfg_style));
+    }
 
     if show_scope {
         line_spans.push(Span::raw("    View: "));

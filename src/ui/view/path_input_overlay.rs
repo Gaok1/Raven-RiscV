@@ -10,7 +10,7 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
 
     let title = match &app.path_input.action {
         PathInputAction::OpenFas | PathInputAction::OpenBin
-        | PathInputAction::OpenFcache | PathInputAction::OpenSnapshot => " Open File ",
+        | PathInputAction::OpenFcache => " Open File ",
         _ => " Save File ",
     };
 
@@ -76,9 +76,13 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
     // Completions list
     if let Some(comp_area) = comp_area {
         let sel = app.path_input.completion_sel;
+        let visible = comp_area.height as usize; // matches comp_show (up to 6)
+        // Scroll so that sel is always in view
+        let scroll = if sel + 1 > visible { sel + 1 - visible } else { 0 };
         let items: Vec<ListItem<'static>> = app.path_input.completions.iter()
-            .take(6)
             .enumerate()
+            .skip(scroll)
+            .take(visible)
             .map(|(i, c)| {
                 let style = if i == sel {
                     Style::default().fg(Color::Black).bg(theme::ACCENT)

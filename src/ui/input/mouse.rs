@@ -2,7 +2,7 @@ use crate::ui::{
     app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, Tab},
     editor::Editor,
 };
-use crate::ui::input::keyboard::{do_export_results, do_compare_load};
+use crate::ui::input::keyboard::{do_export_cfg, do_export_results, do_import_cfg};
 use crate::ui::view::{ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -28,6 +28,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 
     if app.editor.elf_prompt_open && matches!(app.tab, Tab::Editor) {
         handle_elf_prompt_mouse(app, me, area);
+        return;
+    }
+
+    if app.path_input.open {
         return;
     }
 
@@ -80,7 +84,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             Tab::Run => handle_run_scroll(app, me, area, true),
             Tab::Cache => match app.cache.subtab {
                 CacheSubtab::Stats => {
-                    app.cache.stats_scroll = app.cache.stats_scroll.saturating_sub(1);
+                    app.cache.history_scroll = app.cache.history_scroll.saturating_sub(1);
                 }
                 CacheSubtab::View => {
                     app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
@@ -97,7 +101,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             Tab::Run => handle_run_scroll(app, me, area, false),
             Tab::Cache => match app.cache.subtab {
                 CacheSubtab::Stats => {
-                    app.cache.stats_scroll = app.cache.stats_scroll.saturating_add(1);
+                    if !app.cache.session_history.is_empty() {
+                        app.cache.history_scroll = (app.cache.history_scroll + 1)
+                            .min(app.cache.session_history.len() - 1);
+                    }
                 }
                 CacheSubtab::View => {
                     app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
@@ -758,7 +765,7 @@ fn handle_docs_click(app: &mut App, me: MouseEvent) {
     let tab_bar_y = app.docs.tab_bar_y.get();
     if row == tab_bar_y {
         let xs = app.docs.tab_bar_xs.get();
-        let pages = [DocsPage::InstrRef, DocsPage::Syscalls, DocsPage::MemoryMap];
+        let pages = [DocsPage::InstrRef, DocsPage::Syscalls, DocsPage::MemoryMap, DocsPage::FcacheRef];
         for (i, &(x_start, x_end)) in xs.iter().enumerate() {
             if col >= x_start && col < x_end {
                 if app.docs.page != pages[i] {
@@ -849,6 +856,8 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     let btn_icode = "[CODE]";
     let btn_ebin = "[BIN]";
     let btn_ecode = "[CODE]";
+    let btn_run = "[▶ RUN]";
+    let btn_fmt = "[FORMAT]";
 
     x += import_label.len() as u16;
     let ibin_start = x; let ibin_end = x + btn_ibin.len() as u16; x = ibin_end + 1;
@@ -856,7 +865,11 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     x += gap.len() as u16;
     x += export_label.len() as u16;
     let ebin_start = x; let ebin_end = x + btn_ebin.len() as u16; x = ebin_end + 1;
-    let ecode_start = x; let ecode_end = x + btn_ecode.len() as u16;
+    let ecode_start = x; let ecode_end = x + btn_ecode.len() as u16; x = ecode_end;
+    x += gap.len() as u16;
+    // btn_run uses char count because it contains multi-byte '▶'
+    let run_start = x; let run_end = x + btn_run.chars().count() as u16; x = run_end + 1;
+    let fmt_start = x; let fmt_end = x + btn_fmt.len() as u16;
 
     let col = me.column;
     if col >= ibin_start && col < ibin_end {
@@ -954,6 +967,19 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
         } else {
             super::keyboard::open_path_input(app, PathInputAction::SaveFas);
         }
+        return;
+    }
+    // [▶ RUN]: assemble and switch to Run tab (B1)
+    if col >= run_start && col < run_end {
+        app.assemble_and_load();
+        if app.editor.last_compile_ok == Some(true) {
+            app.tab = crate::ui::app::Tab::Run;
+        }
+        return;
+    }
+    // [FORMAT]: auto-format assembly (B2)
+    if col >= fmt_start && col < fmt_end {
+        app.format_code();
         return;
     }
 }
@@ -1460,7 +1486,8 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_subtab_config = false;
     app.cache.hover_subtab_view = false;
     app.cache.hover_export_results = false;
-    app.cache.hover_compare = false;
+    app.cache.hover_export_cfg = false;
+    app.cache.hover_import_cfg = false;
     app.cache.hover_scope_i = false;
     app.cache.hover_scope_d = false;
     app.cache.hover_scope_both = false;
@@ -1502,16 +1529,27 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Shared controls bar — active for all subtabs
-    // Layout: " [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]  hint"
-    // x=1..11               x=13..24         x=34..43  x=44..53   x=54..60
+    // Without cfg buttons: " [⬆ Results]    View: [I-Cache] [D-Cache] [Both]"
+    //   x=1..12                   x=22..31    x=32..41    x=42..48
+    // With cfg buttons (Config subtab): " [⬆ Results]  [⬇ Import cfg]  [⬆ Export cfg]    View: ..."
+    //   x=1..12         x=14..28        x=30..44         scope shifts to x=54+
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
-        if x >= 1 && x < 11 { app.cache.hover_export_results = true; }
-        else if x >= 13 && x < 24 { app.cache.hover_compare = true; }
-        else if x >= 34 && x < 43 { app.cache.hover_scope_i = true; }
-        else if x >= 44 && x < 53 { app.cache.hover_scope_d = true; }
-        else if x >= 54 && x < 60 { app.cache.hover_scope_both = true; }
+        let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
+        if x >= 1 && x < 12 {
+            app.cache.hover_export_results = true;
+        } else if show_cfg_btns {
+            if x >= 14 && x < 28      { app.cache.hover_import_cfg = true; }
+            else if x >= 30 && x < 44 { app.cache.hover_export_cfg = true; }
+            else if x >= 54 && x < 63 { app.cache.hover_scope_i = true; }
+            else if x >= 64 && x < 73 { app.cache.hover_scope_d = true; }
+            else if x >= 74 && x < 80 { app.cache.hover_scope_both = true; }
+        } else {
+            if x >= 22 && x < 31      { app.cache.hover_scope_i = true; }
+            else if x >= 32 && x < 41 { app.cache.hover_scope_d = true; }
+            else if x >= 42 && x < 48 { app.cache.hover_scope_both = true; }
+        }
     }
 
     // Config panel controls
@@ -1677,17 +1715,23 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Shared controls bar — available in all subtabs
-    // Layout: " [Reset]  [⬆ Export]  [⬇ Compare]    View: [I-Cache] [D-Cache] [Both]"
-    // x=1..8   x=10..20              x=22..33         x=43..52  x=53..62   x=63..69
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
-        if x >= 1 && x < 11 { do_export_results(app); return; }
-        if x >= 13 && x < 24 { do_compare_load(app);  return; }
-        if app.cache.selected_level == 0 {
-            if x >= 34 && x < 43 { app.cache.scope = CacheScope::ICache; return; }
-            if x >= 44 && x < 53 { app.cache.scope = CacheScope::DCache; return; }
-            if x >= 54 && x < 60 { app.cache.scope = CacheScope::Both;   return; }
+        let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
+        if x >= 1 && x < 12 { do_export_results(app); return; }
+        if show_cfg_btns {
+            if x >= 14 && x < 28      { do_import_cfg(app); return; }
+            if x >= 30 && x < 44      { do_export_cfg(app); return; }
+            if app.cache.selected_level == 0 {
+                if x >= 54 && x < 63  { app.cache.scope = CacheScope::ICache; return; }
+                if x >= 64 && x < 73  { app.cache.scope = CacheScope::DCache; return; }
+                if x >= 74 && x < 80  { app.cache.scope = CacheScope::Both;   return; }
+            }
+        } else if app.cache.selected_level == 0 {
+            if x >= 22 && x < 31      { app.cache.scope = CacheScope::ICache; return; }
+            if x >= 32 && x < 41      { app.cache.scope = CacheScope::DCache; return; }
+            if x >= 42 && x < 48      { app.cache.scope = CacheScope::Both;   return; }
         }
     }
 
