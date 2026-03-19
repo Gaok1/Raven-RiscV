@@ -25,7 +25,7 @@ key=value
 Every file must declare how many extra levels (beyond L1) exist.
 
 ```
-# FALCON-ASM Cache Config v2
+# Raven Cache Config v2
 levels=N
 ```
 
@@ -211,7 +211,7 @@ Powers of 2 to remember: 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768
 ### L1 only (minimal)
 
 ```
-# FALCON-ASM Cache Config v2
+# Raven Cache Config v2
 levels=0
 
 icache.size=1024
@@ -242,7 +242,7 @@ dcache.transfer_width=8
 ### L1 + L2
 
 ```
-# FALCON-ASM Cache Config v2
+# Raven Cache Config v2
 levels=1
 
 icache.size=4096
@@ -285,7 +285,7 @@ l2.transfer_width=16
 ### L1 + L2 + L3
 
 ```
-# FALCON-ASM Cache Config v2
+# Raven Cache Config v2
 levels=2
 
 icache.size=4096
@@ -366,7 +366,7 @@ Generate a Raven cache configuration file (.fcache) with the following rules:
 
 FORMAT
 - Plain text, one key=value per line
-- First line: # FALCON-ASM Cache Config v2
+- First line: # Raven Cache Config v2
 - Second line: levels=N  (N = number of extra levels beyond L1: 0=L1 only, 1=L1+L2, etc.)
 - Prefixes: icache  dcache  l2  l3  l4  (l2 = first extra level, l3 = second, ...)
 - All enum values are PascalCase (e.g. Lru, WriteBack, WriteAllocate, NonInclusive)

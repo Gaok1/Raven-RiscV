@@ -464,7 +464,7 @@ fn format_csv(mem: &CacheController, file: &str) -> String {
 // ── Cache config serialization / parsing ─────────────────────────────────────
 
 pub fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig]) -> String {
-    let mut s = String::from("# FALCON-ASM Cache Config v2\n");
+    let mut s = String::from("# Raven Cache Config v2\n");
     s.push_str(&format!("levels={}\n", extra.len()));
     serialize_one_config(&mut s, "icache", icfg);
     serialize_one_config(&mut s, "dcache", dcfg);
