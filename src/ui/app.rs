@@ -222,6 +222,7 @@ pub(super) struct CacheState {
     // Session run history (captured with `s` key)
     pub(super) session_history: Vec<CacheResultsSnapshot>,
     pub(super) history_scroll: usize,
+    pub(super) viewing_snapshot: Option<usize>, // index into session_history, Some = popup open
     pub(super) window_start_instr: u64,   // start of current capture window, reset on restart
     // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse
     pub(super) hover_hscrollbar: bool,
@@ -921,6 +922,7 @@ impl App {
                 hover_import_cfg: false,
                 session_history: Vec::new(),
                 history_scroll: 0,
+                viewing_snapshot: None,
                 window_start_instr: 0,
                 hover_hscrollbar: false,
                 hscroll_hover_track_x: 0,

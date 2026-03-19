@@ -158,6 +158,7 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 - **Interactive tutorial** — press `[?]` on any tab inside Raven (EN / PT-BR toggle with `[L]`)
 - [Instruction formats (EN)](docs/format.md) — bit layouts, encoding, pseudo-instructions
 - [Formatos (PT-BR)](docs/format.pt-BR.md)
+- [Cache config file reference](docs/cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
 
 ---
 

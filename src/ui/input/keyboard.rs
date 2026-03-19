@@ -308,6 +308,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    // Snapshot detail popup: Esc closes it, everything else is swallowed.
+    if app.cache.viewing_snapshot.is_some() && matches!(app.tab, Tab::Cache) {
+        if key.code == KeyCode::Esc {
+            app.cache.viewing_snapshot = None;
+        }
+        return Ok(false);
+    }
+
     if matches!(app.tab, Tab::Run) && matches!(key.code, KeyCode::Char('R')) {
         app.restart_simulation();
         return Ok(false);
@@ -1172,6 +1180,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     } else {
                         app.cache.history_scroll = 0;
                     }
+                }
+                // Stats: Enter = open snapshot detail popup
+                (KeyCode::Enter, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Stats) && !app.cache.session_history.is_empty() && !app.run.is_running => {
+                    let idx = app.cache.history_scroll.min(app.cache.session_history.len() - 1);
+                    app.cache.viewing_snapshot = Some(idx);
                 }
                 // CPI panel navigation (when Config subtab, L1, not in cache edit mode)
                 (KeyCode::Enter, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.selected_level == 0 && app.cache.edit_field.is_none() => {

@@ -2,7 +2,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Axis, Block, BorderType, Borders, Chart, Dataset, Gauge, GraphType, Paragraph},
+    widgets::{Axis, Block, BorderType, Borders, Chart, Clear, Dataset, Gauge, GraphType, Paragraph},
 };
 
 use crate::ui::app::{App, CacheScope};
@@ -592,6 +592,123 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
                 .labels(vec![Span::raw("0%"), Span::raw("50%"), Span::raw("100%")]),
         );
     f.render_widget(chart, inner);
+}
+
+pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
+    let idx = match app.cache.viewing_snapshot {
+        Some(i) => i,
+        None => return,
+    };
+    let snap = match app.cache.session_history.get(idx) {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Centered popup: 90% width, up to 24 rows tall
+    let pop_w = (area.width * 9 / 10).min(110);
+    let pop_h = 24u16.min(area.height.saturating_sub(4));
+    let popup = Rect::new(
+        area.x + (area.width.saturating_sub(pop_w)) / 2,
+        area.y + (area.height.saturating_sub(pop_h)) / 2,
+        pop_w.min(area.width),
+        pop_h.min(area.height),
+    );
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::ACCENT))
+        .title(Span::styled(
+            format!(" Snapshot {} ", snap.label),
+            Style::default().fg(theme::ACCENT).bold(),
+        ))
+        .title_bottom(Span::styled(
+            " Esc=close ",
+            Style::default().fg(theme::LABEL),
+        ));
+
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    // Build lines
+    let mut lines: Vec<Line> = Vec::new();
+
+    // ── Program summary ───────────────────────────────────────────────────────
+    lines.push(Line::from(vec![
+        Span::styled("Program  ", Style::default().fg(theme::LABEL)),
+        Span::styled(format!("Cycles: {}", snap.total_cycles), Style::default().fg(theme::METRIC_CYC)),
+        Span::raw("   "),
+        Span::styled(format!("CPI: {:.2}", snap.cpi), Style::default().fg(theme::METRIC_CPI)),
+        Span::raw("   "),
+        Span::styled(format!("IPC: {:.2}", snap.ipc), Style::default().fg(theme::METRIC_IPC)),
+        Span::raw("   "),
+        Span::styled(format!("Instructions: {}", snap.instruction_count), Style::default().fg(theme::LABEL)),
+    ]));
+    lines.push(Line::raw(""));
+
+    // ── Per-level helper closure ──────────────────────────────────────────────
+    let level_lines = |lvl: &crate::ui::app::LevelSnapshot, label: &str| -> Vec<Line<'static>> {
+        let total = lvl.hits + lvl.misses;
+        let hit_pct = if total == 0 { 0.0 } else { lvl.hits as f64 / total as f64 * 100.0 };
+        let mpki = if snap.instruction_count == 0 { 0.0 }
+                   else { lvl.misses as f64 / snap.instruction_count as f64 * 1000.0 };
+        let label = label.to_string();
+        vec![
+            Line::from(vec![
+                Span::styled(format!("{label:<9}"), Style::default().fg(theme::ACCENT)),
+                Span::styled(format!("Hit: {hit_pct:.1}%"), Style::default().fg(
+                    if hit_pct >= 90.0 { theme::RUNNING } else if hit_pct >= 70.0 { theme::PAUSED } else { theme::DANGER }
+                )),
+                Span::raw("   "),
+                Span::styled(format!("Hits: {}  Misses: {}", lvl.hits, lvl.misses), Style::default().fg(theme::TEXT)),
+                Span::raw("   "),
+                Span::styled(format!("Miss/1K: {mpki:.1}"), Style::default().fg(theme::LABEL)),
+                Span::raw("   "),
+                Span::styled(format!("AMAT: {:.2} cyc", lvl.amat), Style::default().fg(theme::METRIC_CPI)),
+            ]),
+            Line::from(vec![
+                Span::raw("          "),
+                Span::styled(
+                    format!("Cycles: {}   Evictions: {}   RAM: {} read / {} written",
+                        lvl.total_cycles, lvl.evictions,
+                        fmt_bytes(lvl.bytes_loaded), fmt_bytes(lvl.ram_write_bytes)),
+                    Style::default().fg(theme::LABEL),
+                ),
+            ]),
+        ]
+    };
+
+    for l in level_lines(&snap.icache, "I-Cache") { lines.push(l); }
+    lines.push(Line::raw(""));
+    for l in level_lines(&snap.dcache, "D-Cache") { lines.push(l); }
+
+    for (i, extra) in snap.extra_levels.iter().enumerate() {
+        lines.push(Line::raw(""));
+        let name = format!("L{}", i + 2);
+        for l in level_lines(extra, &name) { lines.push(l); }
+    }
+
+    // ── Miss hotspots ─────────────────────────────────────────────────────────
+    if !snap.miss_hotspots.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled("I-Cache miss hotspots (top PCs):", Style::default().fg(theme::LABEL))));
+        for (pc, count) in snap.miss_hotspots.iter().take(5) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("0x{pc:08x}"), Style::default().fg(theme::ACCENT)),
+                Span::styled(format!("  ×{count}"), Style::default().fg(theme::TEXT)),
+            ]));
+        }
+    }
+
+    let para = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false });
+    f.render_widget(para, inner);
 }
 
 fn fmt_bytes(bytes: u64) -> String {

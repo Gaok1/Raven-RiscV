@@ -37,6 +37,10 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     }
 
     render_controls_bar(f, layout[4], app);
+
+    if app.cache.viewing_snapshot.is_some() {
+        stats::render_snapshot_popup(f, area, app);
+    }
 }
 
 fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
