@@ -22,12 +22,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 app.path_input.completions.clear();
             }
             KeyCode::Enter => {
-                let action = app.path_input.action.clone();
-                let path = std::path::PathBuf::from(app.path_input.query.trim());
-                app.path_input.open = false;
-                app.path_input.query.clear();
-                app.path_input.completions.clear();
-                dispatch_path_input(app, action, path);
+                let q = app.path_input.query.trim().to_string();
+                let path = std::path::PathBuf::from(&q);
+                // If the target is a directory, navigate into it instead of dispatching
+                if q.ends_with('/') || path.is_dir() {
+                    if !q.ends_with('/') {
+                        app.path_input.query = format!("{q}/");
+                    }
+                    refresh_path_completions(&mut app.path_input);
+                } else {
+                    let action = app.path_input.action.clone();
+                    app.path_input.open = false;
+                    app.path_input.query.clear();
+                    app.path_input.completions.clear();
+                    dispatch_path_input(app, action, path);
+                }
             }
             KeyCode::Tab => {
                 if !app.path_input.completions.is_empty() {
@@ -39,6 +48,23 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         // File completion — cycle through siblings
                         app.path_input.completion_sel = (app.path_input.completion_sel + 1) % app.path_input.completions.len();
                     }
+                }
+            }
+            KeyCode::Down => {
+                if !app.path_input.completions.is_empty() {
+                    app.path_input.completion_sel =
+                        (app.path_input.completion_sel + 1) % app.path_input.completions.len();
+                    app.path_input.query =
+                        app.path_input.completions[app.path_input.completion_sel].clone();
+                }
+            }
+            KeyCode::Up => {
+                if !app.path_input.completions.is_empty() {
+                    let n = app.path_input.completions.len();
+                    app.path_input.completion_sel =
+                        if app.path_input.completion_sel == 0 { n - 1 } else { app.path_input.completion_sel - 1 };
+                    app.path_input.query =
+                        app.path_input.completions[app.path_input.completion_sel].clone();
                 }
             }
             KeyCode::Backspace => {
@@ -506,6 +532,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
+            // Ctrl+Enter: assemble and switch to Run tab (B1)
+            if ctrl && key.code == KeyCode::Enter && matches!(app.tab, Tab::Editor) {
+                app.assemble_and_load();
+                if app.editor.last_compile_ok == Some(true) {
+                    app.tab = Tab::Run;
+                }
+                return Ok(false);
+            }
+
+            // Ctrl+E: toggle encoding overlay (B3)
+            if ctrl && matches!(key.code, KeyCode::Char('e')) && matches!(app.tab, Tab::Editor) {
+                app.editor.show_encoding = !app.editor.show_encoding;
+                return Ok(false);
+            }
+
             let edited = match (key.code, app.tab) {
                 (code, Tab::Editor) => match code {
                     KeyCode::Left => {
@@ -681,73 +722,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
 
             // Cache config export/import (Ctrl+E / Ctrl+L) — available on Cache tab
             if ctrl && matches!(key.code, KeyCode::Char('e')) && matches!(app.tab, Tab::Cache) {
-                let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending);
-                if let Some(path) = OSFileDialog::new()
-                    .add_filter("Cache Config", &["fcache"])
-                    .set_file_name("cache.fcache")
-                    .save_file()
-                {
-                    match std::fs::write(&path, &text) {
-                        Ok(()) => {
-                            app.cache.config_error = None;
-                            app.cache.config_status = Some(format!(
-                                "Exported to {}",
-                                path.file_name().unwrap_or_default().to_string_lossy()
-                            ));
-                        }
-                        Err(e) => {
-                            app.cache.config_status = None;
-                            app.cache.config_error = Some(format!("Export failed: {e}"));
-                        }
-                    }
-                } else {
-                    open_path_input(app, PathInputAction::SaveFcache);
-                }
+                do_export_cfg(app);
                 return Ok(false);
             }
             if ctrl && matches!(key.code, KeyCode::Char('l')) && matches!(app.tab, Tab::Cache) {
-                if let Some(path) = OSFileDialog::new()
-                    .add_filter("Cache Config", &["fcache"])
-                    .pick_file()
-                {
-                    match std::fs::read_to_string(&path) {
-                        Ok(text) => match parse_cache_configs(&text) {
-                            Ok((icfg, dcfg, extra)) => {
-                                app.cache.pending_icache = icfg;
-                                app.cache.pending_dcache = dcfg;
-                                // Sync extra_pending and live extra_levels
-                                let n_extra = extra.len();
-                                app.cache.extra_pending = extra;
-                                // Rebuild live extra levels to match
-                                app.run.mem.extra_levels.clear();
-                                for cfg in &app.cache.extra_pending {
-                                    app.run.mem.extra_levels.push(crate::falcon::cache::Cache::new(cfg.clone()));
-                                }
-                                // Resize hover_level vec
-                                app.cache.hover_level = vec![false; n_extra + 1];
-                                // Clamp selected_level
-                                if app.cache.selected_level > n_extra {
-                                    app.cache.selected_level = n_extra;
-                                }
-                                app.cache.config_error = None;
-                                app.cache.config_status = Some(format!(
-                                    "Imported from {}",
-                                    path.file_name().unwrap_or_default().to_string_lossy()
-                                ));
-                            }
-                            Err(msg) => {
-                                app.cache.config_status = None;
-                                app.cache.config_error = Some(format!("Import failed: {msg}"));
-                            }
-                        },
-                        Err(e) => {
-                            app.cache.config_status = None;
-                            app.cache.config_error = Some(format!("Import failed: {e}"));
-                        }
-                    }
-                } else {
-                    open_path_input(app, PathInputAction::OpenFcache);
-                }
+                do_import_cfg(app);
                 return Ok(false);
             }
 
@@ -756,9 +735,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 do_export_results(app);
                 return Ok(false);
             }
-            // Cache results compare/load (Ctrl+M) — loads .fstats baseline
-            if ctrl && matches!(key.code, KeyCode::Char('m')) && matches!(app.tab, Tab::Cache) {
-                do_compare_load(app);
+// Ctrl+Enter: assemble and switch to Run tab (B1)
+            if ctrl && key.code == KeyCode::Enter && matches!(app.tab, Tab::Editor) {
+                app.assemble_and_load();
+                if app.editor.last_compile_ok == Some(true) {
+                    app.tab = Tab::Run;
+                }
+                return Ok(false);
+            }
+
+            // Ctrl+E: toggle encoding overlay (B3)
+            if ctrl && matches!(key.code, KeyCode::Char('e')) && matches!(app.tab, Tab::Editor) {
+                app.editor.show_encoding = !app.editor.show_encoding;
                 return Ok(false);
             }
 
@@ -920,6 +908,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.docs.page = app.docs.page.next();
                     app.docs.scroll = 0;
                 }
+                (KeyCode::Char('1'), Tab::Docs) => { app.docs.page = DocsPage::InstrRef;  app.docs.scroll = 0; }
+                (KeyCode::Char('2'), Tab::Docs) => { app.docs.page = DocsPage::Syscalls;  app.docs.scroll = 0; }
+                (KeyCode::Char('3'), Tab::Docs) => { app.docs.page = DocsPage::MemoryMap; app.docs.scroll = 0; }
+                (KeyCode::Char('4'), Tab::Docs) => { app.docs.page = DocsPage::FcacheRef; app.docs.scroll = 0; }
                 (KeyCode::Char('l'), Tab::Docs) if !app.docs.search_open => {
                     app.docs.lang = app.docs.lang.toggle();
                 }
@@ -1132,8 +1124,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 (KeyCode::Char('y'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
                     app.run.show_instr_type = !app.run.show_instr_type;
                 }
-                // Execution hotkeys — available in Stats/View (not Config, where letters edit fields)
-                (KeyCode::Char('s'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+                // `s` in Stats captures a snapshot; in View it single-steps
+                (KeyCode::Char('s'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Stats) => {
+                    let snap = capture_snapshot(app);
+                    let label = snap.label.clone();
+                    let instr_end = snap.instr_end;
+                    app.cache.session_history.push(snap);
+                    app.cache.history_scroll = app.cache.session_history.len().saturating_sub(1);
+                    app.cache.window_start_instr = instr_end;
+                    app.cache.config_status = Some(format!("Captured {label}"));
+                }
+                (KeyCode::Char('s'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::View) => {
                     if !app.run.faulted {
                         app.single_step();
                     }
@@ -1143,9 +1144,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 {
                     app.run.speed = app.run.speed.cycle();
                 }
-                // Clear loaded baseline (Stats subtab only)
-                (KeyCode::Char('c'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Stats) => {
-                    app.cache.loaded_snapshot = None;
+                // History: D = delete entry
+                (KeyCode::Char('D'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Stats) && !app.cache.session_history.is_empty() => {
+                    let idx = app.cache.history_scroll.min(app.cache.session_history.len() - 1);
+                    app.cache.session_history.remove(idx);
+                    if !app.cache.session_history.is_empty() {
+                        app.cache.history_scroll = idx.min(app.cache.session_history.len() - 1);
+                    } else {
+                        app.cache.history_scroll = 0;
+                    }
                 }
                 // CPI panel navigation (when Config subtab, L1, not in cache edit mode)
                 (KeyCode::Enter, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.selected_level == 0 && app.cache.edit_field.is_none() => {
@@ -1154,7 +1161,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 }
                 (KeyCode::Up, Tab::Cache) => match app.cache.subtab {
                     CacheSubtab::Stats => {
-                        app.cache.stats_scroll = app.cache.stats_scroll.saturating_sub(1);
+                        app.cache.history_scroll = app.cache.history_scroll.saturating_sub(1);
                     }
                     CacheSubtab::View => {
                         app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
@@ -1166,7 +1173,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 },
                 (KeyCode::Down, Tab::Cache) => match app.cache.subtab {
                     CacheSubtab::Stats => {
-                        app.cache.stats_scroll = app.cache.stats_scroll.saturating_add(1);
+                        if !app.cache.session_history.is_empty() {
+                            app.cache.history_scroll = (app.cache.history_scroll + 1)
+                                .min(app.cache.session_history.len() - 1);
+                        }
                     }
                     CacheSubtab::View => {
                         app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
@@ -1248,7 +1258,7 @@ fn serialize_one_config(s: &mut String, prefix: &str, cfg: &CacheConfig) {
     s.push_str(&format!("{prefix}.transfer_width={}\n", cfg.transfer_width));
 }
 
-fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig]) -> String {
+fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig], cpi: &CpiConfig) -> String {
     let mut s = String::from("# FALCON-ASM Cache Config v2\n");
     s.push_str(&format!("levels={}\n", extra.len()));
     serialize_one_config(&mut s, "icache", icfg);
@@ -1257,6 +1267,17 @@ fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[Cach
         let prefix = level_prefix(i);
         serialize_one_config(&mut s, &prefix, cfg);
     }
+    s.push_str("\n# --- CPI Config ---\n");
+    s.push_str(&format!("cpi.alu={}\n", cpi.alu));
+    s.push_str(&format!("cpi.mul={}\n", cpi.mul));
+    s.push_str(&format!("cpi.div={}\n", cpi.div));
+    s.push_str(&format!("cpi.load={}\n", cpi.load));
+    s.push_str(&format!("cpi.store={}\n", cpi.store));
+    s.push_str(&format!("cpi.branch_taken={}\n", cpi.branch_taken));
+    s.push_str(&format!("cpi.branch_not_taken={}\n", cpi.branch_not_taken));
+    s.push_str(&format!("cpi.jump={}\n", cpi.jump));
+    s.push_str(&format!("cpi.system={}\n", cpi.system));
+    s.push_str(&format!("cpi.fp={}\n", cpi.fp));
     s
 }
 
@@ -1265,7 +1286,7 @@ fn level_prefix(i: usize) -> String {
     format!("l{}", i + 2)
 }
 
-fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>), String> {
+fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>, CpiConfig), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -1296,7 +1317,20 @@ fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<Cach
         }
     }
 
-    Ok((icfg, dcfg, extra))
+    let cpi = CpiConfig {
+        alu:              map.get("cpi.alu").and_then(|v| v.parse().ok()).unwrap_or(1),
+        mul:              map.get("cpi.mul").and_then(|v| v.parse().ok()).unwrap_or(3),
+        div:              map.get("cpi.div").and_then(|v| v.parse().ok()).unwrap_or(20),
+        load:             map.get("cpi.load").and_then(|v| v.parse().ok()).unwrap_or(0),
+        store:            map.get("cpi.store").and_then(|v| v.parse().ok()).unwrap_or(0),
+        branch_taken:     map.get("cpi.branch_taken").and_then(|v| v.parse().ok()).unwrap_or(3),
+        branch_not_taken: map.get("cpi.branch_not_taken").and_then(|v| v.parse().ok()).unwrap_or(1),
+        jump:             map.get("cpi.jump").and_then(|v| v.parse().ok()).unwrap_or(2),
+        system:           map.get("cpi.system").and_then(|v| v.parse().ok()).unwrap_or(10),
+        fp:               map.get("cpi.fp").and_then(|v| v.parse().ok()).unwrap_or(5),
+    };
+
+    Ok((icfg, dcfg, extra, cpi))
 }
 
 fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<CacheConfig, String> {
@@ -1395,8 +1429,21 @@ fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
     hotspots.sort_by(|a, b| b.1.cmp(&a.1));
     hotspots.truncate(10);
 
+    let instr_start = app.cache.window_start_instr;
+    let instr_end   = mem.instruction_count;
+    let start_f = instr_start as f64;
+
+    let history_i: Vec<(f64, f64)> = mem.icache.stats.history.iter()
+        .filter(|(x, _)| *x >= start_f)
+        .cloned().collect();
+    let history_d: Vec<(f64, f64)> = mem.dcache.stats.history.iter()
+        .filter(|(x, _)| *x >= start_f)
+        .cloned().collect();
+
     CacheResultsSnapshot {
-        label: String::new(),
+        label: format!("[{}\u{2013}{}]", instr_start, instr_end),
+        instr_start,
+        instr_end,
         instruction_count: mem.instruction_count,
         total_cycles: mem.total_program_cycles(),
         base_cycles: mem.extra_cycles,
@@ -1407,8 +1454,78 @@ fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         extra_levels: extra_snaps,
         cpi_config: app.run.cpi_config.clone(),
         miss_hotspots: hotspots,
-        hit_rate_history_i: mem.icache.stats.history.iter().cloned().collect(),
-        hit_rate_history_d: mem.dcache.stats.history.iter().cloned().collect(),
+        hit_rate_history_i: history_i,
+        hit_rate_history_d: history_d,
+    }
+}
+
+pub(super) fn do_export_cfg(app: &mut App) {
+    let text = serialize_cache_configs(
+        &app.cache.pending_icache,
+        &app.cache.pending_dcache,
+        &app.cache.extra_pending,
+        &app.run.cpi_config,
+    );
+    if let Some(path) = OSFileDialog::new()
+        .add_filter("Cache Config", &["fcache"])
+        .set_file_name("cache.fcache")
+        .save_file()
+    {
+        match std::fs::write(&path, &text) {
+            Ok(()) => {
+                app.cache.config_error = None;
+                app.cache.config_status = Some(format!(
+                    "Exported to {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+            }
+            Err(e) => {
+                app.cache.config_status = None;
+                app.cache.config_error = Some(format!("Export failed: {e}"));
+            }
+        }
+    } else {
+        open_path_input(app, PathInputAction::SaveFcache);
+    }
+}
+
+pub(super) fn do_import_cfg(app: &mut App) {
+    if let Some(path) = OSFileDialog::new()
+        .add_filter("Cache Config", &["fcache"])
+        .pick_file()
+    {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => match parse_cache_configs(&text) {
+                Ok((icfg, dcfg, extra, cpi)) => {
+                    app.cache.pending_icache = icfg;
+                    app.cache.pending_dcache = dcfg;
+                    let n_extra = extra.len();
+                    app.cache.extra_pending = extra;
+                    app.run.mem.extra_levels.clear();
+                    for cfg in &app.cache.extra_pending {
+                        app.run.mem.extra_levels.push(crate::falcon::cache::Cache::new(cfg.clone()));
+                    }
+                    app.cache.hover_level = vec![false; n_extra + 1];
+                    if app.cache.selected_level > n_extra { app.cache.selected_level = n_extra; }
+                    app.run.cpi_config = cpi;
+                    app.cache.config_error = None;
+                    app.cache.config_status = Some(format!(
+                        "Imported from {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ));
+                }
+                Err(msg) => {
+                    app.cache.config_status = None;
+                    app.cache.config_error = Some(format!("Import failed: {msg}"));
+                }
+            },
+            Err(e) => {
+                app.cache.config_status = None;
+                app.cache.config_error = Some(format!("Import failed: {e}"));
+            }
+        }
+    } else {
+        open_path_input(app, PathInputAction::OpenFcache);
     }
 }
 
@@ -1422,7 +1539,8 @@ pub(super) fn do_export_results(app: &mut App) {
     {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("fstats");
         snap.label = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let text = if ext == "csv" { serialize_results_csv(&snap) } else { serialize_results_fstats(&snap) };
+        let windows = &app.cache.session_history;
+        let text = if ext == "csv" { serialize_results_csv(&snap, windows) } else { serialize_results_fstats(&snap, windows) };
         match std::fs::write(&path, &text) {
             Ok(()) => {
                 app.cache.config_status = Some(format!(
@@ -1441,36 +1559,6 @@ pub(super) fn do_export_results(app: &mut App) {
     }
 }
 
-pub(super) fn do_compare_load(app: &mut App) {
-    if let Some(path) = OSFileDialog::new()
-        .add_filter("FALCON Stats", &["fstats"])
-        .pick_file()
-    {
-        match std::fs::read_to_string(&path) {
-            Ok(text) => match parse_results_snapshot(&text) {
-                Ok(mut snap) => {
-                    snap.label = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    app.cache.loaded_snapshot = Some(Box::new(snap));
-                    app.cache.config_status = Some(format!(
-                        "Baseline loaded from {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                    app.cache.config_error = None;
-                }
-                Err(msg) => {
-                    app.cache.config_error = Some(format!("Load failed: {msg}"));
-                    app.cache.config_status = None;
-                }
-            },
-            Err(e) => {
-                app.cache.config_error = Some(format!("Load failed: {e}"));
-                app.cache.config_status = None;
-            }
-        }
-    } else {
-        open_path_input(app, PathInputAction::OpenSnapshot);
-    }
-}
 
 fn write_level_snap(s: &mut String, prefix: &str, l: &LevelSnapshot) {
     s.push_str(&format!("{prefix}.name={}\n", l.name));
@@ -1492,10 +1580,12 @@ fn write_level_snap(s: &mut String, prefix: &str, l: &LevelSnapshot) {
     s.push_str(&format!("{prefix}.amat={:.4}\n", l.amat));
 }
 
-fn serialize_results_fstats(snap: &CacheResultsSnapshot) -> String {
+fn serialize_results_fstats(snap: &CacheResultsSnapshot, windows: &[CacheResultsSnapshot]) -> String {
     let mut s = String::from("# FALCON-ASM Simulation Results v1\n");
     s.push_str(&format!("label={}\n", snap.label));
     s.push_str(&format!("prog.instructions={}\n", snap.instruction_count));
+    s.push_str(&format!("prog.instr_start={}\n", snap.instr_start));
+    s.push_str(&format!("prog.instr_end={}\n", snap.instr_end));
     s.push_str(&format!("prog.total_cycles={}\n", snap.total_cycles));
     s.push_str(&format!("prog.base_cycles={}\n", snap.base_cycles));
     s.push_str(&format!("prog.cache_cycles={}\n", snap.total_cycles.saturating_sub(snap.base_cycles)));
@@ -1525,6 +1615,38 @@ fn serialize_results_fstats(snap: &CacheResultsSnapshot) -> String {
     for (i, (x, y)) in snap.hit_rate_history_d.iter().enumerate() {
         s.push_str(&format!("history_d.{i}={x}:{y}\n"));
     }
+    // Window snapshots
+    s.push_str("\n# --- Window Snapshots ---\n");
+    s.push_str(&format!("window_count={}\n", windows.len()));
+    for (n, w) in windows.iter().enumerate() {
+        let i_total = w.icache.hits + w.icache.misses;
+        let d_total = w.dcache.hits + w.dcache.misses;
+        let i_miss_rate = if i_total == 0 { 0.0 } else { w.icache.misses as f64 / i_total as f64 * 100.0 };
+        let d_miss_rate = if d_total == 0 { 0.0 } else { w.dcache.misses as f64 / d_total as f64 * 100.0 };
+        s.push_str(&format!("window.{n}.label={}\n", w.label));
+        s.push_str(&format!("window.{n}.instr_start={}\n", w.instr_start));
+        s.push_str(&format!("window.{n}.instr_end={}\n", w.instr_end));
+        s.push_str(&format!("window.{n}.total_cycles={}\n", w.total_cycles));
+        s.push_str(&format!("window.{n}.cpi={:.4}\n", w.cpi));
+        s.push_str(&format!("window.{n}.icache.hits={}\n", w.icache.hits));
+        s.push_str(&format!("window.{n}.icache.misses={}\n", w.icache.misses));
+        s.push_str(&format!("window.{n}.icache.miss_rate={:.4}\n", i_miss_rate));
+        s.push_str(&format!("window.{n}.icache.amat={:.4}\n", w.icache.amat));
+        s.push_str(&format!("window.{n}.dcache.hits={}\n", w.dcache.hits));
+        s.push_str(&format!("window.{n}.dcache.misses={}\n", w.dcache.misses));
+        s.push_str(&format!("window.{n}.dcache.miss_rate={:.4}\n", d_miss_rate));
+        s.push_str(&format!("window.{n}.dcache.amat={:.4}\n", w.dcache.amat));
+        let n_extra = w.extra_levels.len();
+        if n_extra > 0 {
+            s.push_str(&format!("window.{n}.extra_count={n_extra}\n"));
+            for (k, lvl) in w.extra_levels.iter().enumerate() {
+                s.push_str(&format!("window.{n}.extra.{k}.name={}\n", lvl.name));
+                s.push_str(&format!("window.{n}.extra.{k}.hits={}\n", lvl.hits));
+                s.push_str(&format!("window.{n}.extra.{k}.misses={}\n", lvl.misses));
+                s.push_str(&format!("window.{n}.extra.{k}.amat={:.4}\n", lvl.amat));
+            }
+        }
+    }
     s
 }
 
@@ -1540,7 +1662,7 @@ fn csv_level_row(s: &mut String, label: &str, l: &LevelSnapshot, instructions: u
     ));
 }
 
-fn serialize_results_csv(snap: &CacheResultsSnapshot) -> String {
+fn serialize_results_csv(snap: &CacheResultsSnapshot, windows: &[CacheResultsSnapshot]) -> String {
     let mut s = String::new();
     s.push_str("PROGRAM SUMMARY\n");
     s.push_str("Instructions,Total Cycles,Base Cycles,Cache Cycles,CPI,IPC\n");
@@ -1564,122 +1686,29 @@ fn serialize_results_csv(snap: &CacheResultsSnapshot) -> String {
     for (pc, count) in &snap.miss_hotspots {
         s.push_str(&format!("0x{pc:08x},{count}\n"));
     }
+    if !windows.is_empty() {
+        s.push('\n');
+        s.push_str("WINDOW SNAPSHOTS\n");
+        s.push_str("Window,Instructions,I-Cache Hits,I-Cache Misses,I-Cache Miss Rate (%),I-Cache Access Time,D-Cache Hits,D-Cache Misses,D-Cache Miss Rate (%),D-Cache Access Time,Total Cycles,CPI\n");
+        for w in windows {
+            let instr = w.instr_end.saturating_sub(w.instr_start);
+            let i_total = w.icache.hits + w.icache.misses;
+            let d_total = w.dcache.hits + w.dcache.misses;
+            let i_miss_rate = if i_total == 0 { 0.0 } else { w.icache.misses as f64 / i_total as f64 * 100.0 };
+            let d_miss_rate = if d_total == 0 { 0.0 } else { w.dcache.misses as f64 / d_total as f64 * 100.0 };
+            s.push_str(&format!(
+                "{},{},{},{},{:.1},{:.2},{},{},{:.1},{:.2},{},{:.4}\n",
+                w.label, instr,
+                w.icache.hits, w.icache.misses, i_miss_rate, w.icache.amat,
+                w.dcache.hits, w.dcache.misses, d_miss_rate, w.dcache.amat,
+                w.total_cycles, w.cpi,
+            ));
+        }
+    }
     s
 }
 
-fn parse_level_snap(map: &std::collections::HashMap<String, String>, prefix: &str) -> Result<LevelSnapshot, String> {
-    let get_str = |key: &str| -> String {
-        map.get(&format!("{prefix}.{key}")).cloned().unwrap_or_default()
-    };
-    let get_u64 = |key: &str| -> u64 {
-        map.get(&format!("{prefix}.{key}")).and_then(|v| v.parse().ok()).unwrap_or(0)
-    };
-    let get_f64 = |key: &str| -> f64 {
-        map.get(&format!("{prefix}.{key}")).and_then(|v| v.parse().ok()).unwrap_or(0.0)
-    };
-    Ok(LevelSnapshot {
-        name: get_str("name"),
-        size: map.get(&format!("{prefix}.size")).and_then(|v| v.parse().ok()).unwrap_or(0),
-        line_size: map.get(&format!("{prefix}.line_size")).and_then(|v| v.parse().ok()).unwrap_or(1),
-        associativity: map.get(&format!("{prefix}.associativity")).and_then(|v| v.parse().ok()).unwrap_or(1),
-        replacement: get_str("replacement"),
-        write_policy: get_str("write_policy"),
-        hit_latency: get_u64("hit_latency"),
-        miss_penalty: get_u64("miss_penalty"),
-        hits: get_u64("hits"), misses: get_u64("misses"),
-        evictions: get_u64("evictions"), writebacks: get_u64("writebacks"),
-        bytes_loaded: get_u64("bytes_loaded"), bytes_stored: get_u64("bytes_stored"),
-        total_cycles: get_u64("total_cycles"), ram_write_bytes: get_u64("ram_write_bytes"),
-        amat: get_f64("amat"),
-    })
-}
 
-fn parse_results_snapshot(text: &str) -> Result<CacheResultsSnapshot, String> {
-    let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('#') || line.is_empty() { continue; }
-        if let Some((k, v)) = line.split_once('=') {
-            map.insert(k.trim().to_string(), v.trim().to_string());
-        }
-    }
-
-    let get_u64 = |key: &str| -> Result<u64, String> {
-        map.get(key).and_then(|v| v.parse().ok())
-            .ok_or_else(|| format!("Missing or invalid key: {key}"))
-    };
-    let get_f64 = |key: &str| -> f64 {
-        map.get(key).and_then(|v| v.parse().ok()).unwrap_or(0.0)
-    };
-
-    let n_extra: usize = map.get("extra_levels").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let icache = parse_level_snap(&map, "icache")?;
-    let dcache = parse_level_snap(&map, "dcache")?;
-    let mut extra = Vec::new();
-    for i in 0..n_extra {
-        extra.push(parse_level_snap(&map, &format!("l{}", i + 2))?);
-    }
-
-    let cpi_config = CpiConfig {
-        alu:              map.get("cpi.alu").and_then(|v| v.parse().ok()).unwrap_or(1),
-        mul:              map.get("cpi.mul").and_then(|v| v.parse().ok()).unwrap_or(3),
-        div:              map.get("cpi.div").and_then(|v| v.parse().ok()).unwrap_or(20),
-        load:             map.get("cpi.load").and_then(|v| v.parse().ok()).unwrap_or(0),
-        store:            map.get("cpi.store").and_then(|v| v.parse().ok()).unwrap_or(0),
-        branch_taken:     map.get("cpi.branch_taken").and_then(|v| v.parse().ok()).unwrap_or(3),
-        branch_not_taken: map.get("cpi.branch_not_taken").and_then(|v| v.parse().ok()).unwrap_or(1),
-        jump:             map.get("cpi.jump").and_then(|v| v.parse().ok()).unwrap_or(2),
-        system:           map.get("cpi.system").and_then(|v| v.parse().ok()).unwrap_or(10),
-        fp:               map.get("cpi.fp").and_then(|v| v.parse().ok()).unwrap_or(5),
-    };
-
-    let n_hotspots: usize = map.get("miss_hotspot_count").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let mut hotspots = Vec::new();
-    for i in 0..n_hotspots {
-        let pc_str = map.get(&format!("miss_hotspot.{i}.pc")).cloned().unwrap_or_default();
-        let count: u64 = map.get(&format!("miss_hotspot.{i}.count")).and_then(|v| v.parse().ok()).unwrap_or(0);
-        let pc = u32::from_str_radix(pc_str.trim_start_matches("0x"), 16).unwrap_or(0);
-        hotspots.push((pc, count));
-    }
-
-    let n_hist_i: usize = map.get("history_i_count").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let mut hist_i = Vec::new();
-    for i in 0..n_hist_i {
-        if let Some(val) = map.get(&format!("history_i.{i}")) {
-            if let Some((xs, ys)) = val.split_once(':') {
-                if let (Ok(x), Ok(y)) = (xs.parse::<f64>(), ys.parse::<f64>()) {
-                    hist_i.push((x, y));
-                }
-            }
-        }
-    }
-    let n_hist_d: usize = map.get("history_d_count").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let mut hist_d = Vec::new();
-    for i in 0..n_hist_d {
-        if let Some(val) = map.get(&format!("history_d.{i}")) {
-            if let Some((xs, ys)) = val.split_once(':') {
-                if let (Ok(x), Ok(y)) = (xs.parse::<f64>(), ys.parse::<f64>()) {
-                    hist_d.push((x, y));
-                }
-            }
-        }
-    }
-
-    Ok(CacheResultsSnapshot {
-        label: map.get("label").cloned().unwrap_or_default(),
-        instruction_count: get_u64("prog.instructions")?,
-        total_cycles: get_u64("prog.total_cycles")?,
-        base_cycles: map.get("prog.base_cycles").and_then(|v| v.parse().ok()).unwrap_or(0),
-        cpi: get_f64("prog.cpi"),
-        ipc: get_f64("prog.ipc"),
-        icache, dcache,
-        extra_levels: extra,
-        cpi_config,
-        miss_hotspots: hotspots,
-        hit_rate_history_i: hist_i,
-        hit_rate_history_d: hist_d,
-    })
-}
 
 fn apply_imem_search(app: &mut App) {
     let q = app.run.imem_search_query.trim().to_lowercase();
@@ -1706,6 +1735,69 @@ fn apply_mem_search(app: &mut App) {
     }
 }
 
+/// Fuzzy score for how well `name` matches `prefix` (lower = better match).
+/// Returns None if the match is too poor to include.
+fn fuzzy_score(name: &str, prefix: &str) -> Option<i32> {
+    if prefix.is_empty() {
+        return Some(0);
+    }
+    let name_lc = name.to_lowercase();
+    let pfx_lc = prefix.to_lowercase();
+
+    // Tier 0: exact case-insensitive prefix
+    if name_lc.starts_with(&pfx_lc) {
+        return Some(0);
+    }
+    // Tier 1: case-insensitive substring anywhere
+    if let Some(pos) = name_lc.find(&pfx_lc) {
+        return Some(100 + pos as i32);
+    }
+    // Tier 2: all prefix chars appear as a subsequence (in order)
+    let pfx_chars: Vec<char> = pfx_lc.chars().collect();
+    let mut pi = 0usize;
+    for nc in name_lc.chars() {
+        if pi < pfx_chars.len() && nc == pfx_chars[pi] {
+            pi += 1;
+        }
+    }
+    if pi == pfx_chars.len() {
+        // Score by name length — shorter name = tighter match
+        return Some(200 + name.len() as i32);
+    }
+    // Tier 3: Levenshtein on the first N chars of name vs prefix
+    // Allow 1 edit per 3 chars of prefix, minimum 1
+    let max_dist = (pfx_lc.chars().count() / 3).max(1);
+    let name_head: String = name_lc.chars().take(pfx_lc.chars().count() + 1).collect();
+    let dist = levenshtein(&name_head, &pfx_lc);
+    if dist <= max_dist {
+        return Some(400 + dist as i32 * 50);
+    }
+    None
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    if m == 0 { return n; }
+    if n == 0 { return m; }
+    // Rolling two-row DP — O(n) space
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr = vec![0usize; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            curr[j] = if a[i-1] == b[j-1] {
+                prev[j-1]
+            } else {
+                1 + prev[j-1].min(prev[j]).min(curr[j-1])
+            };
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
 fn refresh_path_completions(input: &mut PathInput) {
     let query = &input.query;
     let path = std::path::Path::new(query);
@@ -1718,20 +1810,27 @@ fn refresh_path_completions(input: &mut PathInput) {
         let pfx = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
         (parent, pfx)
     };
-    let mut completions: Vec<String> = std::fs::read_dir(&dir)
+
+    let mut scored: Vec<(i32, String)> = std::fs::read_dir(&dir)
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_str().map(|n| n.starts_with(&prefix)).unwrap_or(false))
-        .map(|e| {
+        .filter_map(|e| {
+            let fname = e.file_name();
+            let name = fname.to_str()?;
+            let score = fuzzy_score(name, &prefix)?;
             let p = e.path();
             let mut s = p.to_string_lossy().to_string();
-            if p.is_dir() { s.push('/'); }
-            s
+            let is_dir = p.is_dir();
+            if is_dir { s.push('/'); }
+            // Within the same tier, directories sort before files
+            let dir_penalty = if is_dir { 0 } else { 1 };
+            Some((score * 10 + dir_penalty, s))
         })
         .collect();
-    completions.sort();
-    input.completions = completions;
+
+    scored.sort_by(|(sa, na), (sb, nb)| sa.cmp(sb).then(na.cmp(nb)));
+    input.completions = scored.into_iter().map(|(_, s)| s).collect();
     input.completion_sel = 0;
 }
 
@@ -1805,7 +1904,7 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
         PathInputAction::OpenFcache => {
             match std::fs::read_to_string(&path) {
                 Ok(text) => match parse_cache_configs(&text) {
-                    Ok((icfg, dcfg, extra)) => {
+                    Ok((icfg, dcfg, extra, cpi)) => {
                         let n_extra = extra.len();
                         app.cache.pending_icache = icfg;
                         app.cache.pending_dcache = dcfg;
@@ -1816,6 +1915,7 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
                         }
                         app.cache.hover_level = vec![false; n_extra + 1];
                         if app.cache.selected_level > n_extra { app.cache.selected_level = n_extra; }
+                        app.run.cpi_config = cpi;
                         app.cache.config_error = None;
                         app.cache.config_status = Some(format!("Imported from {}", path.file_name().unwrap_or_default().to_string_lossy()));
                     }
@@ -1831,7 +1931,7 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
             }
         }
         PathInputAction::SaveFcache => {
-            let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending);
+            let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending, &app.run.cpi_config);
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_error = None;
@@ -1847,7 +1947,8 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
             let mut snap = capture_snapshot(app);
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("fstats");
             snap.label = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            let text = if ext == "csv" { serialize_results_csv(&snap) } else { serialize_results_fstats(&snap) };
+            let windows = app.cache.session_history.clone();
+            let text = if ext == "csv" { serialize_results_csv(&snap, &windows) } else { serialize_results_fstats(&snap, &windows) };
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_status = Some(format!("Results exported to {}", path.file_name().unwrap_or_default().to_string_lossy()));
@@ -1855,26 +1956,6 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
                 }
                 Err(e) => {
                     app.cache.config_error = Some(format!("Export failed: {e}"));
-                    app.cache.config_status = None;
-                }
-            }
-        }
-        PathInputAction::OpenSnapshot => {
-            match std::fs::read_to_string(&path) {
-                Ok(text) => match parse_results_snapshot(&text) {
-                    Ok(mut snap) => {
-                        snap.label = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        app.cache.loaded_snapshot = Some(Box::new(snap));
-                        app.cache.config_status = Some(format!("Baseline loaded from {}", path.file_name().unwrap_or_default().to_string_lossy()));
-                        app.cache.config_error = None;
-                    }
-                    Err(msg) => {
-                        app.cache.config_error = Some(format!("Load failed: {msg}"));
-                        app.cache.config_status = None;
-                    }
-                },
-                Err(e) => {
-                    app.cache.config_error = Some(format!("Load failed: {e}"));
                     app.cache.config_status = None;
                 }
             }

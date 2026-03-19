@@ -215,10 +215,14 @@ pub(super) struct CacheState {
     pub(super) cpi_editing: bool,
     pub(super) cpi_edit_buf: String,
     pub(super) hover_cpi_field: Option<usize>,
-    // Export/Compare
-    pub(super) loaded_snapshot: Option<Box<CacheResultsSnapshot>>,
+    // Export / Import buttons
     pub(super) hover_export_results: bool,
-    pub(super) hover_compare: bool,
+    pub(super) hover_export_cfg: bool,
+    pub(super) hover_import_cfg: bool,
+    // Session run history (captured with `s` key)
+    pub(super) session_history: Vec<CacheResultsSnapshot>,
+    pub(super) history_scroll: usize,
+    pub(super) window_start_instr: u64,   // start of current capture window, reset on restart
     // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse
     pub(super) hover_hscrollbar: bool,
     pub(super) hscroll_hover_track_x: u16,  // track_x of hovered scrollbar
@@ -239,6 +243,7 @@ pub(super) struct CacheState {
 
 // ── Simulation results snapshot ──────────────────────────────────────────────
 
+#[derive(Clone)]
 pub(super) struct LevelSnapshot {
     pub name: String,
     pub size: usize, pub line_size: usize, pub associativity: usize,
@@ -249,8 +254,11 @@ pub(super) struct LevelSnapshot {
     pub total_cycles: u64, pub ram_write_bytes: u64, pub amat: f64,
 }
 
+#[derive(Clone)]
 pub(super) struct CacheResultsSnapshot {
     pub label: String,
+    pub instr_start: u64,
+    pub instr_end: u64,
     pub instruction_count: u64, pub total_cycles: u64, pub base_cycles: u64,
     pub cpi: f64, pub ipc: f64,
     pub icache: LevelSnapshot, pub dcache: LevelSnapshot,
@@ -448,6 +456,8 @@ pub(super) struct EditorState {
     // Goto bar
     pub(super) goto_open: bool,
     pub(super) goto_query: String,
+    // Encoding overlay (Ctrl+E): show binary encoding of current line
+    pub(super) show_encoding: bool,
 }
 
 pub(super) struct RunState {
@@ -571,6 +581,7 @@ pub(crate) enum DocsPage {
     InstrRef,
     Syscalls,
     MemoryMap,
+    FcacheRef,
 }
 
 impl DocsPage {
@@ -578,7 +589,8 @@ impl DocsPage {
         match self {
             Self::InstrRef   => Self::Syscalls,
             Self::Syscalls   => Self::MemoryMap,
-            Self::MemoryMap  => Self::InstrRef,
+            Self::MemoryMap  => Self::FcacheRef,
+            Self::FcacheRef  => Self::InstrRef,
         }
     }
     pub(super) fn label(self) -> &'static str {
@@ -586,6 +598,7 @@ impl DocsPage {
             Self::InstrRef  => "Instr Ref",
             Self::Syscalls  => "Syscalls",
             Self::MemoryMap => "Memory Map",
+            Self::FcacheRef => "Config Ref",
         }
     }
 }
@@ -616,8 +629,8 @@ pub(super) struct DocsState {
     // ── Render-side position tracking (set by render, read by mouse handler) ──
     /// Y row of the page tab bar (relative to terminal origin).
     pub(super) tab_bar_y: std::cell::Cell<u16>,
-    /// (x_start, x_end) for each of the 3 page tabs, relative to terminal origin.
-    pub(super) tab_bar_xs: std::cell::Cell<[(u16, u16); 3]>,
+    /// (x_start, x_end) for each of the 4 page tabs, relative to terminal origin.
+    pub(super) tab_bar_xs: std::cell::Cell<[(u16, u16); 4]>,
     /// Y row of the filter bar (InstrRef page only).
     pub(super) filter_bar_y: std::cell::Cell<u16>,
 }
@@ -634,7 +647,6 @@ pub(super) enum PathInputAction {
     OpenFcache,
     SaveFcache,
     SaveResults,
-    OpenSnapshot,
 }
 
 pub(super) struct PathInput {
@@ -768,6 +780,7 @@ impl App {
                 find_current: 0,
                 goto_open: false,
                 goto_query: String::new(),
+                show_encoding: false,
             },
             run: RunState {
                 cpu,
@@ -844,7 +857,7 @@ impl App {
                 search_open: false, search_query: String::new(),
                 type_filter: 0x0FFF, filter_cursor: 0,
                 tab_bar_y: std::cell::Cell::new(0),
-                tab_bar_xs: std::cell::Cell::new([(0, 0); 3]),
+                tab_bar_xs: std::cell::Cell::new([(0, 0); 4]),
                 filter_bar_y: std::cell::Cell::new(0),
             },
             cache: CacheState {
@@ -886,9 +899,12 @@ impl App {
                 cpi_editing: false,
                 cpi_edit_buf: String::new(),
                 hover_cpi_field: None,
-                loaded_snapshot: None,
                 hover_export_results: false,
-                hover_compare: false,
+                hover_export_cfg: false,
+                hover_import_cfg: false,
+                session_history: Vec::new(),
+                history_scroll: 0,
+                window_start_instr: 0,
                 hover_hscrollbar: false,
                 hscroll_hover_track_x: 0,
                 hscroll_hover_track_w: 0,
@@ -1126,6 +1142,7 @@ impl App {
         self.run.exec_counts.clear();
         self.run.exec_trace.clear();
         self.run.mem_access_log.clear();
+        self.cache.window_start_instr = 0;
         self.load_last_ok_program();
     }
 
@@ -1760,6 +1777,142 @@ impl App {
             // Select the word via the selection_anchor API
             self.editor.buf.selection_anchor = Some((r, c));
             self.editor.buf.cursor_col = c + Editor::char_count(&word);
+        }
+    }
+}
+
+///// Auto-format all assembly lines: normalize indentation and operand spacing.
+pub(super) fn format_asm_lines(lines: &[String]) -> Vec<String> {
+    lines.iter()
+        .flat_map(|l| {
+            let formatted = format_asm_line(l);
+            formatted.split('\n').map(|s| s.to_string()).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn format_asm_line(line: &str) -> String {
+    // Strip trailing whitespace but preserve structure
+    let trimmed_end = line.trim_end();
+    if trimmed_end.is_empty() {
+        return String::new();
+    }
+
+    // Split at comment boundary
+    let comment_byte = find_comment_byte(trimmed_end);
+    let (code, comment) = if let Some(ci) = comment_byte {
+        (&trimmed_end[..ci], &trimmed_end[ci..])
+    } else {
+        (trimmed_end, "")
+    };
+
+    let code_trimmed = code.trim();
+    if code_trimmed.is_empty() {
+        // Pure comment line — keep as-is (just trim trailing)
+        return trimmed_end.to_string();
+    }
+
+    // Label-only line: "label:"
+    if code_trimmed.ends_with(':') && !code_trimmed.contains(' ') {
+        return if comment.is_empty() {
+            code_trimmed.to_string()
+        } else {
+            format!("{}  {}", code_trimmed, comment.trim_start())
+        };
+    }
+
+    // Directive: ".section", ".data", ".globl sym" etc.
+    if code_trimmed.starts_with('.') {
+        let formatted = format!("    {}", normalize_operand_spacing(code_trimmed));
+        return if comment.is_empty() {
+            formatted
+        } else {
+            format!("{formatted}  {}", comment.trim_start())
+        };
+    }
+
+    // Instruction (possibly with "label: instr" on same line)
+    let (prefix, instr_code) = if let Some((lab, rest)) = code_trimmed.split_once(':') {
+        let rest = rest.trim();
+        if !rest.is_empty() {
+            (Some(lab.trim()), rest)
+        } else {
+            (None, code_trimmed)
+        }
+    } else {
+        (None, code_trimmed)
+    };
+
+    let formatted_instr = format!("    {}", normalize_operand_spacing(instr_code));
+    let body = if let Some(lab) = prefix {
+        format!("{lab}:\n{formatted_instr}")
+    } else {
+        formatted_instr
+    };
+
+    if comment.is_empty() {
+        body
+    } else {
+        format!("{body}  {}", comment.trim_start())
+    }
+}
+
+fn normalize_operand_spacing(code: &str) -> String {
+    // Split at first whitespace to separate mnemonic from operands
+    let mut it = code.splitn(2, |c: char| c.is_whitespace());
+    let mnemonic = it.next().unwrap_or("");
+    let ops_raw = it.next().unwrap_or("").trim();
+    if ops_raw.is_empty() {
+        return mnemonic.to_string();
+    }
+    // Split operands by comma (outside parens), trim each, rejoin with ", "
+    let mut result = String::new();
+    let mut tok = String::new();
+    let mut depth = 0i32;
+    let mut first = true;
+    for ch in ops_raw.chars() {
+        match ch {
+            '(' => { depth += 1; tok.push(ch); }
+            ')' => { depth -= 1; tok.push(ch); }
+            ',' if depth == 0 => {
+                if !first { result.push_str(", "); }
+                result.push_str(tok.trim());
+                tok.clear();
+                first = false;
+            }
+            _ => { tok.push(ch); }
+        }
+    }
+    if !first { result.push_str(", "); }
+    result.push_str(tok.trim());
+    format!("{mnemonic} {result}")
+}
+
+fn find_comment_byte(s: &str) -> Option<usize> {
+    let mut in_str = false;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '"' => in_str = !in_str,
+            '#' | ';' if !in_str => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+impl App {
+    /// Format the current editor buffer in-place, snapshotting for undo.
+    pub(super) fn format_code(&mut self) {
+        let formatted = format_asm_lines(&self.editor.buf.lines);
+        if formatted == self.editor.buf.lines {
+            return; // nothing to do
+        }
+        self.editor.buf.snapshot();
+        self.editor.buf.lines = formatted;
+        // keep cursor row valid
+        let max_row = self.editor.buf.lines.len().saturating_sub(1);
+        if self.editor.buf.cursor_row > max_row {
+            self.editor.buf.cursor_row = max_row;
         }
     }
 }

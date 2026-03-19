@@ -1,5 +1,6 @@
 mod falcon;
 mod ui;
+mod cli;
 
 use ratatui::DefaultTerminal;
 use std::io;
@@ -45,12 +46,28 @@ fn parse_mem_arg(s: &str) -> Result<usize, String> {
     Ok(bytes)
 }
 
+fn parse_max_cycles(s: &str) -> Result<u64, String> {
+    s.trim().parse::<u64>().map_err(|_| format!("invalid --max-cycles value '{s}'"))
+}
+
 fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // ── CLI mode: raven --run <file> [options] ───────────────────────────────
+    if args.iter().any(|a| a == "--run") || args.iter().any(|a| a == "--export-config") {
+        let result = parse_and_run_cli(&args);
+        if let Err(e) = result {
+            eprintln!("raven: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    // ── TUI mode ─────────────────────────────────────────────────────────────
     #[cfg(unix)]
     let quit_flag = setup_sigint();
 
     let mut ram_override: Option<usize> = None;
-    let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--mem" {
@@ -67,8 +84,6 @@ fn main() -> io::Result<()> {
     }
 
     // Send xterm-compatible maximize hint before entering raw/alternate mode.
-    // Works in most modern terminal emulators (alacritty, kitty, xterm, Windows Terminal).
-    // Silently ignored by terminals that don't support it.
     print!("\x1b[9;1t");
     let _ = std::io::Write::flush(&mut std::io::stdout());
 
@@ -86,4 +101,54 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_and_run_cli(args: &[String]) -> Result<(), String> {
+    // --export-config [file]
+    if args.iter().any(|a| a == "--export-config") {
+        let output = flag_value(args, "--output")
+            .or_else(|| {
+                // positional: first non-flag arg after --export-config
+                let pos = args.iter().position(|a| a == "--export-config").unwrap_or(0);
+                args.get(pos + 1).filter(|a| !a.starts_with('-')).cloned()
+            });
+        return cli::export_default_config(output.as_deref());
+    }
+
+    let file = flag_value(args, "--run")
+        .ok_or("--run requires a file path")?;
+
+    let mem_size = if let Some(s) = flag_value(args, "--mem") {
+        parse_mem_arg(&s)?
+    } else {
+        16 * 1024 * 1024  // 16 MB default for CLI
+    };
+
+    let max_cycles = if let Some(s) = flag_value(args, "--max-cycles") {
+        parse_max_cycles(&s)?
+    } else {
+        1_000_000_000u64  // 1 billion instructions safety limit
+    };
+
+    let format = match flag_value(args, "--format").as_deref() {
+        Some("fstats") => cli::OutputFormat::Fstats,
+        Some("csv")    => cli::OutputFormat::Csv,
+        Some("json") | None => cli::OutputFormat::Json,
+        Some(other) => return Err(format!("unknown --format '{other}' (use json, fstats, or csv)")),
+    };
+
+    cli::run_headless(cli::CliArgs {
+        file,
+        cache_config: flag_value(args, "--cache-config"),
+        output: flag_value(args, "--output"),
+        format,
+        mem_size,
+        max_cycles,
+    })
+}
+
+/// Return the value of `--flag <value>` from the arg list, or None.
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    let pos = args.iter().position(|a| a == flag)?;
+    args.get(pos + 1).filter(|a| !a.starts_with('-')).cloned()
 }

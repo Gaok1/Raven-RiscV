@@ -23,46 +23,30 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_l1_stats(f: &mut Frame, area: Rect, app: &App) {
-    let has_snap = app.cache.loaded_snapshot.is_some();
-    if has_snap {
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),  // comparison banner
-                Constraint::Length(11), // cache metrics (AMAT + delta lines)
-                Constraint::Length(1),  // program summary line
-                Constraint::Min(8),     // chart
-            ])
-            .split(area);
-        render_comparison_banner(f, layout[0], app);
-        render_metrics(f, layout[1], app);
-        render_program_summary(f, layout[2], app);
-        render_chart(f, layout[3], app);
+    let history_h = if app.cache.session_history.is_empty() {
+        0
     } else {
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(11), // cache metrics (includes AMAT line)
-                Constraint::Length(1),  // program summary line
-                Constraint::Min(8),     // chart
-            ])
-            .split(area);
-        render_metrics(f, layout[0], app);
-        render_program_summary(f, layout[1], app);
-        render_chart(f, layout[2], app);
+        (app.cache.session_history.len() as u16 + 2).min(6)
+    };
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(11), // cache metrics
+            Constraint::Length(1),  // program summary line
+            Constraint::Min(8),     // chart
+            Constraint::Length(history_h), // history panel (0 = hidden)
+        ])
+        .split(area);
+
+    render_metrics(f, layout[0], app);
+    render_program_summary(f, layout[1], app);
+    render_chart(f, layout[2], app);
+    if history_h > 0 {
+        render_history_table(f, layout[3], app);
     }
 }
 
-fn render_comparison_banner(f: &mut Frame, area: Rect, app: &App) {
-    if let Some(snap) = &app.cache.loaded_snapshot {
-        let line = Line::from(vec![
-            Span::styled(" Comparing with: ", Style::default().fg(theme::LABEL)),
-            Span::styled(snap.label.clone(), Style::default().fg(theme::ACCENT).bold()),
-            Span::styled("   [c] clear", Style::default().fg(theme::LABEL)),
-        ]);
-        f.render_widget(Paragraph::new(line), area);
-    }
-}
 
 fn render_unified_stats(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let layout = Layout::default()
@@ -89,24 +73,24 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
 
     let mut spans = vec![
         Span::styled(" Program total \u{2014} ", Style::default().fg(theme::LABEL)),
-        Span::styled(format!("Cycles:{total}"), Style::default().fg(theme::METRIC_CYC)),
+        Span::styled(format!("Cycles: {total}"), Style::default().fg(theme::METRIC_CYC)),
         Span::raw("  "),
-        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(theme::METRIC_CPI)),
+        Span::styled(format!("Cycles/Instr: {cpi:.2}"), Style::default().fg(theme::METRIC_CPI)),
         Span::raw("  "),
-        Span::styled(format!("IPC:{ipc:.2}"), Style::default().fg(theme::METRIC_IPC)),
+        Span::styled(format!("Instrs/Cycle: {ipc:.2}"), Style::default().fg(theme::METRIC_IPC)),
         Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
+        Span::styled(format!("Instructions: {instr}"), Style::default().fg(theme::LABEL)),
         Span::raw("  "),
-        Span::styled(format!("I$:{i_cyc}"), Style::default().fg(theme::CACHE_I)),
+        Span::styled(format!("I-Cache: {i_cyc}"), Style::default().fg(theme::CACHE_I)),
         Span::raw(" + "),
-        Span::styled(format!("D$:{d_cyc}"), Style::default().fg(theme::CACHE_D)),
+        Span::styled(format!("D-Cache: {d_cyc}"), Style::default().fg(theme::CACHE_D)),
     ];
 
     for (i, lvl) in app.run.mem.extra_levels.iter().enumerate() {
         let name = crate::falcon::cache::CacheController::extra_level_name(i);
         spans.push(Span::raw(" + "));
         spans.push(Span::styled(
-            format!("{name}$:{}", lvl.stats.total_cycles),
+            format!("{name}: {}", lvl.stats.total_cycles),
             Style::default().fg(theme::CACHE_L2),
         ));
     }
@@ -181,7 +165,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     // Line 2: hits / misses / miss rate / MPKI
     let line2 = format!(
-        "H:{hits}  M:{misses}  MR:{miss_rate:.1}%  MPKI:{mpki:.1}"
+        "Hits: {hits}  Misses: {misses}  Miss Rate: {miss_rate:.1}%  Misses per 1K Instrs: {mpki:.1}"
     );
     f.render_widget(
         Paragraph::new(Span::styled(line2, Style::default().fg(Color::Gray))),
@@ -196,7 +180,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let wb_part = if icache {
         String::new()
     } else {
-        format!("  WB:{}", stats.writebacks)
+        format!("  Writebacks: {}", stats.writebacks)
     };
     let fills = if cfg.is_valid_config() && cfg.line_size > 0 {
         stats.bytes_loaded / cfg.line_size as u64
@@ -204,7 +188,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         0
     };
     let line3 = format!(
-        "Acc:{total}  Evict:{}{wb_part}  Fills:{fills}",
+        "Accesses: {total}  Evictions: {}{wb_part}  Line Fills: {fills}",
         stats.evictions
     );
     f.render_widget(
@@ -218,7 +202,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     // Line 4: RAM traffic
     let line4 = format!(
-        "RAM R:{}  RAM W:{}",
+        "RAM Reads: {}  RAM Writes: {}",
         fmt_bytes(stats.bytes_loaded),
         fmt_bytes(stats.ram_write_bytes)
     );
@@ -248,7 +232,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let cycles = stats.total_cycles;
     let avg = if total == 0 { 0.0_f64 } else { cycles as f64 / total as f64 };
     let cpi_contrib = if instructions == 0 { 0.0_f64 } else { cycles as f64 / instructions as f64 };
-    let line6 = format!("Cycles:{cycles}  Avg:{avg:.2}c/a  CPI:{cpi_contrib:.2}");
+    let line6 = format!("Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}");
     f.render_widget(
         Paragraph::new(Span::styled(line6, Style::default().fg(theme::METRIC_CPI))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
@@ -273,38 +257,79 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     // Line 8: AMAT
     let amat = if icache { app.run.mem.icache_amat() } else { app.run.mem.dcache_amat() };
-    let line8 = format!("AMAT:{amat:.2}cyc");
+    let line8 = format!("Memory Access Time: {amat:.2} cyc");
     f.render_widget(
         Paragraph::new(Span::styled(line8, Style::default().fg(theme::CACHE_L2))),
         Rect::new(inner.x, inner.y + 7, inner.width, 1),
     );
+}
 
-    if inner.height < 9 {
+
+fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
+    let is_running = app.run.is_running;
+    let title = if is_running {
+        " Snapshots (\u{23f8} to view) "
+    } else {
+        " Snapshots (\u{2191}\u{2193} \u{b7} Enter=view \u{b7} D=delete) "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(title, Style::default().fg(theme::LABEL)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.height == 0 {
         return;
     }
 
-    // Line 9: delta comparison (only when baseline snapshot loaded)
-    if let Some(snap) = &app.cache.loaded_snapshot {
-        let snap_lvl = if icache { &snap.icache } else { &snap.dcache };
-        let snap_total = snap_lvl.hits + snap_lvl.misses;
-        let snap_hit_rate = if snap_total == 0 { 0.0 }
-            else { snap_lvl.hits as f64 / snap_total as f64 * 100.0 };
-        let d_hit = hit_rate - snap_hit_rate;
-        let snap_mpki = if instructions == 0 { 0.0 }
-            else { snap_lvl.misses as f64 / instructions as f64 * 1000.0 };
-        let d_mpki = mpki - snap_mpki;
-        let d_amat = amat - snap_lvl.amat;
-        let d_cyc = stats.total_cycles as i64 - snap_lvl.total_cycles as i64;
-        let sh = if d_hit >= 0.0 { "+" } else { "" };
-        let sm = if d_mpki >= 0.0 { "+" } else { "" };
-        let sa = if d_amat >= 0.0 { "+" } else { "" };
-        let sc = if d_cyc >= 0 { "+" } else { "" };
-        let line9 = format!(
-            "Vs base: \u{394}Hit {sh}{d_hit:.1}%  \u{394}MPKI {sm}{d_mpki:.1}  \u{394}AMAT {sa}{d_amat:.2}c  \u{394}Cyc {sc}{d_cyc}"
+    let history = &app.cache.session_history;
+    let scroll = app.cache.history_scroll;
+    let visible = inner.height as usize;
+
+    // Scroll the view so the selected entry is always visible
+    let start = if scroll + 1 > visible { scroll + 1 - visible } else { 0 };
+
+    for (i, snap) in history.iter().enumerate().skip(start).take(visible) {
+        let row = (i - start) as u16;
+        if row >= inner.height {
+            break;
+        }
+
+        let i_total = snap.icache.hits + snap.icache.misses;
+        let i_hit = if i_total == 0 { 0.0 } else { snap.icache.hits as f64 / i_total as f64 * 100.0 };
+        let d_total = snap.dcache.hits + snap.dcache.misses;
+        let d_hit = if d_total == 0 { 0.0 } else { snap.dcache.hits as f64 / d_total as f64 * 100.0 };
+        let total_misses = snap.icache.misses + snap.dcache.misses;
+        let mpki = if snap.instruction_count == 0 { 0.0 }
+            else { total_misses as f64 / snap.instruction_count as f64 * 1000.0 };
+        let amat_i = snap.icache.amat;
+        let cyc = snap.total_cycles;
+
+        let is_selected = i == scroll;
+
+        let text = format!(
+            "  {:<14}  I-Cache: {:.1}%  D-Cache: {:.1}%  Miss/1K: {:.1}  Access Time: {:.2}  Cycles: {}",
+            snap.label, i_hit, d_hit, mpki, amat_i, cyc
         );
+
+        let style = if is_running {
+            // Entries are greyed out while running — Enter is disabled
+            if is_selected {
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            }
+        } else if is_selected {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().fg(theme::TEXT)
+        };
+
         f.render_widget(
-            Paragraph::new(Span::styled(line9, Style::default().fg(theme::ACCENT))),
-            Rect::new(inner.x, inner.y + 8, inner.width, 1),
+            Paragraph::new(Span::styled(text, style)),
+            Rect::new(inner.x, inner.y + row, inner.width, 1),
         );
     }
 }
@@ -322,6 +347,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let scope = app.cache.scope;
     let i_data: Vec<(f64, f64)> = app.run.mem.icache.stats.history.iter().cloned().collect();
     let d_data: Vec<(f64, f64)> = app.run.mem.dcache.stats.history.iter().cloned().collect();
 
@@ -332,8 +358,6 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(msg, inner);
         return;
     }
-
-    let scope = app.cache.scope;
 
     let mut datasets = Vec::new();
     let show_i = matches!(scope, CacheScope::ICache | CacheScope::Both) && !i_data.is_empty();
@@ -360,8 +384,6 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
         );
     }
 
-    // Use a rolling X window instead of always starting at 0 — otherwise after ~MAX_HISTORY
-    // samples the chart "squeezes" into the right edge as x_max grows.
     let mut x_min = None::<f64>;
     let mut x_max = None::<f64>;
     for series in [
@@ -452,7 +474,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     let mpki = stats.mpki(instructions);
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("H:{hits}  M:{misses}  MR:{miss_rate:.1}%  MPKI:{mpki:.1}"),
+            format!("Hits: {hits}  Misses: {misses}  Miss Rate: {miss_rate:.1}%  Misses per 1K Instrs: {mpki:.1}"),
             Style::default().fg(theme::TEXT),
         )),
         Rect::new(inner.x, inner.y + 1, inner.width, 1),
@@ -464,7 +486,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     } else { 0 };
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("Acc:{total}  Evict:{}  WB:{}  Fills:{fills}", stats.evictions, stats.writebacks),
+            format!("Accesses: {total}  Evictions: {}  Writebacks: {}  Line Fills: {fills}", stats.evictions, stats.writebacks),
             Style::default().fg(theme::LABEL),
         )),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
@@ -473,7 +495,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
 
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("RAM R:{}  RAM W:{}", fmt_bytes(stats.bytes_loaded), fmt_bytes(stats.ram_write_bytes)),
+            format!("RAM Reads: {}  RAM Writes: {}", fmt_bytes(stats.bytes_loaded), fmt_bytes(stats.ram_write_bytes)),
             Style::default().fg(theme::METRIC_CYC),
         )),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
@@ -485,7 +507,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     let cpi_contrib = if instructions == 0 { 0.0_f64 } else { cycles as f64 / instructions as f64 };
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("Cycles:{cycles}  Avg:{avg:.2}c/a  CPI:{cpi_contrib:.2}"),
+            format!("Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}"),
             Style::default().fg(theme::METRIC_CPI),
         )),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
@@ -506,7 +528,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     let amat = app.run.mem.extra_level_amat(extra_idx);
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("AMAT:{amat:.2}cyc"),
+            format!("Memory Access Time: {amat:.2} cyc"),
             Style::default().fg(theme::CACHE_L2),
         )),
         Rect::new(inner.x, inner.y + 6, inner.width, 1),

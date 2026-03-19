@@ -58,6 +58,9 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
         }
     };
 
+    let btn_run = "[▶ RUN]";
+    let btn_fmt = "[FORMAT]";
+
     let mut actions_spans: Vec<Span> = Vec::new();
     actions_spans.push(Span::raw(import_label));
     x += import_label.len() as u16;
@@ -76,6 +79,32 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
     actions_spans.push(Span::raw(" "));
     x += 1;
     actions_spans.push(Span::styled(btn_ecode, style_btn(x, btn_ecode)));
+    x += btn_ecode.len() as u16;
+    actions_spans.push(Span::raw(gap));
+    x += gap.len() as u16;
+    // RUN button — green tint when hoverable
+    let run_hovered = app.mouse_y == actions_y && app.mouse_x >= x && app.mouse_x < x + btn_run.chars().count() as u16;
+    actions_spans.push(Span::styled(
+        btn_run,
+        if run_hovered {
+            Style::default().fg(Color::Black).bg(Color::LightGreen).add_modifier(Modifier::BOLD | Modifier::ITALIC)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::Green)
+        },
+    ));
+    x += btn_run.chars().count() as u16;
+    actions_spans.push(Span::raw(" "));
+    x += 1;
+    // FORMAT button
+    let fmt_hovered = app.mouse_y == actions_y && app.mouse_x >= x && app.mouse_x < x + btn_fmt.len() as u16;
+    actions_spans.push(Span::styled(
+        btn_fmt,
+        if fmt_hovered {
+            Style::default().fg(Color::Black).bg(Color::LightCyan).add_modifier(Modifier::ITALIC)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::DarkGray)
+        },
+    ));
 
     let actions = Line::from(actions_spans);
 
@@ -137,9 +166,11 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     } else {
         0
     };
+    // B3: encoding overlay row (Ctrl+E)
+    let enc_row: u16 = if app.editor.show_encoding { 1 } else { 0 };
 
     let inner_h = area.height.saturating_sub(2);
-    let content_h = inner_h.saturating_sub(bar_rows);
+    let content_h = inner_h.saturating_sub(bar_rows + enc_row);
     let visible_h = content_h as usize;
     // Inform the editor buffer of the visible height so page_up/page_down are accurate.
     app.editor.buf.page_size.set(visible_h);
@@ -172,6 +203,17 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         } else {
             None
         }
+    };
+
+    // A5: heat map — precompute max exec count over visible lines for scaling
+    let exec_max: u64 = if app.run.show_exec_count {
+        (start..end).filter_map(|i| {
+            app.editor.line_to_addr.get(&i)
+                .and_then(|addr| app.run.exec_counts.get(addr))
+                .copied()
+        }).max().unwrap_or(0)
+    } else {
+        0
     };
 
     let mut rows: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
@@ -224,17 +266,28 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
             spans.push(Span::styled(addr_text, Style::default().fg(Color::Rgb(80, 100, 80))));
         }
 
-        // Line number
+        // A4: check if this line has a breakpoint set
+        let is_bp = app.editor.line_to_addr.get(&i)
+            .map_or(false, |addr| app.run.breakpoints.contains(addr));
+
+        // Line number — dim for normal, bright red for breakpoint lines
         spans.push(Span::styled(
             format!("{:>width$}", i + 1, width = num_width),
-            Style::default().fg(Color::DarkGray),
+            if is_bp {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
         ));
         let marker_style = if Some(i) == app.editor.diag_line {
+            Style::default().fg(Color::Red)
+        } else if is_bp {
             Style::default().fg(Color::Red)
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        spans.push(Span::styled(" │ ", marker_style));
+        let marker_str = if is_bp { " ● " } else { " │ " };
+        spans.push(Span::styled(marker_str, marker_style));
         spans.extend(line.spans);
 
         if i == app.editor.buf.cursor_row {
@@ -248,10 +301,24 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
             }
         }
 
-        // Cursor line highlight
+        // A5: heat map — tint line background by exec frequency (cursor row takes precedence)
         let mut row_line = Line::from(spans);
         if i == app.editor.buf.cursor_row {
             row_line = row_line.style(Style::default().bg(Color::Rgb(40, 40, 55)));
+        } else if exec_max > 0 {
+            if let Some(&addr) = app.editor.line_to_addr.get(&i) {
+                if let Some(&count) = app.run.exec_counts.get(&addr) {
+                    if count > 0 {
+                        // ratio 0.0..=1.0 scaled with sqrt for better distribution
+                        let ratio = (count as f64 / exec_max as f64).sqrt() as f32;
+                        // cold Rgb(20,20,60) → hot Rgb(180,30,20)
+                        let r = (20.0 + ratio * 160.0) as u8;
+                        let g = (20.0 - ratio * 0.0_f32).max(0.0) as u8; // stays ~20
+                        let b = (60.0 - ratio * 50.0).max(0.0) as u8;
+                        row_line = row_line.style(Style::default().bg(Color::Rgb(r, g, b)));
+                    }
+                }
+            }
         }
         rows.push(row_line);
     }
@@ -292,6 +359,17 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
             bar_rows,
         );
         render_find_goto_bar(f, bar_area, app);
+    }
+
+    // B3: Encoding overlay — show binary encoding of the current instruction
+    if enc_row > 0 {
+        let enc_area = Rect::new(
+            area.x + 1,
+            area.y + 1 + content_h + bar_rows,
+            area.width.saturating_sub(2),
+            1,
+        );
+        render_encoding_bar(f, enc_area, app);
     }
 
     // Cursor placement
@@ -1107,6 +1185,74 @@ fn style_ghost_operand_expr(expr: &str, base: Style, is_next: bool) -> Vec<Span<
     }
     flush(&mut out, &mut token);
     out
+}
+
+fn render_encoding_bar(f: &mut Frame, area: Rect, app: &App) {
+    let bg = Color::Rgb(20, 20, 45);
+    let cursor_row = app.editor.buf.cursor_row;
+
+    let line = if let Some(&addr) = app.editor.line_to_addr.get(&cursor_row) {
+        if let Ok(word) = app.run.mem.peek32(addr) {
+            // Format as: 0x00b50533  funct7   rs2   rs1 f3  rd     opcode
+            //             (hex)      [31:25] [24:20][19:15][14:12][11:7] [6:0]
+            let f7 = (word >> 25) & 0x7F;
+            let rs2 = (word >> 20) & 0x1F;
+            let rs1 = (word >> 15) & 0x1F;
+            let f3 = (word >> 12) & 0x7;
+            let rd = (word >> 7) & 0x1F;
+            let opc = word & 0x7F;
+            Line::from(vec![
+                Span::styled(" ENC ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 160))),
+                Span::styled(
+                    format!(" 0x{word:08x}  "),
+                    Style::default().fg(Color::Rgb(200, 200, 100)).bg(bg),
+                ),
+                Span::styled(
+                    format!("{f7:07b} "),
+                    Style::default().fg(Color::Rgb(120, 160, 255)).bg(bg),
+                ),
+                Span::styled(
+                    format!("{rs2:05b} "),
+                    Style::default().fg(Color::Green).bg(bg),
+                ),
+                Span::styled(
+                    format!("{rs1:05b} "),
+                    Style::default().fg(Color::Green).bg(bg),
+                ),
+                Span::styled(
+                    format!("{f3:03b} "),
+                    Style::default().fg(Color::Cyan).bg(bg),
+                ),
+                Span::styled(
+                    format!("{rd:05b} "),
+                    Style::default().fg(Color::Magenta).bg(bg),
+                ),
+                Span::styled(
+                    format!("{opc:07b}"),
+                    Style::default().fg(Color::Rgb(180, 120, 60)).bg(bg),
+                ),
+                Span::styled(
+                    "  [funct7|rs2|rs1|f3|rd|opcode]",
+                    Style::default().fg(Color::DarkGray).bg(bg),
+                ),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled(" ENC ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 160))),
+                Span::styled(" (no instruction at this line)", Style::default().fg(Color::DarkGray).bg(bg)),
+            ])
+        }
+    } else {
+        Line::from(vec![
+            Span::styled(" ENC ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 160))),
+            Span::styled(" (assemble first — or not an instruction line)", Style::default().fg(Color::DarkGray).bg(bg)),
+        ])
+    };
+
+    f.render_widget(
+        ratatui::widgets::Paragraph::new(line).style(Style::default().bg(bg)),
+        area,
+    );
 }
 
 fn is_reg_token(tok: &str) -> bool {

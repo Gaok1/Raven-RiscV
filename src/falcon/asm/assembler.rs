@@ -507,13 +507,6 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                         data_bytes.extend_from_slice(&bytes);
                         pc_data += 4;
                     }
-                } else if let Some(rest) = line.strip_prefix(".ascii") {
-                    let s = parse_str_lit(rest).ok_or_else(|| AsmError {
-                        line: *line_no,
-                        msg: format!("invalid .ascii: {rest}"),
-                    })?;
-                    data_bytes.extend_from_slice(s.as_bytes());
-                    pc_data += s.len() as u32;
                 } else if let Some(rest) = line
                     .strip_prefix(".asciz")
                     .or_else(|| line.strip_prefix(".string"))
@@ -525,6 +518,13 @@ pub fn assemble(text: &str, base_pc: u32) -> Result<Program, AsmError> {
                     data_bytes.extend_from_slice(s.as_bytes());
                     data_bytes.push(0);
                     pc_data += (s.len() + 1) as u32;
+                } else if let Some(rest) = line.strip_prefix(".ascii") {
+                    let s = parse_str_lit(rest).ok_or_else(|| AsmError {
+                        line: *line_no,
+                        msg: format!("invalid .ascii: {rest}"),
+                    })?;
+                    data_bytes.extend_from_slice(s.as_bytes());
+                    pc_data += s.len() as u32;
                 } else if let Some(rest) = line
                     .strip_prefix(".space")
                     .or_else(|| line.strip_prefix(".zero"))
