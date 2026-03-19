@@ -635,6 +635,20 @@ pub(super) struct DocsState {
     pub(super) filter_bar_y: std::cell::Cell<u16>,
 }
 
+// ── Tutorial state ─────────────────────────────────────────────────────────────
+
+/// State for the interactive guided tutorial ([?] button).
+pub struct TutorialState {
+    pub active:          bool,
+    pub(super) tab:      Tab,
+    pub step_idx:        usize,
+    pub lang:            DocsLang,
+}
+
+impl Default for TutorialState {
+    fn default() -> Self { Self { active: false, tab: Tab::Editor, step_idx: 0, lang: DocsLang::PtBr } }
+}
+
 // ── Path input bar ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq, Default)]
@@ -714,6 +728,9 @@ pub struct App {
 
     // TUI path input bar (fallback when OS file dialog returns None)
     pub(super) path_input: PathInput,
+
+    // Interactive guided tutorial ([?] button)
+    pub tutorial: TutorialState,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -933,6 +950,7 @@ impl App {
             ram_override,
             splash_start: Some(Instant::now()),
             path_input: PathInput::new(),
+            tutorial: TutorialState::default(),
         };
         app.assemble_and_load();
         app

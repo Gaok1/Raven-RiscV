@@ -107,6 +107,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    // Tutorial intercept — arrow keys navigate steps, Esc closes
+    if app.tutorial.active {
+        use crate::ui::tutorial::{advance_tutorial, retreat_tutorial};
+        match key.code {
+            KeyCode::Esc => { app.tutorial.active = false; }
+            KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => advance_tutorial(app),
+            KeyCode::Left  | KeyCode::Backspace                   => retreat_tutorial(app),
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                app.tutorial.lang = app.tutorial.lang.toggle();
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // Help popup intercept — Esc closes, ←/→ navigate pages, any other key closes
     if app.help_open {
         // Count pages by matching tab
@@ -298,10 +313,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
-    // '?' opens/closes help popup from any tab
+    // '?' opens tutorial (non-Docs tabs) or help popup (Docs tab)
     if key.code == KeyCode::Char('?') {
-        app.help_open = !app.help_open;
-        app.help_page = 0;
+        if !matches!(app.tab, Tab::Docs) && !crate::ui::tutorial::get_steps(app.tab).is_empty() {
+            crate::ui::tutorial::start_tutorial(app);
+        } else {
+            app.help_open = !app.help_open;
+            app.help_page = 0;
+        }
         return Ok(false);
     }
 
