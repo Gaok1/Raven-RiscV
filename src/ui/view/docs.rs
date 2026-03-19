@@ -1146,7 +1146,7 @@ fn fcache_ref_lines_en() -> Vec<Line<'static>> {
 
         h2("Annotated Example File"),
         blank(),
-        mono("  # FALCON-ASM Cache Config v2"),
+        mono("  # Raven Cache Config v2"),
         mono("  levels=1"),
         blank(),
         mono("  icache.size=4096"),
@@ -1271,7 +1271,7 @@ fn fcache_ref_lines_ptbr() -> Vec<Line<'static>> {
 
         h2("Exemplo Anotado de Arquivo"),
         blank(),
-        mono("  # FALCON-ASM Cache Config v2"),
+        mono("  # Raven Cache Config v2"),
         mono("  levels=1"),
         blank(),
         mono("  icache.size=4096"),
