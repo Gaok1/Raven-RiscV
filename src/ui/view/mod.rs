@@ -147,6 +147,10 @@ pub fn ui(f: &mut Frame, app: &App) {
     }
 
     render_path_input(f, size, app);
+
+    if app.tutorial.active {
+        crate::ui::tutorial::render::render_tutorial_overlay(f, size, app);
+    }
 }
 
 fn render_exit_popup(f: &mut Frame, area: Rect) {

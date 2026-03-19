@@ -15,6 +15,14 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
     app.mouse_y = me.row;
 
+    if app.tutorial.active {
+        // Left click advances tutorial; right click or Esc handled in keyboard
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            crate::ui::tutorial::advance_tutorial(app);
+        }
+        return;
+    }
+
     if app.show_exit_popup {
         handle_exit_popup_mouse(app, me, area);
         return;
@@ -46,8 +54,12 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         if me.column >= help_col && me.column < area.x + area.width.saturating_sub(1) {
             app.hover_help = true;
             if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                app.help_open = !app.help_open;
-                app.help_page = 0;
+                if !matches!(app.tab, Tab::Docs) && !crate::ui::tutorial::get_steps(app.tab).is_empty() {
+                    crate::ui::tutorial::start_tutorial(app);
+                } else {
+                    app.help_open = !app.help_open;
+                    app.help_page = 0;
+                }
             }
         } else {
             let x = me.column.saturating_sub(area.x + 1);
