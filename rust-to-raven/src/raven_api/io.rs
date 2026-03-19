@@ -56,6 +56,29 @@ pub fn _read_line(buf: &mut [u8]) -> usize {
     n
 }
 
+// ── Integer readers ───────────────────────────────────────────────────────────
+
+/// Parse a signed decimal integer from one line of stdin.
+#[doc(hidden)]
+pub fn _read_int() -> i32 {
+    let mut buf = [0u8; 24];
+    let n = _read_line(&mut buf);
+    let s = &buf[..n];
+    let (neg, digits) = if s.first() == Some(&b'-') { (true, &s[1..]) } else { (false, s) };
+    let v = digits.iter().take_while(|&&b| b.is_ascii_digit())
+        .fold(0i32, |acc, &b| acc * 10 + (b - b'0') as i32);
+    if neg { -v } else { v }
+}
+
+/// Parse an unsigned decimal integer from one line of stdin.
+#[doc(hidden)]
+pub fn _read_uint() -> u32 {
+    let mut buf = [0u8; 24];
+    let n = _read_line(&mut buf);
+    buf[..n].iter().take_while(|&&b| b.is_ascii_digit())
+        .fold(0u32, |acc, &b| acc * 10 + (b - b'0') as u32)
+}
+
 // ── Macros ────────────────────────────────────────────────────────────────────
 
 #[macro_export]
@@ -91,4 +114,16 @@ macro_rules! eprint {
 macro_rules! eprintln {
     ()            => { $crate::eprint!("\n") };
     ($($arg:tt)*) => { $crate::eprint!("{}\n", format_args!($($arg)*)) };
+}
+
+/// Reads a signed decimal integer from one line of stdin.
+#[macro_export]
+macro_rules! read_int {
+    () => { $crate::raven_api::io::_read_int() };
+}
+
+/// Reads an unsigned decimal integer from one line of stdin.
+#[macro_export]
+macro_rules! read_uint {
+    () => { $crate::raven_api::io::_read_uint() };
 }

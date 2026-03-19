@@ -7,7 +7,7 @@ This is the companion reference for RAVEN, our teaching-friendly RISC-V emulator
 - Every section keeps the tables you need, followed by a short explanation in everyday language.
 - Head straight to [Encoding cheat sheets](#encoding-cheat-sheets) when you only need bit layouts.
 - New to the assembler directives? Jump to [Assembler behaviour and pseudo-instructions](#assembler-behaviour-and-pseudo-instructions).
-- Prefer learning by doing? Pair this guide with the [Tutorial](Tutorial.md) and try the snippets as you read.
+- Prefer learning by doing? Use the in-app `[?]` tutorial for hands-on walkthroughs and try the snippets as you read.
 
 ## Architecture snapshot
 
@@ -337,5 +337,5 @@ Effect:
 For the RAVEN `read*` extensions, RAVEN keeps asking until a valid value fits in the requested size. Invalid input results in a friendly
 error message and the program counter does **not** advance, making it clear that execution is paused.
 
-Ready for a deeper dive? Revisit the [Tutorial](Tutorial.md) for hands-on assembly walkthroughs, or explore the sample programs in
+Ready for a deeper dive? Open the in-app `[?]` tutorial for hands-on assembly walkthroughs, or explore the sample programs in
 `Program Examples/` to see how these encodings look in real projects.
