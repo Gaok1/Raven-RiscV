@@ -1326,7 +1326,7 @@ fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<Cach
             continue;
         }
         if let Some((k, v)) = line.split_once('=') {
-            map.insert(k.trim().to_string(), v.trim().to_string());
+            map.insert(k.trim().to_ascii_lowercase(), v.trim().to_ascii_lowercase());
         }
     }
     let icfg = parse_single_config(&map, "icache")?;
@@ -1379,22 +1379,22 @@ fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<Ca
     };
 
     let replacement = match get("replacement")? {
-        "Lru" => ReplacementPolicy::Lru,
-        "Mru" => ReplacementPolicy::Mru,
-        "Fifo" => ReplacementPolicy::Fifo,
-        "Random" => ReplacementPolicy::Random,
-        "Lfu" => ReplacementPolicy::Lfu,
-        "Clock" => ReplacementPolicy::Clock,
+        "lru"    => ReplacementPolicy::Lru,
+        "mru"    => ReplacementPolicy::Mru,
+        "fifo"   => ReplacementPolicy::Fifo,
+        "random" => ReplacementPolicy::Random,
+        "lfu"    => ReplacementPolicy::Lfu,
+        "clock"  => ReplacementPolicy::Clock,
         other => return Err(format!("Unknown replacement policy: {other}")),
     };
     let write_policy = match get("write_policy")? {
-        "WriteThrough" => WritePolicy::WriteThrough,
-        "WriteBack" => WritePolicy::WriteBack,
+        "writethrough" => WritePolicy::WriteThrough,
+        "writeback"    => WritePolicy::WriteBack,
         other => return Err(format!("Unknown write_policy: {other}")),
     };
     let write_alloc = match get("write_alloc")? {
-        "WriteAllocate" => WriteAllocPolicy::WriteAllocate,
-        "NoWriteAllocate" => WriteAllocPolicy::NoWriteAllocate,
+        "writeallocate"   => WriteAllocPolicy::WriteAllocate,
+        "nowriteallocate" => WriteAllocPolicy::NoWriteAllocate,
         other => return Err(format!("Unknown write_alloc: {other}")),
     };
 
@@ -1404,9 +1404,9 @@ fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<Ca
         .and_then(|v| v.parse::<u32>().ok()).unwrap_or(8).max(1);
 
     use crate::falcon::cache::InclusionPolicy;
-    let inclusion = match map.get(&format!("{prefix}.inclusion")).map(String::as_str).unwrap_or("NonInclusive") {
-        "Inclusive"  => InclusionPolicy::Inclusive,
-        "Exclusive"  => InclusionPolicy::Exclusive,
+    let inclusion = match map.get(&format!("{prefix}.inclusion")).map(String::as_str).unwrap_or("noninclusive") {
+        "inclusive"  => InclusionPolicy::Inclusive,
+        "exclusive"  => InclusionPolicy::Exclusive,
         _            => InclusionPolicy::NonInclusive,
     };
 
