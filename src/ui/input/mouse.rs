@@ -1512,6 +1512,7 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_hscrollbar = false;
     app.cache.hover_view_fmt   = false;
     app.cache.hover_view_group = false;
+    app.cache.hover_view_tag   = false;
     for h in app.cache.hover_level.iter_mut() { *h = false; }
     app.cache.hover_add_level = false;
     app.cache.hover_remove_level = false;
@@ -1664,11 +1665,15 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         // Legend bar buttons: [FMT] [GROUP]
         let (fmt_y, fmt_x0, fmt_x1) = app.cache.view_fmt_btn.get();
         let (grp_y, grp_x0, grp_x1) = app.cache.view_group_btn.get();
+        let (tag_y, tag_x0, tag_x1) = app.cache.view_tag_btn.get();
         if fmt_x1 > fmt_x0 && me.row == fmt_y && me.column >= fmt_x0 && me.column < fmt_x1 {
             app.cache.hover_view_fmt = true;
         }
         if grp_x1 > grp_x0 && me.row == grp_y && me.column >= grp_x0 && me.column < grp_x1 {
             app.cache.hover_view_group = true;
+        }
+        if tag_x1 > tag_x0 && me.row == tag_y && me.column >= tag_x0 && me.column < tag_x1 {
+            app.cache.hover_view_tag = true;
         }
     }
 }
@@ -1747,10 +1752,11 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 
-    // View legend bar button clicks: [FMT] and [GROUP]
+    // View legend bar button clicks: [FMT], [GROUP], and [TAG]
     if matches!(app.cache.subtab, CacheSubtab::View) {
         let (fmt_y, fmt_x0, fmt_x1) = app.cache.view_fmt_btn.get();
         let (grp_y, grp_x0, grp_x1) = app.cache.view_group_btn.get();
+        let (tag_y, tag_x0, tag_x1) = app.cache.view_tag_btn.get();
         if fmt_x1 > fmt_x0 && me.row == fmt_y && me.column >= fmt_x0 && me.column < fmt_x1 {
             app.cache.data_fmt = app.cache.data_fmt.cycle();
             return;
@@ -1760,6 +1766,10 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
             if app.cache.data_fmt != CacheDataFmt::Float {
                 app.cache.data_group = app.cache.data_group.cycle();
             }
+            return;
+        }
+        if tag_x1 > tag_x0 && me.row == tag_y && me.column >= tag_x0 && me.column < tag_x1 {
+            app.cache.show_tag = !app.cache.show_tag;
             return;
         }
     }

@@ -80,8 +80,15 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
     let policy_hint = policy_hint_str(cfg.replacement);
 
-    let (fmt_style, group_style, fmt_label, group_label) =
+    let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
         legend_button_styles(app);
+
+    // When showing raw tags, append ">>Nb" hint so students see the formula: tag = addr >> N
+    let tag_shift_hint = if app.cache.show_tag && cfg.is_valid_config() {
+        format!(" >>{}b", cfg.offset_bits() + cfg.index_bits())
+    } else {
+        String::new()
+    };
 
     // " V D=valid/dirty bits  " is 23 chars
     let prefix_len: u16 = 23;
@@ -89,8 +96,11 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let fmt_x1 = fmt_x0 + fmt_label.len() as u16;
     let group_x0 = fmt_x1 + 1;
     let group_x1 = group_x0 + group_label.len() as u16;
+    let tag_x0 = group_x1 + 1;
+    let tag_x1 = tag_x0 + tag_label.len() as u16;
     app.cache.view_fmt_btn.set((area.y, fmt_x0, fmt_x1));
     app.cache.view_group_btn.set((area.y, group_x0, group_x1));
+    app.cache.view_tag_btn.set((area.y, tag_x0, tag_x1));
 
     let line = Line::from(vec![
         Span::raw(" "),
@@ -99,7 +109,10 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         Span::styled(fmt_label, fmt_style),
         Span::raw(" "),
         Span::styled(group_label, group_style),
-        Span::styled("  ", Style::default()),
+        Span::raw(" "),
+        Span::styled(tag_label, tag_style),
+        Span::styled(tag_shift_hint, Style::default().fg(theme::LABEL)),
+        Span::raw("  "),
         Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
         Span::styled(scroll_hint, Style::default().fg(theme::LABEL)),
@@ -146,8 +159,27 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     let scroll = app.cache.view_scroll.min(num_sets.saturating_sub(1));
     let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
 
-    let (fmt_style, group_style, fmt_label, group_label) =
+    let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
         legend_button_styles(app);
+
+    // When showing raw tags, append ">>Nb" so students see: tag = addr >> N bits.
+    // In Both scope, show the hint only if both caches share the same shift.
+    let tag_shift_hint = if app.cache.show_tag {
+        let i_shift = if icfg.is_valid_config() {
+            Some(icfg.offset_bits() + icfg.index_bits())
+        } else { None };
+        let d_shift = if dcfg.is_valid_config() {
+            Some(dcfg.offset_bits() + dcfg.index_bits())
+        } else { None };
+        let shift_opt = match scope {
+            CacheScope::ICache => i_shift,
+            CacheScope::DCache => d_shift,
+            CacheScope::Both => if i_shift == d_shift { i_shift } else { None },
+        };
+        shift_opt.map(|s| format!(" >>{}b", s)).unwrap_or_default()
+    } else {
+        String::new()
+    };
 
     // " V D=valid/dirty bits  " is 23 chars
     let prefix_len: u16 = 23;
@@ -155,8 +187,11 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     let fmt_x1 = fmt_x0 + fmt_label.len() as u16;
     let group_x0 = fmt_x1 + 1;
     let group_x1 = group_x0 + group_label.len() as u16;
+    let tag_x0 = group_x1 + 1;
+    let tag_x1 = tag_x0 + tag_label.len() as u16;
     app.cache.view_fmt_btn.set((area.y, fmt_x0, fmt_x1));
     app.cache.view_group_btn.set((area.y, group_x0, group_x1));
+    app.cache.view_tag_btn.set((area.y, tag_x0, tag_x1));
 
     let line = Line::from(vec![
         Span::raw(" "),
@@ -165,7 +200,10 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(fmt_label, fmt_style),
         Span::raw(" "),
         Span::styled(group_label, group_style),
-        Span::styled("  ", Style::default()),
+        Span::raw(" "),
+        Span::styled(tag_label, tag_style),
+        Span::styled(tag_shift_hint, Style::default().fg(theme::LABEL)),
+        Span::raw("  "),
         Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
         Span::styled(scroll_hint, Style::default().fg(theme::LABEL)),
@@ -174,8 +212,8 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(line), area);
 }
 
-/// Returns (fmt_style, group_style, fmt_label, group_label) for legend bar buttons.
-fn legend_button_styles(app: &App) -> (Style, Style, String, String) {
+/// Returns (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) for legend bar buttons.
+fn legend_button_styles(app: &App) -> (Style, Style, Style, String, String, String) {
     use crate::ui::app::CacheDataFmt;
     let fmt = app.cache.data_fmt;
     // Include the key hint in the label: "[m:HEX]"
@@ -185,6 +223,11 @@ fn legend_button_styles(app: &App) -> (Style, Style, String, String) {
         "[g:4B]".to_string()
     } else {
         format!("[g:{}]", app.cache.data_group.label())
+    };
+    let tag_label = if app.cache.show_tag {
+        "[t:TAG]".to_string()
+    } else {
+        "[t:ADDR]".to_string()
     };
 
     let fmt_style = if app.cache.hover_view_fmt {
@@ -199,8 +242,13 @@ fn legend_button_styles(app: &App) -> (Style, Style, String, String) {
     } else {
         Style::default().fg(theme::CACHE_D)
     };
+    let tag_style = if app.cache.hover_view_tag {
+        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
+    } else {
+        Style::default().fg(theme::LABEL_Y)
+    };
 
-    (fmt_style, group_style, fmt_label, group_label)
+    (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label)
 }
 
 /// Full policy hint (for single-scope display).
@@ -368,7 +416,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
                     true, // unified = can be dirty
                     policy, cfg, set_idx,
                     bytes_per_row, byte_offset, sub_row == 0,
-                    way_col_w, fmt, group,
+                    way_col_w, fmt, group, app.cache.show_tag,
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
@@ -577,7 +625,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
                     &set.lines[w], set, w,
                     !icache, policy, cfg, set_idx,
                     bytes_per_row, byte_offset, sub_row == 0,
-                    way_col_w, fmt, group,
+                    way_col_w, fmt, group, app.cache.show_tag,
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
@@ -742,6 +790,7 @@ fn build_cell(
     cell_width: usize,
     fmt: CacheDataFmt,
     group: CacheDataGroup,
+    show_tag: bool,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -800,8 +849,6 @@ fn build_cell(
     }
 
     let is_dirty = is_dcache && line.dirty;
-    let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
-        | ((set_idx as u32) << cfg.offset_bits());
 
     // V bit
     spans.push(Span::styled("1", Style::default().fg(theme::RUNNING).bold()));
@@ -819,7 +866,7 @@ fn build_cell(
     }
     spans.push(Span::raw("  "));
 
-    // Address (derived from tag + set index)
+    // Address or raw tag (both are exactly 10 chars)
     // Cyan "MRU" highlight only for policies where recency == safety (LRU, MRU).
     // LFU evicts by frequency, not recency — cyan highlight would be misleading there.
     let is_mru = matches!(policy, ReplacementPolicy::Lru | ReplacementPolicy::Mru)
@@ -831,7 +878,13 @@ fn build_cell(
     } else {
         Style::default().fg(theme::TEXT)
     };
-    spans.push(Span::styled(format!("0x{base:08X}"), addr_style));
+    if show_tag {
+        spans.push(Span::styled(format!("t:{:08X}", line.tag), addr_style));
+    } else {
+        let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
+            | ((set_idx as u32) << cfg.offset_bits());
+        spans.push(Span::styled(format!("0x{base:08X}"), addr_style));
+    }
 
     // Data (first row: bytes [byte_offset .. byte_offset + bytes_per_row])
     if bytes_per_row > 0 && byte_offset < line.data.len() {
@@ -842,31 +895,43 @@ fn build_cell(
 
     // Policy metadata
     spans.push(Span::raw("  "));
+    // Count valid lines in this set (used by LRU/MRU to detect trivial rank)
+    let valid_ways = set.lines.iter().filter(|l| l.valid).count();
     match policy {
         ReplacementPolicy::Lru => {
-            let rank = set.lru_order.iter().position(|&w| w == way).unwrap_or(0);
-            let n = set.lru_order.len();
-            let style = if rank == 0 {
-                Style::default().fg(theme::ACCENT)       // MRU = safest
-            } else if rank + 1 == n {
-                Style::default().fg(theme::DANGER).bold() // LRU = evicted next
+            // r:? when only one way is valid — rank is trivially 0 with no competition
+            if valid_ways < 2 {
+                spans.push(Span::styled("r:?", Style::default().fg(theme::IDLE)));
             } else {
-                Style::default().fg(theme::LABEL)
-            };
-            spans.push(Span::styled(format!("r:{rank}"), style));
+                let rank = set.lru_order.iter().position(|&w| w == way).unwrap_or(0);
+                let n = set.lru_order.len();
+                let style = if rank == 0 {
+                    Style::default().fg(theme::ACCENT)       // MRU = safest
+                } else if rank + 1 == n {
+                    Style::default().fg(theme::DANGER).bold() // LRU = evicted next
+                } else {
+                    Style::default().fg(theme::LABEL)
+                };
+                spans.push(Span::styled(format!("r:{rank}"), style));
+            }
         }
         ReplacementPolicy::Mru => {
             let rank = set.lru_order.iter().position(|&w| w == way).unwrap_or(0);
             let n = set.lru_order.len();
             // MRU evicts the most recently used → rank 0 is the DANGER zone
-            let style = if rank == 0 {
-                Style::default().fg(theme::DANGER).bold() // MRU = evicted next!
-            } else if rank + 1 == n {
-                Style::default().fg(theme::ACCENT)        // LRU = safest for MRU
+            // r:? when only one way is valid — no competition yet
+            if valid_ways < 2 {
+                spans.push(Span::styled("r:?", Style::default().fg(theme::IDLE)));
             } else {
-                Style::default().fg(theme::LABEL)
-            };
-            spans.push(Span::styled(format!("r:{rank}"), style));
+                let style = if rank == 0 {
+                    Style::default().fg(theme::DANGER).bold() // MRU = evicted next!
+                } else if rank + 1 == n {
+                    Style::default().fg(theme::ACCENT)        // LRU = safest for MRU
+                } else {
+                    Style::default().fg(theme::LABEL)
+                };
+                spans.push(Span::styled(format!("r:{rank}"), style));
+            }
         }
         ReplacementPolicy::Fifo => {
             let pos = set.fifo_order.iter().position(|&w| w == way).unwrap_or(0);

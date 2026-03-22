@@ -186,11 +186,14 @@ pub(super) struct CacheState {
     pub(super) view_h_scroll_d: usize, // D-cache horizontal scroll (separate from I-cache)
     pub(super) data_fmt: CacheDataFmt,
     pub(super) data_group: CacheDataGroup,
+    pub(super) show_tag: bool,
     // View legend button positions (set by render each frame, read by mouse)
     pub(super) view_fmt_btn: std::cell::Cell<(u16, u16, u16)>,   // (y, x_start, x_end)
     pub(super) view_group_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
+    pub(super) view_tag_btn: std::cell::Cell<(u16, u16, u16)>,   // (y, x_start, x_end)
     pub(super) hover_view_fmt: bool,
     pub(super) hover_view_group: bool,
+    pub(super) hover_view_tag: bool,
     pub(super) hover_scope_i: bool,
     pub(super) hover_scope_d: bool,
     pub(super) hover_scope_both: bool,
@@ -894,10 +897,13 @@ impl App {
                 view_h_scroll_d: 0,
                 data_fmt: CacheDataFmt::Hex,
                 data_group: CacheDataGroup::B1,
+                show_tag: false,
                 view_fmt_btn: std::cell::Cell::new((0, 0, 0)),
                 view_group_btn: std::cell::Cell::new((0, 0, 0)),
+                view_tag_btn: std::cell::Cell::new((0, 0, 0)),
                 hover_view_fmt: false,
                 hover_view_group: false,
+                hover_view_tag: false,
                 hover_scope_i: false,
                 hover_scope_d: false,
                 hover_scope_both: false,

@@ -1,6 +1,8 @@
 use core::alloc::{GlobalAlloc, Layout};
 
-use crate::{eprintln, raven_api::syscall::{sys_brk, sys_exit}};
+use alloc::format;
+
+use crate::{eprintln, raven_api::{print_debug, syscall::{sys_brk, sys_exit}}};
 
 
 /// Bump allocator backed by the Linux `brk` syscall.
@@ -13,6 +15,7 @@ struct BumpAlloc;
 static ALLOC: BumpAlloc = BumpAlloc;
 
 unsafe impl GlobalAlloc for BumpAlloc {
+    
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // Query current break, align up, then extend.
         let current = unsafe { sys_brk(0) };
