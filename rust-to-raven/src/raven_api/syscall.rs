@@ -111,7 +111,7 @@ pub fn sys_pause_sim() {
     }
 }
 
-// ── Falcon teaching extensions (syscalls 1000–1012) ───────────────────────────
+// ── Falcon teaching extensions (syscalls 1000–1053) ───────────────────────────
 // Raven-specific shortcuts — no strlen loop, no fd argument.
 
 /// Print signed 32-bit integer to console (no newline). — syscall 1000
@@ -163,6 +163,53 @@ pub fn falcon_read_line(buf: *mut u8) {
     }
 }
 
+/// Print unsigned 32-bit integer to console (no newline). — syscall 1004
+#[inline(always)]
+pub fn falcon_print_uint(n: u32) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1004_u32,
+            in("a0") n,
+        );
+    }
+}
+
+/// Print value as hex (e.g. `0xDEADBEEF`) to console (no newline). — syscall 1005
+#[inline(always)]
+pub fn falcon_print_hex(n: u32) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1005_u32,
+            in("a0") n,
+        );
+    }
+}
+
+/// Print a single ASCII character to console. — syscall 1006
+#[inline(always)]
+pub fn falcon_print_char(c: u8) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1006_u32,
+            in("a0") c as u32,
+        );
+    }
+}
+
+/// Print a newline to console. — syscall 1008
+#[inline(always)]
+pub fn falcon_print_newline() {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1008_u32,
+        );
+    }
+}
+
 /// Read one u8 from stdin and store at *dst (decimal or 0x hex). — syscall 1010
 #[inline(always)]
 pub fn falcon_read_u8(dst: *mut u8) {
@@ -197,6 +244,131 @@ pub fn falcon_read_u32(dst: *mut u32) {
             in("a0") dst as usize,
         );
     }
+}
+
+/// Read one i32 from stdin (accepts negatives) and store at *dst. — syscall 1013
+#[inline(always)]
+pub fn falcon_read_int(dst: *mut i32) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1013_u32,
+            in("a0") dst as usize,
+        );
+    }
+}
+
+/// Read one f32 from stdin and store at *dst. — syscall 1014
+#[inline(always)]
+pub fn falcon_read_float(dst: *mut f32) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1014_u32,
+            in("a0") dst as usize,
+        );
+    }
+}
+
+/// Print f32 in fa0 to console (no newline). — syscall 1015
+#[inline(always)]
+pub fn falcon_print_float(v: f32) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1015_u32,
+            in("fa0") v,
+        );
+    }
+}
+
+/// Return the number of instructions executed so far (low 32 bits). — syscall 1030
+#[inline(always)]
+pub fn falcon_get_instr_count() -> u32 {
+    let ret: u32;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1030_u32,
+            lateout("a0") ret,
+        );
+    }
+    ret
+}
+
+/// Return the simulated cycle count (low 32 bits, same as instr_count). — syscall 1031
+#[inline(always)]
+pub fn falcon_get_cycle_count() -> u32 {
+    let ret: u32;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1031_u32,
+            lateout("a0") ret,
+        );
+    }
+    ret
+}
+
+// ── Falcon memory utilities (syscalls 1050–1053) ──────────────────────────────
+
+/// Fill `len` bytes at `dst` with `byte`. — syscall 1050
+#[inline(always)]
+pub unsafe fn falcon_memset(dst: *mut u8, byte: u8, len: usize) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1050_u32,
+            in("a0") dst as usize,
+            in("a1") byte as u32,
+            in("a2") len,
+        );
+    }
+}
+
+/// Copy `len` bytes from `src` to `dst`. — syscall 1051
+#[inline(always)]
+pub unsafe fn falcon_memcpy(dst: *mut u8, src: *const u8, len: usize) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1051_u32,
+            in("a0") dst as usize,
+            in("a1") src as usize,
+            in("a2") len,
+        );
+    }
+}
+
+/// Return the length of NUL-terminated string at `s`. — syscall 1052
+#[inline(always)]
+pub unsafe fn falcon_strlen(s: *const u8) -> usize {
+    let ret: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1052_u32,
+            in("a0") s as usize,
+            lateout("a0") ret,
+        );
+    }
+    ret
+}
+
+/// Compare NUL-terminated strings `s1` and `s2`. Returns negative, 0, or positive. — syscall 1053
+#[inline(always)]
+pub unsafe fn falcon_strcmp(s1: *const u8, s2: *const u8) -> i32 {
+    let ret: i32;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1053_u32,
+            in("a0") s1 as usize,
+            in("a1") s2 as usize,
+            lateout("a0") ret,
+        );
+    }
+    ret
 }
 
 // ── Panic handler ─────────────────────────────────────────────────────────────

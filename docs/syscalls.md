@@ -194,6 +194,103 @@ rng_buf: .space 4
 
 ---
 
+### `writev` — syscall 66
+
+Write data from multiple buffers (scatter write).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `66` |
+| `a0`     | fd (1=stdout, 2=stderr) |
+| `a1`     | pointer to `iovec[]` array |
+| `a2`     | number of entries |
+| **`a0` (ret)** | total bytes written, or `-errno` |
+
+Each `iovec` entry is `{ u32 base, u32 len }` (8 bytes, little-endian).
+
+**Restrictions:** same fd restrictions as `write` (fd=1 or fd=2 only).
+
+---
+
+### `getpid` — syscall 172
+
+Returns the simulated process ID (always `1`).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `172` |
+| **`a0` (ret)** | `1` |
+
+---
+
+### `getuid` — syscall 174 / `getgid` — syscall 176
+
+Returns simulated user/group ID (always `0`).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `174` or `176` |
+| **`a0` (ret)** | `0` |
+
+---
+
+### `mmap` — syscall 222
+
+Allocate a block of anonymous memory from the heap.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `222` |
+| `a0`     | hint address (ignored; pass 0) |
+| `a1`     | length in bytes |
+| `a2`     | prot (ignored) |
+| `a3`     | flags — must include `MAP_ANONYMOUS` (0x20) |
+| `a4`     | fd — must be `-1` for anonymous mappings |
+| `a5`     | offset (ignored) |
+| **`a0` (ret)** | allocated pointer, or `-EINVAL` / `-ENOMEM` |
+
+**Restrictions:** only anonymous mappings (`MAP_ANONYMOUS=0x20`, `fd=-1`) are supported.
+Memory is allocated from the heap (same region as `brk`). `munmap` is a no-op.
+
+```asm
+    li   a0, 0          ; hint = 0
+    li   a1, 256        ; allocate 256 bytes
+    li   a2, 3          ; PROT_READ|PROT_WRITE (ignored)
+    li   a3, 0x22       ; MAP_ANONYMOUS|MAP_PRIVATE
+    li   a4, -1         ; fd = -1
+    li   a5, 0          ; offset = 0
+    li   a7, 222
+    ecall               ; a0 = pointer to allocated block
+```
+
+---
+
+### `munmap` — syscall 215
+
+No-op in RAVEN (always returns 0). Memory is not freed.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `215` |
+| **`a0` (ret)** | `0` |
+
+---
+
+### `clock_gettime` — syscall 403
+
+Fill a `timespec` with the simulated time (derived from instruction count).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `403` |
+| `a0`     | clock ID (ignored; all clocks return instruction-based time) |
+| `a1`     | pointer to `timespec { u32 tv_sec, u32 tv_nsec }` |
+| **`a0` (ret)** | `0`, or `-EFAULT` |
+
+Time is approximated at 10 ns per instruction (100 MHz equivalent).
+
+---
+
 ## Falcon teaching extensions (syscall 1000+)
 
 These are RAVEN-specific syscalls designed for classroom use. They are higher
@@ -264,6 +361,72 @@ The call blocks until the user presses Enter. Ensure the buffer is large enough.
 
 ---
 
+### `1004` — print unsigned integer
+
+Print the unsigned 32-bit integer in `a0` (no newline).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1004` |
+| `a0`     | u32 to print |
+
+```asm
+    li   a0, 4294967295
+    li   a7, 1004
+    ecall               ; prints "4294967295"
+```
+
+---
+
+### `1005` — print hex
+
+Print the value in `a0` as an 8-digit hex string with `0x` prefix (no newline).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1005` |
+| `a0`     | value to print |
+
+```asm
+    li   a0, 0xDEADBEEF
+    li   a7, 1005
+    ecall               ; prints "0xDEADBEEF"
+```
+
+---
+
+### `1006` — print character
+
+Print the ASCII character whose code is in `a0` (no newline).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1006` |
+| `a0`     | ASCII code (0..127) |
+
+```asm
+    li   a0, 65         ; 'A'
+    li   a7, 1006
+    ecall               ; prints "A"
+```
+
+---
+
+### `1008` — print newline
+
+Print a `'\n'` character (no arguments).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1008` |
+
+```asm
+    li   a7, 1008
+    ecall
+```
+
+---
+
 ### `1010` — read byte
 
 Parse one integer from stdin (range 0..255) and store it as a `u8` at the address in `a0`.
@@ -305,6 +468,169 @@ Parse one integer from stdin (range 0..4294967295) and store it as a `u32` (litt
 
 ---
 
+### `1013` — read signed integer
+
+Parse one signed integer from stdin (range -2147483648..2147483647) and store it as an `i32` at `a0`.
+Accepts decimal (optionally negative) or `0x`-prefixed hex.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1013` |
+| `a0`     | destination address |
+
+```asm
+.bss
+n: .space 4
+
+.text
+    la   a0, n
+    li   a7, 1013
+    ecall               ; reads e.g. "-100", stores as i32
+    lw   t0, n
+```
+
+---
+
+### `1014` — read float
+
+Parse one floating-point number from stdin and store it as an IEEE 754 `f32` at `a0`.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1014` |
+| `a0`     | destination address |
+
+---
+
+### `1015` — print float
+
+Print the `f32` value in `fa0` to the console (no newline). Up to 6 significant digits.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1015` |
+| `fa0`    | f32 value to print |
+
+```asm
+    fli.s  fa0, 3.14    ; or flw fa0, addr
+    li     a7, 1015
+    ecall               ; prints "3.14"
+```
+
+---
+
+### `1030` — get instruction count
+
+Return the number of instructions executed since program start (low 32 bits).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1030` |
+| **`a0` (ret)** | instruction count |
+
+Useful for measuring performance of algorithms directly inside a program.
+
+```asm
+    li   a7, 1030
+    ecall
+    mv   s0, a0         ; s0 = baseline count
+
+    ; ... algorithm A ...
+
+    li   a7, 1030
+    ecall
+    sub  a0, a0, s0     ; a0 = instructions used by algorithm A
+    li   a7, 1000
+    ecall               ; print it
+```
+
+---
+
+### `1031` — get cycle count
+
+Alias for `1030`. Returns the same instruction count (cycle-accurate simulation
+may differentiate these in a future version).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1031` |
+| **`a0` (ret)** | cycle count |
+
+---
+
+### `1050` — memset
+
+Fill `a2` bytes starting at `a0` with the byte value in `a1`.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1050` |
+| `a0`     | destination address |
+| `a1`     | byte value (0..255) |
+| `a2`     | length in bytes |
+
+```asm
+.bss
+buf: .space 64
+
+.text
+    la   a0, buf
+    li   a1, 0          ; fill with 0
+    li   a2, 64
+    li   a7, 1050
+    ecall
+```
+
+---
+
+### `1051` — memcpy
+
+Copy `a2` bytes from `a1` to `a0`. Regions must not overlap.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1051` |
+| `a0`     | destination address |
+| `a1`     | source address |
+| `a2`     | length in bytes |
+
+---
+
+### `1052` — strlen
+
+Return the length of the NUL-terminated string at `a0` (NUL not counted).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1052` |
+| `a0`     | string address |
+| **`a0` (ret)** | length |
+
+```asm
+.data
+s: .asciz "hello"
+
+.text
+    la   a0, s
+    li   a7, 1052
+    ecall               ; a0 = 5
+```
+
+---
+
+### `1053` — strcmp
+
+Compare NUL-terminated strings at `a0` and `a1`.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1053` |
+| `a0`     | address of string 1 |
+| `a1`     | address of string 2 |
+| **`a0` (ret)** | negative if s1 < s2, 0 if equal, positive if s1 > s2 |
+
+---
+
 ## Pseudo-instructions that use ecall
 
 | Pseudo | Expands to | Syscall(s) | Clobbers |
@@ -329,8 +655,9 @@ Parse one integer from stdin (range 0..4294967295) and store it as a `u32` (litt
 |------|-----------|-------------------|
 | `-5`  | `EIO`    | getrandom OS failure |
 | `-9`  | `EBADF`  | unsupported fd |
+| `-12` | `ENOMEM` | heap exhausted (mmap) |
 | `-14` | `EFAULT` | address out of bounds |
-| `-22` | `EINVAL` | unsupported flags |
+| `-22` | `EINVAL` | unsupported flags / bad arguments |
 
 Return values are returned as `u32` wrapping of the negative `i32` (e.g. `-9` → `0xFFFFFFF7`).
 
@@ -339,19 +666,39 @@ Return values are returned as `u32` wrapping of the negative `i32` (e.g. `-9` �
 ## Quick reference card
 
 ```
-Num   Name             a0        a1        a2        ret
-────  ───────────────  ────────  ────────  ────────  ───────────────
- 63   read             fd=0      buf addr  max bytes bytes read / -err
- 64   write            fd=1/2    buf addr  count     bytes written / -err
- 93   exit             code      —         —         (no return)
- 94   exit_group       code      —         —         (no return)
-278   getrandom        buf addr  len       flags     len / -err
+Num   Name             a0          a1          a2          ret
+────  ───────────────  ──────────  ──────────  ──────────  ─────────────────
+ 63   read             fd=0        buf addr    max bytes   bytes read / -err
+ 64   write            fd=1/2      buf addr    count       bytes written / -err
+ 66   writev           fd=1/2      iov[]       iovcnt      bytes written / -err
+ 93   exit             code        —           —           (no return)
+ 94   exit_group       code        —           —           (no return)
+172   getpid           —           —           —           1
+174   getuid           —           —           —           0
+176   getgid           —           —           —           0
+215   munmap           addr        len         —           0 (nop)
+222   mmap             hint=0      len         prot        ptr / -err
+278   getrandom        buf addr    len         flags       len / -err
+403   clock_gettime    clockid     *timespec   —           0 / -err
 
-1000  print_int        int       —         —         —
-1001  print_str        str addr  —         —         —
-1002  print_str_ln     str addr  —         —         —
-1003  read_line_z      buf addr  —         —         —
-1010  read_u8          dst addr  —         —         —
-1011  read_u16         dst addr  —         —         —
-1012  read_u32         dst addr  —         —         —
+1000  print_int        int         —           —           —
+1001  print_str        str addr    —           —           —
+1002  print_str_ln     str addr    —           —           —
+1003  read_line_z      buf addr    —           —           —
+1004  print_uint       u32         —           —           —
+1005  print_hex        u32         —           —           —
+1006  print_char       ascii code  —           —           —
+1008  print_newline    —           —           —           —
+1010  read_u8          dst addr    —           —           —
+1011  read_u16         dst addr    —           —           —
+1012  read_u32         dst addr    —           —           —
+1013  read_int         dst addr    —           —           —
+1014  read_float       dst addr    —           —           —
+1015  print_float      (fa0=f32)   —           —           —
+1030  get_instr_count  —           —           —           count (u32)
+1031  get_cycle_count  —           —           —           count (u32)
+1050  memset           dst addr    byte val    len         —
+1051  memcpy           dst addr    src addr    len         —
+1052  strlen           str addr    —           —           len
+1053  strcmp           s1 addr     s2 addr     —           <0 / 0 / >0
 ```

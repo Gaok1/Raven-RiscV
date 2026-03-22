@@ -9,10 +9,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Syscall numbers ──────────────────────────────────────────────────────────
-#define SYS_READ      63
-#define SYS_WRITE     64
-#define SYS_EXIT      93
-#define SYS_GETRANDOM 278
+#define SYS_READ          63
+#define SYS_WRITE         64
+#define SYS_EXIT          93
+#define SYS_EXIT_GROUP    94
+#define SYS_WRITEV        66
+#define SYS_GETPID        172
+#define SYS_GETUID        174
+#define SYS_GETGID        176
+#define SYS_BRK           214
+#define SYS_MUNMAP        215
+#define SYS_MMAP          222
+#define SYS_GETRANDOM     278
+#define SYS_CLOCK_GETTIME 403
+
+// ── mmap flags / prot ────────────────────────────────────────────────────────
+#define PROT_NONE     0x00
+#define PROT_READ     0x01
+#define PROT_WRITE    0x02
+#define PROT_EXEC     0x04
+#define MAP_SHARED    0x01
+#define MAP_PRIVATE   0x02
+#define MAP_ANONYMOUS 0x20
+#define MAP_ANON      MAP_ANONYMOUS
 
 // ── File descriptors ─────────────────────────────────────────────────────────
 #define STDIN  0
@@ -76,6 +95,98 @@ static inline int sys_getrandom(void *buf, int len, unsigned int flags) {
     int ret;
     __asm__ volatile("ecall" : "=r"(ret) : "r"(_a7), "r"(_a0), "r"(_a1), "r"(_a2));
     return ret;
+}
+
+// brk(addr) — syscall 214
+// Pass 0 to query the current program break; pass a higher address to advance it.
+// Returns the new (or current) break. Returns current break on failure.
+static inline void *sys_brk(void *addr) {
+    register int   _a7 __asm__("a7") = SYS_BRK;
+    register void *_a0 __asm__("a0") = addr;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7));
+    return _a0;
+}
+
+// getpid() — syscall 172 (always returns 1 in Raven)
+static inline int sys_getpid(void) {
+    register int _a7 __asm__("a7") = SYS_GETPID;
+    int ret;
+    __asm__ volatile("ecall" : "=r"(ret) : "r"(_a7));
+    return ret;
+}
+
+// getuid() — syscall 174 (always returns 0 in Raven)
+static inline int sys_getuid(void) {
+    register int _a7 __asm__("a7") = SYS_GETUID;
+    int ret;
+    __asm__ volatile("ecall" : "=r"(ret) : "r"(_a7));
+    return ret;
+}
+
+// getgid() — syscall 176 (always returns 0 in Raven)
+static inline int sys_getgid(void) {
+    register int _a7 __asm__("a7") = SYS_GETGID;
+    int ret;
+    __asm__ volatile("ecall" : "=r"(ret) : "r"(_a7));
+    return ret;
+}
+
+// iovec struct for writev
+typedef struct {
+    void        *iov_base;  // buffer address
+    unsigned int iov_len;   // buffer length in bytes
+} raven_iovec;
+
+// writev(fd, iov, iovcnt) — syscall 66
+// Writes data from multiple buffers to fd.  Only fd=1 (stdout) and fd=2 (stderr).
+static inline int sys_writev(int fd, const raven_iovec *iov, int iovcnt) {
+    register int                  _a7 __asm__("a7") = SYS_WRITEV;
+    register int                  _a0 __asm__("a0") = fd;
+    register const raven_iovec   *_a1 __asm__("a1") = iov;
+    register int                  _a2 __asm__("a2") = iovcnt;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7), "r"(_a1), "r"(_a2));
+    return _a0;
+}
+
+// mmap(addr, len, prot, flags, fd, offset) — syscall 222
+// Only anonymous mappings are supported (flags must include MAP_ANONYMOUS, fd must be -1).
+// Allocates from the heap region.  Returns pointer on success, negative value on failure.
+static inline void *sys_mmap(void *addr, size_t len, int prot, int flags, int fd, int offset) {
+    register int   _a7 __asm__("a7") = SYS_MMAP;
+    register void *_a0 __asm__("a0") = addr;
+    register int   _a1 __asm__("a1") = (int)len;
+    register int   _a2 __asm__("a2") = prot;
+    register int   _a3 __asm__("a3") = flags;
+    register int   _a4 __asm__("a4") = fd;
+    register int   _a5 __asm__("a5") = offset;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7), "r"(_a1), "r"(_a2), "r"(_a3), "r"(_a4), "r"(_a5));
+    return _a0;
+}
+
+// munmap(addr, len) — syscall 215
+// No-op in Raven; always returns 0 (memory is never freed).
+static inline int sys_munmap(void *addr, size_t len) {
+    register int   _a7 __asm__("a7") = SYS_MUNMAP;
+    register void *_a0 __asm__("a0") = addr;
+    register int   _a1 __asm__("a1") = (int)len;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7), "r"(_a1));
+    return _a0;
+}
+
+// timespec for clock_gettime
+typedef struct {
+    unsigned int tv_sec;   // seconds
+    unsigned int tv_nsec;  // nanoseconds
+} raven_timespec;
+
+// clock_gettime(clockid, tp) — syscall 403
+// Fills *tp with simulated time derived from instruction count (~10 ns per instruction).
+static inline int sys_clock_gettime(int clockid, raven_timespec *tp) {
+    register int              _a7 __asm__("a7") = SYS_CLOCK_GETTIME;
+    register int              _a0 __asm__("a0") = clockid;
+    register raven_timespec  *_a1 __asm__("a1") = tp;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7), "r"(_a1));
+    return _a0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -567,4 +678,116 @@ static inline void falcon_read_u32(unsigned int *dst) {
     register int           _a7 __asm__("a7") = 1012;
     register unsigned int *_a0 __asm__("a0") = dst;
     __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Print unsigned 32-bit integer to console (no newline).  — syscall 1004
+static inline void falcon_print_uint(unsigned int n) {
+    register int          _a7 __asm__("a7") = 1004;
+    register unsigned int _a0 __asm__("a0") = n;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Print value as hex with "0x" prefix (e.g. "0xDEADBEEF"), no newline.  — syscall 1005
+static inline void falcon_print_hex(unsigned int n) {
+    register int          _a7 __asm__("a7") = 1005;
+    register unsigned int _a0 __asm__("a0") = n;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Print a single ASCII character.  — syscall 1006
+static inline void falcon_print_char(char c) {
+    register int _a7 __asm__("a7") = 1006;
+    register int _a0 __asm__("a0") = (unsigned char)c;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Print a newline character.  — syscall 1008
+static inline void falcon_print_newline(void) {
+    register int _a7 __asm__("a7") = 1008;
+    __asm__ volatile("ecall" :: "r"(_a7));
+}
+
+// Read one signed 32-bit integer from stdin (accepts negatives).  — syscall 1013
+static inline void falcon_read_int(int *dst) {
+    register int  _a7 __asm__("a7") = 1013;
+    register int *_a0 __asm__("a0") = dst;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Read one IEEE 754 float from stdin.  — syscall 1014
+static inline void falcon_read_float(float *dst) {
+    register int    _a7 __asm__("a7") = 1014;
+    register float *_a0 __asm__("a0") = dst;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0));
+}
+
+// Print float value in fa0 to console (up to 6 significant digits, no newline).  — syscall 1015
+// Note: passes the float value via the fa0 floating-point register.
+static inline void falcon_print_float(float v) {
+    register int _a7 __asm__("a7") = 1015;
+    __asm__ volatile("ecall" :: "r"(_a7), "f"(v));
+}
+
+// Return the number of instructions executed since program start (low 32 bits).  — syscall 1030
+// Useful for measuring the cost of algorithm sections without leaving the simulator.
+static inline unsigned int falcon_get_instr_count(void) {
+    register int          _a7 __asm__("a7") = 1030;
+    register unsigned int _a0;
+    __asm__ volatile("ecall" : "=r"(_a0) : "r"(_a7));
+    return _a0;
+}
+
+// Alias of falcon_get_instr_count.  — syscall 1031
+static inline unsigned int falcon_get_cycle_count(void) {
+    register int          _a7 __asm__("a7") = 1031;
+    register unsigned int _a0;
+    __asm__ volatile("ecall" : "=r"(_a0) : "r"(_a7));
+    return _a0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FALCON MEMORY UTILITIES  (syscalls 1050–1053)
+//
+// Simulator-side versions of memset/memcpy/strlen/strcmp.
+// These call into the simulator directly instead of running a C loop.
+// Useful for benchmarking: compare falcon_get_instr_count() before/after.
+// Prefixed with falcon_ to coexist with the C implementations above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fill `len` bytes at `dst` with `byte` (via syscall 1050).
+static inline void falcon_memset(void *dst, unsigned char byte, size_t len) {
+    register int          _a7 __asm__("a7") = 1050;
+    register void        *_a0 __asm__("a0") = dst;
+    register unsigned int _a1 __asm__("a1") = (unsigned int)byte;
+    register int          _a2 __asm__("a2") = (int)len;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0), "r"(_a1), "r"(_a2));
+}
+
+// Copy `len` bytes from `src` to `dst` (via syscall 1051).  Regions must not overlap.
+static inline void falcon_memcpy(void *dst, const void *src, size_t len) {
+    register int          _a7 __asm__("a7") = 1051;
+    register void        *_a0 __asm__("a0") = dst;
+    register const void  *_a1 __asm__("a1") = src;
+    register int          _a2 __asm__("a2") = (int)len;
+    __asm__ volatile("ecall" :: "r"(_a7), "r"(_a0), "r"(_a1), "r"(_a2));
+}
+
+// Return the length of NUL-terminated string at `s` (via syscall 1052).
+static inline size_t falcon_strlen(const char *s) {
+    register int          _a7 __asm__("a7") = 1052;
+    register const char  *_a0 __asm__("a0") = s;
+    unsigned int ret;
+    __asm__ volatile("ecall" : "=r"(ret) : "r"(_a7), "r"(_a0));
+    return (size_t)ret;
+}
+
+// Compare NUL-terminated strings `s1` and `s2` (via syscall 1053).
+// Returns negative / 0 / positive (same as C strcmp).
+static inline int falcon_strcmp(const char *s1, const char *s2) {
+    register int         _a7 __asm__("a7") = 1053;
+    register const char *_a0 __asm__("a0") = s1;
+    register const char *_a1 __asm__("a1") = s2;
+    int ret;
+    __asm__ volatile("ecall" : "=r"(ret) : "r"(_a7), "r"(_a0), "r"(_a1));
+    return ret;
 }
