@@ -64,14 +64,34 @@ pacman -S mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld
 
 ## `raven.h` API reference
 
-### Syscall wrappers
+### Syscall wrappers — Linux ABI
 
-| Function | Description |
-|----------|-------------|
-| `sys_write(fd, buf, len)` | Write `len` bytes to file descriptor (`STDOUT` = 1, `STDERR` = 2) |
-| `sys_read(fd, buf, len)` | Read up to `len` bytes from file descriptor (`STDIN` = 0) |
-| `sys_exit(code)` | Terminate (no return) |
-| `sys_getrandom(buf, len, flags)` | Fill buffer with random bytes; flags = 0 |
+Raw `ecall` wrappers matching the Linux RISC-V ABI (`a7` = syscall number, `a0`..`a5` = args, `a0` = return).
+
+| Function | Syscall | Description |
+|----------|---------|-------------|
+| `sys_read(fd, buf, len)` | 63 | Read up to `len` bytes; `fd=STDIN` only |
+| `sys_write(fd, buf, len)` | 64 | Write `len` bytes; `fd=STDOUT` or `STDERR` |
+| `sys_exit(code)` | 93 | Terminate (no return) |
+| `sys_exit_group(code)` | 94 | Alias of `sys_exit` (single-threaded) |
+| `sys_getpid()` | 172 | Always returns `1` |
+| `sys_getuid()` | 174 | Always returns `0` |
+| `sys_getgid()` | 176 | Always returns `0` |
+| `sys_brk(addr)` | 214 | Advance heap break; pass `NULL` to query |
+| `sys_munmap(addr, len)` | 215 | No-op; always returns `0` |
+| `sys_mmap(addr, len, prot, flags, fd, offset)` | 222 | Anonymous heap alloc (`MAP_ANONYMOUS\|MAP_PRIVATE`, `fd=-1`) |
+| `sys_getrandom(buf, len, flags)` | 278 | Fill buffer with cryptographic random bytes |
+| `sys_clock_gettime(clockid, tp)` | 403 | Fill `raven_timespec*` with instruction-based time |
+| `sys_writev(fd, iov, iovcnt)` | 66 | Scatter-write from `raven_iovec[]` array |
+
+**Structs:**
+```c
+typedef struct { void *iov_base; unsigned int iov_len; } raven_iovec;
+typedef struct { unsigned int tv_sec; unsigned int tv_nsec; } raven_timespec;
+```
+
+**`mmap` flags/prot:** `PROT_NONE/READ/WRITE/EXEC`, `MAP_SHARED/PRIVATE/ANONYMOUS`.
+Note: only anonymous mappings (`MAP_ANONYMOUS`, `fd=-1`) are supported. `munmap` is a no-op.
 
 ### Simulator control
 
@@ -79,21 +99,26 @@ pacman -S mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld
 |----------|-------------|
 | `raven_pause()` | Emit `ebreak` — Raven pauses so you can inspect registers and memory |
 
-### I/O helpers
+### I/O helpers (C implementation via `sys_write`)
 
 | Function | Description |
 |----------|-------------|
 | `print_char(c)` | Print a single character |
 | `print_str(s)` | Print a null-terminated string |
+| `print_ln()` | Print a newline |
 | `print_int(n)` | Print a signed decimal integer |
 | `print_uint(n)` | Print an unsigned decimal integer |
 | `print_hex(n)` | Print unsigned int as `0x00000000` |
 | `print_ptr(p)` | Print a pointer as hex address |
 | `print_float(v, decimals)` | Print a float with the given number of decimal places |
 | `print_bool(v)` | Print `"true"` or `"false"` |
-| `print_ln()` | Print a newline |
+| `print_bin(n)` | Print 32-bit value as binary, grouped by byte |
+| `read_char()` | Read one character from stdin; returns `-1` on EOF |
 | `read_line(buf, max)` | Read a line from stdin; null-terminates; returns byte count |
-| `read_int()` | Read a decimal integer from stdin |
+| `read_int()` | Read a signed decimal integer from stdin |
+| `read_uint()` | Read an unsigned decimal integer from stdin |
+| `eprint_char(c)` / `eprint_str(s)` / `eprint_ln()` | Print to stderr (shown in red in Raven) |
+| `eprint_int(n)` / `eprint_uint(n)` | Print integer to stderr |
 
 ### Memory utilities
 
@@ -117,6 +142,18 @@ pacman -S mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld
 | `strchr(s, c)` | First occurrence of `c` in `s`, or `NULL` |
 | `strrchr(s, c)` | Last occurrence of `c` in `s`, or `NULL` |
 
+### Random utilities
+
+Backed by `sys_getrandom` — cryptographic quality, not a PRNG.
+
+| Function | Description |
+|----------|-------------|
+| `rand_u32()` | Uniformly random 32-bit unsigned integer |
+| `rand_u8()` | Uniformly random byte (0–255) |
+| `rand_range(lo, hi)` | Random unsigned int in `[lo, hi)` |
+| `rand_i32()` | Random signed 32-bit integer |
+| `rand_bool()` | `0` or `1` with equal probability |
+
 ### Math utilities
 
 | Function | Description |
@@ -129,7 +166,7 @@ pacman -S mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld
 ### Assert / panic
 
 | Function / Macro | Description |
-|----------|-------------|
+|------------------|-------------|
 | `raven_assert(expr)` | If `expr` is false: print message, pause, exit(1) |
 | `raven_panic(msg)` | Print `msg` to stderr, pause for inspection, exit(1) |
 
@@ -143,7 +180,8 @@ A first-fit free-list allocator backed by a static `64 KB` heap.
 | `calloc(nmemb, size)` | Allocate `nmemb * size` bytes, zero-initialised |
 | `realloc(ptr, new_size)` | Resize allocation; copies existing data |
 | `free(ptr)` | Release allocation; coalesces adjacent free blocks |
-| `raven_heap_free()` | Returns approximate bytes remaining in the heap |
+| `raven_heap_free()` | Approximate bytes remaining in the heap |
+| `raven_heap_used()` | Bytes currently in use on the heap |
 
 Change the heap size before including the header:
 
@@ -153,6 +191,43 @@ Change the heap size before including the header:
 ```
 
 > **Tip:** single-step with Raven's **[Dyn]** view active (`v` until `DYN` shows in the status bar). Every `sw` that writes a malloc header will flip the sidebar to show exactly what was written in RAM and where.
+
+### Falcon teaching extensions (syscall-based shortcuts)
+
+Single-ecall wrappers — faster than the C I/O helpers above for simple programs.
+Useful when you want minimal instruction count overhead.
+
+| Function | Syscall | Description |
+|----------|---------|-------------|
+| `falcon_print_int(n)` | 1000 | Print signed 32-bit integer (no newline) |
+| `falcon_print_str(s)` | 1001 | Print NUL-terminated string (no newline) |
+| `falcon_println_str(s)` | 1002 | Print NUL-terminated string + newline |
+| `falcon_read_line(buf)` | 1003 | Read console line into `buf` (NUL-terminated, no newline) |
+| `falcon_print_uint(n)` | 1004 | Print unsigned 32-bit integer (no newline) |
+| `falcon_print_hex(n)` | 1005 | Print as hex, e.g. `0xDEADBEEF` (no newline) |
+| `falcon_print_char(c)` | 1006 | Print a single ASCII character |
+| `falcon_print_newline()` | 1008 | Print a newline |
+| `falcon_read_u8(dst)` | 1010 | Read decimal/hex from stdin → store as `u8` at `*dst` |
+| `falcon_read_u16(dst)` | 1011 | Read decimal/hex from stdin → store as `u16` at `*dst` |
+| `falcon_read_u32(dst)` | 1012 | Read decimal/hex from stdin → store as `u32` at `*dst` |
+| `falcon_read_int(dst)` | 1013 | Read signed integer (accepts `-`) → store as `int` at `*dst` |
+| `falcon_read_float(dst)` | 1014 | Read float from stdin → store as `float` at `*dst` |
+| `falcon_print_float(v)` | 1015 | Print `float` value (up to 6 significant digits, no newline) |
+| `falcon_get_instr_count()` | 1030 | Return instructions executed since start (low 32 bits) |
+| `falcon_get_cycle_count()` | 1031 | Alias of `falcon_get_instr_count` |
+| `falcon_memset(dst, byte, len)` | 1050 | Fill `len` bytes at `dst` with `byte` (via simulator) |
+| `falcon_memcpy(dst, src, len)` | 1051 | Copy `len` bytes from `src` to `dst` (via simulator) |
+| `falcon_strlen(s)` | 1052 | Return length of NUL-terminated string (via simulator) |
+| `falcon_strcmp(s1, s2)` | 1053 | Compare strings; returns `<0` / `0` / `>0` |
+
+**Measuring algorithm cost:**
+```c
+unsigned int t0 = falcon_get_instr_count();
+bubble_sort(arr, n);
+unsigned int cost = falcon_get_instr_count() - t0;
+falcon_print_uint(cost);
+falcon_println_str(" instructions");
+```
 
 ---
 

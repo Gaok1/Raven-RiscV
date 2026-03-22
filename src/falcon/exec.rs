@@ -21,6 +21,7 @@ pub fn step<B: Bus>(
         }
     };
     cpu.pc = pc.wrapping_add(4);
+    cpu.instr_count += 1;
 
     match instr {
         i @ (

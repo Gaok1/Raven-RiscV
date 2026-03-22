@@ -17,6 +17,8 @@ pub struct Cpu {
     pub ebreak_hit: bool,
     /// Current program break (heap end). Set by the loader; advanced by SYS_BRK.
     pub heap_break: u32,
+    /// Number of instructions executed since program start.
+    pub instr_count: u64,
 }
 
 impl Cpu {
