@@ -111,12 +111,12 @@ pub fn sys_pause_sim() {
     }
 }
 
-// ── Falcon teaching extensions (syscalls 1000–1053) ───────────────────────────
+// ── Raven teaching extensions (syscalls 1000–1053) ───────────────────────────
 // Raven-specific shortcuts — no strlen loop, no fd argument.
 
 /// Print signed 32-bit integer to console (no newline). — syscall 1000
 #[inline(always)]
-pub fn falcon_print_int(n: i32) {
+pub fn raven_print_int(n: i32) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -128,7 +128,7 @@ pub fn falcon_print_int(n: i32) {
 
 /// Print NUL-terminated string (no newline). — syscall 1001
 #[inline(always)]
-pub fn falcon_print_str(s: *const u8) {
+pub fn raven_print_str(s: *const u8) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -140,7 +140,7 @@ pub fn falcon_print_str(s: *const u8) {
 
 /// Print NUL-terminated string followed by newline. — syscall 1002
 #[inline(always)]
-pub fn falcon_println_str(s: *const u8) {
+pub fn raven_println_str(s: *const u8) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -153,7 +153,7 @@ pub fn falcon_println_str(s: *const u8) {
 /// Read one line from console into buf (NUL-terminated, newline excluded).
 /// Caller must ensure the buffer is large enough. — syscall 1003
 #[inline(always)]
-pub fn falcon_read_line(buf: *mut u8) {
+pub fn raven_read_line(buf: *mut u8) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -165,7 +165,7 @@ pub fn falcon_read_line(buf: *mut u8) {
 
 /// Print unsigned 32-bit integer to console (no newline). — syscall 1004
 #[inline(always)]
-pub fn falcon_print_uint(n: u32) {
+pub fn raven_print_uint(n: u32) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -177,7 +177,7 @@ pub fn falcon_print_uint(n: u32) {
 
 /// Print value as hex (e.g. `0xDEADBEEF`) to console (no newline). — syscall 1005
 #[inline(always)]
-pub fn falcon_print_hex(n: u32) {
+pub fn raven_print_hex(n: u32) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -189,7 +189,7 @@ pub fn falcon_print_hex(n: u32) {
 
 /// Print a single ASCII character to console. — syscall 1006
 #[inline(always)]
-pub fn falcon_print_char(c: u8) {
+pub fn raven_print_char(c: u8) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -201,7 +201,7 @@ pub fn falcon_print_char(c: u8) {
 
 /// Print a newline to console. — syscall 1008
 #[inline(always)]
-pub fn falcon_print_newline() {
+pub fn raven_print_newline() {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -212,7 +212,7 @@ pub fn falcon_print_newline() {
 
 /// Read one u8 from stdin and store at *dst (decimal or 0x hex). — syscall 1010
 #[inline(always)]
-pub fn falcon_read_u8(dst: *mut u8) {
+pub fn raven_read_u8(dst: *mut u8) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -224,7 +224,7 @@ pub fn falcon_read_u8(dst: *mut u8) {
 
 /// Read one u16 from stdin and store at *dst (little-endian). — syscall 1011
 #[inline(always)]
-pub fn falcon_read_u16(dst: *mut u16) {
+pub fn raven_read_u16(dst: *mut u16) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -236,7 +236,7 @@ pub fn falcon_read_u16(dst: *mut u16) {
 
 /// Read one u32 from stdin and store at *dst (little-endian). — syscall 1012
 #[inline(always)]
-pub fn falcon_read_u32(dst: *mut u32) {
+pub fn raven_read_u32(dst: *mut u32) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -248,7 +248,7 @@ pub fn falcon_read_u32(dst: *mut u32) {
 
 /// Read one i32 from stdin (accepts negatives) and store at *dst. — syscall 1013
 #[inline(always)]
-pub fn falcon_read_int(dst: *mut i32) {
+pub fn raven_read_int(dst: *mut i32) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -260,7 +260,7 @@ pub fn falcon_read_int(dst: *mut i32) {
 
 /// Read one f32 from stdin and store at *dst. — syscall 1014
 #[inline(always)]
-pub fn falcon_read_float(dst: *mut f32) {
+pub fn raven_read_float(dst: *mut f32) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -272,7 +272,7 @@ pub fn falcon_read_float(dst: *mut f32) {
 
 /// Print f32 in fa0 to console (no newline). — syscall 1015
 #[inline(always)]
-pub fn falcon_print_float(v: f32) {
+pub fn raven_print_float(v: f32) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -284,7 +284,7 @@ pub fn falcon_print_float(v: f32) {
 
 /// Return the number of instructions executed so far (low 32 bits). — syscall 1030
 #[inline(always)]
-pub fn falcon_get_instr_count() -> u32 {
+pub fn raven_get_instr_count() -> u32 {
     let ret: u32;
     unsafe {
         core::arch::asm!(
@@ -298,7 +298,7 @@ pub fn falcon_get_instr_count() -> u32 {
 
 /// Return the simulated cycle count (low 32 bits, same as instr_count). — syscall 1031
 #[inline(always)]
-pub fn falcon_get_cycle_count() -> u32 {
+pub fn raven_get_cycle_count() -> u32 {
     let ret: u32;
     unsafe {
         core::arch::asm!(
@@ -310,11 +310,11 @@ pub fn falcon_get_cycle_count() -> u32 {
     ret
 }
 
-// ── Falcon memory utilities (syscalls 1050–1053) ──────────────────────────────
+// ── Raven memory utilities (syscalls 1050–1053) ──────────────────────────────
 
 /// Fill `len` bytes at `dst` with `byte`. — syscall 1050
 #[inline(always)]
-pub unsafe fn falcon_memset(dst: *mut u8, byte: u8, len: usize) {
+pub unsafe fn raven_memset(dst: *mut u8, byte: u8, len: usize) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -328,7 +328,7 @@ pub unsafe fn falcon_memset(dst: *mut u8, byte: u8, len: usize) {
 
 /// Copy `len` bytes from `src` to `dst`. — syscall 1051
 #[inline(always)]
-pub unsafe fn falcon_memcpy(dst: *mut u8, src: *const u8, len: usize) {
+pub unsafe fn raven_memcpy(dst: *mut u8, src: *const u8, len: usize) {
     unsafe {
         core::arch::asm!(
             "ecall",
@@ -342,7 +342,7 @@ pub unsafe fn falcon_memcpy(dst: *mut u8, src: *const u8, len: usize) {
 
 /// Return the length of NUL-terminated string at `s`. — syscall 1052
 #[inline(always)]
-pub unsafe fn falcon_strlen(s: *const u8) -> usize {
+pub unsafe fn raven_strlen(s: *const u8) -> usize {
     let ret: usize;
     unsafe {
         core::arch::asm!(
@@ -357,7 +357,7 @@ pub unsafe fn falcon_strlen(s: *const u8) -> usize {
 
 /// Compare NUL-terminated strings `s1` and `s2`. Returns negative, 0, or positive. — syscall 1053
 #[inline(always)]
-pub unsafe fn falcon_strcmp(s1: *const u8, s2: *const u8) -> i32 {
+pub unsafe fn raven_strcmp(s1: *const u8, s2: *const u8) -> i32 {
     let ret: i32;
     unsafe {
         core::arch::asm!(
