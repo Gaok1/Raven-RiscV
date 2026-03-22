@@ -72,29 +72,29 @@ Load either file into Raven — it's a standard ELF, no extra steps needed.
 | `read_int!()` | Read signed integer from stdin |
 | `read_uint!()` | Read unsigned integer from stdin |
 
-### Falcon teaching extensions (`raven_api::syscall`)
+### Raven teaching extensions (`raven_api::syscall`)
 
 Single-ecall shortcuts — minimal overhead, useful for measuring performance.
 
 | Function | Syscall | Description |
 |----------|---------|-------------|
-| `falcon_print_int(n: i32)` | 1000 | Print signed integer (no newline) |
-| `falcon_print_str(s: *const u8)` | 1001 | Print NUL-terminated string (no newline) |
-| `falcon_println_str(s: *const u8)` | 1002 | Print NUL-terminated string + newline |
-| `falcon_read_line(buf: *mut u8)` | 1003 | Read console line into buffer (NUL-terminated) |
-| `falcon_print_uint(n: u32)` | 1004 | Print unsigned integer (no newline) |
-| `falcon_print_hex(n: u32)` | 1005 | Print as hex, e.g. `0xDEADBEEF` |
-| `falcon_print_char(c: u8)` | 1006 | Print a single ASCII character |
-| `falcon_print_newline()` | 1008 | Print a newline |
-| `falcon_read_u8(dst: *mut u8)` | 1010 | Read decimal/hex → store as `u8` |
-| `falcon_read_u16(dst: *mut u16)` | 1011 | Read decimal/hex → store as `u16` |
-| `falcon_read_u32(dst: *mut u32)` | 1012 | Read decimal/hex → store as `u32` |
-| `falcon_read_int(dst: *mut i32)` | 1013 | Read signed integer (accepts `-`) |
-| `falcon_read_float(dst: *mut f32)` | 1014 | Read float → store as `f32` |
-| `falcon_print_float(v: f32)` | 1015 | Print `f32` from `fa0` (up to 6 sig. digits) |
-| `falcon_get_instr_count() -> u32` | 1030 | Instructions executed since start (low 32 bits) |
-| `falcon_get_cycle_count() -> u32` | 1031 | Alias of `falcon_get_instr_count` |
-| `falcon_memset(dst, byte, len)` | 1050 | Fill memory via simulator |
-| `falcon_memcpy(dst, src, len)` | 1051 | Copy memory via simulator |
-| `falcon_strlen(s) -> usize` | 1052 | Length of NUL-terminated string |
-| `falcon_strcmp(s1, s2) -> i32` | 1053 | Compare strings; `<0` / `0` / `>0` |
+| `raven_print_int(n: i32)` | 1000 | Print signed integer (no newline) |
+| `raven_print_str(s: *const u8)` | 1001 | Print NUL-terminated string (no newline) |
+| `raven_println_str(s: *const u8)` | 1002 | Print NUL-terminated string + newline |
+| `raven_read_line(buf: *mut u8)` | 1003 | Read console line into buffer (NUL-terminated) |
+| `raven_print_uint(n: u32)` | 1004 | Print unsigned integer (no newline) |
+| `raven_print_hex(n: u32)` | 1005 | Print as hex, e.g. `0xDEADBEEF` |
+| `raven_print_char(c: u8)` | 1006 | Print a single ASCII character |
+| `raven_print_newline()` | 1008 | Print a newline |
+| `raven_read_u8(dst: *mut u8)` | 1010 | Read decimal/hex → store as `u8` |
+| `raven_read_u16(dst: *mut u16)` | 1011 | Read decimal/hex → store as `u16` |
+| `raven_read_u32(dst: *mut u32)` | 1012 | Read decimal/hex → store as `u32` |
+| `raven_read_int(dst: *mut i32)` | 1013 | Read signed integer (accepts `-`) |
+| `raven_read_float(dst: *mut f32)` | 1014 | Read float → store as `f32` |
+| `raven_print_float(v: f32)` | 1015 | Print `f32` from `fa0` (up to 6 sig. digits) |
+| `raven_get_instr_count() -> u32` | 1030 | Instructions executed since start (low 32 bits) |
+| `raven_get_cycle_count() -> u32` | 1031 | Alias of `raven_get_instr_count` |
+| `raven_memset(dst, byte, len)` | 1050 | Fill memory via simulator |
+| `raven_memcpy(dst, src, len)` | 1051 | Copy memory via simulator |
+| `raven_strlen(s) -> usize` | 1052 | Length of NUL-terminated string |
+| `raven_strcmp(s1, s2) -> i32` | 1053 | Compare strings; `<0` / `0` / `>0` |
