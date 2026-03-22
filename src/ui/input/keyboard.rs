@@ -1109,6 +1109,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                         app.cache.data_group = app.cache.data_group.cycle();
                     }
                 }
+                (KeyCode::Char('t'), Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::View) => {
+                    app.cache.show_tag = !app.cache.show_tag;
+                }
                 // Sidebar / region shortcuts (same behaviour as Run tab)
                 (KeyCode::Char('v'), Tab::Cache) if !matches!(app.cache.subtab, CacheSubtab::Config) => {
                     if app.run.show_dyn {
@@ -1180,6 +1183,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     } else {
                         app.cache.history_scroll = 0;
                     }
+                    if let Some(v) = app.cache.viewing_snapshot {
+                        if v == idx {
+                            app.cache.viewing_snapshot = None;
+                        } else if v > idx {
+                            app.cache.viewing_snapshot = Some(v - 1);
+                        }
+                    }
+                    if app.cache.session_history.is_empty() {
+                        app.cache.viewing_snapshot = None;
+                    }
                 }
                 // Stats: Enter = open snapshot detail popup
                 (KeyCode::Enter, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Stats) && !app.cache.session_history.is_empty() && !app.run.is_running => {
@@ -1220,12 +1233,42 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 },
                 (KeyCode::Left, Tab::Cache) => {
                     if matches!(app.cache.subtab, CacheSubtab::View) {
-                        app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+                        if app.cache.selected_level == 0 {
+                            match app.cache.scope {
+                                CacheScope::DCache => {
+                                    app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_sub(3);
+                                }
+                                CacheScope::Both => {
+                                    app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+                                    app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_sub(3);
+                                }
+                                _ => {
+                                    app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+                                }
+                            }
+                        } else {
+                            app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
+                        }
                     }
                 }
                 (KeyCode::Right, Tab::Cache) => {
                     if matches!(app.cache.subtab, CacheSubtab::View) {
-                        app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+                        if app.cache.selected_level == 0 {
+                            match app.cache.scope {
+                                CacheScope::DCache => {
+                                    app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_add(3);
+                                }
+                                CacheScope::Both => {
+                                    app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+                                    app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_add(3);
+                                }
+                                _ => {
+                                    app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+                                }
+                            }
+                        } else {
+                            app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
+                        }
                     }
                 }
 
