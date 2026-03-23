@@ -1,24 +1,49 @@
+# array_sum.fas — Sum an integer array; output via Linux write + Raven print_int
+#
+# Shows how to mix both I/O styles:
+#   - label string printed with Linux write(2) syscall 64
+#   - numeric result printed with Raven print_int syscall 1000
+#
+# Indexed addressing pattern: addr(arr[i]) = base + i*4
+
 .data
-arr:    .word 1, 2, 3, 4, 5, 6
-prefix: .asciz "Sum array: "
+arr:   .word 10, 20, 30, 40, 50, 60, 70, 80
+label: .asciz "Sum = "
+nl:    .byte 10, 0
 
 .text
-    la t0, arr
-    li t1, 6       # length
-    li s0, 0       # sum
-    li t2, 0       # i
+    la   t0, arr            # base pointer
+    li   t1, 8              # number of elements
+    li   s0, 0              # accumulator
+    li   t2, 0              # index i
 
 sum_loop:
-    slli t3, t2, 2
-    add  t3, t0, t3
-    lw   t4, 0(t3)
-    add  s0, s0, t4
+    slli t3, t2, 2          # byte offset = i * 4
+    add  t3, t0, t3         # address of arr[i]
+    lw   t4, 0(t3)          # load arr[i]
+    add  s0, s0, t4         # accumulate
     addi t2, t2, 1
     blt  t2, t1, sum_loop
 
-    printStr prefix
-    print s0
-    li a0, 0
-    li a7, 93      # exit
+    # Print label via Linux write(1, "Sum = ", 6)
+    li   a0, 1
+    la   a1, label
+    li   a2, 6
+    li   a7, 64
     ecall
 
+    # Print numeric result via Raven print_int
+    mv   a0, s0
+    li   a7, 1000
+    ecall
+
+    # Print newline
+    li   a0, 1
+    la   a1, nl
+    li   a2, 1
+    li   a7, 64
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

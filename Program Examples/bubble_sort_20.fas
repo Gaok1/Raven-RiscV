@@ -1,50 +1,79 @@
+# bubble_sort_20.fas — Bubble sort with swap counter and early-exit optimisation
+#
+# Sorts 20 integers in-place.  Each pass bubbles the largest unsorted element
+# to the right.  If a pass produces zero swaps the array is already sorted —
+# the early-exit makes best-case O(n) instead of O(n^2).
+#
+# Prints the sorted array on one line, then reports total swaps performed.
+
 .data
-arr: .word 20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10
-msg: .asciz "Sorted values:"
-nl:  .byte 10, 0
+arr:        .word 20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10
+lbl_sorted: .asciz "Sorted: "
+lbl_swaps:  .asciz "Swaps:  "
+space:      .asciz " "
 
 .text
-    # Print header
-    printStrLn msg
+    la   t0, arr
+    li   t1, 20             # n
+    li   s2, 0              # total swap count
+    mv   t4, t1             # unsorted length (shrinks each pass)
 
-    # Setup base pointer and length
-    la t0, arr      # base address of arr
-    li t4, 20       # n = 20
-    li t1, 0        # i = 0
+outer_loop:
+    li   s3, 0              # swaps this pass
+    li   t2, 0              # j = 0
+    addi t5, t4, -1         # inner limit = unsorted_len - 1
 
-outer:
-    li  t2, 0       # j = 0
-    sub s2, t4, t1  # s2 = n - i
-    addi s2, s2, -1 # limit = n - 1 - i
-
-inner:
-    slli t3, t2, 2  # offset = j * 4
-    add  t3, t0, t3 # addr of arr[j]
-    addi t5, t3, 4  # addr of arr[j+1]
-    lw   s0, 0(t3)
-    lw   s1, 0(t5)
-    blt  s0, s1, no_swap
+inner_loop:
+    bge  t2, t5, inner_done
+    slli t3, t2, 2
+    add  t3, t0, t3
+    lw   s0, 0(t3)          # arr[j]
+    lw   s1, 4(t3)          # arr[j+1]
+    ble  s0, s1, no_swap    # already in order
     sw   s1, 0(t3)
-    sw   s0, 0(t5)
+    sw   s0, 4(t3)
+    addi s2, s2, 1          # total_swaps++
+    addi s3, s3, 1          # pass_swaps++
 no_swap:
     addi t2, t2, 1
-    blt  t2, s2, inner
+    j    inner_loop
 
-    addi t1, t1, 1
-    blt  t1, t4, outer
+inner_done:
+    addi t4, t4, -1         # one more element is in its final position
+    beq  s3, zero, sort_done   # early exit: no swaps → sorted
+    bgt  t4, zero, outer_loop
 
-    # Print sorted array
+sort_done:
+    # Print sorted array on one line
+    li   a7, 1001
+    la   a0, lbl_sorted
+    ecall
     li   t2, 0
 print_loop:
     slli t3, t2, 2
     add  t3, t0, t3
     lw   a0, 0(t3)
-    print a0
-    printStr nl
+    li   a7, 1000
+    ecall
+    li   a7, 1001
+    la   a0, space
+    ecall
     addi t2, t2, 1
-    blt  t2, t4, print_loop
-
-    li a0, 0
-    li a7, 93      # exit
+    li   t6, 20
+    blt  t2, t6, print_loop
+    li   a7, 1008
     ecall
 
+    # Print swap count
+    li   a7, 1001
+    la   a0, lbl_swaps
+    ecall
+    li   a7, 1000
+    mv   a0, s2
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

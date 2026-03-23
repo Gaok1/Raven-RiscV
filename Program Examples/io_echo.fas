@@ -1,12 +1,44 @@
+# io_echo.fas — Echo loop: reads lines until an empty line is entered
+#
+# Uses Raven pseudo-instructions for I/O:
+#   read buf       → syscall 63: reads up to 256 bytes from stdin into buf (NUL-terminated)
+#   printStrLn buf → syscall 64: writes buf + newline to stdout
+#
+# An "empty" line is one whose first byte is NUL or newline.
+# At the end, prints how many non-empty lines were echoed.
+
 .data
-prompt: .asciz "Enter text: "
-buf:    .space 128
+banner:  .asciz "Type lines. Empty line to stop."
+lbl_cnt: .asciz "Lines echoed: "
+buf:     .space 256
 
 .text
-    printStr prompt
-    read buf
-    printStrLn buf
-    li a0, 0
-    li a7, 93      # exit
+    printStrLn banner
+    li   s0, 0              # line counter
+
+echo_loop:
+    read buf                # blocks until the user presses Enter
+
+    la   t0, buf
+    lb   t1, 0(t0)          # first byte of input
+    beq  t1, zero, echo_done    # NUL  → treat as empty
+    li   t2, 10
+    beq  t1, t2, echo_done      # '\n' → treat as empty
+
+    printStrLn buf          # echo the line
+    addi s0, s0, 1
+    j    echo_loop
+
+echo_done:
+    li   a7, 1001
+    la   a0, lbl_cnt
+    ecall
+    li   a7, 1000
+    mv   a0, s0
+    ecall
+    li   a7, 1008
     ecall
 
+    li   a0, 0
+    li   a7, 93
+    ecall

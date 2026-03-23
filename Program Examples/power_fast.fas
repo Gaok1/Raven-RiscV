@@ -1,22 +1,64 @@
+# power_fast.fas — Fast (binary) exponentiation: base^exp in O(log exp) multiplies
+#
+# Reads base and exponent from stdin.
+# Algorithm: scan exp bit-by-bit from LSB to MSB.
+#   - If current bit is 1: result *= base
+#   - Every step: base = base^2, exp >>= 1
+#
+# This needs only ceil(log2(exp)) squarings instead of exp-1 multiplications.
+# Example: 2^10 = 1024 in 4 multiplications instead of 9.
+#
+# Note: result wraps silently on 32-bit overflow.
+
+.data
+lbl_base:   .asciz "base : "
+lbl_exp:    .asciz "exp  : "
+lbl_result: .asciz "result = "
+base_buf:   .space 4
+exp_buf:    .space 4
+
 .text
-    # Fast exponentiation: result = base^exp
-    li a0, 3       # base
-    li a1, 5       # exp
-    li s0, 1       # result
-
-pow_loop:
-    beq  a1, zero, pow_done
-    andi t0, a1, 1
-    beq  t0, zero, skip_mul
-    mul  s0, s0, a0
-skip_mul:
-    mul  a0, a0, a0
-    srli a1, a1, 1
-    j    pow_loop
-
-pow_done:
-    print s0
-    li a0, 0
-    li a7, 93      # exit
+    li   a7, 1001
+    la   a0, lbl_base
+    ecall
+    la   a0, base_buf
+    li   a7, 1013
     ecall
 
+    li   a7, 1001
+    la   a0, lbl_exp
+    ecall
+    la   a0, exp_buf
+    li   a7, 1013
+    ecall
+
+    la   t0, base_buf
+    lw   s0, 0(t0)          # s0 = base
+    la   t0, exp_buf
+    lw   s1, 0(t0)          # s1 = exp (remaining bits to process)
+    li   s2, 1              # s2 = result (identity element for multiplication)
+
+    # Invariant: true_result = s2 * s0^s1
+pow_loop:
+    beq  s1, zero, pow_done
+    andi t0, s1, 1          # test LSB of exponent
+    beq  t0, zero, pow_skip
+    mul  s2, s2, s0         # bit is set: fold base into result
+pow_skip:
+    mul  s0, s0, s0         # square the base for the next bit position
+    srli s1, s1, 1          # shift exponent right (process next bit)
+    j    pow_loop
+pow_done:
+
+    li   a7, 1001
+    la   a0, lbl_result
+    ecall
+    li   a7, 1000
+    mv   a0, s2
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

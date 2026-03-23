@@ -1,26 +1,82 @@
+# syscall_echo_linux.fas — ROT13 cipher using only Linux ABI syscalls (63 / 64)
+#
+# No Raven pseudo-instructions.  All I/O goes through raw ecall.
+#
+# ROT13 rotates letters by 13 positions within their alphabet half:
+#   'a'..'z'  →  (c - 'a' + 13) % 26 + 'a'
+#   'A'..'Z'  →  (c - 'A' + 13) % 26 + 'A'
+#   anything else → unchanged
+#
+# ROT13 is its own inverse: applying it twice recovers the original text.
+# Try running the output back through the program to verify.
+
 .data
-buf: .space 64
+buf:     .space 256
+prompt:  .asciz "Enter text: \n"
 
 .text
-    # Linux-style syscalls:
-    #   a7 = syscall number
-    #   a0..a5 = args
-    #   return value in a0
-
-    li a0, 0       # fd = stdin
-    la a1, buf
-    li a2, 64      # max bytes
-    li a7, 63      # read
-    ecall          # a0 = bytes read
-
-    mv t0, a0      # n = bytes_read
-    li a0, 1       # fd = stdout
-    la a1, buf
-    mv a2, t0
-    li a7, 64      # write
+    # write(1, prompt, 13) — announce what we want
+    li   a0, 1
+    la   a1, prompt
+    li   a2, 13
+    li   a7, 64
     ecall
 
-    li a0, 0
-    li a7, 93      # exit
+    # read(0, buf, 256)
+    li   a0, 0
+    la   a1, buf
+    li   a2, 256
+    li   a7, 63
+    ecall                   # a0 = bytes read (includes the '\n' from Enter)
+    mv   s0, a0             # s0 = byte count
+
+    # Apply ROT13 in-place over s0 bytes
+    la   s1, buf
+    li   s2, 0              # i = 0
+
+rot_loop:
+    bge  s2, s0, rot_done
+    add  t0, s1, s2         # t0 = &buf[i]
+    lb   t1, 0(t0)          # t1 = buf[i]
+
+    # Test lowercase: 'a'=97 .. 'z'=122
+    li   t2, 97
+    blt  t1, t2, check_upper
+    li   t2, 122
+    bgt  t1, t2, next_char
+    addi t1, t1, -97        # shift to 0-based
+    addi t1, t1, 13
+    li   t2, 26
+    remu t1, t1, t2
+    addi t1, t1, 97         # shift back
+    sb   t1, 0(t0)
+    j    next_char
+
+check_upper:
+    # Test uppercase: 'A'=65 .. 'Z'=90
+    li   t2, 65
+    blt  t1, t2, next_char
+    li   t2, 90
+    bgt  t1, t2, next_char
+    addi t1, t1, -65
+    addi t1, t1, 13
+    li   t2, 26
+    remu t1, t1, t2
+    addi t1, t1, 65
+    sb   t1, 0(t0)
+
+next_char:
+    addi s2, s2, 1
+    j    rot_loop
+
+rot_done:
+    # write(1, buf, s0) — output the transformed bytes
+    li   a0, 1
+    la   a1, buf
+    mv   a2, s0
+    li   a7, 64
     ecall
 
+    li   a0, 0
+    li   a7, 93
+    ecall

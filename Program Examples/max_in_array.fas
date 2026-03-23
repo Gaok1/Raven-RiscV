@@ -1,28 +1,54 @@
+# max_in_array.fas — Find both minimum and maximum in a single O(n) pass
+#
+# A naive approach uses two separate loops (2n comparisons).
+# This version tracks both extremes simultaneously (n-1 comparisons after init).
+
 .data
-arr:    .word 12, 7, 25, 9, 13
-prefix: .asciz "Max: "
+arr:     .word 12, 7, 25, 9, 42, 5, 1, 44, 3, 18
+lbl_min: .asciz "min = "
+lbl_max: .asciz "max = "
 
 .text
-    la t0, arr
-    li t1, 5       # length
-    lw s0, 0(t0)   # max = arr[0]
-    li t2, 1       # i = 1
+    la   t0, arr
+    li   t1, 10             # length
 
-max_loop:
+    lw   s0, 0(t0)          # min = arr[0]
+    lw   s1, 0(t0)          # max = arr[0]
+    li   t2, 1              # i = 1
+
+scan_loop:
     slli t3, t2, 2
     add  t3, t0, t3
-    lw   t4, 0(t3)
-    blt  s0, t4, update
-    j    next
-update:
-    mv   s0, t4
-next:
-    addi t2, t2, 1
-    blt  t2, t1, max_loop
+    lw   t4, 0(t3)          # t4 = arr[i]
 
-    printStr prefix
-    print s0
-    li a0, 0
-    li a7, 93      # exit
+    bge  t4, s0, no_new_min
+    mv   s0, t4             # new minimum found
+no_new_min:
+    ble  t4, s1, no_new_max
+    mv   s1, t4             # new maximum found
+no_new_max:
+    addi t2, t2, 1
+    blt  t2, t1, scan_loop
+
+    # Print results
+    li   a7, 1001
+    la   a0, lbl_min
+    ecall
+    li   a7, 1000
+    mv   a0, s0
+    ecall
+    li   a7, 1008
     ecall
 
+    li   a7, 1001
+    la   a0, lbl_max
+    ecall
+    li   a7, 1000
+    mv   a0, s1
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

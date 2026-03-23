@@ -1,30 +1,49 @@
+# cache_write_policy.fas — Write-policy comparison for the D-cache
+#
+# Runs the same tight store loop under two different cache configurations
+# so students can compare how write policy affects RAM write traffic.
+#
+# Write-back + write-allocate (default):
+#   On a store miss, the line is loaded into cache first (write-allocate),
+#   then updated in the cache.  Dirty lines are written to RAM only on
+#   eviction.  Result: few RAM writes, high hit rate after first miss.
+#
+# Write-through + no-write-allocate:
+#   Every store goes to RAM immediately; misses do NOT load the line.
+#   Result: RAM W count equals the number of stores.
+#
+# How to use:
+#   1. Load a cache config (.fcache) from the Cache tab.
+#   2. Open Cache tab → Stats and click [Reset].
+#   3. Press Enter in the console to run the store loop.
+#   4. Compare "RAM W" and hit% between the two configs.
+
 .data
-title:    .asciz "CACHE: Write policy (D-cache)"
-msg1:     .asciz "Experimente importar configs .fcache (write-through / no-write-allocate) e comparar RAM W / hit%."
-howto:    .asciz "Reset em Cache -> Stats e aperte Enter para rodar o loop de stores."
-done:     .asciz "Fim."
-wait_buf: .space 64
+title:  .asciz "CACHE: Write policy (D-cache)"
+msg:    .asciz "Try write-through vs write-back configs and compare RAM W / hit%."
+howto:  .asciz "Reset Cache -> Stats, then press Enter."
+done:   .asciz "Done."
+wbuf:   .space 64
 
 .align 16
-buf:      .space 64
+buf:    .space 64           # 16 words — small enough to stay in cache after first miss
 
 .text
     printStrLn title
-    printStrLn msg1
+    printStrLn msg
     printStrLn howto
-    read wait_buf
+    read wbuf
 
     la   t0, buf
-    li   t1, 0
-    li   t2, 40000          # iterations
+    li   t1, 0              # counter value to store
+    li   t2, 40000          # iteration count
 store_loop:
-    sw   t1, 0(t0)          # escreve sempre no mesmo endereÃ§o
+    sw   t1, 0(t0)          # always writes to the same cache line
     addi t1, t1, 1
     addi t2, t2, -1
     bne  t2, zero, store_loop
 
     printStrLn done
-    li a0, 0
-    li a7, 93               # exit
+    li   a0, 0
+    li   a7, 93
     ecall
-

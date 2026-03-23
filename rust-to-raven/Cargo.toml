@@ -11,4 +11,4 @@ panic = "abort"
 
 
 [dependencies]
-spin = "*"
+linked_list_allocator = { version = "*", default-features = false }

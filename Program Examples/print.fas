@@ -1,8 +1,32 @@
+# print.fas — "Hello, Raven!" via the Linux write syscall
+#
+# Demonstrates the raw ecall calling convention (no pseudo-instructions):
+#   a7 = syscall number
+#   a0..a5 = arguments in order
+#   a0 = return value (negative = -errno)
+
 .data
-message: .asciz "Hello world"
+msg: .asciz "Hello, Raven!\n"
 
 .text
-  printStrLn message
-  li a0, 0
-  li a7, 93      # exit
-  ecall
+    # Walk the string to compute its length (stops at NUL)
+    la   t0, msg
+    li   t1, 0              # byte counter
+count_loop:
+    lb   t2, 0(t0)
+    beq  t2, zero, count_done
+    addi t0, t0, 1
+    addi t1, t1, 1
+    j    count_loop
+count_done:
+
+    # write(fd=1, buf=msg, count=len) — Linux syscall 64
+    li   a0, 1              # fd = stdout
+    la   a1, msg            # buffer pointer
+    mv   a2, t1             # byte count computed above
+    li   a7, 64             # write
+    ecall                   # a0 = bytes written, or -errno
+
+    li   a0, 0
+    li   a7, 93             # exit(0)
+    ecall
