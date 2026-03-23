@@ -1,89 +1,125 @@
+# cache_locality.fas — Spatial and temporal locality demonstration
+#
+# Three phases show how access pattern affects cache performance:
+#
+#   Phase 1 — small array (fits in cache):
+#     After a warm-up pass, repeated scans hit ~100% because all lines
+#     stay resident in the D-cache.
+#
+#   Phase 2 — large array, sequential access:
+#     The array exceeds D-cache capacity. Each pass is a compulsory miss
+#     stream, but hardware prefetch and spatial locality keep miss penalty low.
+#
+#   Phase 3 — large array, stride-16B access (one word per cache line):
+#     Same total data, but every access touches a new cache line.
+#     Miss rate equals miss rate of phase 2; useful bytes per miss is 4/16 = 25%.
+#
+# How to use:
+#   1. Open Cache tab → Stats.
+#   2. Click [Reset] to clear counters.
+#   3. Press Enter in the console to start the phase.
+#   4. Compare hit%, miss count, and bytes transferred across phases.
+
 .data
-title:          .asciz "CACHE: Localidade (D-cache)"
-phase1:         .asciz "FASE 1: Array pequeno (cabe no D-cache)."
-phase2:         .asciz "FASE 2: Array grande, acesso sequencial (capacidade > cache)."
-phase3:         .asciz "FASE 3: Array grande, stride = 16B (1 acesso por linha)."
-howto_reset:    .asciz "Na aba Cache -> Stats, use [Reset] e depois aperte Enter aqui."
-sum_prefix:     .asciz "Soma (ignore o valor): "
-done:           .asciz "Fim."
-
-wait_buf:       .space 64
+title:       .asciz "CACHE: Access locality (D-cache)"
+phase1:      .asciz "Phase 1: small array (fits in cache)."
+phase2:      .asciz "Phase 2: large array, sequential access."
+phase3:      .asciz "Phase 3: large array, stride = 16 B (one word per line)."
+howto:       .asciz "Reset Cache -> Stats, then press Enter."
+sum_prefix:  .asciz "Sum (ignore value): "
+done:        .asciz "Done."
+wbuf:        .space 64
 
 .align 16
-small:          .space 256      # 64 words  (256 B)  -> tende a caber no D-cache default (1 KB)
+small: .space 256           # 64 words  (256 B)  — fits in 1 KB default D-cache
 .align 16
-large:          .space 4096     # 1024 words (4 KB)  -> maior que o D-cache default
+large: .space 4096          # 1024 words (4 KB)  — larger than default D-cache
 
 .text
-    # Preenche os arrays com valores simples (para o acesso não ser trivial).
-    la a0, small
-    li a1, 64
+    # Fill both arrays with sequential values so loads are non-trivial
+    la   a0, small
+    li   a1, 64
     call fill_seq
-    la a0, large
-    li a1, 1024
+    la   a0, large
+    li   a1, 1024
     call fill_seq
 
     printStrLn title
 
-    # --- Fase 1: pequeno (warm + medir hits) ---
+    # ── Phase 1: small array ─────────────────────────────────────────────────
     printStrLn phase1
-    printStrLn howto_reset
-    read wait_buf
+    printStrLn howto
+    read wbuf
 
-    # Warm-up (carrega linhas no cache)
-    la a0, small
-    li a1, 64
-    li a2, 1
+    la   a0, small          # warm-up pass: bring all lines into cache
+    li   a1, 64
+    li   a2, 1
     call scan_seq
 
-    # Medição: com cache "quente", após Reset de stats o hit% tende a ~100%
-    printStrLn howto_reset
-    read wait_buf
+    printStrLn howto        # reset stats, then measure "hot" accesses
+    read wbuf
 
-    la a0, small
-    li a1, 64
-    li a2, 200
+    la   a0, small
+    li   a1, 64
+    li   a2, 200
     call scan_seq
-    printStr sum_prefix
-    print s0
+    li   a7, 1001
+    la   a0, sum_prefix
+    ecall
+    li   a7, 1000
+    mv   a0, s0
+    ecall
+    li   a7, 1008
+    ecall
 
-    # --- Fase 2: grande, sequencial ---
+    # ── Phase 2: large array, sequential ─────────────────────────────────────
     printStrLn phase2
-    printStrLn howto_reset
-    read wait_buf
+    printStrLn howto
+    read wbuf
 
-    la a0, large
-    li a1, 1024
-    li a2, 40
+    la   a0, large
+    li   a1, 1024
+    li   a2, 40
     call scan_seq
-    printStr sum_prefix
-    print s0
+    li   a7, 1001
+    la   a0, sum_prefix
+    ecall
+    li   a7, 1000
+    mv   a0, s0
+    ecall
+    li   a7, 1008
+    ecall
 
-    # --- Fase 3: grande, stride 16B (pouca localidade espacial) ---
+    # ── Phase 3: large array, stride 16 B ────────────────────────────────────
     printStrLn phase3
-    printStrLn howto_reset
-    read wait_buf
+    printStrLn howto
+    read wbuf
 
-    la a0, large
-    li a1, 4096     # total bytes
-    li a2, 16       # stride bytes
-    li a3, 80       # passes
+    la   a0, large
+    li   a1, 4096           # total bytes
+    li   a2, 16             # stride in bytes (= one full cache line)
+    li   a3, 80             # passes
     call scan_stride
-    printStr sum_prefix
-    print s0
+    li   a7, 1001
+    la   a0, sum_prefix
+    ecall
+    li   a7, 1000
+    mv   a0, s0
+    ecall
+    li   a7, 1008
+    ecall
 
     printStrLn done
-    li a0, 0
-    li a7, 93        # exit
+    li   a0, 0
+    li   a7, 93
     ecall
 
 
-# fill_seq(a0=base, a1=count_words)
+# fill_seq(a0=base, a1=word_count) — writes arr[i] = i
 fill_seq:
     push ra
     push s1
     push s2
-
     mv   s1, a0
     mv   s2, a1
     li   t0, 0
@@ -93,25 +129,22 @@ fill_loop:
     sw   t0, 0(t1)
     addi t0, t0, 1
     blt  t0, s2, fill_loop
-
     pop  s2
     pop  s1
     pop  ra
     ret
 
 
-# scan_seq(a0=base, a1=count_words, a2=passes) -> s0 = soma
+# scan_seq(a0=base, a1=word_count, a2=passes) → s0 = sum
 scan_seq:
     push ra
     push s1
     push s2
     push s3
-
     mv   s1, a0
     mv   s2, a1
     mv   s3, a2
     li   s0, 0
-
 pass_loop:
     li   t0, 0
 scan_loop:
@@ -121,10 +154,8 @@ scan_loop:
     add  s0, s0, t2
     addi t0, t0, 1
     blt  t0, s2, scan_loop
-
     addi s3, s3, -1
     bne  s3, zero, pass_loop
-
     pop  s3
     pop  s2
     pop  s1
@@ -132,36 +163,31 @@ scan_loop:
     ret
 
 
-# scan_stride(a0=base, a1=total_bytes, a2=stride_bytes, a3=passes) -> s0 = soma
+# scan_stride(a0=base, a1=total_bytes, a2=stride_bytes, a3=passes) → s0 = sum
 scan_stride:
     push ra
     push s1
     push s2
     push s3
     push s4
-
     mv   s1, a0
     mv   s2, a1
     mv   s3, a2
     mv   s4, a3
     li   s0, 0
-
 stride_pass:
     mv   t0, s1
-    add  t1, s1, s2    # end = base + total_bytes
+    add  t1, s1, s2         # end = base + total_bytes
 stride_loop:
     lw   t2, 0(t0)
     add  s0, s0, t2
-    add  t0, t0, s3
+    add  t0, t0, s3         # advance by stride
     blt  t0, t1, stride_loop
-
     addi s4, s4, -1
     bne  s4, zero, stride_pass
-
     pop  s4
     pop  s3
     pop  s2
     pop  s1
     pop  ra
     ret
-

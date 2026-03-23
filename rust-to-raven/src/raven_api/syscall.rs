@@ -384,14 +384,15 @@ pub fn read_float(dst: *mut f32) {
     }
 }
 
-/// Print f32 in fa0 to console (no newline). — syscall 1015
+/// Print f32 to console (no newline). — syscall 1015
+/// The bit pattern of `v` is passed in a0; Raven reinterprets it as f32.
 #[inline(always)]
 pub fn print_float(v: f32) {
     unsafe {
         core::arch::asm!(
             "ecall",
             in("a7") 1015_u32,
-            in("fa0") v,
+            in("a0") v.to_bits(),
         );
     }
 }

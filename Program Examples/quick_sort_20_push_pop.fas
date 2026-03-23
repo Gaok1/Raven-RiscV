@@ -1,37 +1,52 @@
+# quick_sort_20_push_pop.fas — Quicksort (recursive, Lomuto partition scheme)
+#
+# Sorts 20 integers using the classic recursive quicksort.
+# Pivot = arr[hi] (last element of the range).
+#
+# Demonstrates deep recursion with push/pop pseudo-instructions to preserve
+# callee-saved registers (s0..s5) and ra across recursive calls.
+#
+# Average O(n log n); worst case O(n^2) on already-sorted input.
+
 .data
 arr: .word 33, 12, 7, 25, 9, 13, 5, 1, 44, 3, 18, 2, 29, 8, 21, 6, 10, 17, 14, 4
-msg: .asciz "Quicksort (20 elements) - recursise "
-nl:  .byte 10, 0
+lbl: .asciz "Sorted: "
+sp2: .asciz " "
 
 .text
-    printStrLn msg
+    printStrLn lbl
 
-    la a0, arr
-    li a1, 0
-    li a2, 19
+    la   a0, arr
+    li   a1, 0
+    li   a2, 19
     call quicksort
 
-    # Print sorted array (one per line)
-    la t0, arr
-    li t4, 20
-    li t1, 0
+    # Print sorted array space-separated
+    la   t0, arr
+    li   t4, 20
+    li   t1, 0
 print_loop:
     slli t2, t1, 2
     add  t2, t0, t2
-    lw   t3, 0(t2)
-    print t3
-    printStr nl
+    lw   a0, 0(t2)
+    li   a7, 1000
+    ecall
+    li   a7, 1001
+    la   a0, sp2
+    ecall
     addi t1, t1, 1
     blt  t1, t4, print_loop
+    li   a7, 1008
+    ecall
 
-    li a0, 0
-    li a7, 93      # exit
+    li   a0, 0
+    li   a7, 93
     ecall
 
 
 # quicksort(a0=base, a1=lo, a2=hi)
 quicksort:
-    bge a1, a2, qs_done
+    bge  a1, a2, qs_done    # base case: empty or single-element range
 
     push ra
     push s1
@@ -39,39 +54,37 @@ quicksort:
     push s3
     push s4
 
-    mv s1, a0      # base
-    mv s2, a1      # lo
-    mv s3, a2      # hi
+    mv   s1, a0             # s1 = array base pointer
+    mv   s2, a1             # s2 = lo
+    mv   s3, a2             # s3 = hi
 
-    mv a0, s1
-    mv a1, s2
-    mv a2, s3
+    mv   a0, s1
+    mv   a1, s2
+    mv   a2, s3
     call partition
-    mv s4, a0      # pivotIndex
+    mv   s4, a0             # s4 = pivot final index
 
-    # quicksort(base, lo, pivotIndex-1)
-    mv a0, s1
-    mv a1, s2
+    mv   a0, s1             # sort left half: [lo, pivot-1]
+    mv   a1, s2
     addi a2, s4, -1
     call quicksort
 
-    # quicksort(base, pivotIndex+1, hi)
-    mv a0, s1
+    mv   a0, s1             # sort right half: [pivot+1, hi]
     addi a1, s4, 1
-    mv a2, s3
+    mv   a2, s3
     call quicksort
 
-    pop s4
-    pop s3
-    pop s2
-    pop s1
-    pop ra
-
+    pop  s4
+    pop  s3
+    pop  s2
+    pop  s1
+    pop  ra
 qs_done:
     ret
 
 
-# partition(a0=base, a1=lo, a2=hi) -> a0 = pivotIndex
+# partition(a0=base, a1=lo, a2=hi) → a0 = pivot final index
+# Lomuto scheme: pivot = arr[hi]; all elements <= pivot go left.
 partition:
     push ra
     push s0
@@ -81,66 +94,62 @@ partition:
     push s4
     push s5
 
-    mv s1, a0      # base
-    mv s2, a1      # lo
-    mv s3, a2      # hi
+    mv   s1, a0             # s1 = base
+    mv   s2, a1             # s2 = lo
+    mv   s3, a2             # s3 = hi
 
-    # pivot = arr[hi]
+    # Load pivot = arr[hi]
     slli t0, s3, 2
     add  t0, s1, t0
-    lw   s0, 0(t0)
+    lw   s0, 0(t0)          # s0 = pivot value
 
-    addi s4, s2, -1 # i = lo - 1
-    mv   s5, s2     # j = lo
+    addi s4, s2, -1         # i = lo-1 (boundary of "small" partition)
+    mv   s5, s2             # j = lo
 
 part_loop:
-    bge  s5, s3, part_done   # while (j < hi)
+    bge  s5, s3, part_done  # j < hi
 
-    # t1 = &arr[j]
     slli t1, s5, 2
     add  t1, s1, t1
-    lw   t2, 0(t1)           # t2 = arr[j]
+    lw   t2, 0(t1)          # arr[j]
 
-    # if (arr[j] > pivot) skip
-    blt  s0, t2, skip_swap
+    blt  s0, t2, skip_swap  # arr[j] > pivot: leave in right partition
 
-    addi s4, s4, 1           # i++
-    beq  s4, s5, skip_swap   # i == j => no swap
+    addi s4, s4, 1          # i++
+    beq  s4, s5, skip_swap  # i == j: no swap needed
 
-    # t3 = &arr[i]
     slli t3, s4, 2
     add  t3, s1, t3
-    lw   t4, 0(t3)           # t4 = arr[i]
-
-    sw   t2, 0(t3)           # arr[i] = arr[j]
-    sw   t4, 0(t1)           # arr[j] = old arr[i]
+    lw   t4, 0(t3)          # arr[i]
+    sw   t2, 0(t3)          # arr[i] = arr[j]
+    sw   t4, 0(t1)          # arr[j] = old arr[i]
 
 skip_swap:
     addi s5, s5, 1
     j    part_loop
 
 part_done:
-    addi t0, s4, 1           # pivotIndex = i + 1
+    addi t0, s4, 1          # pivot final position = i+1
 
-    # swap arr[pivotIndex] <-> arr[hi]
+    # Place pivot at its final position: swap arr[i+1] <-> arr[hi]
     slli t1, t0, 2
     add  t1, s1, t1
-    lw   t2, 0(t1)           # arr[pivotIndex]
+    lw   t2, 0(t1)
 
     slli t3, s3, 2
     add  t3, s1, t3
-    lw   t4, 0(t3)           # arr[hi]
+    lw   t4, 0(t3)
 
     sw   t4, 0(t1)
     sw   t2, 0(t3)
 
-    mv a0, t0
+    mv   a0, t0             # return pivot index
 
-    pop s5
-    pop s4
-    pop s3
-    pop s2
-    pop s1
-    pop s0
-    pop ra
+    pop  s5
+    pop  s4
+    pop  s3
+    pop  s2
+    pop  s1
+    pop  s0
+    pop  ra
     ret

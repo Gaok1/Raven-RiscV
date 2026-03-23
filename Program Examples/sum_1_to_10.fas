@@ -1,21 +1,79 @@
+# sum_1_to_10.fas — Gauss formula vs iterative loop, measured with instruction counters
+#
+# Both methods compute 1+2+...+10 = 55.
+# get_instr_count (syscall 1030) brackets each computation so you can compare
+# how many instructions each approach actually executes.
+#
+#   Gauss:  S = n*(n+1)/2  — O(1), about 4 instructions
+#   Loop:   accumulate i   — O(n), about 5*n instructions
+
 .data
-msg: .asciz "Sum 1..10: "
+lbl_gauss:  .asciz "Gauss  result="
+lbl_loop:   .asciz "Loop   result="
+lbl_cost:   .asciz "  instrs="
 
 .text
-    # print label
-    printStr msg
-    # sum = 0, i = 1, n = 10
-    li s0, 0
-    li t0, 1
-    li t1, 10
-    addi t2, t1, 1   # limit = n + 1
-loop:
-    add  s0, s0, t0  # sum += i
-    addi t0, t0, 1   # i++
-    blt  t0, t2, loop
-    # print result
-    print s0
-    li a0, 0
-    li a7, 93      # exit
+    li   s0, 10             # n = 10
+
+    # ── Gauss O(1) ────────────────────────────────────────────────────────────
+    li   a7, 1030
+    ecall
+    mv   s1, a0             # s1 = instruction count before
+
+    addi t0, s0, 1          # t0 = n+1
+    mul  t0, s0, t0         # t0 = n*(n+1)
+    srli s2, t0, 1          # s2 = n*(n+1)/2  (exact because one of n, n+1 is even)
+
+    li   a7, 1030
+    ecall
+    sub  s3, a0, s1         # s3 = instructions used
+
+    li   a7, 1001           # print_str
+    la   a0, lbl_gauss
+    ecall
+    li   a7, 1000           # print_int
+    mv   a0, s2
+    ecall
+    li   a7, 1001
+    la   a0, lbl_cost
+    ecall
+    li   a7, 1000
+    mv   a0, s3
+    ecall
+    li   a7, 1008           # print_newline
     ecall
 
+    # ── Iterative O(n) ────────────────────────────────────────────────────────
+    li   a7, 1030
+    ecall
+    mv   s1, a0
+
+    li   s2, 0              # sum = 0
+    li   t0, 1              # i = 1
+iter_loop:
+    add  s2, s2, t0         # sum += i
+    addi t0, t0, 1
+    ble  t0, s0, iter_loop  # while i <= n
+
+    li   a7, 1030
+    ecall
+    sub  s3, a0, s1
+
+    li   a7, 1001
+    la   a0, lbl_loop
+    ecall
+    li   a7, 1000
+    mv   a0, s2
+    ecall
+    li   a7, 1001
+    la   a0, lbl_cost
+    ecall
+    li   a7, 1000
+    mv   a0, s3
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

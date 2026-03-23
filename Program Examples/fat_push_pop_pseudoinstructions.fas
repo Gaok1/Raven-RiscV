@@ -1,27 +1,62 @@
-.text
-  li a0, 5
-  call fat
-  call end
+# fat_push_pop_pseudoinstructions.fas — Recursive factorial with push/pop pseudos
+#
+# Reads N from stdin (valid range: 1..12; 13! overflows 32 bits).
+# Uses Raven push/pop pseudo-instructions — each expands to:
+#   push rs  →  addi sp, sp, -4  /  sw rs, 0(sp)
+#   pop  rd  →  lw  rd, 0(sp)   /  addi sp, sp, 4
+#
+# Recursive definition: n! = n * (n-1)!,  base case: n < 2 → 1
+#
+# Compare with fatorial.fas (iterative, raw stack) to see both styles.
 
-#args a0 number to calculate fatorial
-#returns s0 fat(a0)
-fat:
-    li t0,2
-    blt a0,t0, minFat
-    push ra
-    push a0
-    #fat(n-1)
-    addi a0,a0,-1
-    call fat
-    # s0 * a0(stack)
-    pop a0
-    pop ra
-    mul s0, a0,s0    
-    ret
-    minFat:
-        li s0,1
-        ret
-end:
-    li a0, 0
-    li a7, 93      # exit
+.data
+prompt:  .asciz "n (1..12): "
+lbl_out: .asciz "n! = "
+n_buf:   .space 4
+
+.text
+    li   a7, 1001
+    la   a0, prompt
     ecall
+    la   a0, n_buf
+    li   a7, 1013           # read_int
+    ecall
+
+    la   t0, n_buf
+    lw   a0, 0(t0)
+    call factorial
+
+    li   a7, 1001
+    la   a0, lbl_out
+    ecall
+    li   a7, 1000
+    mv   a0, s0
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall
+
+
+# factorial(a0=n) → s0 = n!
+# Recursive: saves ra and n on the stack, recurses on n-1, then multiplies.
+factorial:
+    li   t0, 2
+    blt  a0, t0, fact_base  # n < 2: return 1
+
+    push ra                 # save return address before the recursive call
+    push a0                 # save n (will need it for the multiplication)
+
+    addi a0, a0, -1         # a0 = n-1
+    call factorial          # s0 = (n-1)!
+
+    pop  a0                 # restore n
+    pop  ra                 # restore return address
+    mul  s0, s0, a0         # s0 = (n-1)! * n
+    ret
+
+fact_base:
+    li   s0, 1
+    ret

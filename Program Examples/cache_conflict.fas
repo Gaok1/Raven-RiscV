@@ -1,25 +1,44 @@
+# cache_conflict.fas — Cache conflict-miss demonstration
+#
+# Accesses two (Phase A) or three (Phase B) memory lines that map to the
+# SAME cache set under the default config (1 KB capacity / 16 B lines / 2-way).
+#
+# Why they conflict: lines 512 bytes apart share a set because
+#   set_index = (address / line_size) % num_sets
+# With 16 B lines and 64 sets: offset 0, 512, 1024 all land in set 0.
+#
+# Phase A: 2 lines — fits in a 2-way set; both stay resident → high hit rate.
+# Phase B: 3 lines — exceeds 2-way capacity; each access evicts one of the
+#          others → every access is a miss (cache thrashing).
+#
+# How to use:
+#   1. Open the Cache tab → Stats panel.
+#   2. Click [Reset] to clear counters.
+#   3. Press Enter in the console to start the phase.
+#   4. Read hit-rate and miss-rate in Stats.
+
 .data
-title:       .asciz "CACHE: Conflito (mesmo set)"
-phase_a:     .asciz "FASE A: 2 linhas no mesmo set (2-way deve segurar ambas)."
-phase_b:     .asciz "FASE B: 3 linhas no mesmo set (2-way vai thrash -> muitos misses)."
-howto:       .asciz "Dica: Reset em Cache -> Stats e aperte Enter para medir."
-done:        .asciz "Fim."
-wait_buf:    .space 64
+title:   .asciz "CACHE: Conflict misses (same set)"
+phase_a: .asciz "Phase A: 2 lines — 2-way holds both, expect high hit rate."
+phase_b: .asciz "Phase B: 3 lines — 2-way thrashes, expect ~0% hit rate."
+howto:   .asciz "Reset Cache -> Stats, then press Enter."
+done:    .asciz "Done."
+wbuf:    .space 64
 
 .align 16
-buf:         .space 1536     # offsets 0, 512, 1024 (mesmo set no default: 1KB/16B/2-way)
+buf: .space 1536            # offsets 0, 512, 1024 all map to the same cache set
 
 .text
     printStrLn title
 
-    # --- Fase A (2 linhas) ---
+    # ── Phase A: two lines ────────────────────────────────────────────────────
     printStrLn phase_a
     printStrLn howto
-    read wait_buf
+    read wbuf
 
     la   t0, buf
-    addi t1, t0, 0
-    addi t2, t0, 512
+    addi t1, t0, 0          # line 0: buf + 0
+    addi t2, t0, 512        # line 1: buf + 512  (same set)
     li   t3, 20000
 loop_a:
     lw   t4, 0(t1)
@@ -27,12 +46,12 @@ loop_a:
     addi t3, t3, -1
     bne  t3, zero, loop_a
 
-    # --- Fase B (3 linhas) ---
+    # ── Phase B: three lines ──────────────────────────────────────────────────
     printStrLn phase_b
     printStrLn howto
-    read wait_buf
+    read wbuf
 
-    addi t6, t0, 1024
+    addi t6, t0, 1024       # line 2: buf + 1024 (same set → causes thrash)
     li   t3, 20000
 loop_b:
     lw   t4, 0(t1)
@@ -42,7 +61,6 @@ loop_b:
     bne  t3, zero, loop_b
 
     printStrLn done
-    li a0, 0
-    li a7, 93        # exit
+    li   a0, 0
+    li   a7, 93
     ecall
-

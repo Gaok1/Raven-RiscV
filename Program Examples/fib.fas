@@ -1,33 +1,52 @@
+# fib.fas — First 15 Fibonacci numbers, iterative O(n) O(1)-space algorithm
+#
+# F(0)=0  F(1)=1  F(n)=F(n-1)+F(n-2)
+#
+# Two-variable rolling update — no recursion, no stack, no array.
+# Compare with the original recursive version to see the difference in
+# instruction count (visible in the Run tab status bar).
+#
+# Expected output:
+#   0 1 1 2 3 5 8 13 21 34 55 89 144 233 377
 
-li a0, 6
-call fib
-call end
+.data
+lbl_header: .asciz "First 15 Fibonacci numbers:\n"
+sep:        .asciz " "
 
-#args a0 number to calculate fib
-#return s0 fib(a0)
-fib:
-    li t0,1
-    beq a0,t0, one
-    beq a0,zero, zero_label
-        push ra               # push return address
-        addi a0,a0,-1         # n-1
-        push a0               #push n-1
-        call fib              # fib(n-1)
-        pop a0                # pop n-1
-        push s0               # push fib(n-1)
-        addi a0,a0,-1         # a0 = n-2
-        call fib              # fib(n-2)
-        pop s1                # s1 = fib(n-1)
-        add s0,s0,s1          # s0 = fib(n-1) + fib(n-2)
-        pop ra                # pop return address
-        ret
-    one:
-        li s0,1
-        ret
-    zero_label:
-        li s0,0
-        ret
-end:
-    li a0, 0
-    li a7, 93      # exit
+.text
+    # Print header via Linux write
+    li   a0, 1
+    la   a1, lbl_header
+    li   a2, 28
+    li   a7, 64
+    ecall
+
+    li   s0, 0              # F(k)   — current term
+    li   s1, 1              # F(k+1) — next term
+    li   s2, 15             # terms to print
+    li   s3, 0              # i = 0
+
+fib_loop:
+    li   a7, 1000           # print_int
+    mv   a0, s0
+    ecall
+
+    addi s3, s3, 1
+    bge  s3, s2, fib_done
+
+    li   a7, 1001           # print space separator
+    la   a0, sep
+    ecall
+
+    add  t0, s0, s1         # next = current + following
+    mv   s0, s1             # advance: current = following
+    mv   s1, t0             # advance: following = next
+    j    fib_loop
+
+fib_done:
+    li   a7, 1008           # newline
+    ecall
+
+    li   a0, 0
+    li   a7, 93
     ecall

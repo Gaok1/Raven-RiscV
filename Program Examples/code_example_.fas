@@ -1,12 +1,67 @@
-
+# code_example_.fas — FizzBuzz 1..20
+#
+# Classic exercise: for each number 1..20 print —
+#   "FizzBuzz"  if divisible by both 3 and 5
+#   "Fizz"      if divisible by 3 only
+#   "Buzz"      if divisible by 5 only
+#   the number  otherwise
+#
+# Uses remu (RISC-V M-extension unsigned remainder) for divisibility tests.
+# Output via Raven teaching syscalls (1000 print_int, 1001 print_str, 1008 newline).
 
 .data
-data: .word 50,20
+fizzbuzz: .asciz "FizzBuzz"
+fizz:     .asciz "Fizz"
+buzz:     .asciz "Buzz"
 
 .text
+    li   s0, 1              # i = 1
+    li   s1, 20             # limit
 
-la t0,data
-lw t0, 0(t0)
-lw t1,4(t0)
-nop 
-nop
+fizzbuzz_loop:
+    bgt  s0, s1, fb_done
+
+    li   t1, 15
+    remu t0, s0, t1
+    beq  t0, zero, print_fizzbuzz
+
+    li   t1, 3
+    remu t0, s0, t1
+    beq  t0, zero, print_fizz
+
+    li   t1, 5
+    remu t0, s0, t1
+    beq  t0, zero, print_buzz
+
+    li   a7, 1000           # plain number
+    mv   a0, s0
+    ecall
+    j    print_nl
+
+print_fizzbuzz:
+    li   a7, 1001
+    la   a0, fizzbuzz
+    ecall
+    j    print_nl
+
+print_fizz:
+    li   a7, 1001
+    la   a0, fizz
+    ecall
+    j    print_nl
+
+print_buzz:
+    li   a7, 1001
+    la   a0, buzz
+    ecall
+
+print_nl:
+    li   a7, 1008           # newline
+    ecall
+    addi s0, s0, 1
+    j    fizzbuzz_loop
+
+fb_done:
+    li   a0, 0
+    li   a7, 93
+    ecall
