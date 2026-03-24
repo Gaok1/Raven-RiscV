@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::raven_api::syscall::{sys_read, sys_write};
+use crate::raven_api::syscall::{read, write};
 use crate::raven_api::syscall::RavenFD;
 
 // ── Writers ──────────────────────────────────────────────────────────────────
@@ -10,14 +10,14 @@ pub struct StderrWriter;
 
 impl fmt::Write for StdoutWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        unsafe { sys_write(super::syscall::RavenFD::STDOUT, s.as_ptr(), s.len()) };
+        unsafe { write(super::syscall::RavenFD::STDOUT, s.as_ptr(), s.len()) };
         Ok(())
     }
 }
 
 impl fmt::Write for StderrWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        unsafe { sys_write(super::syscall::RavenFD::STDERR, s.as_ptr(), s.len()) };
+        unsafe { write(super::syscall::RavenFD::STDERR, s.as_ptr(), s.len()) };
         Ok(())
     }
 }
@@ -46,7 +46,7 @@ pub fn _read_line(buf: &mut [u8]) -> usize {
     let mut n = 0;
     for slot in buf.iter_mut() {
         let mut byte = 0u8;
-        let ret = unsafe { sys_read(RavenFD::STDIN, &mut byte as *mut u8, 1) };
+        let ret = unsafe { read(RavenFD::STDIN, &mut byte as *mut u8, 1) };
         if ret <= 0 || byte == b'\n' {
             break;
         }

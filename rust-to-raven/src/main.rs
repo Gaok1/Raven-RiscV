@@ -6,14 +6,14 @@ extern crate alloc;
 
 mod raven_api;
 
-use crate::raven_api::syscall::{sys_exit, sys_pause_sim};
+use crate::raven_api::syscall::{exit, pause_sim};
 
 // Guessing game — demonstrates:
 //   read_int!()      parse a signed integer from stdin
 //   rand_range!()    random u32 in [lo, hi)
 //   println!()       formatted output to stdout
 //   eprintln!()      formatted output to stderr (shown in red in Raven)
-//   sys_pause_sim()  freeze execution so you can inspect state in Raven
+//   pause_sim()  freeze execution so you can inspect state in Raven
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
@@ -48,6 +48,6 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    sys_pause_sim(); // inspect registers and memory before exit
-    sys_exit(0);
+    pause_sim(); // inspect registers and memory before exit
+    exit(0);
 }
