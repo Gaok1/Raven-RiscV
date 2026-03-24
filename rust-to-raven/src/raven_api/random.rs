@@ -1,18 +1,18 @@
-use crate::raven_api::syscall::sys_getrandom;
+use crate::raven_api::syscall::getrandom;
 
 // ── Raw random helpers ────────────────────────────────────────────────────────
 
 /// Return a uniformly random `u32` via `getrandom`.
 pub fn rand_u32() -> u32 {
     let mut v = 0u32;
-    unsafe { sys_getrandom(&mut v as *mut u32 as *mut u8, 4, 0) };
+    unsafe { getrandom(&mut v as *mut u32 as *mut u8, 4, 0) };
     v
 }
 
 /// Return a uniformly random byte (0–255).
 pub fn rand_u8() -> u8 {
     let mut v = 0u8;
-    unsafe { sys_getrandom(&mut v as *mut u8, 1, 0) };
+    unsafe { getrandom(&mut v as *mut u8, 1, 0) };
     v
 }
 
