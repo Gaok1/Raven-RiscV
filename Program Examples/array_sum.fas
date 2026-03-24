@@ -1,5 +1,7 @@
-# array_sum.fas — Sum an integer array; output via Linux write + Raven print_int
+# array_sum.fas — Sum a random integer array; output via Linux write + Raven print_int
 #
+# The array is filled at run time via the Linux getrandom(2) syscall,
+# so the sum differs on every execution.
 # Shows how to mix both I/O styles:
 #   - label string printed with Linux write(2) syscall 64
 #   - numeric result printed with Raven print_int syscall 1000
@@ -7,11 +9,35 @@
 # Indexed addressing pattern: addr(arr[i]) = base + i*4
 
 .data
-arr:   .word 10, 20, 30, 40, 50, 60, 70, 80
+arr:   .space 32               # 8 × 4-byte slots, filled at run time
 label: .asciz "Sum = "
 nl:    .byte 10, 0
 
 .text
+    # Linux getrandom(2) — syscall 278:
+    # fills the buffer with cryptographically-secure random bytes from
+    # the kernel CSPRNG.  a0=buf, a1=len (bytes), a2=flags (0 = block
+    # until the entropy pool is seeded; never returns stale data).
+    la   a0, arr
+    li   a1, 32                 # 8 elements × 4 bytes
+    li   a2, 0
+    li   a7, 278
+    ecall
+
+    # Reduce each raw 32-bit word to [1, 50] for a sum that fits in one line.
+    la   t0, arr
+    li   t1, 8
+    li   t2, 0
+reduce_loop:
+    slli t3, t2, 2
+    add  t3, t0, t3
+    lw   t4, 0(t3)
+    remu t4, t4, 50
+    addi t4, t4, 1
+    sw   t4, 0(t3)
+    addi t2, t2, 1
+    blt  t2, t1, reduce_loop
+
     la   t0, arr            # base pointer
     li   t1, 8              # number of elements
     li   s0, 0              # accumulator

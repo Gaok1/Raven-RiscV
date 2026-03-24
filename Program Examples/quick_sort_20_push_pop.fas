@@ -1,7 +1,8 @@
 # quick_sort_20_push_pop.fas — Quicksort (recursive, Lomuto partition scheme)
 #
-# Sorts 20 integers using the classic recursive quicksort.
-# Pivot = arr[hi] (last element of the range).
+# Sorts 20 random integers using the classic recursive quicksort.
+# The array is filled at run time via the Linux getrandom(2) syscall,
+# so input differs on every execution.  Pivot = arr[hi] (last element).
 #
 # Demonstrates deep recursion with push/pop pseudo-instructions to preserve
 # callee-saved registers (s0..s5) and ra across recursive calls.
@@ -9,11 +10,35 @@
 # Average O(n log n); worst case O(n^2) on already-sorted input.
 
 .data
-arr: .word 33, 12, 7, 25, 9, 13, 5, 1, 44, 3, 18, 2, 29, 8, 21, 6, 10, 17, 14, 4
+arr: .space 80                      # 20 × 4-byte slots, filled at run time
 lbl: .asciz "Sorted: "
 sp2: .asciz " "
 
 .text
+    # Linux getrandom(2) — syscall 278:
+    # fills the buffer with cryptographically-secure random bytes from
+    # the kernel CSPRNG.  a0=buf, a1=len (bytes), a2=flags (0 = block
+    # until the entropy pool is seeded; never returns stale data).
+    la   a0, arr
+    li   a1, 80                 # 20 elements × 4 bytes
+    li   a2, 0
+    li   a7, 278
+    ecall
+
+    # Reduce each raw 32-bit word to [1, 100] for readable output.
+    la   t0, arr
+    li   t1, 20
+    li   t2, 0
+reduce_loop:
+    slli t3, t2, 2
+    add  t3, t0, t3
+    lw   t4, 0(t3)
+    remu t4, t4, 100
+    addi t4, t4, 1
+    sw   t4, 0(t3)
+    addi t2, t2, 1
+    blt  t2, t1, reduce_loop
+
     printStrLn lbl
 
     la   a0, arr

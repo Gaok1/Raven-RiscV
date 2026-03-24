@@ -1,14 +1,40 @@
 # max_in_array.fas — Find both minimum and maximum in a single O(n) pass
 #
+# The array is filled at run time via the Linux getrandom(2) syscall,
+# so input differs on every execution.
 # A naive approach uses two separate loops (2n comparisons).
 # This version tracks both extremes simultaneously (n-1 comparisons after init).
 
 .data
-arr:     .word 12, 7, 25, 9, 42, 5, 1, 44, 3, 18
+arr:     .space 40               # 10 × 4-byte slots, filled at run time
 lbl_min: .asciz "min = "
 lbl_max: .asciz "max = "
 
 .text
+    # Linux getrandom(2) — syscall 278:
+    # fills the buffer with cryptographically-secure random bytes from
+    # the kernel CSPRNG.  a0=buf, a1=len (bytes), a2=flags (0 = block
+    # until the entropy pool is seeded; never returns stale data).
+    la   a0, arr
+    li   a1, 40                 # 10 elements × 4 bytes
+    li   a2, 0
+    li   a7, 278
+    ecall
+
+    # Reduce each raw 32-bit word to [1, 100] for readable output.
+    la   t0, arr
+    li   t1, 10
+    li   t2, 0
+reduce_loop:
+    slli t3, t2, 2
+    add  t3, t0, t3
+    lw   t4, 0(t3)
+    remu t4, t4, 100
+    addi t4, t4, 1
+    sw   t4, 0(t3)
+    addi t2, t2, 1
+    blt  t2, t1, reduce_loop
+
     la   t0, arr
     li   t1, 10             # length
 
