@@ -63,6 +63,8 @@ fn main() -> io::Result<()> {
         | Some("run")
         | Some("export-config")
         | Some("import-config")
+        | Some("export-settings")
+        | Some("import-settings")
         | Some("help")
         | Some("--help") | Some("-h")
         | Some("--run")         // legacy
@@ -120,8 +122,10 @@ fn dispatch_subcommand(args: &[String]) -> Result<(), String> {
     match args.get(1).map(String::as_str) {
         Some("build")         => cmd_build(&args[2..]),
         Some("run")           => cmd_run(&args[2..]),
-        Some("export-config") => cmd_export_config(&args[2..]),
-        Some("import-config") => cmd_import_config(&args[2..]),
+        Some("export-config")   => cmd_export_config(&args[2..]),
+        Some("import-config")   => cmd_import_config(&args[2..]),
+        Some("export-settings") => cmd_export_settings(&args[2..]),
+        Some("import-settings") => cmd_import_settings(&args[2..]),
         Some("help") | Some("--help") | Some("-h") => { print_help(); Ok(()) }
 
         // ── Legacy: raven --run <file> [old flags] ────────────────────────
@@ -158,9 +162,11 @@ fn dispatch_subcommand(args: &[String]) -> Result<(), String> {
 
 fn cmd_build(args: &[String]) -> Result<(), String> {
     let file = positional(args)
-        .ok_or("build requires a file argument\n\nUsage: raven build <file> [--out <path>] [--nout]")?;
+        .ok_or("build requires a file argument\n\nUsage: raven build <input> [output] [--nout]")?;
     let nout = has_flag(args, "--nout");
-    let out  = flag_value(args, "--out");
+    // output: --out flag takes priority, then second positional arg
+    let out = flag_value(args, "--out")
+        .or_else(|| positional_nth(args, 1));
     cli::build_program(&file, out.as_deref(), nout)
 }
 
@@ -188,6 +194,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     cli::run_headless(cli::RunArgs {
         file,
         cache_config: flag_value(args, "--cache-config"),
+        settings:     flag_value(args, "--settings"),
         output:       flag_value(args, "--out"),
         nout:         has_flag(args, "--nout"),
         format,
@@ -210,6 +217,20 @@ fn cmd_import_config(args: &[String]) -> Result<(), String> {
     cli::import_config(&file, flag_value(args, "--out").as_deref())
 }
 
+// ── raven export-settings [--out <file>] ─────────────────────────────────────
+
+fn cmd_export_settings(args: &[String]) -> Result<(), String> {
+    cli::export_sim_settings(flag_value(args, "--out").as_deref())
+}
+
+// ── raven import-settings <file> [--out <file>] ──────────────────────────────
+
+fn cmd_import_settings(args: &[String]) -> Result<(), String> {
+    let file = positional(args)
+        .ok_or("import-settings requires a file argument\n\nUsage: raven import-settings <file.rcfg> [--out <file>]")?;
+    cli::import_sim_settings(&file, flag_value(args, "--out").as_deref())
+}
+
 // ── Help ─────────────────────────────────────────────────────────────────────
 
 fn print_help() {
@@ -222,13 +243,17 @@ USAGE:
     raven run    <file> [OPTIONS]            Assemble and simulate
     raven export-config [OPTIONS]            Export default cache config (.fcache)
     raven import-config <file> [OPTIONS]     Validate and inspect a .fcache file
+    raven export-settings [OPTIONS]          Export default sim settings (.rcfg)
+    raven import-settings <file> [OPTIONS]   Validate and inspect a .rcfg file
 
 OPTIONS  build:
-    --out <path>                Output .bin file  (default: replaces extension)
+    [output]                    Output .bin file as second positional arg
+    --out <path>                Same as above (takes priority over positional)
     --nout                      Check-only: assemble but don't write any file
 
 OPTIONS  run:
     --cache-config <file>       Load cache hierarchy from .fcache
+    --settings <file>           Load sim settings (CPI, cache_enabled) from .rcfg
     --mem <size>                RAM size, e.g. 16mb, 256kb, 1gb   (default: 16mb)
     --max-cycles <n>            Instruction limit                  (default: 1000000000)
     --out <file>                Write simulation results to file
@@ -241,16 +266,26 @@ OPTIONS  export-config:
 OPTIONS  import-config:
     --out <file>                Re-export normalized config to this file
 
+OPTIONS  export-settings:
+    --out <file>                Write to file instead of stdout
+
+OPTIONS  import-settings:
+    --out <file>                Re-export normalized settings to this file
+
 EXAMPLES:
     raven build program.fas
+    raven build program.fas out/prog.bin
     raven build program.fas --nout
-    raven build program.fas --out out/prog.bin
     raven run program.fas --nout
     raven run program.fas --out results.json
     raven run program.fas --cache-config l2.fcache --format csv --out stats.csv
+    raven run program.fas --settings my.rcfg --nout
     raven export-config --out default.fcache
     raven import-config my.fcache
     raven import-config my.fcache --out normalized.fcache
+    raven export-settings --out default.rcfg
+    raven import-settings my.rcfg
+    raven import-settings my.rcfg --out normalized.rcfg
 "#
     );
 }
@@ -259,5 +294,10 @@ EXAMPLES:
 
 /// First non-flag argument (positional).
 fn positional(args: &[String]) -> Option<String> {
-    args.iter().find(|a| !a.starts_with('-')).cloned()
+    positional_nth(args, 0)
+}
+
+/// Nth non-flag argument (0-based).
+fn positional_nth(args: &[String], n: usize) -> Option<String> {
+    args.iter().filter(|a| !a.starts_with('-')).nth(n).cloned()
 }

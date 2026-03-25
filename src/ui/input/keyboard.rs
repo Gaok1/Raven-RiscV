@@ -758,6 +758,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 return Ok(false);
             }
 
+            // Sim settings export/import (Ctrl+E / Ctrl+L) — available on Config tab
+            if ctrl && matches!(key.code, KeyCode::Char('e')) && matches!(app.tab, Tab::Config) {
+                do_export_rcfg(app);
+                return Ok(false);
+            }
+            if ctrl && matches!(key.code, KeyCode::Char('l')) && matches!(app.tab, Tab::Config) {
+                do_import_rcfg(app);
+                return Ok(false);
+            }
+
             // Cache results export (Ctrl+R) — saves .fstats or .csv
             if ctrl && matches!(key.code, KeyCode::Char('r')) && matches!(app.tab, Tab::Cache) {
                 do_export_results(app);
@@ -1358,9 +1368,8 @@ fn serialize_one_config(s: &mut String, prefix: &str, cfg: &CacheConfig) {
     s.push_str(&format!("{prefix}.transfer_width={}\n", cfg.transfer_width));
 }
 
-fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig], cpi: &CpiConfig, cache_enabled: bool) -> String {
+fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig]) -> String {
     let mut s = String::from("# Raven Cache Config v2\n");
-    s.push_str(&format!("cache_enabled={}\n", cache_enabled));
     s.push_str(&format!("levels={}\n", extra.len()));
     serialize_one_config(&mut s, "icache", icfg);
     serialize_one_config(&mut s, "dcache", dcfg);
@@ -1368,7 +1377,13 @@ fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[Cach
         let prefix = level_prefix(i);
         serialize_one_config(&mut s, &prefix, cfg);
     }
-    s.push_str("\n# --- CPI Config ---\n");
+    s
+}
+
+fn serialize_rcfg(cpi: &CpiConfig, cache_enabled: bool) -> String {
+    let mut s = String::from("# Raven Sim Config v1\n");
+    s.push_str(&format!("cache_enabled={}\n", cache_enabled));
+    s.push_str("\n# CPI (cycles per instruction)\n");
     s.push_str(&format!("cpi.alu={}\n", cpi.alu));
     s.push_str(&format!("cpi.mul={}\n", cpi.mul));
     s.push_str(&format!("cpi.div={}\n", cpi.div));
@@ -1382,42 +1397,15 @@ fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[Cach
     s
 }
 
-/// Returns prefix like "l2", "l3", etc. for extra_level index i (0-based → L2, L3, …)
-fn level_prefix(i: usize) -> String {
-    format!("l{}", i + 2)
-}
-
-fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>, CpiConfig, bool), String> {
-    let mut map: HashMap<String, String> = HashMap::new();
+fn parse_rcfg(text: &str) -> Result<(CpiConfig, bool), String> {
+    let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for line in text.lines() {
         let line = line.trim();
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
+        if line.starts_with('#') || line.is_empty() { continue; }
         if let Some((k, v)) = line.split_once('=') {
             map.insert(k.trim().to_ascii_lowercase(), v.trim().to_ascii_lowercase());
         }
     }
-    let icfg = parse_single_config(&map, "icache")?;
-    let dcfg = parse_single_config(&map, "dcache")?;
-
-    // Read number of extra levels (v2 format); default 0 for v1
-    let n_extra: usize = map.get("levels")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-
-    let mut extra = Vec::with_capacity(n_extra);
-    let presets = extra_level_presets();
-    for i in 0..n_extra {
-        let prefix = level_prefix(i);
-        // If prefix keys are present, parse them; otherwise use a default preset
-        if map.contains_key(&format!("{prefix}.size")) {
-            extra.push(parse_single_config(&map, &prefix)?);
-        } else {
-            extra.push(presets[1].clone()); // medium preset as fallback
-        }
-    }
-
     let cpi = CpiConfig {
         alu:              map.get("cpi.alu").and_then(|v| v.parse().ok()).unwrap_or(1),
         mul:              map.get("cpi.mul").and_then(|v| v.parse().ok()).unwrap_or(3),
@@ -1430,12 +1418,40 @@ fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<Cach
         system:           map.get("cpi.system").and_then(|v| v.parse().ok()).unwrap_or(10),
         fp:               map.get("cpi.fp").and_then(|v| v.parse().ok()).unwrap_or(5),
     };
+    let cache_enabled = map.get("cache_enabled").map(|v| v != "false").unwrap_or(true);
+    Ok((cpi, cache_enabled))
+}
 
-    let cache_enabled = map.get("cache_enabled")
-        .map(|v| v != "false")
-        .unwrap_or(true);
+/// Returns prefix like "l2", "l3", etc. for extra_level index i (0-based → L2, L3, …)
+fn level_prefix(i: usize) -> String {
+    format!("l{}", i + 2)
+}
 
-    Ok((icfg, dcfg, extra, cpi, cache_enabled))
+fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>), String> {
+    let mut map: HashMap<String, String> = HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() { continue; }
+        if let Some((k, v)) = line.split_once('=') {
+            map.insert(k.trim().to_ascii_lowercase(), v.trim().to_ascii_lowercase());
+        }
+    }
+    let icfg = parse_single_config(&map, "icache")?;
+    let dcfg = parse_single_config(&map, "dcache")?;
+
+    let n_extra: usize = map.get("levels").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let mut extra = Vec::with_capacity(n_extra);
+    let presets = extra_level_presets();
+    for i in 0..n_extra {
+        let prefix = level_prefix(i);
+        if map.contains_key(&format!("{prefix}.size")) {
+            extra.push(parse_single_config(&map, &prefix)?);
+        } else {
+            extra.push(presets[1].clone());
+        }
+    }
+
+    Ok((icfg, dcfg, extra))
 }
 
 fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<CacheConfig, String> {
@@ -1569,8 +1585,6 @@ pub(super) fn do_export_cfg(app: &mut App) {
         &app.cache.pending_icache,
         &app.cache.pending_dcache,
         &app.cache.extra_pending,
-        &app.run.cpi_config,
-        app.run.cache_enabled,
     );
     if let Some(path) = OSFileDialog::new()
         .add_filter("Cache Config", &["fcache"])
@@ -1602,7 +1616,7 @@ pub(super) fn do_import_cfg(app: &mut App) {
     {
         match std::fs::read_to_string(&path) {
             Ok(text) => match parse_cache_configs(&text) {
-                Ok((icfg, dcfg, extra, cpi, cache_enabled)) => {
+                Ok((icfg, dcfg, extra)) => {
                     app.cache.pending_icache = icfg;
                     app.cache.pending_dcache = dcfg;
                     let n_extra = extra.len();
@@ -1613,9 +1627,6 @@ pub(super) fn do_import_cfg(app: &mut App) {
                     }
                     app.cache.hover_level = vec![false; n_extra + 1];
                     if app.cache.selected_level > n_extra { app.cache.selected_level = n_extra; }
-                    app.run.cpi_config = cpi;
-                    app.run.cache_enabled = cache_enabled;
-                    app.run.mem.bypass = !cache_enabled;
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",
@@ -1634,6 +1645,63 @@ pub(super) fn do_import_cfg(app: &mut App) {
         }
     } else {
         open_path_input(app, PathInputAction::OpenFcache);
+    }
+}
+
+pub(super) fn do_export_rcfg(app: &mut App) {
+    let text = serialize_rcfg(&app.run.cpi_config, app.run.cache_enabled);
+    if let Some(path) = OSFileDialog::new()
+        .add_filter("Raven Sim Config", &["rcfg"])
+        .set_file_name("settings.rcfg")
+        .save_file()
+    {
+        match std::fs::write(&path, &text) {
+            Ok(()) => {
+                app.cache.config_error = None;
+                app.cache.config_status = Some(format!(
+                    "Settings exported to {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+            }
+            Err(e) => {
+                app.cache.config_status = None;
+                app.cache.config_error = Some(format!("Export failed: {e}"));
+            }
+        }
+    } else {
+        open_path_input(app, PathInputAction::SaveRcfg);
+    }
+}
+
+pub(super) fn do_import_rcfg(app: &mut App) {
+    if let Some(path) = OSFileDialog::new()
+        .add_filter("Raven Sim Config", &["rcfg"])
+        .pick_file()
+    {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => match parse_rcfg(&text) {
+                Ok((cpi, cache_enabled)) => {
+                    app.run.cpi_config = cpi;
+                    app.run.cache_enabled = cache_enabled;
+                    app.run.mem.bypass = !cache_enabled;
+                    app.cache.config_error = None;
+                    app.cache.config_status = Some(format!(
+                        "Settings imported from {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ));
+                }
+                Err(msg) => {
+                    app.cache.config_status = None;
+                    app.cache.config_error = Some(format!("Import failed: {msg}"));
+                }
+            },
+            Err(e) => {
+                app.cache.config_status = None;
+                app.cache.config_error = Some(format!("Import failed: {e}"));
+            }
+        }
+    } else {
+        open_path_input(app, PathInputAction::OpenRcfg);
     }
 }
 
@@ -2012,7 +2080,7 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
         PathInputAction::OpenFcache => {
             match std::fs::read_to_string(&path) {
                 Ok(text) => match parse_cache_configs(&text) {
-                    Ok((icfg, dcfg, extra, cpi, cache_enabled)) => {
+                    Ok((icfg, dcfg, extra)) => {
                         let n_extra = extra.len();
                         app.cache.pending_icache = icfg;
                         app.cache.pending_dcache = dcfg;
@@ -2023,9 +2091,6 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
                         }
                         app.cache.hover_level = vec![false; n_extra + 1];
                         if app.cache.selected_level > n_extra { app.cache.selected_level = n_extra; }
-                        app.run.cpi_config = cpi;
-                        app.run.cache_enabled = cache_enabled;
-                        app.run.mem.bypass = !cache_enabled;
                         app.cache.config_error = None;
                         app.cache.config_status = Some(format!("Imported from {}", path.file_name().unwrap_or_default().to_string_lossy()));
                     }
@@ -2041,11 +2106,45 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
             }
         }
         PathInputAction::SaveFcache => {
-            let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending, &app.run.cpi_config, app.run.cache_enabled);
+            let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending);
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!("Exported to {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                }
+                Err(e) => {
+                    app.cache.config_status = None;
+                    app.cache.config_error = Some(format!("Export failed: {e}"));
+                }
+            }
+        }
+        PathInputAction::OpenRcfg => {
+            match std::fs::read_to_string(&path) {
+                Ok(text) => match parse_rcfg(&text) {
+                    Ok((cpi, cache_enabled)) => {
+                        app.run.cpi_config = cpi;
+                        app.run.cache_enabled = cache_enabled;
+                        app.run.mem.bypass = !cache_enabled;
+                        app.cache.config_error = None;
+                        app.cache.config_status = Some(format!("Settings imported from {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                    }
+                    Err(msg) => {
+                        app.cache.config_status = None;
+                        app.cache.config_error = Some(format!("Import failed: {msg}"));
+                    }
+                },
+                Err(e) => {
+                    app.cache.config_status = None;
+                    app.cache.config_error = Some(format!("Import failed: {e}"));
+                }
+            }
+        }
+        PathInputAction::SaveRcfg => {
+            let text = serialize_rcfg(&app.run.cpi_config, app.run.cache_enabled);
+            match std::fs::write(&path, &text) {
+                Ok(()) => {
+                    app.cache.config_error = None;
+                    app.cache.config_status = Some(format!("Settings exported to {}", path.file_name().unwrap_or_default().to_string_lossy()));
                 }
                 Err(e) => {
                     app.cache.config_status = None;

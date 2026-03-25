@@ -708,6 +708,8 @@ pub(super) enum PathInputAction {
     SaveBin,
     OpenFcache,
     SaveFcache,
+    OpenRcfg,
+    SaveRcfg,
     SaveResults,
 }
 
