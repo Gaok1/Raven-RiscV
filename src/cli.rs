@@ -11,6 +11,8 @@ use crate::ui::Console;
 pub struct RunArgs {
     pub file: String,
     pub cache_config: Option<String>,
+    /// Path to a `.rcfg` sim-settings file (CPI + cache_enabled).
+    pub settings: Option<String>,
     pub output: Option<String>,
     /// When true, simulation stats are not written/printed (program stdout still shown).
     pub nout: bool,
@@ -115,9 +117,19 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         cfg.validate().map_err(|e| format!("L{} cache config error: {e}", i + 2))?;
     }
 
-    // ── 2. Set up simulation ─────────────────────────────────────────────────
+    // ── 2. Apply sim settings (.rcfg) ────────────────────────────────────────
+    let cache_enabled = if let Some(path) = &args.settings {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("Cannot read settings '{}': {e}", path))?;
+        parse_rcfg_cli(&text)?
+    } else {
+        true // default: cache enabled
+    };
+
+    // ── 3. Set up simulation ─────────────────────────────────────────────────
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(icfg, dcfg, extra_cfgs, args.mem_size);
+    mem.bypass = !cache_enabled;
     let mut console = Console::default();
 
     // SP = top of RAM
@@ -221,6 +233,82 @@ pub fn export_default_config(output: Option<&str>) -> Result<(), String> {
             .map_err(|e| format!("Cannot write '{}': {e}", path)),
         None => { print!("{text}"); Ok(()) }
     }
+}
+
+// ── raven export-settings / import-settings ───────────────────────────────────
+
+/// Default `.rcfg` content (same defaults as the TUI).
+fn default_rcfg_text() -> String {
+    let mut s = String::from("# Raven Sim Config v1\ncache_enabled=true\n\n# CPI (cycles per instruction)\n");
+    s.push_str("cpi.alu=1\ncpi.mul=3\ncpi.div=20\ncpi.load=0\ncpi.store=0\n");
+    s.push_str("cpi.branch_taken=3\ncpi.branch_not_taken=1\ncpi.jump=2\ncpi.system=10\ncpi.fp=5\n");
+    s
+}
+
+/// Serialize the default sim settings to a `.rcfg` file.
+pub fn export_sim_settings(output: Option<&str>) -> Result<(), String> {
+    let text = default_rcfg_text();
+    match output {
+        Some(path) => std::fs::write(path, &text)
+            .map_err(|e| format!("Cannot write '{}': {e}", path)),
+        None => { print!("{text}"); Ok(()) }
+    }
+}
+
+/// Parse and validate a `.rcfg` file, print a human-readable summary.
+/// Optionally re-export the normalized settings to `output`.
+pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), String> {
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| format!("cannot read '{}': {e}", file))?;
+    let mut cache_enabled = true;
+    let mut kv: HashMap<String, String> = HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        if let Some((k, v)) = line.split_once('=') {
+            kv.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+    if let Some(v) = kv.get("cache_enabled") {
+        cache_enabled = v == "true";
+    }
+    let cpi_keys = ["alu","mul","div","load","store","branch_taken","branch_not_taken","jump","system","fp"];
+    let defaults = [1u64,3,20,0,0,3,1,2,10,5];
+    eprintln!("{}: valid", file);
+    eprintln!("  cache_enabled = {}", cache_enabled);
+    for (key, def) in cpi_keys.iter().zip(defaults.iter()) {
+        let val: u64 = kv.get(&format!("cpi.{}", key))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(*def);
+        eprintln!("  cpi.{:<20} = {}", key, val);
+    }
+    if let Some(out) = output {
+        // Re-serialize with parsed values
+        let mut out_text = String::from("# Raven Sim Config v1\n");
+        out_text.push_str(&format!("cache_enabled={}\n\n# CPI (cycles per instruction)\n", cache_enabled));
+        for (key, def) in cpi_keys.iter().zip(defaults.iter()) {
+            let val: u64 = kv.get(&format!("cpi.{}", key))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(*def);
+            out_text.push_str(&format!("cpi.{}={}\n", key, val));
+        }
+        std::fs::write(out, out_text)
+            .map_err(|e| format!("Cannot write '{}': {e}", out))?;
+        eprintln!("  → {out}");
+    }
+    Ok(())
+}
+
+/// Parse a `.rcfg` and return `cache_enabled` (only field relevant to headless sim).
+fn parse_rcfg_cli(text: &str) -> Result<bool, String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("cache_enabled=") {
+            let v = line.trim_start_matches("cache_enabled=").trim();
+            return Ok(v == "true");
+        }
+    }
+    Ok(true) // default if not specified
 }
 
 // ── Build helpers ─────────────────────────────────────────────────────────────

@@ -439,6 +439,8 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[Esc]",          "cancel edit"),
                 ("[Tab]",          "confirm edit and move to next field"),
                 ("[click]",        "toggle bool button / start CPI edit"),
+                ("[Ctrl+E]",       "export .rcfg"),
+                ("[Ctrl+L]",       "import .rcfg"),
             ],
         ],
     }
