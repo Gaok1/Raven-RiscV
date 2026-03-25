@@ -153,9 +153,30 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 
 ---
 
+## CLI
+
+Raven can also be used headlessly from the command line — assemble, simulate, export/import configs, and redirect output to files.
+
+```bash
+raven build program.fas                             # assemble
+raven run   program.fas --nout                      # run, suppress stats
+raven run   program.fas --out results.json          # run, save stats
+raven run   program.fas --cache-config l2.fcache \
+                        --settings my.rcfg \
+                        --format csv --out stats.csv
+raven export-config  --out default.fcache           # dump default cache config
+raven export-settings --out default.rcfg            # dump default sim settings
+```
+
+See the **[CLI Reference](docs/cli.md)** for all subcommands and flags.
+
+---
+
 ## Docs
 
 - **Interactive tutorial** — press `[?]` on any tab inside Raven (EN / PT-BR toggle with `[L]`)
+- [CLI Reference (EN)](docs/cli.md) — all subcommands, flags, config file formats
+- [Referência da CLI (PT-BR)](docs/cli.pt-BR.md)
 - [Instruction formats (EN)](docs/format.md) — bit layouts, encoding, pseudo-instructions
 - [Formatos (PT-BR)](docs/format.pt-BR.md)
 - [Cache config file reference](docs/cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
