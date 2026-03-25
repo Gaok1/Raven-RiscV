@@ -1,16 +1,4 @@
-// cli.rs — headless simulation mode
-//
-// Usage:
-//   raven --run <file.asm|file.elf|file.falc>
-//         [--cache-config <file.fcache>]
-//         [--output <file>]
-//         [--format json|fstats|csv]
-//         [--mem 16mb]
-//         [--max-cycles 1000000000]
-//         [--export-config [file]]
-//
-// Outputs simulation analytics (cycles, CPI, cache stats, miss hotspots)
-// to stdout (JSON by default) or a file.
+// cli.rs — headless CLI commands (build, run, export-config, import-config)
 
 use std::collections::HashMap;
 use crate::falcon::{self, Cpu, CacheController};
@@ -18,12 +6,14 @@ use crate::falcon::cache::{CacheConfig, Cache, ReplacementPolicy, WritePolicy, W
 use crate::falcon::program::{load_words, load_bytes, load_elf, zero_bytes};
 use crate::ui::Console;
 
-// ── Public entry point ────────────────────────────────────────────────────────
+// ── Public types ──────────────────────────────────────────────────────────────
 
-pub struct CliArgs {
+pub struct RunArgs {
     pub file: String,
     pub cache_config: Option<String>,
     pub output: Option<String>,
+    /// When true, simulation stats are not written/printed (program stdout still shown).
+    pub nout: bool,
     pub format: OutputFormat,
     pub mem_size: usize,
     pub max_cycles: u64,
@@ -31,7 +21,85 @@ pub struct CliArgs {
 
 pub enum OutputFormat { Json, Fstats, Csv }
 
-pub fn run_headless(args: CliArgs) -> Result<(), String> {
+// ── raven build ───────────────────────────────────────────────────────────────
+
+/// Assemble `file` and optionally write a FALC binary.
+/// `nout = true` → check-only (no output file written).
+pub fn build_program(file: &str, output: Option<&str>, nout: bool) -> Result<(), String> {
+    let src = std::fs::read_to_string(file)
+        .map_err(|e| format!("cannot read '{}': {e}", file))?;
+
+    let prog = crate::falcon::asm::assemble(&src, 0x0)
+        .map_err(|e| {
+            eprintln!("error: {}:{}: {}", file, e.line + 1, e.msg);
+            String::new() // sentinel; we already printed
+        })
+        .map_err(|_| String::new())?; // propagate empty sentinel
+
+    let instr = prog.text.len();
+    let data  = prog.data.len();
+    eprintln!("{}: {} instruction{}, {} data byte{}",
+        file,
+        instr, if instr == 1 { "" } else { "s" },
+        data,  if data  == 1 { "" } else { "s" },
+    );
+
+    if nout { return Ok(()); }
+
+    let out_path = output.map(str::to_string)
+        .unwrap_or_else(|| replace_ext(file, "bin"));
+    write_falc(&prog, &out_path)?;
+    eprintln!("  → {out_path}");
+    Ok(())
+}
+
+// ── raven import-config ───────────────────────────────────────────────────────
+
+/// Parse and validate a .fcache file, print a human-readable summary.
+/// Optionally re-export the normalized config to `output`.
+pub fn import_config(file: &str, output: Option<&str>) -> Result<(), String> {
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| format!("cannot read '{}': {e}", file))?;
+    let (icfg, dcfg, extra) = parse_cache_configs(&text)?;
+
+    icfg.validate().map_err(|e| format!("I-cache config error: {e}"))?;
+    dcfg.validate().map_err(|e| format!("D-cache config error: {e}"))?;
+    for (i, cfg) in extra.iter().enumerate() {
+        cfg.validate().map_err(|e| format!("L{} config error: {e}", i + 2))?;
+    }
+
+    eprintln!("{}: valid — {} cache level{}", file, 1 + extra.len(), if extra.is_empty() { "" } else { "s" });
+    print_config_row("  I-Cache L1", &icfg);
+    print_config_row("  D-Cache L1", &dcfg);
+    for (i, cfg) in extra.iter().enumerate() {
+        print_config_row(&format!("  L{} Unified ", i + 2), cfg);
+    }
+
+    if let Some(out) = output {
+        let normalized = serialize_cache_configs(&icfg, &dcfg, &extra);
+        std::fs::write(out, normalized)
+            .map_err(|e| format!("cannot write '{}': {e}", out))?;
+        eprintln!("  → {out}");
+    }
+    Ok(())
+}
+
+fn print_config_row(label: &str, cfg: &CacheConfig) {
+    eprintln!("  {:<14}  {:>5}KB  {}B lines  {}-way  {:?}/{:?}  lat={} pen={}",
+        label,
+        cfg.size / 1024,
+        cfg.line_size,
+        cfg.associativity,
+        cfg.replacement,
+        cfg.write_policy,
+        cfg.hit_latency,
+        cfg.miss_penalty,
+    );
+}
+
+// ── raven run ────────────────────────────────────────────────────────────────
+
+pub fn run_headless(args: RunArgs) -> Result<(), String> {
     // ── 1. Load cache config ─────────────────────────────────────────────────
     let (icfg, dcfg, extra_cfgs) = if let Some(path) = &args.cache_config {
         let text = std::fs::read_to_string(path)
@@ -124,17 +192,18 @@ pub fn run_headless(args: CliArgs) -> Result<(), String> {
     }
 
     // ── 5. Serialize and output ──────────────────────────────────────────────
-    let exit_code = if faulted { None } else { cpu.exit_code };
-    let text = match args.format {
-        OutputFormat::Json   => format_json(&mem, &file_name, exit_code),
-        OutputFormat::Fstats => format_fstats(&mem, &file_name, exit_code),
-        OutputFormat::Csv    => format_csv(&mem, &file_name),
-    };
-
-    match &args.output {
-        Some(path) => std::fs::write(path, &text)
-            .map_err(|e| format!("Cannot write '{}': {e}", path))?,
-        None => print!("{text}"),
+    if !args.nout {
+        let exit_code = if faulted { None } else { cpu.exit_code };
+        let text = match args.format {
+            OutputFormat::Json   => format_json(&mem, &file_name, exit_code),
+            OutputFormat::Fstats => format_fstats(&mem, &file_name, exit_code),
+            OutputFormat::Csv    => format_csv(&mem, &file_name),
+        };
+        match &args.output {
+            Some(path) => std::fs::write(path, &text)
+                .map_err(|e| format!("Cannot write '{}': {e}", path))?,
+            None => print!("{text}"),
+        }
     }
 
     Ok(())
@@ -152,6 +221,34 @@ pub fn export_default_config(output: Option<&str>) -> Result<(), String> {
             .map_err(|e| format!("Cannot write '{}': {e}", path)),
         None => { print!("{text}"); Ok(()) }
     }
+}
+
+// ── Build helpers ─────────────────────────────────────────────────────────────
+
+/// Write a `Program` as a FALC binary (native Raven format).
+fn write_falc(prog: &crate::falcon::asm::Program, path: &str) -> Result<(), String> {
+    let text_bytes: Vec<u8> = prog.text.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let text_size = text_bytes.len() as u32;
+    let data_size = prog.data.len() as u32;
+    let bss_size  = prog.bss_size;
+
+    let mut bytes: Vec<u8> = Vec::with_capacity(16 + text_bytes.len() + prog.data.len());
+    bytes.extend_from_slice(b"FALC");
+    bytes.extend_from_slice(&text_size.to_le_bytes());
+    bytes.extend_from_slice(&data_size.to_le_bytes());
+    bytes.extend_from_slice(&bss_size.to_le_bytes());
+    bytes.extend_from_slice(&text_bytes);
+    bytes.extend_from_slice(&prog.data);
+
+    std::fs::write(path, bytes)
+        .map_err(|e| format!("cannot write '{}': {e}", path))
+}
+
+fn replace_ext(path: &str, new_ext: &str) -> String {
+    std::path::Path::new(path)
+        .with_extension(new_ext)
+        .to_string_lossy()
+        .to_string()
 }
 
 // ── Loaders ───────────────────────────────────────────────────────────────────
