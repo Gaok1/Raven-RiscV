@@ -357,8 +357,8 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let is_heap_mode = app.run.mem_region == MemRegion::Heap;
     let is_hb = addr == hb_aligned;
 
-    let cache_loc = app.run.mem.data_cache_location(addr);
-    let is_dirty = app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
+    let cache_loc = if app.run.cache_enabled { app.run.mem.data_cache_location(addr) } else { None };
+    let is_dirty  = app.run.cache_enabled && app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
 
     // Check if any recent memory access overlaps this row's byte range
     let row_end = addr.wrapping_add(app.run.mem_view_bytes);

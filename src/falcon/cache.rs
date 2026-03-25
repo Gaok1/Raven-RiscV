@@ -363,6 +363,28 @@ impl Cache {
         }
     }
 
+    /// Write all dirty lines back to RAM, then invalidate.
+    pub fn flush_to_ram(&mut self, ram: &mut Ram) {
+        if !self.config.is_valid_config() { return; }
+        let offset_bits = self.config.offset_bits();
+        let index_bits  = self.config.index_bits();
+        for (set_idx, set) in self.sets.iter_mut().enumerate() {
+            for line in &mut set.lines {
+                if line.valid && line.dirty {
+                    // Reconstruct line base: tag bits above (offset+index), set index in the middle
+                    let base = (line.tag << (offset_bits + index_bits))
+                        | ((set_idx as u32) << offset_bits);
+                    for (i, &byte) in line.data.iter().enumerate() {
+                        // Best-effort: ignore write errors (out-of-bounds addresses)
+                        let _ = ram.store8(base.wrapping_add(i as u32), byte);
+                    }
+                }
+                line.valid = false;
+                line.dirty = false;
+            }
+        }
+    }
+
     pub fn reset_stats(&mut self) {
         self.stats = CacheStats::default();
     }
@@ -780,6 +802,8 @@ pub struct CacheController {
     /// Base instruction-execution cycles (not cache): set via add_instruction_cycles().
     pub extra_cycles: u64,
     step_count: u64,
+    /// When true, all cache lookups are skipped and RAM is accessed directly (no stats, no latency).
+    pub bypass: bool,
 }
 
 impl CacheController {
@@ -792,6 +816,7 @@ impl CacheController {
             instruction_count: 0,
             extra_cycles: 0,
             step_count: 0,
+            bypass: false,
         }
     }
 
@@ -873,6 +898,21 @@ impl CacheController {
         self.dcache.invalidate();
         for level in &mut self.extra_levels {
             level.invalidate();
+        }
+    }
+
+    /// Write-back all dirty D-cache lines to RAM, then invalidate all caches.
+    /// Use this before disabling the cache to keep RAM consistent.
+    pub fn flush_all(&mut self) {
+        // I-cache is read-only — just invalidate
+        self.icache.invalidate();
+        // D-cache and extra levels may have dirty data — write back first
+        self.dcache.flush_to_ram(&mut self.ram);
+        // Borrow checker: ram and extra_levels are disjoint fields, use raw ptr trick
+        let ram_ptr = &mut self.ram as *mut Ram;
+        for level in &mut self.extra_levels {
+            // SAFETY: `ram` and `extra_levels` are distinct fields, no aliasing.
+            level.flush_to_ram(unsafe { &mut *ram_ptr });
         }
     }
 
@@ -1025,6 +1065,7 @@ impl CacheController {
     /// falling back to RAM. Checks L1 D-cache first, then extra_levels in order.
     /// No stats side-effects. Use for syscalls and the Run-tab memory view.
     pub fn effective_read8(&self, addr: u32) -> Result<u8, FalconError> {
+        if self.bypass { return self.ram.load8(addr); }
         if let Some(v) = self.dcache.peek_dirty(addr) { return Ok(v); }
         for level in &self.extra_levels {
             if let Some(v) = level.peek_dirty(addr) { return Ok(v); }
@@ -1046,12 +1087,14 @@ impl CacheController {
 
     /// True if any byte in [addr, addr+bytes) is dirty in D-cache.
     pub fn is_dirty_cached(&self, addr: u32, bytes: u32) -> bool {
+        if self.bypass { return false; }
         (0..bytes).any(|i| self.dcache.peek_dirty(addr.wrapping_add(i)).is_some())
     }
 
     /// Returns `Some((level, dirty))` if `addr`'s cache line is present in the D-cache hierarchy.
     /// `level` is 1-based (1 = L1 D-cache, 2 = L2, …). No side effects.
     pub fn data_cache_location(&self, addr: u32) -> Option<(u8, bool)> {
+        if self.bypass { return None; }
         if let Some(dirty) = self.dcache.has_line(addr) {
             return Some((1, dirty));
         }
@@ -1080,17 +1123,24 @@ impl Bus for CacheController {
 
     // store* = D-cache tracked writes (bypasses L2+ — write-through-to-RAM for evictions)
     fn store8(&mut self, addr: u32, val: u8) -> Result<(), FalconError> {
+        if self.bypass { return self.ram.store8(addr, val); }
         self.dcache.write_byte(addr, val, &mut self.ram)
     }
     fn store16(&mut self, addr: u32, val: u16) -> Result<(), FalconError> {
+        if self.bypass { return self.ram.store16(addr, val); }
         self.dcache.write_halfword(addr, val, &mut self.ram)
     }
     fn store32(&mut self, addr: u32, val: u32) -> Result<(), FalconError> {
+        if self.bypass { return self.ram.store32(addr, val); }
         self.dcache.write_word(addr, val, &mut self.ram)
     }
 
     // I-cache tracked fetch — hierarchical: L1 hit → return; miss → L2+/RAM fill
     fn fetch32(&mut self, addr: u32) -> Result<u32, FalconError> {
+        if self.bypass {
+            self.instruction_count += 1;
+            return self.ram.load32(addr);
+        }
         if !self.icache.config.is_valid_config() {
             self.instruction_count += 1;
             return self.ram.load32(addr);
@@ -1154,6 +1204,7 @@ impl Bus for CacheController {
 
     // D-cache tracked reads — hierarchical: L1 hit → return; miss → L2+/RAM fill
     fn dcache_read8(&mut self, addr: u32) -> Result<u8, FalconError> {
+        if self.bypass { return self.ram.load8(addr); }
         if !self.dcache.config.is_valid_config() {
             return self.ram.load8(addr);
         }
@@ -1188,6 +1239,7 @@ impl Bus for CacheController {
     }
 
     fn dcache_read16(&mut self, addr: u32) -> Result<u16, FalconError> {
+        if self.bypass { return self.ram.load16(addr); }
         if !self.dcache.config.is_valid_config() {
             return self.ram.load16(addr);
         }
@@ -1232,6 +1284,7 @@ impl Bus for CacheController {
     }
 
     fn dcache_read32(&mut self, addr: u32) -> Result<u32, FalconError> {
+        if self.bypass { return self.ram.load32(addr); }
         if !self.dcache.config.is_valid_config() {
             return self.ram.load32(addr);
         }

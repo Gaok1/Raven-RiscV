@@ -14,6 +14,30 @@ mod stats;
 mod view;
 
 pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
+    // When cache is disabled, show a notice and skip all cache-specific content.
+    if !app.run.cache_enabled {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(theme::BORDER));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        let lines = vec![
+            Line::raw(""),
+            Line::from(Span::styled(
+                "  Cache simulation is disabled.",
+                Style::default().fg(theme::PAUSED).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "  Enable it in the Config tab to run cache statistics.",
+                Style::default().fg(theme::LABEL),
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+
     // Layout: level selector (1) | subtab header (3) | exec controls (4) | content (min) | shared controls bar (3)
     let layout = Layout::default()
         .direction(Direction::Vertical)

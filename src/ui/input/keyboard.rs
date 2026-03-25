@@ -1,5 +1,5 @@
 use crate::falcon::cache::{CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets, Cache};
-use crate::ui::app::{App, CacheResultsSnapshot, CacheScope, CacheSubtab, CpiConfig, DocsPage, EditorMode, LevelSnapshot, MemRegion, PathInput, PathInputAction, Tab};
+use crate::ui::app::{App, CacheResultsSnapshot, CacheScope, CacheSubtab, CpiConfig, DocsPage, EditorMode, LevelSnapshot, MemRegion, PathInput, PathInputAction, Tab, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROWS};
 use crate::ui::view::docs::{docs_body_line_count, ALL_MASK, FILTER_ITEMS};
 use crossterm::{event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, terminal};
 use rfd::FileDialog as OSFileDialog;
@@ -130,6 +130,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
             Tab::Editor => 1,
             Tab::Cache => 1,
             Tab::Docs => 1,
+            Tab::Config => 1,
         };
         match key.code {
             KeyCode::Esc => { app.help_open = false; }
@@ -967,46 +968,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     app.docs.scroll = 0;
                 }
 
-                // Cache tab — CPI panel editing (when editing a CPI field)
-                (code, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.cpi_editing && app.cache.selected_level == 0 => {
-                    let n = 9usize; // number of CPI fields
-                    match code {
-                        KeyCode::Esc => {
-                            app.cache.cpi_editing = false;
-                            app.cache.cpi_edit_buf.clear();
-                        }
-                        KeyCode::Enter => {
-                            if let Ok(v) = app.cache.cpi_edit_buf.trim().parse::<u64>() {
-                                app.run.cpi_config.set(app.cache.cpi_selected, v);
-                            }
-                            app.cache.cpi_editing = false;
-                            app.cache.cpi_edit_buf.clear();
-                        }
-                        KeyCode::Up => {
-                            if let Ok(v) = app.cache.cpi_edit_buf.trim().parse::<u64>() {
-                                app.run.cpi_config.set(app.cache.cpi_selected, v);
-                            }
-                            app.cache.cpi_editing = false;
-                            app.cache.cpi_edit_buf.clear();
-                            app.cache.cpi_selected = app.cache.cpi_selected.saturating_sub(1);
-                        }
-                        KeyCode::Down => {
-                            if let Ok(v) = app.cache.cpi_edit_buf.trim().parse::<u64>() {
-                                app.run.cpi_config.set(app.cache.cpi_selected, v);
-                            }
-                            app.cache.cpi_editing = false;
-                            app.cache.cpi_edit_buf.clear();
-                            app.cache.cpi_selected = (app.cache.cpi_selected + 1).min(n - 1);
-                        }
-                        KeyCode::Char(c) if c.is_ascii_digit() => {
-                            app.cache.cpi_edit_buf.push(c);
-                        }
-                        KeyCode::Backspace => {
-                            app.cache.cpi_edit_buf.pop();
-                        }
-                        _ => {}
-                    }
-                }
                 // Cache tab — Config field editing takes priority
                 (code, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.edit_field.is_some() => {
                     let (is_icache, field) = app.cache.edit_field.unwrap();
@@ -1199,20 +1160,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     let idx = app.cache.history_scroll.min(app.cache.session_history.len() - 1);
                     app.cache.viewing_snapshot = Some(idx);
                 }
-                // CPI panel navigation (when Config subtab, L1, not in cache edit mode)
-                (KeyCode::Enter, Tab::Cache) if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.selected_level == 0 && app.cache.edit_field.is_none() => {
-                    app.cache.cpi_edit_buf = app.run.cpi_config.get(app.cache.cpi_selected).to_string();
-                    app.cache.cpi_editing = true;
-                }
                 (KeyCode::Up, Tab::Cache) => match app.cache.subtab {
                     CacheSubtab::Stats => {
                         app.cache.history_scroll = app.cache.history_scroll.saturating_sub(1);
                     }
                     CacheSubtab::View => {
                         app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
-                    }
-                    CacheSubtab::Config if app.cache.selected_level == 0 && app.cache.edit_field.is_none() => {
-                        app.cache.cpi_selected = app.cache.cpi_selected.saturating_sub(1);
                     }
                     _ => {}
                 },
@@ -1225,9 +1178,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                     }
                     CacheSubtab::View => {
                         app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
-                    }
-                    CacheSubtab::Config if app.cache.selected_level == 0 && app.cache.edit_field.is_none() => {
-                        app.cache.cpi_selected = (app.cache.cpi_selected + 1).min(8);
                     }
                     _ => {}
                 },
@@ -1275,6 +1225,81 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                 // Editor navigation in command mode
                 (KeyCode::Up, Tab::Editor) => app.editor.buf.move_up(),
                 (KeyCode::Down, Tab::Editor) => app.editor.buf.move_down(),
+
+                // ── Config tab — CPI field editing ──────────────────────────
+                (code, Tab::Config) if app.settings.cpi_editing => {
+                    let cpi_idx = app.settings.selected.saturating_sub(SETTINGS_ROW_CPI_START);
+                    match code {
+                        KeyCode::Esc => {
+                            app.settings.cpi_editing = false;
+                            app.settings.cpi_edit_buf.clear();
+                        }
+                        KeyCode::Enter => {
+                            if let Ok(v) = app.settings.cpi_edit_buf.trim().parse::<u64>() {
+                                app.run.cpi_config.set(cpi_idx, v);
+                            }
+                            app.settings.cpi_editing = false;
+                            app.settings.cpi_edit_buf.clear();
+                        }
+                        KeyCode::Up => {
+                            if let Ok(v) = app.settings.cpi_edit_buf.trim().parse::<u64>() {
+                                app.run.cpi_config.set(cpi_idx, v);
+                            }
+                            app.settings.cpi_editing = false;
+                            app.settings.cpi_edit_buf.clear();
+                            if app.settings.selected > SETTINGS_ROW_CPI_START {
+                                app.settings.selected -= 1;
+                            }
+                        }
+                        KeyCode::Down | KeyCode::Tab => {
+                            if let Ok(v) = app.settings.cpi_edit_buf.trim().parse::<u64>() {
+                                app.run.cpi_config.set(cpi_idx, v);
+                            }
+                            app.settings.cpi_editing = false;
+                            app.settings.cpi_edit_buf.clear();
+                            if app.settings.selected + 1 < SETTINGS_ROWS {
+                                app.settings.selected += 1;
+                            }
+                        }
+                        KeyCode::Char(c) if c.is_ascii_digit() => {
+                            app.settings.cpi_edit_buf.push(c);
+                        }
+                        KeyCode::Backspace => { app.settings.cpi_edit_buf.pop(); }
+                        _ => {}
+                    }
+                }
+                // Config tab — navigation and toggle
+                (code, Tab::Config) => {
+                    match code {
+                        KeyCode::Up => {
+                            if app.settings.selected > 0 {
+                                app.settings.selected -= 1;
+                                // Skip blank separator row
+                                if app.settings.selected == 1 { app.settings.selected = 0; }
+                            }
+                        }
+                        KeyCode::Down => {
+                            if app.settings.selected + 1 < SETTINGS_ROWS {
+                                app.settings.selected += 1;
+                                // Skip blank separator row
+                                if app.settings.selected == 1 { app.settings.selected = SETTINGS_ROW_CPI_START; }
+                            }
+                        }
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            if app.settings.selected == SETTINGS_ROW_CACHE_ENABLED {
+                                app.run.cache_enabled = !app.run.cache_enabled;
+                                app.run.mem.bypass = !app.run.cache_enabled;
+                                app.run.mem.flush_all();
+                            } else if app.settings.selected >= SETTINGS_ROW_CPI_START {
+                                let i = app.settings.selected - SETTINGS_ROW_CPI_START;
+                                app.settings.cpi_edit_buf = app.run.cpi_config.get(i).to_string();
+                                app.settings.cpi_editing = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 _ => {}
             }
         }
@@ -1333,8 +1358,9 @@ fn serialize_one_config(s: &mut String, prefix: &str, cfg: &CacheConfig) {
     s.push_str(&format!("{prefix}.transfer_width={}\n", cfg.transfer_width));
 }
 
-fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig], cpi: &CpiConfig) -> String {
+fn serialize_cache_configs(icfg: &CacheConfig, dcfg: &CacheConfig, extra: &[CacheConfig], cpi: &CpiConfig, cache_enabled: bool) -> String {
     let mut s = String::from("# Raven Cache Config v2\n");
+    s.push_str(&format!("cache_enabled={}\n", cache_enabled));
     s.push_str(&format!("levels={}\n", extra.len()));
     serialize_one_config(&mut s, "icache", icfg);
     serialize_one_config(&mut s, "dcache", dcfg);
@@ -1361,7 +1387,7 @@ fn level_prefix(i: usize) -> String {
     format!("l{}", i + 2)
 }
 
-fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>, CpiConfig), String> {
+fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>, CpiConfig, bool), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -1405,7 +1431,11 @@ fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<Cach
         fp:               map.get("cpi.fp").and_then(|v| v.parse().ok()).unwrap_or(5),
     };
 
-    Ok((icfg, dcfg, extra, cpi))
+    let cache_enabled = map.get("cache_enabled")
+        .map(|v| v != "false")
+        .unwrap_or(true);
+
+    Ok((icfg, dcfg, extra, cpi, cache_enabled))
 }
 
 fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<CacheConfig, String> {
@@ -1540,6 +1570,7 @@ pub(super) fn do_export_cfg(app: &mut App) {
         &app.cache.pending_dcache,
         &app.cache.extra_pending,
         &app.run.cpi_config,
+        app.run.cache_enabled,
     );
     if let Some(path) = OSFileDialog::new()
         .add_filter("Cache Config", &["fcache"])
@@ -1571,7 +1602,7 @@ pub(super) fn do_import_cfg(app: &mut App) {
     {
         match std::fs::read_to_string(&path) {
             Ok(text) => match parse_cache_configs(&text) {
-                Ok((icfg, dcfg, extra, cpi)) => {
+                Ok((icfg, dcfg, extra, cpi, cache_enabled)) => {
                     app.cache.pending_icache = icfg;
                     app.cache.pending_dcache = dcfg;
                     let n_extra = extra.len();
@@ -1583,6 +1614,8 @@ pub(super) fn do_import_cfg(app: &mut App) {
                     app.cache.hover_level = vec![false; n_extra + 1];
                     if app.cache.selected_level > n_extra { app.cache.selected_level = n_extra; }
                     app.run.cpi_config = cpi;
+                    app.run.cache_enabled = cache_enabled;
+                    app.run.mem.bypass = !cache_enabled;
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",
@@ -1979,7 +2012,7 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
         PathInputAction::OpenFcache => {
             match std::fs::read_to_string(&path) {
                 Ok(text) => match parse_cache_configs(&text) {
-                    Ok((icfg, dcfg, extra, cpi)) => {
+                    Ok((icfg, dcfg, extra, cpi, cache_enabled)) => {
                         let n_extra = extra.len();
                         app.cache.pending_icache = icfg;
                         app.cache.pending_dcache = dcfg;
@@ -1991,6 +2024,8 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
                         app.cache.hover_level = vec![false; n_extra + 1];
                         if app.cache.selected_level > n_extra { app.cache.selected_level = n_extra; }
                         app.run.cpi_config = cpi;
+                        app.run.cache_enabled = cache_enabled;
+                        app.run.mem.bypass = !cache_enabled;
                         app.cache.config_error = None;
                         app.cache.config_status = Some(format!("Imported from {}", path.file_name().unwrap_or_default().to_string_lossy()));
                     }
@@ -2006,7 +2041,7 @@ fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::
             }
         }
         PathInputAction::SaveFcache => {
-            let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending, &app.run.cpi_config);
+            let text = serialize_cache_configs(&app.cache.pending_icache, &app.cache.pending_dcache, &app.cache.extra_pending, &app.run.cpi_config, app.run.cache_enabled);
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_error = None;

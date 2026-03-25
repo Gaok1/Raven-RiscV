@@ -1,5 +1,5 @@
 use crate::ui::{
-    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, Tab},
+    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, Tab, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START},
     editor::Editor,
 };
 use crate::ui::input::keyboard::{do_export_cfg, do_export_results, do_import_cfg};
@@ -107,6 +107,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.docs.scroll = app.docs.scroll.saturating_sub(1);
                 clamp_docs_scroll(app, area);
             }
+            Tab::Config => {}
         },
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.buf.move_down(),
@@ -127,6 +128,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.docs.scroll = app.docs.scroll.saturating_add(1);
                 clamp_docs_scroll(app, area);
             }
+            Tab::Config => {}
         },
         MouseEventKind::ScrollLeft => {
             if matches!(app.tab, Tab::Cache)
@@ -219,6 +221,14 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     if let Tab::Docs = app.tab {
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_docs_click(app, me);
+        }
+    }
+
+    // Config tab interactions
+    if let Tab::Config = app.tab {
+        update_settings_hover(app, me);
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            handle_settings_click(app, me);
         }
     }
 
@@ -1570,28 +1580,22 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         let selected = app.cache.selected_level;
 
         if selected == 0 {
-            // L1 three-column layout: I-Cache(38%) | D-Cache(38%) | CPI(24%)
-            let i_w = content_area.width * 38 / 100;
-            let d_w = content_area.width * 38 / 100;
-            let cpi_x = content_area.x + i_w + d_w;
+            // L1 two-column layout: I-Cache(50%) | D-Cache(50%)
+            let i_w = content_area.width / 2;
+            let d_w = content_area.width / 2;
 
             let fields_y0 = content_area.y + 1;
             let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
             if me.row >= fields_y0 && me.row < fields_y1 {
                 let row_idx = (me.row - fields_y0) as usize;
-                if me.column >= cpi_x {
-                    // CPI panel hover
-                    if row_idx < 9 {
-                        app.cache.hover_cpi_field = Some(row_idx);
-                    }
-                } else if let Some(field) = ConfigField::from_list_row(row_idx) {
+                if let Some(field) = ConfigField::from_list_row(row_idx) {
                     let is_icache = me.column < content_area.x + i_w;
                     app.cache.hover_config_field = Some((is_icache, field));
                 }
             }
 
             let apply_y = content_area.y + content_area.height.saturating_sub(3);
-            if me.row == apply_y && me.column < cpi_x {
+            if me.row == apply_y {
                 let x = me.column.saturating_sub(content_area.x + 1);
                 if x >= 1 && x < 22 { app.cache.hover_apply = true; }
                 else if x >= 24 && x < 43 { app.cache.hover_apply_keep = true; }
@@ -1811,23 +1815,13 @@ fn handle_level_selector_click(app: &mut App, me: MouseEvent, level_area: Rect) 
 }
 
 fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
-    let i_w = content_area.width * 38 / 100;
-    let d_w = content_area.width * 38 / 100;
-    let cpi_x = content_area.x + i_w + d_w;
+    let i_w = content_area.width / 2;
+    let d_w = content_area.width / 2;
 
     let fields_y0 = content_area.y + 1;
     let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
     if me.row >= fields_y0 && me.row < fields_y1 {
         let row_idx = (me.row - fields_y0) as usize;
-        if me.column >= cpi_x {
-            // CPI field click: select + start editing
-            if row_idx < 9 {
-                app.cache.cpi_selected = row_idx;
-                app.cache.cpi_edit_buf = app.run.cpi_config.get(row_idx).to_string();
-                app.cache.cpi_editing = true;
-            }
-            return;
-        }
         if let Some(field) = ConfigField::from_list_row(row_idx) {
             let is_icache = me.column < content_area.x + i_w;
             if field.is_numeric() {
@@ -1849,7 +1843,7 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
     app.cache.edit_buf.clear();
 
     let apply_y = content_area.y + content_area.height.saturating_sub(3);
-    if me.row == apply_y && me.column < cpi_x {
+    if me.row == apply_y {
         let x = me.column.saturating_sub(content_area.x + 1);
         if x >= 1 && x < 22 {
             apply_l1_config(app, false);
@@ -1910,6 +1904,7 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
         app.cache.config_status = Some("Config applied (stats reset).".to_string());
         app.run.mem.apply_config(icfg, dcfg, extra);
     }
+    app.run.mem.bypass = !app.run.cache_enabled;
     app.cache.view_scroll = 0;
     app.cache.stats_scroll = 0;
 }
@@ -2007,7 +2002,47 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
     app.cache.stats_scroll = 0;
 }
 
+// ── Config tab mouse ─────────────────────────────────────────────────────────
 
+fn update_settings_hover(app: &mut App, me: MouseEvent) {
+    app.settings.hover_cache_enabled = false;
+    app.settings.hover_cpi_field = None;
 
+    let (btn_y, btn_x0, btn_x1) = app.settings.bool_btn_rect.get();
+    if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
+        app.settings.hover_cache_enabled = true;
+        return;
+    }
+
+    let rows_y = app.settings.cpi_rows_y.get();
+    for (i, &y) in rows_y.iter().enumerate() {
+        if y > 0 && me.row == y {
+            app.settings.hover_cpi_field = Some(i);
+            return;
+        }
+    }
+}
+
+fn handle_settings_click(app: &mut App, me: MouseEvent) {
+    let (btn_y, btn_x0, btn_x1) = app.settings.bool_btn_rect.get();
+    if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
+        app.run.cache_enabled = !app.run.cache_enabled;
+        app.run.mem.bypass = !app.run.cache_enabled;
+        app.run.mem.flush_all();
+        app.settings.selected = SETTINGS_ROW_CACHE_ENABLED;
+        return;
+    }
+
+    let rows_y = app.settings.cpi_rows_y.get();
+    for (i, &y) in rows_y.iter().enumerate() {
+        if y > 0 && me.row == y {
+            let row = SETTINGS_ROW_CPI_START + i;
+            app.settings.selected = row;
+            app.settings.cpi_edit_buf = app.run.cpi_config.get(i).to_string();
+            app.settings.cpi_editing = true;
+            return;
+        }
+    }
+}
 
 
