@@ -182,7 +182,29 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
 
         match falcon::exec::step(&mut cpu, &mut mem, &mut console) {
             Ok(true) => {}
-            Ok(false) => break,
+            Ok(false) => {
+                if console.reading {
+                    // Program is waiting for user input — flush pending output then read stdin.
+                    if !cpu.stdout.is_empty() {
+                        use std::io::Write;
+                        let _ = std::io::stdout().write_all(&cpu.stdout);
+                        let _ = std::io::stdout().flush();
+                        cpu.stdout.clear();
+                    }
+                    let mut line = String::new();
+                    match std::io::stdin().read_line(&mut line) {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            // strip trailing newline before queuing
+                            let trimmed = line.trim_end_matches(['\n', '\r']).to_string();
+                            console.push_input(trimmed);
+                        }
+                        Err(_) => break,
+                    }
+                } else {
+                    break; // normal halt
+                }
+            }
             Err(e) => {
                 eprintln!("raven: fault at PC=0x{:08X}: {e}", cpu.pc);
                 faulted = true;
@@ -192,9 +214,12 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         cycles += 1;
     }
 
-    // Print program stdout
+    // Print remaining program stdout
     if !cpu.stdout.is_empty() {
-        eprint!("{}", String::from_utf8_lossy(&cpu.stdout));
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(&cpu.stdout);
+        let _ = std::io::stdout().flush();
+        cpu.stdout.clear();
     }
     // Print any console errors from the simulation
     for line in &console.lines {
