@@ -16,6 +16,7 @@ pub mod disasm;
 mod cache;
 mod splash;
 mod path_input_overlay;
+mod settings;
 
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};
@@ -23,6 +24,7 @@ use run::render_run;
 use cache::render_cache;
 use splash::render_splash;
 use path_input_overlay::render_path_input;
+use settings::render_settings;
 
 pub fn ui(f: &mut Frame, app: &App) {
     // Splash screen takes over the full frame
@@ -64,8 +66,22 @@ pub fn ui(f: &mut Frame, app: &App) {
         })
         .collect::<Vec<_>>();
 
+    let tutorial_targets_tabbar = app.tutorial.active && {
+        use crate::ui::tutorial::get_steps;
+        let steps = get_steps(app.tutorial.tab);
+        steps.get(app.tutorial.step_idx)
+            .and_then(|s| (s.target)(size, app))
+            .map(|r| r.height <= 3 && r.y == tab_row.y)
+            .unwrap_or(false)
+    };
+    let tab_border_style = if tutorial_targets_tabbar {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(theme::BORDER)
+    };
+
     let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme::BORDER)).title("RAVEN"))
+        .block(Block::default().borders(Borders::ALL).border_style(tab_border_style).title("RAVEN"))
         .highlight_style(
             Style::default()
                 .fg(Color::Rgb(0, 0, 0))
@@ -100,6 +116,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Run => render_run(f, chunks[1], app),
         Tab::Cache => render_cache(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
+        Tab::Config => render_settings(f, chunks[1], app),
     }
 
     let (footer_text, footer_style) = match app.tab {
@@ -128,6 +145,10 @@ pub fn ui(f: &mut Frame, app: &App) {
         }
         Tab::Docs => (
             "Ctrl+F=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language".to_string(),
+            Style::default().fg(theme::LABEL),
+        ),
+        Tab::Config => (
+            "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field".to_string(),
             Style::default().fg(theme::LABEL),
         ),
     };
@@ -395,9 +416,6 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[g] View",        "cycle byte grouping: 1B → 2B → 4B"),
                 ("[t] View",        "toggle address / tag display (0x… ↔ t:…)"),
                 ("[↑/↓]",          "scroll (Stats / View subtabs)"),
-                ("[↑/↓] Config",   "navigate CPI fields"),
-                ("[Enter] Config",  "edit selected CPI field"),
-                ("[click] Config",  "click CPI field to edit"),
                 ("[Ctrl+E]",       "export cache config (.fcache)"),
                 ("[Ctrl+L]",       "import cache config (.fcache)"),
                 ("[Ctrl+R]",       "export simulation results (.fstats / .csv)"),
@@ -412,6 +430,15 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[Ctrl+F]",       "open search bar (filter by name/desc)"),
                 ("[←/→]",          "navigate type filter"),
                 ("[Space]",        "toggle selected type filter / restore All"),
+            ],
+        ],
+        Tab::Config => vec![
+            vec![
+                ("[↑/↓]",          "navigate settings"),
+                ("[Enter]",        "edit CPI field / toggle bool"),
+                ("[Esc]",          "cancel edit"),
+                ("[Tab]",          "confirm edit and move to next field"),
+                ("[click]",        "toggle bool button / start CPI edit"),
             ],
         ],
     }

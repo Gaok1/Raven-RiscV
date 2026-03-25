@@ -37,11 +37,12 @@ pub(super) enum Tab {
     Run,
     Cache,
     Docs,
+    Config,
 }
 
 impl Tab {
     pub(super) fn all() -> &'static [Tab] {
-        &[Tab::Editor, Tab::Run, Tab::Cache, Tab::Docs]
+        &[Tab::Editor, Tab::Run, Tab::Cache, Tab::Docs, Tab::Config]
     }
 
     pub(super) fn label(self) -> &'static str {
@@ -50,6 +51,7 @@ impl Tab {
             Tab::Run => "Run",
             Tab::Cache => "Cache",
             Tab::Docs => "Docs",
+            Tab::Config => "Config",
         }
     }
 
@@ -343,6 +345,46 @@ impl CpiConfig {
     }
 }
 
+// ── Settings tab state ───────────────────────────────────────────────────────
+
+/// Row index of the cache_enabled toggle in the settings list (0-indexed).
+pub(super) const SETTINGS_ROW_CACHE_ENABLED: usize = 0;
+/// First CPI row index in the settings list.
+pub(super) const SETTINGS_ROW_CPI_START: usize = 2;
+/// Total number of settings rows (1 bool + 1 blank + 10 CPI fields).
+pub(super) const SETTINGS_ROWS: usize = SETTINGS_ROW_CPI_START + 10;
+
+pub(super) struct SettingsState {
+    /// Index of currently highlighted row (0 = cache_enabled button, 1..=10 = CPI fields).
+    pub(super) selected: usize,
+    /// true when a CPI field is being edited
+    pub(super) cpi_editing: bool,
+    /// Text buffer while editing a CPI field
+    pub(super) cpi_edit_buf: String,
+    /// Mouse hover: which CPI field row (0-based within CPI section)
+    pub(super) hover_cpi_field: Option<usize>,
+    /// Mouse hover over the cache_enabled bool button
+    pub(super) hover_cache_enabled: bool,
+    /// Geometry of the bool button (y, x_start, x_end) — written by render, read by mouse
+    pub(super) bool_btn_rect: std::cell::Cell<(u16, u16, u16)>,
+    /// Geometry of each CPI row (y) — written by render, read by mouse
+    pub(super) cpi_rows_y: std::cell::Cell<[u16; 10]>,
+}
+
+impl Default for SettingsState {
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            cpi_editing: false,
+            cpi_edit_buf: String::new(),
+            hover_cpi_field: None,
+            hover_cache_enabled: false,
+            bool_btn_rect: std::cell::Cell::new((0, 0, 0)),
+            cpi_rows_y: std::cell::Cell::new([0u16; 10]),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(super) enum EditorMode {
     Insert,
@@ -577,6 +619,8 @@ pub(super) struct RunState {
 
     // Memory access highlight: (base_addr, size_bytes, age); age 0=just accessed, disappears at 3
     pub(super) mem_access_log: Vec<(u32, u32, u8)>,
+    /// When false, cache simulation is fully bypassed (direct RAM access, no latency).
+    pub(super) cache_enabled: bool,
 }
 
 /// Pages in the Docs tab. Tab key cycles through them.
@@ -697,6 +741,7 @@ pub struct App {
     pub(super) run: RunState,
     pub(super) docs: DocsState,
     pub(super) cache: CacheState,
+    pub(super) settings: SettingsState,
 
     pub(super) show_exit_popup: bool,
     pub(super) should_quit: bool,
@@ -872,6 +917,7 @@ impl App {
                 show_exec_count: true,
                 show_instr_type: true,
                 mem_access_log: Vec::new(),
+                cache_enabled: true,
             },
             docs: DocsState {
                 page: DocsPage::InstrRef, lang: DocsLang::En, scroll: 0,
@@ -959,6 +1005,7 @@ impl App {
             splash_start: Some(Instant::now()),
             path_input: PathInput::new(),
             tutorial: TutorialState::default(),
+            settings: SettingsState::default(),
         };
         app.assemble_and_load();
         app
@@ -980,6 +1027,7 @@ impl App {
             self.cache.extra_pending.clone(),
             self.run.mem_size,
         );
+        self.run.mem.bypass = !self.run.cache_enabled;
         self.run.faulted = false;
 
         match assemble(&self.editor.buf.text(), self.run.base_pc) {
@@ -1114,6 +1162,7 @@ impl App {
                 self.cache.extra_pending.clone(),
                 self.run.mem_size,
             );
+            self.run.mem.bypass = !self.run.cache_enabled;
             self.run.faulted = false;
 
             // Write directly to RAM (bypass cache) so invalidate() won't discard data
@@ -1183,6 +1232,7 @@ impl App {
             self.cache.extra_pending.clone(),
             self.run.mem_size,
         );
+        self.run.mem.bypass = !self.run.cache_enabled;
         self.run.faulted = false;
 
         // ── Detect format and load ───────────────────────────────────────

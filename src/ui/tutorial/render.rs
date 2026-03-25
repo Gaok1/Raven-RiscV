@@ -15,14 +15,18 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     let total = steps.len();
     let idx = app.tutorial.step_idx;
 
-    // Highlight target area
+    // Highlight target area — thin targets (≤3 rows, e.g. tab bar) already own a
+    // border; coloring it yellow is handled by the caller (ui()) so we skip the
+    // overlay here to avoid covering the element.
     let target = (step.target)(term, app);
     if let Some(t) = target {
-        let highlight = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Thick)
-            .border_style(Style::default().fg(Color::Yellow));
-        f.render_widget(highlight, t);
+        if t.height > 3 {
+            let highlight = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Thick)
+                .border_style(Style::default().fg(Color::Yellow));
+            f.render_widget(highlight, t);
+        }
     }
 
     let (title, body) = match app.tutorial.lang {
