@@ -138,9 +138,30 @@ O diretório `Program Examples/` inclui:
 
 ---
 
+## CLI
+
+O Raven também pode ser usado pela linha de comando sem interface gráfica — montar, simular, exportar/importar configs e redirecionar saída para arquivos.
+
+```bash
+raven build program.fas                             # montar
+raven run   program.fas --nout                      # executar, sem stats
+raven run   program.fas --out results.json          # executar, salvar stats
+raven run   program.fas --cache-config l2.fcache \
+                        --settings my.rcfg \
+                        --format csv --out stats.csv
+raven export-config  --out default.fcache           # exportar config de cache padrão
+raven export-settings --out default.rcfg            # exportar configurações padrão
+```
+
+Veja a **[Referência da CLI](cli.pt-BR.md)** para todos os subcomandos e flags.
+
+---
+
 ## Documentação
 
 - **Tutorial interativo** — pressione `[?]` em qualquer aba no Raven (alterne idioma com `[L]`)
+- [Referência da CLI (PT-BR)](cli.pt-BR.md) — subcomandos, flags e formatos de arquivo
+- [CLI Reference (EN)](cli.md)
 - [Formatos de instrução (PT-BR)](format.pt-BR.md) — layouts de bits, encoding, pseudoinstruções
 - [Guia do simulador de cache (PT-BR)](cache.pt-BR.md) — configuração, métricas, exportação
 - [Formats (EN)](format.md) | [Cache (EN)](cache.md)
