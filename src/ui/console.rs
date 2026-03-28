@@ -48,21 +48,33 @@ pub struct Console {
 
 impl Console {
     pub fn push_line<S: Into<String>>(&mut self, line: S) {
-        self.lines.push(ConsoleLine { text: line.into(), color: ConsoleColor::Normal });
+        self.lines.push(ConsoleLine {
+            text: line.into(),
+            color: ConsoleColor::Normal,
+        });
     }
 
     pub fn push_error<S: Into<String>>(&mut self, line: S) {
-        self.lines.push(ConsoleLine { text: line.into(), color: ConsoleColor::Error });
+        self.lines.push(ConsoleLine {
+            text: line.into(),
+            color: ConsoleColor::Error,
+        });
     }
 
     pub fn push_colored<S: Into<String>>(&mut self, line: S, color: ConsoleColor) {
-        self.lines.push(ConsoleLine { text: line.into(), color });
+        self.lines.push(ConsoleLine {
+            text: line.into(),
+            color,
+        });
     }
 
     /// Provide a line of user input (displayed and queued)
     pub fn push_input<S: Into<String>>(&mut self, line: S) {
         let line = line.into();
-        self.lines.push(ConsoleLine { text: line.clone(), color: ConsoleColor::Normal });
+        self.lines.push(ConsoleLine {
+            text: line.clone(),
+            color: ConsoleColor::Normal,
+        });
         self.input.push_back(line);
     }
 
@@ -85,7 +97,10 @@ impl Console {
                 return;
             }
         }
-        self.lines.push(ConsoleLine { text: s.to_string(), color: ConsoleColor::Normal });
+        self.lines.push(ConsoleLine {
+            text: s.to_string(),
+            color: ConsoleColor::Normal,
+        });
     }
 
     // Append text to the current output line with a specific color.
@@ -97,7 +112,10 @@ impl Console {
                 return;
             }
         }
-        self.lines.push(ConsoleLine { text: s.to_string(), color });
+        self.lines.push(ConsoleLine {
+            text: s.to_string(),
+            color,
+        });
     }
 
     // Start a new empty line (acts as a newline terminator for append-only output).

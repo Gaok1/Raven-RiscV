@@ -147,6 +147,10 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 | `binary_search_tree.fas` | Heap allocation, pointer chasing |
 | `gcd_euclid.fas` | Iterative algorithm, branch-heavy |
 | `cache_locality.fas` | Cache-friendly vs cache-hostile access patterns |
+| `pipeline_forwarding_demo.fas` | RAW chains and forwarding paths |
+| `pipeline_load_use_demo.fas` | Load-use stalls and replays |
+| `pipeline_branch_flush_demo.fas` | Prediction, redirect, and wrong-path squash |
+| `pipeline_cache_stall_demo.fas` | MEM stalls from cache latency |
 
 ---
 
@@ -177,6 +181,8 @@ See the **[CLI Reference](cli.md)** for all subcommands and flags.
 - [Instruction formats (EN)](format.md) — bit layouts, encoding, pseudo-instructions
 - [Formatos (PT-BR)](format.pt-BR.md)
 - [Cache config file reference](cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
+- `threads-plan.md` — design plan for future multi-core execution using the term `hart` ("hardware thread") to keep the model bare metal and avoid OS-thread semantics
+- `Program Examples/hart_spawn_visual_demo.fas` — multi-hart example to stress Run/Pipeline views across cores
 
 ---
 

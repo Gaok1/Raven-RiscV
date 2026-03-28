@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "raven"
-version = "1.24.0"
+version = "1.25.0"
 dependencies = [
  "arboard",
  "comfy-table",
@@ -1494,6 +1494,7 @@ dependencies = [
  "signal-hook",
  "thiserror",
  "unicode-truncate",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

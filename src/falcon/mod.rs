@@ -14,6 +14,7 @@ pub mod encoder;
 
 pub mod program;
 
+pub use cache::CacheController;
 #[allow(unused_imports)]
 pub use instruction::Instruction;
 #[allow(unused_imports)]
@@ -21,4 +22,3 @@ pub use memory::Bus;
 #[allow(unused_imports)]
 pub use memory::Ram;
 pub use registers::Cpu;
-pub use cache::CacheController;

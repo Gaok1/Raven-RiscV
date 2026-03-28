@@ -4,13 +4,15 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
+use super::get_steps;
 use crate::ui::app::{App, DocsLang};
 use crate::ui::theme;
-use super::get_steps;
 
 pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     let steps = get_steps(app.tutorial.tab);
-    if steps.is_empty() { return; }
+    if steps.is_empty() {
+        return;
+    }
     let step = &steps[app.tutorial.step_idx];
     let total = steps.len();
     let idx = app.tutorial.step_idx;
@@ -23,14 +25,14 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
         if t.height > 3 {
             let highlight = Block::default()
                 .borders(Borders::ALL)
-                .border_type(BorderType::Thick)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Yellow));
             f.render_widget(highlight, t);
         }
     }
 
     let (title, body) = match app.tutorial.lang {
-        DocsLang::En   => (step.title_en, step.body_en),
+        DocsLang::En => (step.title_en, step.body_en),
         DocsLang::PtBr => (step.title_pt, step.body_pt),
     };
 
@@ -43,7 +45,7 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     let popup_w = max_w;
 
     // Position popup
-    let popup_rect = best_popup_rect(target, popup_w, popup_h, term);
+    let popup_rect = tutorial_popup_rect(target, popup_w, popup_h, term);
 
     f.render_widget(Clear, popup_rect);
 
@@ -52,7 +54,10 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Yellow))
-        .title(Span::styled(title_str, Style::default().fg(Color::Yellow).bold()));
+        .title(Span::styled(
+            title_str,
+            Style::default().fg(Color::Yellow).bold(),
+        ));
 
     let inner = block.inner(popup_rect);
     f.render_widget(block, popup_rect);
@@ -73,8 +78,16 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
 
     // Nav hint at bottom
     let nav_text = match app.tutorial.lang {
-        DocsLang::En   => format!("  ← Prev  → Next  [L]=PT-BR  Esc=close  [{}/{}]", idx + 1, total),
-        DocsLang::PtBr => format!("  ← Ant  → Próx  [L]=EN    Esc=fechar  [{}/{}]", idx + 1, total),
+        DocsLang::En => format!(
+            "  ← Prev  → Next  [L]=PT-BR  Esc=close  [{}/{}]",
+            idx + 1,
+            total
+        ),
+        DocsLang::PtBr => format!(
+            "  ← Ant  → Próx  [L]=EN    Esc=fechar  [{}/{}]",
+            idx + 1,
+            total
+        ),
     };
     let nav_area = Rect {
         x: inner.x,
@@ -89,7 +102,9 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
-    if width == 0 { return vec![text.to_string()]; }
+    if width == 0 {
+        return vec![text.to_string()];
+    }
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         if paragraph.is_empty() {
@@ -116,35 +131,39 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 }
 
 /// Try positions: below → above → right → left → centered.
-fn best_popup_rect(target: Option<Rect>, pw: u16, ph: u16, term: Rect) -> Rect {
+pub(crate) fn tutorial_popup_rect(target: Option<Rect>, pw: u16, ph: u16, term: Rect) -> Rect {
     let Some(t) = target else {
         return centered(pw, ph, term);
     };
+    let gap = 1;
+    let align_x = if t.width >= pw.saturating_add(16) {
+        centered(pw, ph, term).x
+    } else {
+        clamp_x(t.x, pw, term)
+    };
 
     // Below
-    let below_y = t.y + t.height;
+    let below_y = t.y + t.height + gap;
     if below_y + ph <= term.y + term.height {
-        let x = clamp_x(t.x, pw, term);
-        return Rect::new(x, below_y, pw, ph);
+        return Rect::new(align_x, below_y, pw, ph);
     }
 
     // Above
-    if t.y >= term.y + ph {
-        let x = clamp_x(t.x, pw, term);
-        return Rect::new(x, t.y - ph, pw, ph);
+    if t.y >= term.y + ph + gap {
+        return Rect::new(align_x, t.y - ph - gap, pw, ph);
     }
 
     // Right
-    let right_x = t.x + t.width;
+    let right_x = t.x + t.width + gap;
     if right_x + pw <= term.x + term.width {
         let y = clamp_y(t.y, ph, term);
         return Rect::new(right_x, y, pw, ph);
     }
 
     // Left
-    if t.x >= term.x + pw {
+    if t.x >= term.x + pw + gap {
         let y = clamp_y(t.y, ph, term);
-        return Rect::new(t.x - pw, y, pw, ph);
+        return Rect::new(t.x - pw - gap, y, pw, ph);
     }
 
     // Centered fallback

@@ -1,0 +1,47 @@
+# pipeline_cache_stall_demo.fas — large streaming load workload
+#
+# Best viewed in the Pipeline tab with cache enabled and non-trivial latencies.
+# The array is intentionally larger than a small teaching cache, so the scan
+# produces visible MEM stalls and a branch-heavy inner loop.
+#
+# Expected output: 2096128
+
+.data
+arr: .space 8192          # 2048 words
+msg: .asciz "PIPE cache scan sum: "
+
+.text
+    la   t0, arr
+    li   t1, 2048
+    li   t2, 0
+
+fill_loop:
+    slli t3, t2, 2
+    add  t4, t0, t3
+    sw   t2, 0(t4)
+    addi t2, t2, 1
+    blt  t2, t1, fill_loop
+
+    li   s0, 0
+    li   t2, 0
+
+scan_loop:
+    slli t3, t2, 2
+    add  t4, t0, t3
+    lw   t5, 0(t4)
+    add  s0, s0, t5
+    addi t2, t2, 1
+    blt  t2, t1, scan_loop
+
+    li   a7, 1001
+    la   a0, msg
+    ecall
+    mv   a0, s0
+    li   a7, 1000
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

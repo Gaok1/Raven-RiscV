@@ -41,13 +41,13 @@ impl Editor {
             ".text".to_string(),
             ".globl _start".to_string(),
             "_start:".to_string(),
-            "    li a0, 1".to_string(),     // fd=1 (stdout)
-            "    la a1, msg".to_string(),   // buf
-            "    li a2, len".to_string(),   // count
-            "    li a7, 64".to_string(),    // write
+            "    li a0, 1".to_string(),   // fd=1 (stdout)
+            "    la a1, msg".to_string(), // buf
+            "    li a2, len".to_string(), // count
+            "    li a7, 64".to_string(),  // write
             "    ecall".to_string(),
-            "    li a0, 0".to_string(),     // status
-            "    li a7, 93".to_string(),    // exit
+            "    li a0, 0".to_string(),  // status
+            "    li a7, 93".to_string(), // exit
             "    ecall".to_string(),
         ];
         Self {
@@ -447,7 +447,8 @@ impl Editor {
         }
         self.ensure_line();
         // Auto-indent: carry the leading whitespace of the current line.
-        let indent: String = self.current_line()
+        let indent: String = self
+            .current_line()
             .chars()
             .take_while(|c| c.is_whitespace())
             .collect();
@@ -477,7 +478,9 @@ impl Editor {
 
         // Determine if ALL non-empty lines in range already start with ';'
         let all_commented = (start_row..=end_row).all(|r| {
-            if r >= self.lines.len() { return true; }
+            if r >= self.lines.len() {
+                return true;
+            }
             let trimmed = self.lines[r].trim_start();
             trimmed.is_empty() || trimmed.starts_with(';')
         });
@@ -490,21 +493,37 @@ impl Editor {
         {
             if all_commented {
                 let ws_b: usize = self.lines[self.cursor_row]
-                    .chars().take_while(|c| c.is_whitespace()).map(|c| c.len_utf8()).sum();
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .map(|c| c.len_utf8())
+                    .sum();
                 let content = &self.lines[self.cursor_row][ws_b..];
-                if content.starts_with("; ") { -2 }
-                else if content.starts_with(';') { -1 }
-                else { 0 }
+                if content.starts_with("; ") {
+                    -2
+                } else if content.starts_with(';') {
+                    -1
+                } else {
+                    0
+                }
             } else {
                 // Only adjust if "; " will actually be inserted (non-empty line)
-                if !self.lines[self.cursor_row].trim_start().is_empty() { 2 } else { 0 }
+                if !self.lines[self.cursor_row].trim_start().is_empty() {
+                    2
+                } else {
+                    0
+                }
             }
-        } else { 0 };
+        } else {
+            0
+        };
 
         for r in start_row..=end_row {
-            if r >= self.lines.len() { break; }
+            if r >= self.lines.len() {
+                break;
+            }
             // Byte offset of the first non-whitespace character.
-            let ws_bytes: usize = self.lines[r].chars()
+            let ws_bytes: usize = self.lines[r]
+                .chars()
                 .take_while(|c| c.is_whitespace())
                 .map(|c| c.len_utf8())
                 .sum();
@@ -536,7 +555,10 @@ impl Editor {
             self.selection_anchor = None;
         }
         // Normalize: CRLF → LF, lone CR → LF, tabs → 4 spaces
-        let normalized = text.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ");
+        let normalized = text
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\t', "    ");
         let chunks: Vec<&str> = normalized.split('\n').collect();
         if chunks.is_empty() {
             return;
@@ -711,8 +733,12 @@ fn word_left_col(line: &str, col: usize) -> usize {
     let chars: Vec<char> = line.chars().collect();
     let mut c = col;
     // Skip non-word chars, then skip word chars
-    while c > 0 && !is_word_char(chars[c - 1]) { c -= 1; }
-    while c > 0 && is_word_char(chars[c - 1]) { c -= 1; }
+    while c > 0 && !is_word_char(chars[c - 1]) {
+        c -= 1;
+    }
+    while c > 0 && is_word_char(chars[c - 1]) {
+        c -= 1;
+    }
     c
 }
 
@@ -722,8 +748,12 @@ fn word_right_col(line: &str, col: usize) -> usize {
     let len = chars.len();
     let mut c = col;
     // Skip word chars, then skip non-word chars
-    while c < len && is_word_char(chars[c]) { c += 1; }
-    while c < len && !is_word_char(chars[c]) { c += 1; }
+    while c < len && is_word_char(chars[c]) {
+        c += 1;
+    }
+    while c < len && !is_word_char(chars[c]) {
+        c += 1;
+    }
     c
 }
 
@@ -736,8 +766,12 @@ fn word_left_col_inclusive(line: &str, col: usize) -> usize {
     let chars: Vec<char> = line.chars().collect();
     let mut c = col.min(chars.len());
     // If cursor is past end or on non-word char, step back into word
-    while c > 0 && !is_word_char(chars[c - 1]) { c -= 1; }
-    while c > 0 && is_word_char(chars[c - 1]) { c -= 1; }
+    while c > 0 && !is_word_char(chars[c - 1]) {
+        c -= 1;
+    }
+    while c > 0 && is_word_char(chars[c - 1]) {
+        c -= 1;
+    }
     c
 }
 
@@ -746,7 +780,11 @@ fn word_right_col_inclusive(line: &str, col: usize) -> usize {
     let len = chars.len();
     let mut c = col.min(len);
     // If on non-word char, step into word
-    while c < len && !is_word_char(chars[c]) { c += 1; }
-    while c < len && is_word_char(chars[c]) { c += 1; }
+    while c < len && !is_word_char(chars[c]) {
+        c += 1;
+    }
+    while c < len && is_word_char(chars[c]) {
+        c += 1;
+    }
     c
 }

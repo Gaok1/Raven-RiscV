@@ -1,4 +1,4 @@
-use crate::falcon::{memory::Bus, errors::FalconError};
+use crate::falcon::{errors::FalconError, memory::Bus};
 
 /// Loads words (u32 little-endian) at `base`, contiguously, as code.
 pub fn load_words(mem: &mut impl Bus, base: u32, code: &[u32]) -> Result<(), FalconError> {

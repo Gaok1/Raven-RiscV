@@ -12,4 +12,5 @@ pub use errors::AsmError;
 pub use program::Program;
 
 #[cfg(test)]
+#[path = "../../../tests/support/falcon_asm.rs"]
 mod tests;

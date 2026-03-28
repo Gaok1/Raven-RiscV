@@ -1,6 +1,10 @@
 use crate::{
-    falcon::{errors::FalconError, memory::Bus, registers::Cpu},
-    ui::{console::ConsoleColor, Console},
+    falcon::{
+        errors::FalconError,
+        memory::Bus,
+        registers::{Cpu, HartStartRequest},
+    },
+    ui::{Console, console::ConsoleColor},
 };
 
 // Linux ABI syscall numbers
@@ -12,7 +16,7 @@ const SYS_EXIT_GROUP: u32 = 94;
 const SYS_GETPID: u32 = 172;
 const SYS_GETUID: u32 = 174;
 const SYS_GETGID: u32 = 176;
-const SYS_BRK:       u32 = 214;
+const SYS_BRK: u32 = 214;
 const SYS_MUNMAP: u32 = 215;
 const SYS_MMAP: u32 = 222;
 const SYS_GETRANDOM: u32 = 278;
@@ -39,6 +43,8 @@ const FALCON_MEMSET: u32 = 1050;
 const FALCON_MEMCPY: u32 = 1051;
 const FALCON_STRLEN: u32 = 1052;
 const FALCON_STRCMP: u32 = 1053;
+pub const FALCON_HART_START: u32 = 1100;
+pub const FALCON_HART_EXIT: u32 = 1101;
 
 // Linux errno values
 const LINUX_EBADF: u32 = (-9i32) as u32;
@@ -207,7 +213,9 @@ pub fn handle_syscall<B: Bus>(
             let mut len: u32 = 0;
             loop {
                 let b = mem.load8(addr)?;
-                if b == 0 { break; }
+                if b == 0 {
+                    break;
+                }
                 len += 1;
                 addr = addr.wrapping_add(1);
             }
@@ -224,12 +232,28 @@ pub fn handle_syscall<B: Bus>(
                     cpu.write(10, if ca < cb { (-1i32) as u32 } else { 1 });
                     return Ok(true);
                 }
-                if ca == 0 { break; }
+                if ca == 0 {
+                    break;
+                }
                 a = a.wrapping_add(1);
                 b = b.wrapping_add(1);
             }
             cpu.write(10, 0);
             Ok(true)
+        }
+        FALCON_HART_START => {
+            cpu.pending_hart_start = Some(HartStartRequest {
+                entry_pc: cpu.read(10),
+                stack_ptr: cpu.read(11),
+                arg: cpu.read(12),
+            });
+            cpu.write(10, 0);
+            Ok(true)
+        }
+        FALCON_HART_EXIT => {
+            // Exit only this hart; does not affect other harts or the program exit code.
+            cpu.local_exit = true;
+            Ok(false)
         }
 
         _ => {
@@ -239,7 +263,11 @@ pub fn handle_syscall<B: Bus>(
     }
 }
 
-fn linux_read<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn linux_read<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     // Linux: read(fd=a0, buf=a1, count=a2) -> a0 = n or -errno
     let fd = cpu.read(10);
     let buf = cpu.read(11);
@@ -283,7 +311,11 @@ fn linux_read<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Resu
     Ok(true)
 }
 
-fn linux_write<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn linux_write<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     // Linux: write(fd=a0, buf=a1, count=a2) -> a0 = n or -errno
     let fd = cpu.read(10);
     let buf = cpu.read(11);
@@ -291,7 +323,9 @@ fn linux_write<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Res
 
     if fd != 1 && fd != 2 {
         cpu.write(10, LINUX_EBADF);
-        console.push_error(format!("write: unsupported fd {fd} (only fd=1/2 supported)"));
+        console.push_error(format!(
+            "write: unsupported fd {fd} (only fd=1/2 supported)"
+        ));
         return Ok(true);
     }
     if count == 0 {
@@ -416,7 +450,11 @@ fn console_write_bytes_colored(console: &mut Console, bytes: &[u8], color: Conso
     }
 }
 
-fn falcon_read_u8<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn falcon_read_u8<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     let addr = cpu.read(10);
     if let Some(line) = console.read_line() {
         let s = line.trim();
@@ -442,7 +480,11 @@ fn falcon_read_u8<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> 
     }
 }
 
-fn falcon_read_u16<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn falcon_read_u16<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     let addr = cpu.read(10);
     if let Some(line) = console.read_line() {
         let s = line.trim();
@@ -468,7 +510,11 @@ fn falcon_read_u16<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) ->
     }
 }
 
-fn falcon_read_u32<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn falcon_read_u32<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     let addr = cpu.read(10);
     if let Some(line) = console.read_line() {
         let s = line.trim();
@@ -504,16 +550,21 @@ fn parse_u64(s: &str) -> Option<u64> {
     }
 }
 
-fn falcon_read_int<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn falcon_read_int<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     let addr = cpu.read(10);
     if let Some(line) = console.read_line() {
         let s = line.trim();
         // Parse as signed decimal or 0x hex
-        let val: Option<i32> = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-            u32::from_str_radix(hex, 16).ok().map(|v| v as i32)
-        } else {
-            s.parse::<i32>().ok()
-        };
+        let val: Option<i32> =
+            if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                u32::from_str_radix(hex, 16).ok().map(|v| v as i32)
+            } else {
+                s.parse::<i32>().ok()
+            };
         if let Some(v) = val {
             mem.store32(addr, v as u32)?;
             console.reading = false;
@@ -529,7 +580,11 @@ fn falcon_read_int<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) ->
     }
 }
 
-fn falcon_read_float<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn falcon_read_float<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     let addr = cpu.read(10);
     if let Some(line) = console.read_line() {
         let s = line.trim();
@@ -548,7 +603,11 @@ fn falcon_read_float<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) 
     }
 }
 
-fn linux_writev<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn linux_writev<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     // writev(fd=a0, iov=a1, iovcnt=a2) -> bytes written or -errno
     // struct iovec { void *base; size_t len; } — both u32 on RV32
     let fd = cpu.read(10);
@@ -565,19 +624,30 @@ fn linux_writev<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Re
         let entry = iov_ptr.wrapping_add((i * 8) as u32);
         let base = match mem.load32(entry) {
             Ok(v) => v,
-            Err(_) => { cpu.write(10, LINUX_EFAULT); return Ok(true); }
+            Err(_) => {
+                cpu.write(10, LINUX_EFAULT);
+                return Ok(true);
+            }
         };
         let len = match mem.load32(entry.wrapping_add(4)) {
             Ok(v) => v as usize,
-            Err(_) => { cpu.write(10, LINUX_EFAULT); return Ok(true); }
+            Err(_) => {
+                cpu.write(10, LINUX_EFAULT);
+                return Ok(true);
+            }
         };
-        if len == 0 { continue; }
+        if len == 0 {
+            continue;
+        }
 
         let mut bytes = Vec::with_capacity(len);
         for j in 0..len {
             match mem.load8(base.wrapping_add(j as u32)) {
                 Ok(b) => bytes.push(b),
-                Err(_) => { cpu.write(10, LINUX_EFAULT); return Ok(true); }
+                Err(_) => {
+                    cpu.write(10, LINUX_EFAULT);
+                    return Ok(true);
+                }
             }
         }
         cpu.stdout.extend_from_slice(&bytes);
@@ -593,7 +663,11 @@ fn linux_writev<B: Bus>(cpu: &mut Cpu, mem: &mut B, console: &mut Console) -> Re
     Ok(true)
 }
 
-fn linux_mmap<B: Bus>(cpu: &mut Cpu, _mem: &mut B, console: &mut Console) -> Result<bool, FalconError> {
+fn linux_mmap<B: Bus>(
+    cpu: &mut Cpu,
+    _mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     // mmap(addr=a0, len=a1, prot=a2, flags=a3, fd=a4, offset=a5) -> ptr or -errno
     // Only anonymous mappings (MAP_ANONYMOUS=0x20) are supported.
     let len = cpu.read(11);
@@ -652,7 +726,11 @@ fn format_float(v: f32) -> String {
     if v.is_nan() {
         "NaN".to_string()
     } else if v.is_infinite() {
-        if v > 0.0 { "inf".to_string() } else { "-inf".to_string() }
+        if v > 0.0 {
+            "inf".to_string()
+        } else {
+            "-inf".to_string()
+        }
     } else {
         // Use up to 6 significant digits, strip trailing zeros
         let s = format!("{:.6}", v);
@@ -661,3 +739,7 @@ fn format_float(v: f32) -> String {
         s.to_string()
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/falcon_syscall.rs"]
+mod tests;

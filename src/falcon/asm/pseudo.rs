@@ -2,15 +2,14 @@ use std::collections::HashMap;
 
 use crate::falcon::instruction::Instruction;
 
-use super::utils::{check_signed, check_u_imm, parse_char_lit, parse_imm, parse_reg, split_operands};
+use super::utils::{
+    check_signed, check_u_imm, parse_char_lit, parse_imm, parse_reg, split_operands,
+};
 
 /// `li rd, imm` — load any 32-bit immediate into `rd`.
 /// For values in [-2048, 2047] emits a single `addi rd, x0, imm`.
 /// For larger values emits `lui rd, hi20` + `addi rd, rd, lo12`.
-pub(crate) fn parse_li(
-    s: &str,
-    consts: &HashMap<String, i64>,
-) -> Result<Vec<Instruction>, String> {
+pub(crate) fn parse_li(s: &str, consts: &HashMap<String, i64>) -> Result<Vec<Instruction>, String> {
     let mut parts = s.split_whitespace();
     parts.next();
     let rest = parts.collect::<Vec<_>>().join(" ");
@@ -34,8 +33,15 @@ pub(crate) fn parse_li(
     let hi20 = ((imm as i64 + 0x800) >> 12) as i32;
     let lo12 = imm.wrapping_sub(hi20 << 12);
     Ok(vec![
-        Instruction::Lui  { rd, imm: hi20 << 12 }, // Lui stores pre-shifted value
-        Instruction::Addi { rd, rs1: rd, imm: lo12 },
+        Instruction::Lui {
+            rd,
+            imm: hi20 << 12,
+        }, // Lui stores pre-shifted value
+        Instruction::Addi {
+            rd,
+            rs1: rd,
+            imm: lo12,
+        },
     ])
 }
 
@@ -159,17 +165,46 @@ pub(crate) fn parse_print_str(
     let la_line = format!("la a1, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        i1, i2,                                                  // la a1, label  (buf)
-        Instruction::Addi { rd: 12, rs1: 11, imm: 0 },          // mv a2, a1  (scan ptr)
+        i1,
+        i2, // la a1, label  (buf)
+        Instruction::Addi {
+            rd: 12,
+            rs1: 11,
+            imm: 0,
+        }, // mv a2, a1  (scan ptr)
         // strlen loop (offsets relative to each instruction's own PC):
-        Instruction::Lbu  { rd: 5,  rs1: 12, imm: 0 },          // lbu t0, 0(a2)
-        Instruction::Beq  { rs1: 5, rs2: 0,  imm: 12 },         // beq t0, x0, +12 → exit
-        Instruction::Addi { rd: 12, rs1: 12, imm: 1 },          // addi a2, a2, 1
-        Instruction::Jal  { rd: 0,  imm: -12 },                  // jal x0, -12 → lbu
+        Instruction::Lbu {
+            rd: 5,
+            rs1: 12,
+            imm: 0,
+        }, // lbu t0, 0(a2)
+        Instruction::Beq {
+            rs1: 5,
+            rs2: 0,
+            imm: 12,
+        }, // beq t0, x0, +12 → exit
+        Instruction::Addi {
+            rd: 12,
+            rs1: 12,
+            imm: 1,
+        }, // addi a2, a2, 1
+        Instruction::Jal { rd: 0, imm: -12 }, // jal x0, -12 → lbu
         // end loop: a2 = pointer to null byte
-        Instruction::Sub  { rd: 12, rs1: 12, rs2: 11 },         // sub a2, a2, a1  (len)
-        Instruction::Addi { rd: 10, rs1: 0,  imm: 1 },          // addi a0, x0, 1  (stdout)
-        Instruction::Addi { rd: 17, rs1: 0,  imm: 64 },         // addi a7, x0, 64 (write)
+        Instruction::Sub {
+            rd: 12,
+            rs1: 12,
+            rs2: 11,
+        }, // sub a2, a2, a1  (len)
+        Instruction::Addi {
+            rd: 10,
+            rs1: 0,
+            imm: 1,
+        }, // addi a0, x0, 1  (stdout)
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 64,
+        }, // addi a7, x0, 64 (write)
         Instruction::Ecall,
     ])
 }
@@ -192,26 +227,87 @@ pub(crate) fn parse_print_strln(
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
         // --- strlen + write(1, buf, len) ---
-        i1, i2,
-        Instruction::Addi { rd: 12, rs1: 11, imm: 0 },
-        Instruction::Lbu  { rd: 5,  rs1: 12, imm: 0 },
-        Instruction::Beq  { rs1: 5, rs2: 0,  imm: 12 },
-        Instruction::Addi { rd: 12, rs1: 12, imm: 1 },
-        Instruction::Jal  { rd: 0,  imm: -12 },
-        Instruction::Sub  { rd: 12, rs1: 12, rs2: 11 },
-        Instruction::Addi { rd: 10, rs1: 0,  imm: 1 },
-        Instruction::Addi { rd: 17, rs1: 0,  imm: 64 },
+        i1,
+        i2,
+        Instruction::Addi {
+            rd: 12,
+            rs1: 11,
+            imm: 0,
+        },
+        Instruction::Lbu {
+            rd: 5,
+            rs1: 12,
+            imm: 0,
+        },
+        Instruction::Beq {
+            rs1: 5,
+            rs2: 0,
+            imm: 12,
+        },
+        Instruction::Addi {
+            rd: 12,
+            rs1: 12,
+            imm: 1,
+        },
+        Instruction::Jal { rd: 0, imm: -12 },
+        Instruction::Sub {
+            rd: 12,
+            rs1: 12,
+            rs2: 11,
+        },
+        Instruction::Addi {
+            rd: 10,
+            rs1: 0,
+            imm: 1,
+        },
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 64,
+        },
         Instruction::Ecall,
         // --- write(1, "\n", 1) via stack ---
-        Instruction::Addi { rd: 2,  rs1: 2,  imm: -4 },         // sp -= 4
-        Instruction::Addi { rd: 5,  rs1: 0,  imm: 10 },         // t0 = '\n'
-        Instruction::Sb   { rs2: 5, rs1: 2,  imm: 0 },          // sb t0, 0(sp)
-        Instruction::Addi { rd: 10, rs1: 0,  imm: 1 },          // a0 = 1 (stdout)
-        Instruction::Addi { rd: 11, rs1: 2,  imm: 0 },          // a1 = sp (buf)
-        Instruction::Addi { rd: 12, rs1: 0,  imm: 1 },          // a2 = 1 (len)
-        Instruction::Addi { rd: 17, rs1: 0,  imm: 64 },         // a7 = write
+        Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: -4,
+        }, // sp -= 4
+        Instruction::Addi {
+            rd: 5,
+            rs1: 0,
+            imm: 10,
+        }, // t0 = '\n'
+        Instruction::Sb {
+            rs2: 5,
+            rs1: 2,
+            imm: 0,
+        }, // sb t0, 0(sp)
+        Instruction::Addi {
+            rd: 10,
+            rs1: 0,
+            imm: 1,
+        }, // a0 = 1 (stdout)
+        Instruction::Addi {
+            rd: 11,
+            rs1: 2,
+            imm: 0,
+        }, // a1 = sp (buf)
+        Instruction::Addi {
+            rd: 12,
+            rs1: 0,
+            imm: 1,
+        }, // a2 = 1 (len)
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 64,
+        }, // a7 = write
         Instruction::Ecall,
-        Instruction::Addi { rd: 2,  rs1: 2,  imm: 4 },          // sp += 4
+        Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: 4,
+        }, // sp += 4
     ])
 }
 
@@ -232,10 +328,23 @@ pub(crate) fn parse_read(
     let la_line = format!("la a1, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 10, rs1: 0, imm: 0   }, // a0 = 0 (stdin)
-        i1, i2,                                           // la a1, label (buf)
-        Instruction::Addi { rd: 12, rs1: 0, imm: 256 }, // a2 = 256 (max bytes)
-        Instruction::Addi { rd: 17, rs1: 0, imm: 63  }, // a7 = read
+        Instruction::Addi {
+            rd: 10,
+            rs1: 0,
+            imm: 0,
+        }, // a0 = 0 (stdin)
+        i1,
+        i2, // la a1, label (buf)
+        Instruction::Addi {
+            rd: 12,
+            rs1: 0,
+            imm: 256,
+        }, // a2 = 256 (max bytes)
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 63,
+        }, // a7 = read
         Instruction::Ecall,
     ])
 }
@@ -255,8 +364,14 @@ pub(crate) fn parse_read_byte(
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 1010 },
-        i1, i2, Instruction::Ecall,
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 1010,
+        },
+        i1,
+        i2,
+        Instruction::Ecall,
     ])
 }
 
@@ -275,8 +390,14 @@ pub(crate) fn parse_read_half(
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 1011 },
-        i1, i2, Instruction::Ecall,
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 1011,
+        },
+        i1,
+        i2,
+        Instruction::Ecall,
     ])
 }
 
@@ -295,8 +416,14 @@ pub(crate) fn parse_read_word(
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 1012 },
-        i1, i2, Instruction::Ecall,
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 1012,
+        },
+        i1,
+        i2,
+        Instruction::Ecall,
     ])
 }
 
@@ -312,14 +439,38 @@ pub(crate) fn parse_random(s: &str) -> Result<Vec<Instruction>, String> {
     }
     let rd = parse_reg(&ops[0]).ok_or("random: invalid rd")?;
     Ok(vec![
-        Instruction::Addi { rd: 2,  rs1: 2, imm: -4 }, // sp -= 4 (temp slot)
-        Instruction::Addi { rd: 17, rs1: 0, imm: 278 }, // a7 = getrandom
-        Instruction::Addi { rd: 10, rs1: 2, imm: 0  }, // a0 = sp (buf)
-        Instruction::Addi { rd: 11, rs1: 0, imm: 4  }, // a1 = 4 (len = 4 bytes)
-        Instruction::Addi { rd: 12, rs1: 0, imm: 0  }, // a2 = 0 (flags)
+        Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: -4,
+        }, // sp -= 4 (temp slot)
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 278,
+        }, // a7 = getrandom
+        Instruction::Addi {
+            rd: 10,
+            rs1: 2,
+            imm: 0,
+        }, // a0 = sp (buf)
+        Instruction::Addi {
+            rd: 11,
+            rs1: 0,
+            imm: 4,
+        }, // a1 = 4 (len = 4 bytes)
+        Instruction::Addi {
+            rd: 12,
+            rs1: 0,
+            imm: 0,
+        }, // a2 = 0 (flags)
         Instruction::Ecall,
-        Instruction::Lw  { rd, rs1: 2, imm: 0 },       // rd = mem[sp] (full word)
-        Instruction::Addi { rd: 2,  rs1: 2, imm: 4  }, // sp += 4 (restore)
+        Instruction::Lw { rd, rs1: 2, imm: 0 }, // rd = mem[sp] (full word)
+        Instruction::Addi {
+            rd: 2,
+            rs1: 2,
+            imm: 4,
+        }, // sp += 4 (restore)
     ])
 }
 
@@ -343,15 +494,30 @@ pub(crate) fn parse_random_bytes(
     let n = parse_imm(&ops[1])
         .ok_or_else(|| format!("random_bytes: invalid byte count: {}", ops[1]))?;
     if n <= 0 {
-        return Err(format!("random_bytes: byte count must be positive, got {n}"));
+        return Err(format!(
+            "random_bytes: byte count must be positive, got {n}"
+        ));
     }
     let la_line = format!("la a0, {}", ops[0]);
     let (i1, i2) = parse_la(&la_line, labels)?;
     Ok(vec![
-        Instruction::Addi { rd: 17, rs1: 0, imm: 278 }, // a7 = getrandom
-        i1, i2,                                          // la a0, label
-        Instruction::Addi { rd: 11, rs1: 0, imm: n  },  // a1 = n (len)
-        Instruction::Addi { rd: 12, rs1: 0, imm: 0  },  // a2 = 0 (flags)
+        Instruction::Addi {
+            rd: 17,
+            rs1: 0,
+            imm: 278,
+        }, // a7 = getrandom
+        i1,
+        i2, // la a0, label
+        Instruction::Addi {
+            rd: 11,
+            rs1: 0,
+            imm: n,
+        }, // a1 = n (len)
+        Instruction::Addi {
+            rd: 12,
+            rs1: 0,
+            imm: 0,
+        }, // a2 = 0 (flags)
         Instruction::Ecall,
     ])
 }

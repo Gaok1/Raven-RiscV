@@ -791,3 +791,48 @@ static inline int falcon_strcmp(const char *s1, const char *s2) {
     __asm__ volatile("ecall" : "=r"(ret) : "r"(_a7), "r"(_a0), "r"(_a1));
     return ret;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HART MANAGEMENT  (syscall 1100)
+//
+// Spawns a new hardware thread (hart) to run concurrently with the caller.
+// The new hart begins execution at `entry_pc` with stack pointer `stack_ptr`.
+// `arg` is placed in a0 so the hart entry point receives a single u32 argument.
+//
+// Returns 0 on success.  In Raven, the new hart is scheduled alongside the
+// caller from the next simulation cycle.
+//
+// Typical usage:
+//
+//   void worker(unsigned int id) { ... sys_exit(0); }
+//
+//   // allocate a stack for the new hart
+//   static char hart1_stack[4096];
+//   falcon_hart_start((unsigned int)worker,
+//                     (unsigned int)(hart1_stack + sizeof(hart1_stack)),
+//                     /*arg=*/1);
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Convenience macro — spawns a hart using a stack array declared in scope.
+// stack_arr must be a char/u8 array (not a pointer).  Computes stack-top automatically.
+//
+//   static char worker_stack[4096];
+//   RAVEN_SPAWN_HART(my_worker, worker_stack, /*arg=*/1);
+#define RAVEN_SPAWN_HART(fn_ptr, stack_arr, arg) \
+    falcon_hart_start((unsigned int)(fn_ptr), \
+                      (unsigned int)((stack_arr) + sizeof(stack_arr)), \
+                      (unsigned int)(arg))
+
+// Spawn a new hart.  entry_pc must point to a valid instruction.
+// stack_ptr must point to the TOP (high address) of an aligned stack region.
+// arg is passed in a0 of the new hart.  Returns 0.
+static inline int falcon_hart_start(unsigned int entry_pc,
+                                    unsigned int stack_ptr,
+                                    unsigned int arg) {
+    register int          _a7 __asm__("a7") = 1100;
+    register unsigned int _a0 __asm__("a0") = entry_pc;
+    register unsigned int _a1 __asm__("a1") = stack_ptr;
+    register unsigned int _a2 __asm__("a2") = arg;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7), "r"(_a1), "r"(_a2));
+    return (int)_a0;
+}

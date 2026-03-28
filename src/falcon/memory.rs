@@ -48,15 +48,39 @@ pub trait Bus {
     }
 }
 
-pub struct Ram { data: Vec<u8> }
+pub struct Ram {
+    data: Vec<u8>,
+}
 
 impl Ram {
-    pub fn new(size: usize) -> Self { Self { data: vec![0; size] } }
+    pub fn new(size: usize) -> Self {
+        Self {
+            data: vec![0; size],
+        }
+    }
+
+    /// Number of bytes in this RAM.
+    pub fn data_len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Copy `len` bytes from `src` into this RAM starting at byte offset 0.
+    pub fn copy_from_slice(&mut self, src: &[u8], len: usize) {
+        let len = len.min(self.data.len()).min(src.len());
+        self.data[..len].copy_from_slice(&src[..len]);
+    }
+
+    /// Return a read-only view of the raw bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
 }
 
 impl Bus for Ram {
     fn load8(&self, a: u32) -> Result<u8, FalconError> {
-        self.data.get(a as usize).copied()
+        self.data
+            .get(a as usize)
+            .copied()
             .ok_or_else(|| FalconError::Bus(format!("address 0x{a:08X} out of bounds")))
     }
     fn load16(&self, a: u32) -> Result<u16, FalconError> {
@@ -93,13 +117,5 @@ impl Bus for Ram {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn store_and_load_word() {
-        let mut ram = Ram::new(64);
-        ram.store32(0x10, 0xDEADBEEF).unwrap();
-        assert_eq!(ram.load32(0x10).unwrap(), 0xDEADBEEF);
-    }
-}
+#[path = "../../tests/support/falcon_memory.rs"]
+mod tests;

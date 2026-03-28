@@ -14,11 +14,15 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    },
 };
 use unicode_truncate::UnicodeTruncateStr;
 
-use crate::falcon::cache::{CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy};
+use crate::falcon::cache::{
+    CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy,
+};
 use crate::ui::app::{App, CacheDataFmt, CacheDataGroup, CacheScope};
 use crate::ui::theme;
 
@@ -75,7 +79,11 @@ fn render_unified_view(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
 
 fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let cfg = &app.run.mem.extra_levels[extra_idx].config;
-    let num_sets = if cfg.is_valid_config() { cfg.num_sets() } else { 0 };
+    let num_sets = if cfg.is_valid_config() {
+        cfg.num_sets()
+    } else {
+        0
+    };
     let scroll = app.cache.view_scroll.min(num_sets.saturating_sub(1));
     let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
     let policy_hint = policy_hint_str(cfg.replacement);
@@ -145,14 +153,30 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     // Scroll indicator (use the cache with more sets as reference)
     let num_sets = match scope {
         CacheScope::ICache => {
-            if icfg.is_valid_config() { icfg.num_sets() } else { 0 }
+            if icfg.is_valid_config() {
+                icfg.num_sets()
+            } else {
+                0
+            }
         }
         CacheScope::DCache => {
-            if dcfg.is_valid_config() { dcfg.num_sets() } else { 0 }
+            if dcfg.is_valid_config() {
+                dcfg.num_sets()
+            } else {
+                0
+            }
         }
         CacheScope::Both => {
-            let i = if icfg.is_valid_config() { icfg.num_sets() } else { 0 };
-            let d = if dcfg.is_valid_config() { dcfg.num_sets() } else { 0 };
+            let i = if icfg.is_valid_config() {
+                icfg.num_sets()
+            } else {
+                0
+            };
+            let d = if dcfg.is_valid_config() {
+                dcfg.num_sets()
+            } else {
+                0
+            };
             i.max(d)
         }
     };
@@ -167,14 +191,24 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     let tag_shift_hint = if app.cache.show_tag {
         let i_shift = if icfg.is_valid_config() {
             Some(icfg.offset_bits() + icfg.index_bits())
-        } else { None };
+        } else {
+            None
+        };
         let d_shift = if dcfg.is_valid_config() {
             Some(dcfg.offset_bits() + dcfg.index_bits())
-        } else { None };
+        } else {
+            None
+        };
         let shift_opt = match scope {
             CacheScope::ICache => i_shift,
             CacheScope::DCache => d_shift,
-            CacheScope::Both => if i_shift == d_shift { i_shift } else { None },
+            CacheScope::Both => {
+                if i_shift == d_shift {
+                    i_shift
+                } else {
+                    None
+                }
+            }
         };
         shift_opt.map(|s| format!(" >>{}b", s)).unwrap_or_default()
     } else {
@@ -248,17 +282,32 @@ fn legend_button_styles(app: &App) -> (Style, Style, Style, String, String, Stri
         Style::default().fg(theme::LABEL_Y)
     };
 
-    (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label)
+    (
+        fmt_style,
+        group_style,
+        tag_style,
+        fmt_label,
+        group_label,
+        tag_label,
+    )
 }
 
 /// Full policy hint (for single-scope display).
 fn policy_hint_str(p: ReplacementPolicy) -> String {
     match p {
-        ReplacementPolicy::Lru   => "r:N = recency rank  (cyan 0=just used / red N=evict next)".into(),
-        ReplacementPolicy::Mru   => "r:N = recency rank  (red 0=just used=EVICT / cyan N=safe)".into(),
-        ReplacementPolicy::Fifo  => "r:N = arrival order  (cyan 0=newest / red N=oldest=evict next)".into(),
-        ReplacementPolicy::Lfu   => "f:N = access count  (red=fewest accesses=evict next)".into(),
-        ReplacementPolicy::Clock => "> = clock pointer  R = recently used (protected)  > no R = evict next".into(),
+        ReplacementPolicy::Lru => {
+            "r:N = recency rank  (cyan 0=just used / red N=evict next)".into()
+        }
+        ReplacementPolicy::Mru => {
+            "r:N = recency rank  (red 0=just used=EVICT / cyan N=safe)".into()
+        }
+        ReplacementPolicy::Fifo => {
+            "r:N = arrival order  (cyan 0=newest / red N=oldest=evict next)".into()
+        }
+        ReplacementPolicy::Lfu => "f:N = access count  (red=fewest accesses=evict next)".into(),
+        ReplacementPolicy::Clock => {
+            "> = clock pointer  R = recently used (protected)  > no R = evict next".into()
+        }
         ReplacementPolicy::Random => "random eviction — no priority ordering".into(),
     }
 }
@@ -266,10 +315,10 @@ fn policy_hint_str(p: ReplacementPolicy) -> String {
 /// Short policy hint used when showing both caches side by side with different policies.
 fn policy_hint_short(p: ReplacementPolicy) -> &'static str {
     match p {
-        ReplacementPolicy::Lru   => "LRU  r:N recency  cyan=safe  red=evict",
-        ReplacementPolicy::Mru   => "MRU  r:N recency  red=just-used=EVICT",
-        ReplacementPolicy::Fifo  => "FIFO  r:N order  cyan=newest  red=evict",
-        ReplacementPolicy::Lfu   => "LFU  f:N=count  red=fewest=evict",
+        ReplacementPolicy::Lru => "LRU  r:N recency  cyan=safe  red=evict",
+        ReplacementPolicy::Mru => "MRU  r:N recency  red=just-used=EVICT",
+        ReplacementPolicy::Fifo => "FIFO  r:N order  cyan=newest  red=evict",
+        ReplacementPolicy::Lfu => "LFU  f:N=count  red=fewest=evict",
         ReplacementPolicy::Clock => "Clock  >=pointer  R=protected",
         ReplacementPolicy::Random => "Random",
     }
@@ -284,16 +333,19 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
 
     let title = if cfg.is_valid_config() {
         let policy_str = match cfg.replacement {
-            ReplacementPolicy::Lru    => "LRU",
-            ReplacementPolicy::Mru    => "MRU",
-            ReplacementPolicy::Fifo   => "FIFO",
+            ReplacementPolicy::Lru => "LRU",
+            ReplacementPolicy::Mru => "MRU",
+            ReplacementPolicy::Fifo => "FIFO",
             ReplacementPolicy::Random => "Rand",
-            ReplacementPolicy::Lfu    => "LFU",
-            ReplacementPolicy::Clock  => "Clock",
+            ReplacementPolicy::Lfu => "LFU",
+            ReplacementPolicy::Clock => "Clock",
         };
         format!(
             "{level_name} Unified · {}B · {}S · {}W · {}B/L · {policy_str}",
-            cfg.size, cfg.num_sets(), cfg.associativity, cfg.line_size
+            cfg.size,
+            cfg.num_sets(),
+            cfg.associativity,
+            cfg.line_size
         )
     } else {
         format!("{level_name}: disabled")
@@ -303,7 +355,10 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(title, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            title,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -319,7 +374,9 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         return;
     }
 
-    if inner.height < 2 || inner.width < 20 { return; }
+    if inner.height < 2 || inner.width < 20 {
+        return;
+    }
 
     let sets_view = cache.view();
     let num_sets = sets_view.len();
@@ -329,19 +386,24 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let set_col_w: usize = 5;
     let sep_w: usize = 1;
     let policy_w = match policy {
-        ReplacementPolicy::Lfu    => 6,
-        ReplacementPolicy::Clock  => 4,
+        ReplacementPolicy::Lfu => 6,
+        ReplacementPolicy::Clock => 4,
         ReplacementPolicy::Random => 2,
-        _                         => 4,
+        _ => 4,
     };
     // Fixed overhead: ○  0x00001000  = 1+2+10 = 13, + "  " before bytes + "  " before policy = 4
     let cell_overhead = 17 + policy_w;
-    let total_way_space = (inner.width as usize).saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
+    let total_way_space =
+        (inner.width as usize).saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
     let ideal_way_col_w = total_way_space / ways.max(1);
     let min_way_col_w = (cell_overhead + 2).max(28);
     let way_col_w = ideal_way_col_w.max(min_way_col_w);
-    let fmt   = app.cache.data_fmt;
-    let group = if fmt == CacheDataFmt::Float { CacheDataGroup::B4 } else { app.cache.data_group };
+    let fmt = app.cache.data_fmt;
+    let group = if fmt == CacheDataFmt::Float {
+        CacheDataGroup::B4
+    } else {
+        app.cache.data_group
+    };
 
     // Expand way_col_w so that all line_size bytes can fit in a single row (h-scroll if needed)
     let (unit_chars, unit_bytes) = unit_metrics(fmt, group);
@@ -351,12 +413,15 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
 
     let bytes_per_row = if way_col_w > cell_overhead {
         bytes_from_budget(way_col_w - cell_overhead, fmt, group, cfg.line_size)
-    } else { 0 };
+    } else {
+        0
+    };
     let row_height = if bytes_per_row == 0 || cfg.line_size == 0 {
         1
     } else {
         cfg.line_size.div_ceil(bytes_per_row)
-    }.max(1);
+    }
+    .max(1);
     let total_content_w = set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
     let max_h_scroll = total_content_w.saturating_sub(inner.width as usize);
     let h_scroll = app.cache.view_h_scroll.min(max_h_scroll) as u16;
@@ -395,28 +460,50 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     // Set rows (unified — D-cache lines can be dirty)
     let mut term_row: u16 = 0;
     'sets: for set_idx in scroll.. {
-        if set_idx >= num_sets || term_row >= rows_h { break; }
+        if set_idx >= num_sets || term_row >= rows_h {
+            break;
+        }
         let set = &sets_view[set_idx];
         let has_valid = set.lines.iter().any(|l| l.valid);
-        let set_style = if has_valid { Style::default().fg(theme::TEXT) }
-                        else         { Style::default().fg(theme::LABEL) };
+        let set_style = if has_valid {
+            Style::default().fg(theme::TEXT)
+        } else {
+            Style::default().fg(theme::LABEL)
+        };
         for sub_row in 0..row_height {
-            if term_row >= rows_h { break 'sets; }
+            if term_row >= rows_h {
+                break 'sets;
+            }
             let y = inner.y + header_h + term_row;
             let set_col = if sub_row == 0 {
-                Span::styled(format!("{:>width$} ", set_idx, width = set_col_w - 1), set_style)
+                Span::styled(
+                    format!("{:>width$} ", set_idx, width = set_col_w - 1),
+                    set_style,
+                )
             } else {
                 Span::raw(" ".repeat(set_col_w))
             };
             let byte_offset = sub_row * bytes_per_row;
-            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(theme::BORDER))];
+            let mut spans = vec![
+                set_col,
+                Span::styled("|", Style::default().fg(theme::BORDER)),
+            ];
             for w in 0..ways {
                 let cell = build_cell(
-                    &set.lines[w], set, w,
+                    &set.lines[w],
+                    set,
+                    w,
                     true, // unified = can be dirty
-                    policy, cfg, set_idx,
-                    bytes_per_row, byte_offset, sub_row == 0,
-                    way_col_w, fmt, group, app.cache.show_tag,
+                    policy,
+                    cfg,
+                    set_idx,
+                    bytes_per_row,
+                    byte_offset,
+                    sub_row == 0,
+                    way_col_w,
+                    fmt,
+                    group,
+                    app.cache.show_tag,
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
@@ -441,8 +528,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         app.cache.hscroll_tracks.set([(track_x, track_w), (0, 0)]);
         app.cache.hscroll_row.set(sb_y);
         app.cache.hscroll_max.set(max_h_scroll);
-        let hovered = app.cache.hover_hscrollbar
-            && app.cache.hscroll_hover_track_x == track_x;
+        let hovered = app.cache.hover_hscrollbar && app.cache.hscroll_hover_track_x == track_x;
         let style = if hovered {
             Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
         } else {
@@ -461,18 +547,22 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
 }
 
 fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
-    let cache = if icache { &app.run.mem.icache } else { &app.run.mem.dcache };
+    let cache = if icache {
+        &app.run.mem.icache
+    } else {
+        &app.run.mem.dcache
+    };
     let label = if icache { "I-Cache" } else { "D-Cache" };
     let cfg = &cache.config;
 
     let title = if cfg.is_valid_config() {
         let policy_str = match cfg.replacement {
-            ReplacementPolicy::Lru    => "LRU",
-            ReplacementPolicy::Mru    => "MRU",
-            ReplacementPolicy::Fifo   => "FIFO",
+            ReplacementPolicy::Lru => "LRU",
+            ReplacementPolicy::Mru => "MRU",
+            ReplacementPolicy::Fifo => "FIFO",
             ReplacementPolicy::Random => "Rand",
-            ReplacementPolicy::Lfu    => "LFU",
-            ReplacementPolicy::Clock  => "Clock",
+            ReplacementPolicy::Lfu => "LFU",
+            ReplacementPolicy::Clock => "Clock",
         };
         format!(
             "{label} · {}B · {}S · {}W · {}B/L · {policy_str}",
@@ -489,7 +579,10 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(title, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            title,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -516,27 +609,31 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     // Column widths
     let set_col_w: usize = 5; // " NNN "
-    let sep_w: usize = 1;     // "|"
+    let sep_w: usize = 1; // "|"
 
     // Fixed overhead: ○  0x00001000  = 1+2+10 = 13, + "  " before bytes + "  " before policy = 4
     let policy_w = match policy {
-        ReplacementPolicy::Lfu    => 6, // "f:9999"
-        ReplacementPolicy::Clock  => 4, // ">R" or "> " etc.
+        ReplacementPolicy::Lfu => 6,   // "f:9999"
+        ReplacementPolicy::Clock => 4, // ">R" or "> " etc.
         ReplacementPolicy::Random => 2,
-        _                         => 4, // "r:NN"
+        _ => 4, // "r:NN"
     };
     let cell_overhead = 17 + policy_w;
 
     // way_col_w: prefer fitting the screen, but guarantee a useful minimum so
     // that content is always readable and horizontal scrolling becomes possible.
-    let total_way_space = (inner.width as usize)
-        .saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
+    let total_way_space =
+        (inner.width as usize).saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
     let ideal_way_col_w = total_way_space / ways.max(1);
     let min_way_col_w = (cell_overhead + 2).max(28); // at least readable
     let way_col_w = ideal_way_col_w.max(min_way_col_w);
 
     let fmt = app.cache.data_fmt;
-    let group = if fmt == CacheDataFmt::Float { CacheDataGroup::B4 } else { app.cache.data_group };
+    let group = if fmt == CacheDataFmt::Float {
+        CacheDataGroup::B4
+    } else {
+        app.cache.data_group
+    };
 
     // Expand way_col_w so that all line_size bytes can fit in a single row (h-scroll if needed)
     let (unit_chars, unit_bytes) = unit_metrics(fmt, group);
@@ -553,15 +650,19 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         1
     } else {
         cfg.line_size.div_ceil(bytes_per_row)
-    }.max(1);
+    }
+    .max(1);
 
     // Total logical content width (may exceed inner.width for large associativity)
-    let total_content_w =
-        set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
+    let total_content_w = set_col_w + sep_w + ways * way_col_w + ways.saturating_sub(1) * sep_w;
 
     // Horizontal scroll (each panel has its own scroll position)
     let max_h_scroll = total_content_w.saturating_sub(inner.width as usize);
-    let raw_h_scroll = if icache { app.cache.view_h_scroll } else { app.cache.view_h_scroll_d };
+    let raw_h_scroll = if icache {
+        app.cache.view_h_scroll
+    } else {
+        app.cache.view_h_scroll_d
+    };
     let h_scroll = raw_h_scroll.min(max_h_scroll) as u16;
     let need_h_scrollbar = max_h_scroll > 0;
 
@@ -602,7 +703,9 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     // ── Set rows ─────────────────────────────────────────────────────────────
     let mut term_row: u16 = 0;
     'sets: for set_idx in scroll.. {
-        if set_idx >= num_sets || term_row >= rows_h { break; }
+        if set_idx >= num_sets || term_row >= rows_h {
+            break;
+        }
         let set = &sets_view[set_idx];
         let has_valid = set.lines.iter().any(|l| l.valid);
         let set_style = if has_valid {
@@ -611,21 +714,39 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
             Style::default().fg(Color::DarkGray)
         };
         for sub_row in 0..row_height {
-            if term_row >= rows_h { break 'sets; }
+            if term_row >= rows_h {
+                break 'sets;
+            }
             let y = inner.y + header_h + term_row;
             let set_col = if sub_row == 0 {
-                Span::styled(format!("{:>width$} ", set_idx, width = set_col_w - 1), set_style)
+                Span::styled(
+                    format!("{:>width$} ", set_idx, width = set_col_w - 1),
+                    set_style,
+                )
             } else {
                 Span::raw(" ".repeat(set_col_w))
             };
             let byte_offset = sub_row * bytes_per_row;
-            let mut spans = vec![set_col, Span::styled("|", Style::default().fg(theme::BORDER))];
+            let mut spans = vec![
+                set_col,
+                Span::styled("|", Style::default().fg(theme::BORDER)),
+            ];
             for w in 0..ways {
                 let cell = build_cell(
-                    &set.lines[w], set, w,
-                    !icache, policy, cfg, set_idx,
-                    bytes_per_row, byte_offset, sub_row == 0,
-                    way_col_w, fmt, group, app.cache.show_tag,
+                    &set.lines[w],
+                    set,
+                    w,
+                    !icache,
+                    policy,
+                    cfg,
+                    set_idx,
+                    bytes_per_row,
+                    byte_offset,
+                    sub_row == 0,
+                    way_col_w,
+                    fmt,
+                    group,
+                    app.cache.show_tag,
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
@@ -654,15 +775,14 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         app.cache.hscroll_row.set(sb_y);
         app.cache.hscroll_max.set(max_h_scroll);
         // Highlight if this specific scrollbar is hovered
-        let hovered = app.cache.hover_hscrollbar
-            && app.cache.hscroll_hover_track_x == track_x;
+        let hovered = app.cache.hover_hscrollbar && app.cache.hscroll_hover_track_x == track_x;
         let style = if hovered {
             Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
         } else {
             Style::default()
         };
-        let mut sb_state = ScrollbarState::new(max_h_scroll)
-            .position(raw_h_scroll.min(max_h_scroll));
+        let mut sb_state =
+            ScrollbarState::new(max_h_scroll).position(raw_h_scroll.min(max_h_scroll));
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .begin_symbol(Some("◄"))
@@ -678,17 +798,21 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
 /// Chars per display unit and bytes consumed, given format + grouping.
 fn unit_metrics(fmt: CacheDataFmt, group: CacheDataGroup) -> (usize, usize) {
-    let g = if fmt == CacheDataFmt::Float { 4 } else { group.bytes() };
+    let g = if fmt == CacheDataFmt::Float {
+        4
+    } else {
+        group.bytes()
+    };
     let chars = match (fmt, g) {
-        (CacheDataFmt::Hex,  1) => 3,  // "XX "
-        (CacheDataFmt::Hex,  2) => 5,  // "XXXX "
-        (CacheDataFmt::Hex,  4) => 9,  // "XXXXXXXX "
-        (CacheDataFmt::DecU, 1) => 4,  // "NNN " (0–255)
-        (CacheDataFmt::DecU, 2) => 6,  // "NNNNN " (0–65535)
-        (CacheDataFmt::DecU, 4) => 11, // "NNNNNNNNNN " (0–4294967295)
-        (CacheDataFmt::DecS, 1) => 5,  // "-NNN " (−128–127)
-        (CacheDataFmt::DecS, 2) => 7,  // "-NNNNN " (−32768–32767)
-        (CacheDataFmt::DecS, 4) => 12, // "-NNNNNNNNNN "
+        (CacheDataFmt::Hex, 1) => 3,    // "XX "
+        (CacheDataFmt::Hex, 2) => 5,    // "XXXX "
+        (CacheDataFmt::Hex, 4) => 9,    // "XXXXXXXX "
+        (CacheDataFmt::DecU, 1) => 4,   // "NNN " (0–255)
+        (CacheDataFmt::DecU, 2) => 6,   // "NNNNN " (0–65535)
+        (CacheDataFmt::DecU, 4) => 11,  // "NNNNNNNNNN " (0–4294967295)
+        (CacheDataFmt::DecS, 1) => 5,   // "-NNN " (−128–127)
+        (CacheDataFmt::DecS, 2) => 7,   // "-NNNNN " (−32768–32767)
+        (CacheDataFmt::DecS, 4) => 12,  // "-NNNNNNNNNN "
         (CacheDataFmt::Float, _) => 10, // "±NNN.NNN "
         _ => 3,
     };
@@ -696,7 +820,12 @@ fn unit_metrics(fmt: CacheDataFmt, group: CacheDataGroup) -> (usize, usize) {
 }
 
 /// How many bytes fit in `budget` chars for the given format + grouping.
-fn bytes_from_budget(budget: usize, fmt: CacheDataFmt, group: CacheDataGroup, line_size: usize) -> usize {
+fn bytes_from_budget(
+    budget: usize,
+    fmt: CacheDataFmt,
+    group: CacheDataGroup,
+    line_size: usize,
+) -> usize {
     let (chars, g) = unit_metrics(fmt, group);
     let units = budget / chars;
     (units * g).min(line_size)
@@ -710,10 +839,20 @@ fn read_le(data: &[u8], offset: usize, size: usize) -> u64 {
     val
 }
 
-fn render_data(data: &[u8], max_bytes: usize, fmt: CacheDataFmt, group: CacheDataGroup, tint: Option<Color>) -> Vec<Span<'static>> {
+fn render_data(
+    data: &[u8],
+    max_bytes: usize,
+    fmt: CacheDataFmt,
+    group: CacheDataGroup,
+    tint: Option<Color>,
+) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let dim = Style::default().fg(theme::LABEL);
-    let g = if fmt == CacheDataFmt::Float { 4 } else { group.bytes() };
+    let g = if fmt == CacheDataFmt::Float {
+        4
+    } else {
+        group.bytes()
+    };
     let n_bytes = max_bytes.min(data.len());
     let n_units = n_bytes / g;
 
@@ -732,8 +871,8 @@ fn render_data(data: &[u8], max_bytes: usize, fmt: CacheDataFmt, group: CacheDat
             CacheDataFmt::DecU => {
                 let v = read_le(data, offset, g);
                 let s = match g {
-                    1 => format!("{:3}",  v as u8),
-                    2 => format!("{:5}",  v as u16),
+                    1 => format!("{:3}", v as u8),
+                    2 => format!("{:5}", v as u16),
                     _ => format!("{:10}", v as u32),
                 };
                 (s, v == 0, false)
@@ -741,35 +880,60 @@ fn render_data(data: &[u8], max_bytes: usize, fmt: CacheDataFmt, group: CacheDat
             CacheDataFmt::DecS => {
                 let v = read_le(data, offset, g);
                 let (s, neg) = match g {
-                    1 => { let x = v as i8;  (format!("{x:4}"),  x < 0) }
-                    2 => { let x = v as i16; (format!("{x:6}"),  x < 0) }
-                    _ => { let x = v as i32; (format!("{x:11}"), x < 0) }
+                    1 => {
+                        let x = v as i8;
+                        (format!("{x:4}"), x < 0)
+                    }
+                    2 => {
+                        let x = v as i16;
+                        (format!("{x:6}"), x < 0)
+                    }
+                    _ => {
+                        let x = v as i32;
+                        (format!("{x:11}"), x < 0)
+                    }
                 };
                 (s, v == 0, neg)
             }
             CacheDataFmt::Float => {
                 let bytes = [
-                    data.get(offset    ).copied().unwrap_or(0),
+                    data.get(offset).copied().unwrap_or(0),
                     data.get(offset + 1).copied().unwrap_or(0),
                     data.get(offset + 2).copied().unwrap_or(0),
                     data.get(offset + 3).copied().unwrap_or(0),
                 ];
                 let f = f32::from_le_bytes(bytes);
-                let s = if f.is_nan()          { "     NaN".to_string() }
-                        else if f.is_infinite() { if f > 0.0 { "    +Inf".to_string() } else { "    -Inf".to_string() } }
-                        else                    { format!("{f:8.3}") };
+                let s = if f.is_nan() {
+                    "     NaN".to_string()
+                } else if f.is_infinite() {
+                    if f > 0.0 {
+                        "    +Inf".to_string()
+                    } else {
+                        "    -Inf".to_string()
+                    }
+                } else {
+                    format!("{f:8.3}")
+                };
                 (s, f == 0.0, f < 0.0)
             }
         };
 
         let style = tint.map_or_else(
-            || if is_zero { dim }
-               else if neg { Style::default().fg(theme::DANGER) }
-               else { Style::default().fg(theme::TEXT) },
+            || {
+                if is_zero {
+                    dim
+                } else if neg {
+                    Style::default().fg(theme::DANGER)
+                } else {
+                    Style::default().fg(theme::TEXT)
+                }
+            },
             |c| Style::default().fg(c),
         );
         spans.push(Span::styled(s, style));
-        if i + 1 < n_units { spans.push(Span::raw(" ")); }
+        if i + 1 < n_units {
+            spans.push(Span::raw(" "));
+        }
     }
     spans
 }
@@ -818,7 +982,13 @@ fn build_cell(
         spans.push(Span::raw(" ".repeat(17)));
         if byte_offset < line.data.len() && bytes_per_row > 0 {
             let tint = if is_dirty { Some(DIRTY_COLOR) } else { None };
-            spans.extend(render_data(&line.data[byte_offset..], bytes_per_row, fmt, group, tint));
+            spans.extend(render_data(
+                &line.data[byte_offset..],
+                bytes_per_row,
+                fmt,
+                group,
+                tint,
+            ));
         }
         // enforce cell_width (truncate/pad handled by the common block below)
         let used: usize = spans.iter().map(Span::width).sum();
@@ -828,7 +998,9 @@ fn build_cell(
             let mut out: Vec<Span<'static>> = Vec::with_capacity(spans.len());
             let mut budget = cell_width;
             for span in spans {
-                if budget == 0 { break; }
+                if budget == 0 {
+                    break;
+                }
                 let width = span.width();
                 if width <= budget {
                     budget -= width;
@@ -842,7 +1014,9 @@ fn build_cell(
                     break;
                 }
             }
-            if budget > 0 { out.push(Span::raw(" ".repeat(budget))); }
+            if budget > 0 {
+                out.push(Span::raw(" ".repeat(budget)));
+            }
             spans = out;
         }
         return spans;
@@ -851,7 +1025,10 @@ fn build_cell(
     let is_dirty = is_dcache && line.dirty;
 
     // V bit
-    spans.push(Span::styled("1", Style::default().fg(theme::RUNNING).bold()));
+    spans.push(Span::styled(
+        "1",
+        Style::default().fg(theme::RUNNING).bold(),
+    ));
     spans.push(Span::raw(" "));
 
     // D bit
@@ -890,7 +1067,13 @@ fn build_cell(
     if bytes_per_row > 0 && byte_offset < line.data.len() {
         spans.push(Span::raw("  "));
         let tint = if is_dirty { Some(DIRTY_COLOR) } else { None };
-        spans.extend(render_data(&line.data[byte_offset..], bytes_per_row, fmt, group, tint));
+        spans.extend(render_data(
+            &line.data[byte_offset..],
+            bytes_per_row,
+            fmt,
+            group,
+            tint,
+        ));
     }
 
     // Policy metadata
@@ -906,7 +1089,7 @@ fn build_cell(
                 let rank = set.lru_order.iter().position(|&w| w == way).unwrap_or(0);
                 let n = set.lru_order.len();
                 let style = if rank == 0 {
-                    Style::default().fg(theme::ACCENT)       // MRU = safest
+                    Style::default().fg(theme::ACCENT) // MRU = safest
                 } else if rank + 1 == n {
                     Style::default().fg(theme::DANGER).bold() // LRU = evicted next
                 } else {
@@ -926,7 +1109,7 @@ fn build_cell(
                 let style = if rank == 0 {
                     Style::default().fg(theme::DANGER).bold() // MRU = evicted next!
                 } else if rank + 1 == n {
-                    Style::default().fg(theme::ACCENT)        // LRU = safest for MRU
+                    Style::default().fg(theme::ACCENT) // LRU = safest for MRU
                 } else {
                     Style::default().fg(theme::LABEL)
                 };
@@ -937,7 +1120,7 @@ fn build_cell(
             let pos = set.fifo_order.iter().position(|&w| w == way).unwrap_or(0);
             let n = set.fifo_order.len();
             let style = if pos == 0 {
-                Style::default().fg(theme::ACCENT)        // newest
+                Style::default().fg(theme::ACCENT) // newest
             } else if pos + 1 == n {
                 Style::default().fg(theme::DANGER).bold() // oldest = evicted next
             } else {
@@ -947,7 +1130,13 @@ fn build_cell(
         }
         ReplacementPolicy::Lfu => {
             let freq = line.freq;
-            let min_freq = set.lines.iter().filter(|l| l.valid).map(|l| l.freq).min().unwrap_or(0);
+            let min_freq = set
+                .lines
+                .iter()
+                .filter(|l| l.valid)
+                .map(|l| l.freq)
+                .min()
+                .unwrap_or(0);
             let style = if freq == min_freq {
                 Style::default().fg(theme::DANGER).bold()
             } else {
@@ -966,9 +1155,9 @@ fn build_cell(
             let n = set.lines.len().max(1);
             let is_hand = (set.clock_hand % n) == way;
             let (icon, style) = match (is_hand, line.ref_bit) {
-                (true,  true)  => (">R", Style::default().fg(theme::LABEL_Y).bold()),
-                (true,  false) => ("> ", Style::default().fg(theme::DANGER).bold()),
-                (false, true)  => (" R", Style::default().fg(theme::LABEL_Y)),
+                (true, true) => (">R", Style::default().fg(theme::LABEL_Y).bold()),
+                (true, false) => ("> ", Style::default().fg(theme::DANGER).bold()),
+                (false, true) => (" R", Style::default().fg(theme::LABEL_Y)),
                 (false, false) => ("  ", Style::default().fg(theme::LABEL)),
             };
             spans.push(Span::styled(icon, style));
@@ -986,7 +1175,9 @@ fn build_cell(
         let mut out: Vec<Span<'static>> = Vec::with_capacity(spans.len());
         let mut budget = cell_width;
         for span in spans {
-            if budget == 0 { break; }
+            if budget == 0 {
+                break;
+            }
             let width = span.width();
             if width <= budget {
                 budget -= width;

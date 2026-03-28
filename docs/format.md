@@ -161,8 +161,10 @@ a reminder about immediate ranges or special cases.
 
 **`JALR` (`0x67`):** uses `funct3 = 0x0`.
 
-**System (`0x73`):** RAVEN implements two encodings: `ECALL` (`0x00000073`) and `EBREAK` (`0x00100073`). The assembler accepts
-`halt` as an alias for `ebreak`.
+**System (`0x73`):** RAVEN implements three encodings: `ECALL` (`0x00000073`), `EBREAK`
+(`0x00100073`), and `HALT` (`0x00200073`). `ebreak` is a resumable debug breakpoint; `halt`
+permanently stops only the current hart and should be used as the semantic "hart finished here"
+marker in examples.
 
 ## Assembler behaviour and pseudo-instructions
 

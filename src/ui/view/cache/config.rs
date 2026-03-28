@@ -5,9 +5,13 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 
-use crate::falcon::cache::{CacheConfig, InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
+use crate::falcon::cache::{
+    CacheConfig, InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy,
+    extra_level_presets,
+};
 use crate::ui::app::{App, ConfigField};
 use crate::ui::theme;
+use crate::ui::view::components::{dense_action, dense_value};
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     if app.cache.selected_level == 0 {
@@ -25,9 +29,21 @@ pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool) {
-    let cfg = if icache { &app.cache.pending_icache } else { &app.cache.pending_dcache };
-    let label = if icache { "I-Cache Config" } else { "D-Cache Config" };
-    let current = if icache { &app.run.mem.icache.config } else { &app.run.mem.dcache.config };
+    let cfg = if icache {
+        &app.cache.pending_icache
+    } else {
+        &app.cache.pending_dcache
+    };
+    let label = if icache {
+        "I-Cache Config"
+    } else {
+        "D-Cache Config"
+    };
+    let current = if icache {
+        &app.run.mem.icache.config
+    } else {
+        &app.run.mem.dcache.config
+    };
 
     // Determine which field (if any) is being edited in this panel
     let (active_field, edit_buf) = match app.cache.edit_field {
@@ -43,7 +59,10 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            label,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -61,7 +80,16 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         .split(inner);
 
     let is_last_level = app.cache.extra_pending.is_empty();
-    render_fields(f, layout[0], cfg, current, active_field, hovered_field, edit_buf, is_last_level);
+    render_fields(
+        f,
+        layout[0],
+        cfg,
+        current,
+        active_field,
+        hovered_field,
+        edit_buf,
+        is_last_level,
+    );
     render_presets(f, layout[1], app, icache);
     // Apply is global (applies both I-cache and D-cache), so render it only once to avoid duplication.
     if icache {
@@ -95,7 +123,10 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            label,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -118,15 +149,28 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
         .split(col_area);
 
     let is_last_level = extra_idx == app.cache.extra_pending.len().saturating_sub(1);
-    render_fields(f, layout[0], pending, current, active_field, hovered_field, edit_buf, is_last_level);
+    render_fields(
+        f,
+        layout[0],
+        pending,
+        current,
+        active_field,
+        hovered_field,
+        edit_buf,
+        is_last_level,
+    );
     render_unified_presets(f, layout[1], app, extra_idx);
     render_apply_row(f, layout[2], app);
 }
 
 fn render_fields(
-    f: &mut Frame, area: Rect,
-    pending: &CacheConfig, current: &CacheConfig,
-    active: Option<ConfigField>, hovered: Option<ConfigField>, edit_buf: &str,
+    f: &mut Frame,
+    area: Rect,
+    pending: &CacheConfig,
+    current: &CacheConfig,
+    active: Option<ConfigField>,
+    hovered: Option<ConfigField>,
+    edit_buf: &str,
     is_last_level: bool,
 ) {
     let validation = pending.validate();
@@ -137,43 +181,38 @@ fn render_fields(
     let size_ok = pending.size > 0 && validation.is_ok();
 
     let mark = |ok: bool| if ok { "" } else { " ✗" };
-    // Yellow = pending change from active config, White = same
-    let cs = |same: bool| -> Style {
-        if !same { Style::default().fg(theme::LABEL_Y) } else { Style::default().fg(theme::TEXT) }
-    };
-    // Style for the active/selected field
-    let active_style = Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT);
-    let label_active = Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT);
-    let hover_style = Style::default().bg(Color::Rgb(50, 50, 60));
+    let value_color = |same: bool| if same { theme::TEXT } else { theme::LABEL_Y };
 
-    let field_item = |field: ConfigField, label: &'static str, value: String, val_style: Style| -> ListItem<'static> {
-        let mut item = if active == Some(field) {
-            if field.is_numeric() {
-                // Show edit buffer with cursor
-                let display = format!("{edit_buf}█");
-                ListItem::new(Line::from(vec![
-                    Span::styled(label, label_active),
-                    Span::styled(display, active_style),
-                ]))
+    let field_item =
+        |field: ConfigField, label: &'static str, value: String, same: bool| -> ListItem<'static> {
+            let label_style = if active == Some(field) {
+                Style::default().fg(theme::ACCENT).bold()
+            } else if hovered == Some(field) {
+                Style::default().fg(theme::TEXT).bold()
             } else {
-                // Show enum value with ◄ ► arrows to indicate clickable
+                Style::default().fg(theme::LABEL)
+            };
+            let item = if active == Some(field) {
+                if field.is_numeric() {
+                    let display = format!("{edit_buf}█");
+                    ListItem::new(Line::from(vec![
+                        Span::styled(label, label_style),
+                        dense_value(&display, false, true, theme::ACCENT),
+                    ]))
+                } else {
+                    ListItem::new(Line::from(vec![
+                        Span::styled(label, label_style),
+                        dense_value(&format!("< {value} >"), false, true, theme::ACCENT),
+                    ]))
+                }
+            } else {
                 ListItem::new(Line::from(vec![
-                    Span::styled(label, label_active),
-                    Span::styled(format!("◄ {value} ►"), active_style),
+                    Span::styled(label, label_style),
+                    dense_value(&value, hovered == Some(field), true, value_color(same)),
                 ]))
-            }
-        } else {
-            ListItem::new(Line::from(vec![
-                Span::styled(label, Style::default().fg(theme::LABEL)),
-                Span::styled(value, val_style),
-            ]))
+            };
+            item
         };
-
-        if active != Some(field) && hovered == Some(field) {
-            item = item.style(hover_style);
-        }
-        item
-    };
 
     // Sets row: show computed value or the specific validation error
     let sets_item = match &validation {
@@ -191,51 +230,84 @@ fn render_fields(
     };
 
     let items: Vec<ListItem> = vec![
-        field_item(ConfigField::Size, "  Size:          ",
+        field_item(
+            ConfigField::Size,
+            "  Size:          ",
             format!("{} B{}", pending.size, mark(size_ok)),
-            cs(pending.size == current.size)),
-        field_item(ConfigField::LineSize, "  Line Size:     ",
+            pending.size == current.size,
+        ),
+        field_item(
+            ConfigField::LineSize,
+            "  Line Size:     ",
             format!("{} B{}", pending.line_size, mark(line_ok)),
-            cs(pending.line_size == current.line_size)),
-        field_item(ConfigField::Associativity, "  Associativity: ",
+            pending.line_size == current.line_size,
+        ),
+        field_item(
+            ConfigField::Associativity,
+            "  Associativity: ",
             format!("{}-way{}", pending.associativity, mark(assoc_ok)),
-            cs(pending.associativity == current.associativity)),
+            pending.associativity == current.associativity,
+        ),
         sets_item,
-        field_item(ConfigField::Replacement, "  Replacement:   ",
+        field_item(
+            ConfigField::Replacement,
+            "  Replacement:   ",
             replacement_label(pending.replacement).to_string(),
-            cs(pending.replacement == current.replacement)),
-        field_item(ConfigField::WritePolicy, "  Write Policy:  ",
+            pending.replacement == current.replacement,
+        ),
+        field_item(
+            ConfigField::WritePolicy,
+            "  Write Policy:  ",
             write_policy_label(pending.write_policy).to_string(),
-            cs(pending.write_policy == current.write_policy)),
-        field_item(ConfigField::WriteAlloc, "  Write Alloc:   ",
+            pending.write_policy == current.write_policy,
+        ),
+        field_item(
+            ConfigField::WriteAlloc,
+            "  Write Alloc:   ",
             write_alloc_label(pending.write_alloc).to_string(),
-            cs(pending.write_alloc == current.write_alloc)),
-        field_item(ConfigField::HitLatency, "  Hit Latency:   ",
+            pending.write_alloc == current.write_alloc,
+        ),
+        field_item(
+            ConfigField::HitLatency,
+            "  Hit Latency:   ",
             format!("{} cyc", pending.hit_latency),
-            cs(pending.hit_latency == current.hit_latency)),
-        field_item(ConfigField::MissPenalty, "  Miss Penalty:  ",
+            pending.hit_latency == current.hit_latency,
+        ),
+        field_item(
+            ConfigField::MissPenalty,
+            "  Miss Penalty:  ",
             format!("{} cyc", pending.miss_penalty),
-            cs(pending.miss_penalty == current.miss_penalty)),
-        field_item(ConfigField::AssocPenalty, "  Assoc Penalty: ",
+            pending.miss_penalty == current.miss_penalty,
+        ),
+        field_item(
+            ConfigField::AssocPenalty,
+            "  Assoc Penalty: ",
             format!("{} cyc/way", pending.assoc_penalty),
-            cs(pending.assoc_penalty == current.assoc_penalty)),
-        field_item(ConfigField::TransferWidth, "  Transfer Width:",
+            pending.assoc_penalty == current.assoc_penalty,
+        ),
+        field_item(
+            ConfigField::TransferWidth,
+            "  Transfer Width:",
             format!("{} B", pending.transfer_width),
-            cs(pending.transfer_width == current.transfer_width)),
+            pending.transfer_width == current.transfer_width,
+        ),
         if is_last_level {
             ListItem::new(Line::from(vec![
                 Span::styled("  Inclusion:      ", Style::default().fg(theme::BORDER)),
                 Span::styled("N/A (last level)", Style::default().fg(theme::BORDER)),
             ]))
         } else {
-            field_item(ConfigField::Inclusion, "  Inclusion:      ",
+            field_item(
+                ConfigField::Inclusion,
+                "  Inclusion:      ",
                 inclusion_label(pending.inclusion).to_string(),
-                cs(pending.inclusion == current.inclusion))
+                pending.inclusion == current.inclusion,
+            )
         },
         ListItem::new(Line::raw("")),
         ListItem::new(Line::from(Span::styled(
             if active.is_some() {
-                "  Enter=confirm  Esc=cancel  ◄►=cycle  Tab/↑↓=move"
+                "  Enter=confirm  Esc=cancel  <- ->=cycle  Tab/↑↓=move"
             } else {
                 "  Click/edit  ◄►=cycle  Ctrl+E=export  Ctrl+L=import"
             },
@@ -256,12 +328,14 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let large_s = preset_btn_style(hovered == Some(2));
 
     let line = Line::from(vec![
-        Span::raw(" Presets: "),
-        Span::styled("[Small]", small_s),
         Span::raw(" "),
-        Span::styled("[Medium]", med_s),
+        Span::styled("presets", Style::default().fg(theme::IDLE)),
         Span::raw(" "),
-        Span::styled("[Large]", large_s),
+        Span::styled("small", small_s),
+        Span::raw(" "),
+        Span::styled("medium", med_s),
+        Span::raw(" "),
+        Span::styled("large", large_s),
     ]);
     let block = Block::default()
         .borders(Borders::TOP)
@@ -275,17 +349,19 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
     // hover_preset_d is reused for unified presets
     let hovered = app.cache.hover_preset_d;
     let small_s = preset_btn_style(hovered == Some(0));
-    let med_s   = preset_btn_style(hovered == Some(1));
+    let med_s = preset_btn_style(hovered == Some(1));
     let large_s = preset_btn_style(hovered == Some(2));
 
     let presets = extra_level_presets();
     let line = Line::from(vec![
-        Span::raw(" Presets: "),
-        Span::styled(format!("[Small {}KB]", presets[0].size / 1024), small_s),
         Span::raw(" "),
-        Span::styled(format!("[Med {}KB]",   presets[1].size / 1024), med_s),
+        Span::styled("presets", Style::default().fg(theme::IDLE)),
         Span::raw(" "),
-        Span::styled(format!("[Large {}KB]", presets[2].size / 1024), large_s),
+        Span::styled(format!("small {}kb", presets[0].size / 1024), small_s),
+        Span::raw(" "),
+        Span::styled(format!("med {}kb", presets[1].size / 1024), med_s),
+        Span::raw(" "),
+        Span::styled(format!("large {}kb", presets[2].size / 1024), large_s),
     ]);
     let block = Block::default()
         .borders(Borders::TOP)
@@ -296,27 +372,26 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
 }
 
 fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
-    let apply_s = if app.cache.hover_apply {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::RUNNING)
-    };
-    let keep_s = if app.cache.hover_apply_keep {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT)
-    };
-
     let line = if let Some(ref err) = app.cache.config_error {
-        Line::from(Span::styled(format!(" ✗ {err}"), Style::default().fg(theme::DANGER)))
+        Line::from(Span::styled(
+            format!(" ✗ {err}"),
+            Style::default().fg(theme::DANGER),
+        ))
     } else if let Some(ref status) = app.cache.config_status {
-        Line::from(Span::styled(format!(" ✓ {status}"), Style::default().fg(theme::RUNNING)))
+        Line::from(Span::styled(
+            format!(" ✓ {status}"),
+            Style::default().fg(theme::RUNNING),
+        ))
     } else {
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("[Apply + Reset Stats]", apply_s),
-            Span::raw("  "),
-            Span::styled("[Apply Keep History]", keep_s),
+            dense_action("apply + reset stats", theme::RUNNING, app.cache.hover_apply),
+            Span::raw("   "),
+            dense_action(
+                "apply keep history",
+                theme::ACCENT,
+                app.cache.hover_apply_keep,
+            ),
         ])
     };
 
@@ -330,9 +405,9 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
 
 fn preset_btn_style(hovered: bool) -> Style {
     if hovered {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
+        Style::default().fg(theme::TEXT).bold()
     } else {
-        Style::default().fg(theme::ACCENT)
+        Style::default().fg(theme::ACCENT).bold()
     }
 }
 
@@ -364,7 +439,7 @@ pub fn write_alloc_label(w: WriteAllocPolicy) -> &'static str {
 pub fn inclusion_label(p: InclusionPolicy) -> &'static str {
     match p {
         InclusionPolicy::NonInclusive => "Non-Inclusive (NINE)",
-        InclusionPolicy::Inclusive    => "Inclusive",
-        InclusionPolicy::Exclusive    => "Exclusive",
+        InclusionPolicy::Inclusive => "Inclusive",
+        InclusionPolicy::Exclusive => "Exclusive",
     }
 }

@@ -1,0 +1,36 @@
+# pipeline_branch_flush_demo.fas — branch redirection and wrong-path squashes
+#
+# Best viewed in the Pipeline tab with branch prediction enabled.
+# The instruction after JAL must be squashed every iteration.
+#
+# Expected output: 6
+
+.data
+msg: .asciz "PIPE branch total: "
+
+.text
+    li   s0, 0            # committed loop iterations
+    li   s1, 0            # wrong-path counter (should stay 0)
+    li   t0, 6
+
+loop:
+    beq  t0, zero, done
+    addi s0, s0, 1
+    addi t0, t0, -1
+    jal  zero, loop
+    addi s1, s1, 99       # wrong path if flush is correct
+
+done:
+    add  a0, s0, s1
+    li   a7, 1001
+    la   a0, msg
+    ecall
+    add  a0, s0, s1
+    li   a7, 1000
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

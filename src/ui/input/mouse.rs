@@ -1,15 +1,23 @@
+use crate::falcon::CacheController;
+use crate::ui::input::keyboard::{do_export_cfg, do_export_results, do_import_cfg};
+use crate::ui::view::{
+    ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W,
+};
 use crate::ui::{
-    app::{App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, Tab, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START},
+    app::{
+        App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion,
+        PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START,
+        SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, Tab,
+    },
     editor::Editor,
 };
-use crate::ui::input::keyboard::{do_export_cfg, do_export_results, do_import_cfg};
-use crate::ui::view::{ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use rfd::FileDialog as OSFileDialog;
 
 use super::max_regs_scroll;
 use crate::ui::view::docs::{docs_body_line_count, free_page_line_count};
+use crate::ui::view::{help_button_area, help_popup_rect};
 
 pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
@@ -47,27 +55,28 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.hover_tab = None;
     app.hover_run_button = None;
     app.hover_help = false;
-    if me.row == area.y + 1 {
-        // "?" help button is in the rightmost position of the tab bar row
-        // It occupies 5 columns from the right edge: "[?]  " → columns [width-6..width-1]
-        let help_col = area.x + area.width.saturating_sub(6);
-        if me.column >= help_col && me.column < area.x + area.width.saturating_sub(1) {
+    let help = help_button_area(area);
+    if me.row >= help.y && me.row < help.y + help.height {
+        if me.column >= help.x && me.column < help.x + help.width {
             app.hover_help = true;
             if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                if !matches!(app.tab, Tab::Docs) && !crate::ui::tutorial::get_steps(app.tab).is_empty() {
+                if !matches!(app.tab, Tab::Docs)
+                    && !crate::ui::tutorial::get_steps(app.tab).is_empty()
+                {
                     crate::ui::tutorial::start_tutorial(app);
                 } else {
                     app.help_open = !app.help_open;
                     app.help_page = 0;
                 }
             }
-        } else {
+        } else if me.row == area.y {
             let x = me.column.saturating_sub(area.x + 1);
-            let divider = 3u16; // " │ "
+            let divider = 2u16; // "  "
             let pad_left = 1u16;
             let pad_right = 1u16;
             let mut pos: u16 = 0;
-            for (i, &tab) in Tab::all().iter().enumerate() {
+            let visible_tabs = app.visible_tabs();
+            for (i, &tab) in visible_tabs.iter().enumerate() {
                 let label = tab.label();
                 let w = pad_left + label.len() as u16 + pad_right;
                 if x >= pos && x < pos + w {
@@ -82,7 +91,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     break;
                 }
                 pos += w;
-                if i + 1 < Tab::all().len() {
+                if i + 1 < visible_tabs.len() {
                     pos += divider;
                 }
             }
@@ -103,6 +112,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 }
                 _ => {}
             },
+            Tab::Pipeline => {
+                app.pipeline.gantt_scroll = app.pipeline.gantt_scroll.saturating_sub(1);
+            }
             Tab::Docs => {
                 app.docs.scroll = app.docs.scroll.saturating_sub(1);
                 clamp_docs_scroll(app, area);
@@ -115,8 +127,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             Tab::Cache => match app.cache.subtab {
                 CacheSubtab::Stats => {
                     if !app.cache.session_history.is_empty() {
-                        app.cache.history_scroll = (app.cache.history_scroll + 1)
-                            .min(app.cache.session_history.len() - 1);
+                        app.cache.history_scroll =
+                            (app.cache.history_scroll + 1).min(app.cache.session_history.len() - 1);
                     }
                 }
                 CacheSubtab::View => {
@@ -124,6 +136,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 }
                 _ => {}
             },
+            Tab::Pipeline => {
+                let max = app.pipeline.gantt.len().saturating_sub(1);
+                app.pipeline.gantt_scroll = (app.pipeline.gantt_scroll + 1).min(max);
+            }
             Tab::Docs => {
                 app.docs.scroll = app.docs.scroll.saturating_add(1);
                 clamp_docs_scroll(app, area);
@@ -131,12 +147,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             Tab::Config => {}
         },
         MouseEventKind::ScrollLeft => {
-            if matches!(app.tab, Tab::Cache)
-                && matches!(app.cache.subtab, CacheSubtab::View)
-            {
+            if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {
                 // Scroll the panel under the cursor: D-cache slot 1 if its track is set
                 let tracks = app.cache.hscroll_tracks.get();
-                let use_d = tracks[1].1 > 0 && me.column >= tracks[1].0
+                let use_d = tracks[1].1 > 0
+                    && me.column >= tracks[1].0
                     && me.column < tracks[1].0 + tracks[1].1;
                 if use_d {
                     app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_sub(3);
@@ -146,11 +161,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             }
         }
         MouseEventKind::ScrollRight => {
-            if matches!(app.tab, Tab::Cache)
-                && matches!(app.cache.subtab, CacheSubtab::View)
-            {
+            if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {
                 let tracks = app.cache.hscroll_tracks.get();
-                let use_d = tracks[1].1 > 0 && me.column >= tracks[1].0
+                let use_d = tracks[1].1 > 0
+                    && me.column >= tracks[1].0
                     && me.column < tracks[1].0 + tracks[1].1;
                 if use_d {
                     app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_add(3);
@@ -177,7 +191,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 let tracks = app.cache.hscroll_tracks.get();
                 let is_dcache = tracks[1].1 > 0 && track_x == tracks[1].0;
                 app.cache.hscroll_drag_is_dcache = is_dcache;
-                let cur_scroll = if is_dcache { app.cache.view_h_scroll_d } else { app.cache.view_h_scroll };
+                let cur_scroll = if is_dcache {
+                    app.cache.view_h_scroll_d
+                } else {
+                    app.cache.view_h_scroll
+                };
                 // Jump to click ratio immediately
                 if track_w > 0 {
                     let rel = me.column.saturating_sub(track_x).min(track_w - 1) as f64;
@@ -219,6 +237,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     if let Tab::Docs = app.tab {
+        update_docs_hover(app, me);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_docs_click(app, me);
         }
@@ -229,6 +248,14 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         update_settings_hover(app, me);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_settings_click(app, me);
+        }
+    }
+
+    // Pipeline tab interactions
+    if let Tab::Pipeline = app.tab {
+        update_pipeline_hover(app, me);
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            handle_pipeline_click(app, me);
         }
     }
 
@@ -261,14 +288,13 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         let num_width = end.to_string().len() as u16;
         let gutter = num_width + 3;
 
-        let inner_top  = editor_area.y + 1;
-        let inner_bot  = editor_area.y + editor_area.height.saturating_sub(1);
+        let inner_top = editor_area.y + 1;
+        let inner_bot = editor_area.y + editor_area.height.saturating_sub(1);
         let inner_left = editor_area.x + 1;
         let inner_right = editor_area.x + editor_area.width.saturating_sub(1);
 
-        let within = |x: u16, y: u16| {
-            x >= inner_left && x < inner_right && y >= inner_top && y < inner_bot
-        };
+        let within =
+            |x: u16, y: u16| x >= inner_left && x < inner_right && y >= inner_top && y < inner_bot;
 
         match me.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -365,6 +391,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 
 fn apply_run_button(app: &mut App, btn: RunButton) {
     match btn {
+        RunButton::Core => {
+            app.cycle_selected_core(1);
+        }
         RunButton::View => {
             if app.run.show_dyn {
                 app.run.show_dyn = false;
@@ -425,13 +454,22 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::Speed => {
             app.run.speed = app.run.speed.cycle();
         }
-        RunButton::ExecCount => { app.run.show_exec_count = !app.run.show_exec_count; }
-        RunButton::InstrType => { app.run.show_instr_type = !app.run.show_instr_type; }
+        RunButton::ExecCount => {
+            app.run.show_exec_count = !app.run.show_exec_count;
+        }
+        RunButton::InstrType => {
+            app.run.show_instr_type = !app.run.show_instr_type;
+        }
         RunButton::State => {
             if app.run.is_running {
                 app.run.is_running = false;
-            } else if !app.run.faulted {
-                app.run.is_running = true;
+            } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
+                || !app.run.faulted
+            {
+                app.resume_selected_hart();
+                if app.can_start_run() {
+                    app.run.is_running = true;
+                }
             }
         }
         RunButton::Reset => {
@@ -442,7 +480,9 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
 
 fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
     let status = run_status_area(app, area);
-    if me.row != status.y + 1 { return; }
+    if me.row != status.y + 1 {
+        return;
+    }
     if let Some(btn) = run_status_hit(app, status, me.column) {
         apply_run_button(app, btn);
     }
@@ -450,7 +490,9 @@ fn handle_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
 
 fn update_run_status_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let status = run_status_area(app, area);
-    if me.row != status.y + 1 { return; }
+    if me.row != status.y + 1 {
+        return;
+    }
     app.hover_run_button = run_status_hit(app, status, me.column);
 }
 
@@ -462,13 +504,17 @@ fn cache_run_status_area(area: Rect) -> Rect {
 
 fn update_cache_run_status_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let status = cache_run_status_area(area);
-    if me.row != status.y + 1 { return; }
+    if me.row != status.y + 1 {
+        return;
+    }
     app.hover_run_button = cache_exec_hit(app, status, me.column);
 }
 
 fn handle_cache_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
     let status = cache_run_status_area(area);
-    if me.row != status.y + 1 { return; }
+    if me.row != status.y + 1 {
+        return;
+    }
     if let Some(btn) = cache_exec_hit(app, status, me.column) {
         apply_run_button(app, btn);
     }
@@ -480,7 +526,9 @@ fn cache_exec_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     let state_text = if app.run.is_running { "RUN" } else { "PAUSE" };
 
     let mut pos = status.x + 1; // inner x (after block border)
-    let skip  = |p: &mut u16, s: &str| { *p += s.len() as u16; };
+    let skip = |p: &mut u16, s: &str| {
+        *p += s.len() as u16;
+    };
     let range = |p: &mut u16, label: &str| -> (u16, u16) {
         let s = *p;
         *p += 1 + label.len() as u16 + 1; // [label]
@@ -495,13 +543,18 @@ fn cache_exec_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
     skip(&mut pos, "  State ");
     let (state_s, state_e) = range(&mut pos, state_text);
 
-    if col >= reset_s && col < reset_e { Some(RunButton::Reset) }
-    else if col >= speed_s && col < speed_e { Some(RunButton::Speed) }
-    else if col >= state_s && col < state_e { Some(RunButton::State) }
-    else { None }
+    if col >= reset_s && col < reset_e {
+        Some(RunButton::Reset)
+    } else if col >= speed_s && col < speed_e {
+        Some(RunButton::Speed)
+    } else if col >= state_s && col < state_e {
+        Some(RunButton::State)
+    } else {
+        None
+    }
 }
 
-fn run_status_area(app: &App, area: Rect) -> Rect {
+pub(crate) fn run_status_area(app: &App, area: Rect) -> Rect {
     let root_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -521,81 +574,100 @@ fn run_status_area(app: &App, area: Rect) -> Rect {
     run_chunks[0]
 }
 
-fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
-    let view_text = if app.run.show_registers { "REGS" } else { "RAM" };
-    let fmt_text = match app.run.fmt_mode {
-        FormatMode::Hex => "HEX",
-        FormatMode::Dec => "DEC",
-        FormatMode::Str => "STR",
+pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
+    let core_text = format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1));
+    let view_text = if app.run.show_dyn {
+        "dyn"
+    } else if app.run.show_registers {
+        "regs"
+    } else {
+        "ram"
     };
-    let sign_text = if app.run.show_signed { "SGN" } else { "UNS" };
+    let fmt_text = match app.run.fmt_mode {
+        FormatMode::Hex => "hex",
+        FormatMode::Dec => "dec",
+        FormatMode::Str => "str",
+    };
+    let sign_text = if app.run.show_signed { "sgn" } else { "uns" };
     let bytes_text = match app.run.mem_view_bytes {
-        4 => "4B",
-        2 => "2B",
-        _ => "1B",
+        4 => "4b",
+        2 => "2b",
+        _ => "1b",
     };
     let region_text = match app.run.mem_region {
-        MemRegion::Data | MemRegion::Custom => "DATA",
-        MemRegion::Stack => "STACK",
-        MemRegion::Access => "R/W",
-        MemRegion::Heap => "HEAP",
+        MemRegion::Data | MemRegion::Custom => "data",
+        MemRegion::Stack => "stack",
+        MemRegion::Access => "r/w",
+        MemRegion::Heap => "heap",
     };
-    let run_text = if app.run.is_running { "RUN" } else { "PAUSE" };
+    let run_text = if app.run.is_running { "run" } else { "pause" };
 
     let mut pos = status.x + 1;
     let range = |start: &mut u16, label: &str| {
         let s = *start;
-        *start += 1 + label.len() as u16 + 1;
+        *start += label.len() as u16;
         (s, *start)
     };
     let skip = |start: &mut u16, s: &str| {
         *start += s.len() as u16;
     };
 
-    skip(&mut pos, "View ");
+    skip(&mut pos, "core ");
+    let (core_start, core_end) = range(&mut pos, &core_text);
+    skip(&mut pos, "   view ");
     let (view_start, view_end) = range(&mut pos, view_text);
 
     let (region_start, region_end) = if !app.run.show_registers && !app.run.show_dyn {
-        skip(&mut pos, "  Region ");
+        skip(&mut pos, "   region ");
         range(&mut pos, region_text)
     } else {
         (0, 0)
     };
 
-    skip(&mut pos, "  Format ");
+    skip(&mut pos, "   fmt ");
     let (fmt_start, fmt_end) = range(&mut pos, fmt_text);
 
-    skip(&mut pos, "  Sign ");
+    skip(&mut pos, "   sign ");
     let (sign_start, sign_end) = range(&mut pos, sign_text);
 
     let (bytes_start, bytes_end) = if !app.run.show_registers && !app.run.show_dyn {
-        skip(&mut pos, "  Bytes ");
+        skip(&mut pos, "   bytes ");
         range(&mut pos, bytes_text)
     } else {
         (0, 0)
     };
 
-    let speed_text = app.run.speed.label();
-    skip(&mut pos, "  Speed ");
+    let speed_text = if app.run.speed.label() == "GO" {
+        "go"
+    } else {
+        app.run.speed.label()
+    };
+    skip(&mut pos, "   speed ");
     let (speed_start, speed_end) = range(&mut pos, speed_text);
 
-    skip(&mut pos, "  State ");
+    skip(&mut pos, "   state ");
     let (state_start, state_end) = range(&mut pos, run_text);
 
-    let count_text = if app.run.show_exec_count { "ON" } else { "OFF" };
-    skip(&mut pos, "  Count ");
+    let count_text = if app.run.show_exec_count { "on" } else { "off" };
+    skip(&mut pos, "   count ");
     let (count_start, count_end) = range(&mut pos, count_text);
 
-    let type_text = if app.run.show_instr_type { "ON" } else { "OFF" };
-    skip(&mut pos, "  Type ");
+    let type_text = if app.run.show_instr_type { "on" } else { "off" };
+    skip(&mut pos, "   type ");
     let (type_start, type_end) = range(&mut pos, type_text);
 
-    skip(&mut pos, "  ");
-    let (reset_start, reset_end) = range(&mut pos, "Reset");
+    skip(&mut pos, "   ");
+    let (reset_start, reset_end) = range(&mut pos, "reset");
 
-    if col >= view_start && col < view_end {
+    if col >= core_start && col < core_end {
+        Some(RunButton::Core)
+    } else if col >= view_start && col < view_end {
         Some(RunButton::View)
-    } else if !app.run.show_registers && col >= region_start && col < region_end {
+    } else if !app.run.show_registers
+        && !app.run.show_dyn
+        && col >= region_start
+        && col < region_end
+    {
         Some(RunButton::Region)
     } else if col >= fmt_start && col < fmt_end {
         Some(RunButton::Format)
@@ -605,7 +677,8 @@ fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
         } else {
             None
         }
-    } else if !app.run.show_registers && col >= bytes_start && col < bytes_end {
+    } else if !app.run.show_registers && !app.run.show_dyn && col >= bytes_start && col < bytes_end
+    {
         Some(RunButton::Bytes)
     } else if col >= speed_start && col < speed_end {
         Some(RunButton::Speed)
@@ -645,8 +718,16 @@ fn run_main_area(app: &App, area: Rect) -> Rect {
 
 fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
     let main = run_main_area(app, area);
-    let sidebar_w = if app.run.sidebar_collapsed { 3 } else { app.run.sidebar_width };
-    let imem_w    = if app.run.imem_collapsed    { 3 } else { app.run.imem_width    };
+    let sidebar_w = if app.run.sidebar_collapsed {
+        3
+    } else {
+        app.run.sidebar_width
+    };
+    let imem_w = if app.run.imem_collapsed {
+        3
+    } else {
+        app.run.imem_width
+    };
     let details_min = if app.run.details_collapsed { 3 } else { 40 };
     Layout::default()
         .direction(Direction::Horizontal)
@@ -665,8 +746,10 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
     // Sidebar resize bar (right edge of col[0]) — full height hit area
     let sidebar = cols[0];
     let sbar_x = sidebar.x + sidebar.width.saturating_sub(1);
-    if !app.run.sidebar_collapsed && me.column == sbar_x
-        && me.row >= area.y && me.row < area.y + area.height
+    if !app.run.sidebar_collapsed
+        && me.column == sbar_x
+        && me.row >= area.y
+        && me.row < area.y + area.height
     {
         app.run.hover_sidebar_bar = true;
     } else if !app.run.sidebar_drag {
@@ -675,8 +758,10 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
 
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
-    if !app.run.imem_collapsed && me.column == bar_x
-        && me.row >= area.y && me.row < area.y + area.height
+    if !app.run.imem_collapsed
+        && me.column == bar_x
+        && me.row >= area.y
+        && me.row < area.y + area.height
     {
         app.run.hover_imem_bar = true;
     } else if !app.run.imem_drag {
@@ -717,7 +802,9 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
 /// the first block (matches the value returned by `imem_addr_skip_for_scroll`).
 fn addr_at_visual_row(base: u32, skip: usize, target_row: usize, app: &App) -> Option<u32> {
     let mem_end = if let Some(text) = &app.editor.last_ok_text {
-        app.run.base_pc.saturating_add((text.len() as u32).saturating_mul(4))
+        app.run
+            .base_pc
+            .saturating_add((text.len() as u32).saturating_mul(4))
     } else {
         app.run.mem_size as u32
     };
@@ -729,27 +816,39 @@ fn addr_at_visual_row(base: u32, skip: usize, target_row: usize, app: &App) -> O
             return None;
         }
         if app.run.block_comments.contains_key(&addr) {
-            if skip_rem > 0 { skip_rem -= 1; }
-            else {
-                if vrow == target_row { return Some(addr); }
+            if skip_rem > 0 {
+                skip_rem -= 1;
+            } else {
+                if vrow == target_row {
+                    return Some(addr);
+                }
                 vrow += 1;
             }
         }
         if let Some(names) = app.run.labels.get(&addr) {
             for _ in names {
-                if skip_rem > 0 { skip_rem -= 1; continue; }
-                if vrow == target_row { return Some(addr); }
+                if skip_rem > 0 {
+                    skip_rem -= 1;
+                    continue;
+                }
+                if vrow == target_row {
+                    return Some(addr);
+                }
                 vrow += 1;
             }
         }
-        if vrow == target_row { return Some(addr); }
+        if vrow == target_row {
+            return Some(addr);
+        }
         vrow += 1;
         addr = addr.wrapping_add(4);
     }
 }
 
 fn start_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
-    if app.run.sidebar_collapsed { return; }
+    if app.run.sidebar_collapsed {
+        return;
+    }
     let cols = run_cols(app, area);
     let sidebar = cols[0];
     let bar_x = sidebar.x + sidebar.width.saturating_sub(1);
@@ -767,10 +866,35 @@ fn handle_panel_title_click(app: &mut App, me: MouseEvent, area: Rect) {
         if me.row == col.y && me.column >= col.x && me.column < col.x + col.width {
             match i {
                 0 => app.run.sidebar_collapsed = !app.run.sidebar_collapsed,
-                1 => app.run.imem_collapsed    = !app.run.imem_collapsed,
+                1 => app.run.imem_collapsed = !app.run.imem_collapsed,
                 2 => app.run.details_collapsed = !app.run.details_collapsed,
                 _ => {}
             }
+            return;
+        }
+    }
+}
+
+/// Handle left-click on the Docs tab: page tabs and filter bar.
+fn update_docs_hover(app: &mut App, me: MouseEvent) {
+    app.docs.hover_page = None;
+    let row = me.row;
+    let col = me.column;
+    let tab_bar_y = app.docs.tab_bar_y.get();
+    if row != tab_bar_y {
+        return;
+    }
+
+    let xs = app.docs.tab_bar_xs.get();
+    let pages = [
+        DocsPage::InstrRef,
+        DocsPage::Syscalls,
+        DocsPage::MemoryMap,
+        DocsPage::FcacheRef,
+    ];
+    for (i, &(x_start, x_end)) in xs.iter().enumerate() {
+        if col >= x_start && col < x_end {
+            app.docs.hover_page = Some(pages[i]);
             return;
         }
     }
@@ -787,7 +911,12 @@ fn handle_docs_click(app: &mut App, me: MouseEvent) {
     let tab_bar_y = app.docs.tab_bar_y.get();
     if row == tab_bar_y {
         let xs = app.docs.tab_bar_xs.get();
-        let pages = [DocsPage::InstrRef, DocsPage::Syscalls, DocsPage::MemoryMap, DocsPage::FcacheRef];
+        let pages = [
+            DocsPage::InstrRef,
+            DocsPage::Syscalls,
+            DocsPage::MemoryMap,
+            DocsPage::FcacheRef,
+        ];
         for (i, &(x_start, x_end)) in xs.iter().enumerate() {
             if col >= x_start && col < x_end {
                 if app.docs.page != pages[i] {
@@ -846,7 +975,10 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
             let search_h: u16 = if app.docs.search_open { 1 } else { 0 };
             let fixed: u16 = 1 + 2 + search_h + 1 + 1 + 1;
             let viewport_h = docs_area.height.saturating_sub(fixed) as usize;
-            if viewport_h == 0 { app.docs.scroll = 0; return; }
+            if viewport_h == 0 {
+                app.docs.scroll = 0;
+                return;
+            }
             let q = app.docs.search_query.clone();
             let f = app.docs.type_filter;
             let w = docs_area.width;
@@ -855,7 +987,10 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
         p => {
             // header(2) consumed by render_free_page
             let viewport_h = docs_area.height.saturating_sub(2) as usize;
-            if viewport_h == 0 { app.docs.scroll = 0; return; }
+            if viewport_h == 0 {
+                app.docs.scroll = 0;
+                return;
+            }
             free_page_line_count(p, app.docs.lang).saturating_sub(viewport_h)
         }
     };
@@ -882,16 +1017,27 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     let btn_fmt = "[FORMAT]";
 
     x += import_label.len() as u16;
-    let ibin_start = x; let ibin_end = x + btn_ibin.len() as u16; x = ibin_end + 1;
-    let icode_start = x; let icode_end = x + btn_icode.len() as u16; x = icode_end;
+    let ibin_start = x;
+    let ibin_end = x + btn_ibin.len() as u16;
+    x = ibin_end + 1;
+    let icode_start = x;
+    let icode_end = x + btn_icode.len() as u16;
+    x = icode_end;
     x += gap.len() as u16;
     x += export_label.len() as u16;
-    let ebin_start = x; let ebin_end = x + btn_ebin.len() as u16; x = ebin_end + 1;
-    let ecode_start = x; let ecode_end = x + btn_ecode.len() as u16; x = ecode_end;
+    let ebin_start = x;
+    let ebin_end = x + btn_ebin.len() as u16;
+    x = ebin_end + 1;
+    let ecode_start = x;
+    let ecode_end = x + btn_ecode.len() as u16;
+    x = ecode_end;
     x += gap.len() as u16;
     // btn_run uses char count because it contains multi-byte '▶'
-    let run_start = x; let run_end = x + btn_run.chars().count() as u16; x = run_end + 1;
-    let fmt_start = x; let fmt_end = x + btn_fmt.len() as u16;
+    let run_start = x;
+    let run_end = x + btn_run.chars().count() as u16;
+    x = run_end + 1;
+    let fmt_start = x;
+    let fmt_end = x + btn_fmt.len() as u16;
 
     let col = me.column;
     if col >= ibin_start && col < ibin_end {
@@ -908,11 +1054,16 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                 let lines: Vec<String> = if let Some(ref words) = app.editor.last_ok_text {
                     words.iter().map(|&w| disasm_word(w)).collect()
                 } else {
-                    bytes.chunks(4).map(|chunk| {
-                        let mut b = [0u8; 4];
-                        for (i, &v) in chunk.iter().enumerate() { b[i] = v; }
-                        disasm_word(u32::from_le_bytes(b))
-                    }).collect()
+                    bytes
+                        .chunks(4)
+                        .map(|chunk| {
+                            let mut b = [0u8; 4];
+                            for (i, &v) in chunk.iter().enumerate() {
+                                b[i] = v;
+                            }
+                            disasm_word(u32::from_le_bytes(b))
+                        })
+                        .collect()
                 };
                 app.editor.buf.lines = lines;
                 app.editor.buf.cursor_row = 0;
@@ -955,7 +1106,11 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                 _ => match crate::falcon::asm::assemble(&app.editor.buf.text(), app.run.base_pc) {
                     Ok(p) => (p.text, p.data, p.bss_size),
                     Err(e) => {
-                        app.console.push_error(format!("Cannot export: assemble error at line {}: {}", e.line + 1, e.msg));
+                        app.console.push_error(format!(
+                            "Cannot export: assemble error at line {}: {}",
+                            e.line + 1,
+                            e.msg
+                        ));
                         return;
                     }
                 },
@@ -1007,7 +1162,9 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
 }
 
 fn start_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
-    if app.run.imem_collapsed { return; }
+    if app.run.imem_collapsed {
+        return;
+    }
     let cols = run_cols(app, area);
     let imem = cols[1];
     let bar_x = imem.x + imem.width - 1;
@@ -1021,7 +1178,11 @@ fn start_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
 fn handle_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let delta = me.column as i32 - app.run.imem_drag_start_x as i32;
     let main = run_main_area(app, area);
-    let sidebar_w = if app.run.sidebar_collapsed { 3 } else { app.run.sidebar_width };
+    let sidebar_w = if app.run.sidebar_collapsed {
+        3
+    } else {
+        app.run.sidebar_width
+    };
     let available = main.width.saturating_sub(sidebar_w + 40);
     let max = (available as i32).max(20);
     let new_width = (app.run.imem_width_start as i32 + delta).clamp(20, max);
@@ -1031,7 +1192,11 @@ fn handle_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
 fn handle_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let delta = me.column as i32 - app.run.sidebar_drag_start_x as i32;
     let main = run_main_area(app, area);
-    let imem_w = if app.run.imem_collapsed { 3 } else { app.run.imem_width };
+    let imem_w = if app.run.imem_collapsed {
+        3
+    } else {
+        app.run.imem_width
+    };
     let available = main.width.saturating_sub(imem_w + 40);
     let max = (available as i32).max(20);
     let new_width = (app.run.sidebar_width_start as i32 + delta).clamp(20, max);
@@ -1059,8 +1224,8 @@ fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
         .split(run_area);
     let console = run_chunks[3];
     let bar_y = console.y;
-    let clear_start = console.x + console.width.saturating_sub(6);
-    let clear_end = clear_start + 5;
+    let clear_start = console.x + console.width.saturating_sub(9);
+    let clear_end = clear_start + 7;
     if me.row == bar_y {
         if me.column >= clear_start && me.column < clear_end {
             app.run.hover_console_clear = true;
@@ -1099,8 +1264,8 @@ fn start_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
         .split(run_area);
     let console = run_chunks[3];
     let bar_y = console.y;
-    let clear_start = console.x + console.width.saturating_sub(6);
-    let clear_end = clear_start + 5;
+    let clear_start = console.x + console.width.saturating_sub(9);
+    let clear_end = clear_start + 7;
     if me.row == bar_y
         && me.column >= console.x
         && me.column < console.x + console.width
@@ -1133,8 +1298,8 @@ fn handle_console_clear(app: &mut App, me: MouseEvent, area: Rect) {
         .split(run_area);
     let console = run_chunks[3];
     let bar_y = console.y;
-    let clear_start = console.x + console.width.saturating_sub(6);
-    let clear_end = clear_start + 5;
+    let clear_start = console.x + console.width.saturating_sub(9);
+    let clear_end = clear_start + 7;
     if me.row == bar_y && me.column >= clear_start && me.column < clear_end {
         app.console.clear();
     }
@@ -1153,8 +1318,12 @@ fn handle_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let run_area = root_chunks[1];
     let max = run_area.height.saturating_sub(3 + 5);
     let mut new_h = app.run.console_height_start as i32 + delta;
-    if new_h < 1 { new_h = 1; }
-    if new_h as u16 > max { new_h = max as i32; }
+    if new_h < 1 {
+        new_h = 1;
+    }
+    if new_h as u16 > max {
+        new_h = max as i32;
+    }
     app.run.console_height = new_h as u16;
 }
 
@@ -1215,11 +1384,17 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
             }
         } else {
             if up {
-                app.run.mem_view_addr = app.run.mem_view_addr.saturating_sub(app.run.mem_view_bytes);
+                app.run.mem_view_addr =
+                    app.run.mem_view_addr.saturating_sub(app.run.mem_view_bytes);
             } else {
-                let max = app.run.mem_size.saturating_sub(app.run.mem_view_bytes as usize) as u32;
+                let max =
+                    app.run
+                        .mem_size
+                        .saturating_sub(app.run.mem_view_bytes as usize) as u32;
                 if app.run.mem_view_addr < max {
-                    app.run.mem_view_addr = app.run.mem_view_addr
+                    app.run.mem_view_addr = app
+                        .run
+                        .mem_view_addr
                         .saturating_add(app.run.mem_view_bytes)
                         .min(max);
                 }
@@ -1271,6 +1446,9 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
         if let Some(addr) = app.run.hover_imem_addr {
             app.run.prev_pc = app.run.cpu.pc;
             app.run.cpu.pc = addr;
+            if app.pipeline.enabled {
+                app.pipeline.redirect_pc(addr);
+            }
         }
     }
 }
@@ -1278,7 +1456,9 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
 fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {
     let cols = run_cols(app, area);
     let imem = cols[1];
-    if app.run.imem_collapsed { return; }
+    if app.run.imem_collapsed {
+        return;
+    }
     let inner = Rect::new(
         imem.x + 1,
         imem.y + 1,
@@ -1286,10 +1466,7 @@ fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {
         imem.height.saturating_sub(2),
     );
     // Only toggle breakpoint when clicking exactly on the marker column (inner.x)
-    if me.column == inner.x
-        && me.row >= inner.y
-        && me.row < inner.y + inner.height
-    {
+    if me.column == inner.x && me.row >= inner.y && me.row < inner.y + inner.height {
         if let Some(addr) = app.run.hover_imem_addr {
             if app.run.breakpoints.contains(&addr) {
                 app.run.breakpoints.remove(&addr);
@@ -1326,22 +1503,34 @@ fn update_sidebar_hover(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
-    if !app.run.show_registers { return; }
+    if !app.run.show_registers {
+        return;
+    }
     let cols = run_cols(app, area);
     let sidebar = cols[0];
-    if app.run.sidebar_collapsed { return; }
+    if app.run.sidebar_collapsed {
+        return;
+    }
     let inner = Rect::new(
         sidebar.x + 1,
         sidebar.y + 1,
         sidebar.width.saturating_sub(2),
         sidebar.height.saturating_sub(2),
     );
-    if me.column < inner.x || me.column >= inner.x + inner.width { return; }
-    if me.row < inner.y || me.row >= inner.y + inner.height { return; }
+    if me.column < inner.x || me.column >= inner.x + inner.width {
+        return;
+    }
+    if me.row < inner.y || me.row >= inner.y + inner.height {
+        return;
+    }
 
     let visual_row = (me.row - inner.y) as usize;
     let pinned = &app.run.pinned_regs;
-    let sep_row = if pinned.is_empty() { usize::MAX } else { pinned.len() };
+    let sep_row = if pinned.is_empty() {
+        usize::MAX
+    } else {
+        pinned.len()
+    };
 
     // Click on a pinned register row → unpin it
     if visual_row < pinned.len() {
@@ -1350,10 +1539,16 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
     // Click on separator → ignore
-    if visual_row == sep_row { return; }
+    if visual_row == sep_row {
+        return;
+    }
 
     // Click on a regular (scrolled) register row → pin/unpin
-    let offset = if pinned.is_empty() { 0 } else { pinned.len() + 1 };
+    let offset = if pinned.is_empty() {
+        0
+    } else {
+        pinned.len() + 1
+    };
     let row_in_scroll = visual_row.saturating_sub(offset);
     let visible_rows = inner.height as usize;
     let total = 33usize;
@@ -1361,8 +1556,12 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     let start = app.run.regs_scroll.min(max_scroll);
     let reg_idx = start + row_in_scroll; // 0 = PC, 1..=32 = x0..x31
 
-    if reg_idx == 0 { return; } // PC can't be pinned
-    if reg_idx > 32 { return; }
+    if reg_idx == 0 {
+        return;
+    } // PC can't be pinned
+    if reg_idx > 32 {
+        return;
+    }
     let reg = (reg_idx - 1) as u8;
     if let Some(pos) = app.run.pinned_regs.iter().position(|&r| r == reg) {
         app.run.pinned_regs.remove(pos);
@@ -1371,9 +1570,16 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
-fn handle_help_popup_mouse(app: &mut App, me: MouseEvent, _area: Rect) {
-    // Any left click closes the help popup (or could navigate pages)
+fn handle_help_popup_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+        let popup = help_popup_rect(area, app);
+        if me.column >= popup.x
+            && me.column < popup.x + popup.width
+            && me.row >= popup.y
+            && me.row < popup.y + popup.height
+        {
+            return;
+        }
         app.help_open = false;
     }
 }
@@ -1438,9 +1644,9 @@ fn handle_elf_prompt_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         + ELF_BTN_EDIT.len() as u16
         + GAP
         + ELF_BTN_DISCARD.len() as u16;
-    let x_cancel  = popup.x + 1 + inner_w.saturating_sub(total_btns) / 2;
-    let x_edit    = x_cancel  + ELF_BTN_CANCEL.len()  as u16 + GAP;
-    let x_discard = x_edit    + ELF_BTN_EDIT.len()    as u16 + GAP;
+    let x_cancel = popup.x + 1 + inner_w.saturating_sub(total_btns) / 2;
+    let x_edit = x_cancel + ELF_BTN_CANCEL.len() as u16 + GAP;
+    let x_discard = x_edit + ELF_BTN_EDIT.len() as u16 + GAP;
 
     let col = me.column;
     if col >= x_cancel && col < x_cancel + ELF_BTN_CANCEL.len() as u16 {
@@ -1452,6 +1658,7 @@ fn handle_elf_prompt_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         app.editor.last_ok_elf_bytes = None;
         app.editor.dirty = true;
         app.editor.last_edit_at = Some(std::time::Instant::now());
+        app.editor.last_build_stats = None;
         app.editor.last_assemble_msg = Some("ELF unloaded — edit opcodes and save.".to_string());
         app.mode = EditorMode::Insert;
     } else if col >= x_discard && col < x_discard + ELF_BTN_DISCARD.len() as u16 {
@@ -1464,6 +1671,7 @@ fn handle_elf_prompt_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         app.editor.last_ok_text = None;
         app.editor.last_ok_data = None;
         app.editor.last_compile_ok = None;
+        app.editor.last_build_stats = None;
         app.editor.dirty = false;
         app.editor.last_assemble_msg = Some("ELF discarded — editor cleared.".to_string());
         app.mode = EditorMode::Insert;
@@ -1485,7 +1693,11 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
 fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
     let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ])
         .split(area);
     let parts = Layout::default()
         .direction(Direction::Vertical)
@@ -1520,10 +1732,12 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     app.cache.hover_config_field = None;
     app.cache.hover_cpi_field = None;
     app.cache.hover_hscrollbar = false;
-    app.cache.hover_view_fmt   = false;
+    app.cache.hover_view_fmt = false;
     app.cache.hover_view_group = false;
-    app.cache.hover_view_tag   = false;
-    for h in app.cache.hover_level.iter_mut() { *h = false; }
+    app.cache.hover_view_tag = false;
+    for h in app.cache.hover_level.iter_mut() {
+        *h = false;
+    }
     app.cache.hover_add_level = false;
     app.cache.hover_remove_level = false;
 
@@ -1541,37 +1755,42 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     );
     if me.row == inner_header.y && me.column >= inner_header.x {
         let x = me.column - inner_header.x;
-        // " Stats " (x 1..8) | " View " (x 10..16) | " Config " (x 18..26)
-        if x >= 1 && x < 8 {
+        // "stats" (x 0..5) | "view" (x 8..12) | "config" (x 15..21)
+        if x < 5 {
             app.cache.hover_subtab_stats = true;
-        } else if x >= 10 && x < 16 {
+        } else if x >= 8 && x < 12 {
             app.cache.hover_subtab_view = true;
-        } else if x >= 18 && x < 26 {
+        } else if x >= 15 && x < 21 {
             app.cache.hover_subtab_config = true;
         }
     }
 
-    // Shared controls bar — active for all subtabs
-    // Without cfg buttons: " [⬆ Results]    View: [I-Cache] [D-Cache] [Both]"
-    //   x=1..12                   x=22..31    x=32..41    x=42..48
-    // With cfg buttons (Config subtab): " [⬆ Results]  [⬇ Import cfg]  [⬆ Export cfg]    View: ..."
-    //   x=1..12         x=14..28        x=30..44         scope shifts to x=54+
     let ctrl_y = controls_area.y + 1;
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
         let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
-        if x >= 1 && x < 12 {
+        if x < 7 {
             app.cache.hover_export_results = true;
         } else if show_cfg_btns {
-            if x >= 14 && x < 28      { app.cache.hover_import_cfg = true; }
-            else if x >= 30 && x < 44 { app.cache.hover_export_cfg = true; }
-            else if x >= 54 && x < 63 { app.cache.hover_scope_i = true; }
-            else if x >= 64 && x < 73 { app.cache.hover_scope_d = true; }
-            else if x >= 74 && x < 80 { app.cache.hover_scope_both = true; }
+            if x >= 10 && x < 20 {
+                app.cache.hover_import_cfg = true;
+            } else if x >= 23 && x < 33 {
+                app.cache.hover_export_cfg = true;
+            } else if x >= 41 && x < 48 {
+                app.cache.hover_scope_i = true;
+            } else if x >= 49 && x < 56 {
+                app.cache.hover_scope_d = true;
+            } else if x >= 57 && x < 61 {
+                app.cache.hover_scope_both = true;
+            }
         } else {
-            if x >= 22 && x < 31      { app.cache.hover_scope_i = true; }
-            else if x >= 32 && x < 41 { app.cache.hover_scope_d = true; }
-            else if x >= 42 && x < 48 { app.cache.hover_scope_both = true; }
+            if x >= 15 && x < 22 {
+                app.cache.hover_scope_i = true;
+            } else if x >= 23 && x < 30 {
+                app.cache.hover_scope_d = true;
+            } else if x >= 31 && x < 35 {
+                app.cache.hover_scope_both = true;
+            }
         }
     }
 
@@ -1597,20 +1816,30 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
             let apply_y = content_area.y + content_area.height.saturating_sub(3);
             if me.row == apply_y {
                 let x = me.column.saturating_sub(content_area.x + 1);
-                if x >= 1 && x < 22 { app.cache.hover_apply = true; }
-                else if x >= 24 && x < 43 { app.cache.hover_apply_keep = true; }
+                if x < 19 {
+                    app.cache.hover_apply = true;
+                } else if x >= 22 && x < 40 {
+                    app.cache.hover_apply_keep = true;
+                }
             }
 
             let preset_y = content_area.y + content_area.height.saturating_sub(6);
             if me.row == preset_y {
                 let col_x = me.column;
                 let check_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
-                    if col_x < panel_x || col_x >= panel_x + panel_w { return None; }
+                    if col_x < panel_x || col_x >= panel_x + panel_w {
+                        return None;
+                    }
                     let x = col_x - panel_x;
-                    if x >= 10 && x < 17 { Some(0) }
-                    else if x >= 18 && x < 26 { Some(1) }
-                    else if x >= 27 && x < 34 { Some(2) }
-                    else { None }
+                    if x >= 9 && x < 14 {
+                        Some(0)
+                    } else if x >= 15 && x < 21 {
+                        Some(1)
+                    } else if x >= 22 && x < 27 {
+                        Some(2)
+                    } else {
+                        None
+                    }
                 };
                 app.cache.hover_preset_i = check_preset(content_area.x, i_w);
                 app.cache.hover_preset_d = check_preset(content_area.x + i_w, d_w);
@@ -1635,18 +1864,26 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
             let apply_y = col_area.y + col_area.height.saturating_sub(3);
             if me.row == apply_y {
                 let x = me.column.saturating_sub(col_area.x + 1);
-                if x >= 1 && x < 22 { app.cache.hover_apply = true; }
-                else if x >= 24 && x < 43 { app.cache.hover_apply_keep = true; }
+                if x < 19 {
+                    app.cache.hover_apply = true;
+                } else if x >= 22 && x < 40 {
+                    app.cache.hover_apply_keep = true;
+                }
             }
 
             let preset_y = col_area.y + col_area.height.saturating_sub(6);
-            if me.row == preset_y && me.column >= col_area.x && me.column < col_area.x + col_area.width {
+            if me.row == preset_y
+                && me.column >= col_area.x
+                && me.column < col_area.x + col_area.width
+            {
                 let x = me.column - col_area.x;
-                // " Presets: [Small NKB] [Med NKB] [Large NKB]"
-                // Approximate positions (labels vary); use same offsets as render_unified_presets
-                if x >= 10 && x < 22 { app.cache.hover_preset_d = Some(0); }
-                else if x >= 23 && x < 33 { app.cache.hover_preset_d = Some(1); }
-                else if x >= 34 && x < 47 { app.cache.hover_preset_d = Some(2); }
+                if x >= 9 && x < 18 {
+                    app.cache.hover_preset_d = Some(0);
+                } else if x >= 19 && x < 27 {
+                    app.cache.hover_preset_d = Some(1);
+                } else if x >= 28 && x < 38 {
+                    app.cache.hover_preset_d = Some(2);
+                }
             }
         }
     }
@@ -1685,28 +1922,30 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
 /// Update hover state for the level selector bar (row = level_area.y).
 fn update_level_selector_hover(app: &mut App, me: MouseEvent, level_area: Rect) {
     let mut x = me.column.saturating_sub(level_area.x + 1); // relative x
-    // " [ L1 ] [ L2 ] ... [+ Add] [- Remove]   ..."
-    // Each level button: "[ LN ]" = 6 chars, " " separator
+    // "level l1   l2   add   remove"
+    x = x.saturating_sub(6); // "level "
     let num_levels = 1 + app.cache.extra_pending.len(); // L1 + extras
     for i in 0..num_levels {
-        let btn_w: u16 = 6; // "[ L1 ]"
+        let btn_w: u16 = if i == 0 {
+            2
+        } else {
+            CacheController::extra_level_name(i - 1).len() as u16
+        };
         if x < btn_w {
             if i < app.cache.hover_level.len() {
                 app.cache.hover_level[i] = true;
             }
             return;
         }
-        x = x.saturating_sub(btn_w + 1); // skip button + " "
+        x = x.saturating_sub(btn_w + 3); // skip button + "   "
     }
-    // "  " gap before [+ Add]
-    x = x.saturating_sub(2);
-    let add_w: u16 = 7; // "[+ Add]"
+    let add_w: u16 = 3; // "add"
     if x < add_w {
         app.cache.hover_add_level = true;
         return;
     }
-    x = x.saturating_sub(add_w + 1);
-    let rem_w: u16 = 10; // "[- Remove]"
+    x = x.saturating_sub(add_w + 3);
+    let rem_w: u16 = 6; // "remove"
     if x < rem_w && !app.cache.extra_pending.is_empty() {
         app.cache.hover_remove_level = true;
     }
@@ -1730,9 +1969,18 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     );
     if me.row == inner_header.y && me.column >= inner_header.x {
         let x = me.column - inner_header.x;
-        if x >= 1  && x < 8  { app.cache.subtab = CacheSubtab::Stats;  return; }
-        if x >= 10 && x < 16 { app.cache.subtab = CacheSubtab::View;   return; }
-        if x >= 18 && x < 26 { app.cache.subtab = CacheSubtab::Config; return; }
+        if x < 5 {
+            app.cache.subtab = CacheSubtab::Stats;
+            return;
+        }
+        if x >= 8 && x < 12 {
+            app.cache.subtab = CacheSubtab::View;
+            return;
+        }
+        if x >= 15 && x < 21 {
+            app.cache.subtab = CacheSubtab::Config;
+            return;
+        }
     }
 
     // Shared controls bar — available in all subtabs
@@ -1740,19 +1988,46 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     if me.row == ctrl_y {
         let x = me.column.saturating_sub(controls_area.x + 1);
         let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
-        if x >= 1 && x < 12 { do_export_results(app); return; }
+        if x < 7 {
+            do_export_results(app);
+            return;
+        }
         if show_cfg_btns {
-            if x >= 14 && x < 28      { do_import_cfg(app); return; }
-            if x >= 30 && x < 44      { do_export_cfg(app); return; }
+            if x >= 10 && x < 20 {
+                do_import_cfg(app);
+                return;
+            }
+            if x >= 23 && x < 33 {
+                do_export_cfg(app);
+                return;
+            }
             if app.cache.selected_level == 0 {
-                if x >= 54 && x < 63  { app.cache.scope = CacheScope::ICache; return; }
-                if x >= 64 && x < 73  { app.cache.scope = CacheScope::DCache; return; }
-                if x >= 74 && x < 80  { app.cache.scope = CacheScope::Both;   return; }
+                if x >= 41 && x < 48 {
+                    app.cache.scope = CacheScope::ICache;
+                    return;
+                }
+                if x >= 49 && x < 56 {
+                    app.cache.scope = CacheScope::DCache;
+                    return;
+                }
+                if x >= 57 && x < 61 {
+                    app.cache.scope = CacheScope::Both;
+                    return;
+                }
             }
         } else if app.cache.selected_level == 0 {
-            if x >= 22 && x < 31      { app.cache.scope = CacheScope::ICache; return; }
-            if x >= 32 && x < 41      { app.cache.scope = CacheScope::DCache; return; }
-            if x >= 42 && x < 48      { app.cache.scope = CacheScope::Both;   return; }
+            if x >= 15 && x < 22 {
+                app.cache.scope = CacheScope::ICache;
+                return;
+            }
+            if x >= 23 && x < 30 {
+                app.cache.scope = CacheScope::DCache;
+                return;
+            }
+            if x >= 31 && x < 35 {
+                app.cache.scope = CacheScope::Both;
+                return;
+            }
         }
     }
 
@@ -1792,23 +2067,27 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
 
 fn handle_level_selector_click(app: &mut App, me: MouseEvent, level_area: Rect) {
     let mut x = me.column.saturating_sub(level_area.x + 1);
+    x = x.saturating_sub(6); // "level "
     let num_levels = 1 + app.cache.extra_pending.len();
     for i in 0..num_levels {
-        let btn_w: u16 = 6;
+        let btn_w: u16 = if i == 0 {
+            2
+        } else {
+            CacheController::extra_level_name(i - 1).len() as u16
+        };
         if x < btn_w {
             app.cache.selected_level = i;
             return;
         }
-        x = x.saturating_sub(btn_w + 1);
+        x = x.saturating_sub(btn_w + 3);
     }
-    x = x.saturating_sub(2); // "  " gap
-    let add_w: u16 = 7;
+    let add_w: u16 = 3;
     if x < add_w {
         app.add_cache_level();
         return;
     }
-    x = x.saturating_sub(add_w + 1);
-    let rem_w: u16 = 10;
+    x = x.saturating_sub(add_w + 3);
+    let rem_w: u16 = 6;
     if x < rem_w && !app.cache.extra_pending.is_empty() {
         app.remove_last_cache_level();
     }
@@ -1845,11 +2124,11 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
     let apply_y = content_area.y + content_area.height.saturating_sub(3);
     if me.row == apply_y {
         let x = me.column.saturating_sub(content_area.x + 1);
-        if x >= 1 && x < 22 {
+        if x < 19 {
             apply_l1_config(app, false);
             return;
         }
-        if x >= 24 && x < 43 {
+        if x >= 22 && x < 40 {
             apply_l1_config(app, true);
             return;
         }
@@ -1859,12 +2138,19 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
     if me.row == preset_y {
         let col_x = me.column;
         let apply_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
-            if col_x < panel_x || col_x >= panel_x + panel_w { return None; }
+            if col_x < panel_x || col_x >= panel_x + panel_w {
+                return None;
+            }
             let x = col_x - panel_x;
-            if x >= 10 && x < 17 { Some(0) }
-            else if x >= 18 && x < 26 { Some(1) }
-            else if x >= 27 && x < 34 { Some(2) }
-            else { None }
+            if x >= 9 && x < 14 {
+                Some(0)
+            } else if x >= 15 && x < 21 {
+                Some(1)
+            } else if x >= 22 && x < 27 {
+                Some(2)
+            } else {
+                None
+            }
         };
         use crate::falcon::cache::cache_presets;
         if let Some(idx) = apply_preset(content_area.x, i_w) {
@@ -1909,15 +2195,22 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
     app.cache.stats_scroll = 0;
 }
 
-fn handle_unified_config_click(app: &mut App, me: MouseEvent, content_area: Rect, extra_idx: usize) {
+fn handle_unified_config_click(
+    app: &mut App,
+    me: MouseEvent,
+    content_area: Rect,
+    extra_idx: usize,
+) {
     let col_w = content_area.width.min(60);
     let col_x = content_area.x + (content_area.width.saturating_sub(col_w)) / 2;
     let col_area = Rect::new(col_x, content_area.y, col_w, content_area.height);
 
     let fields_y0 = col_area.y + 1;
     let fields_y1 = col_area.y + col_area.height.saturating_sub(7);
-    if me.row >= fields_y0 && me.row < fields_y1
-        && me.column >= col_area.x && me.column < col_area.x + col_area.width
+    if me.row >= fields_y0
+        && me.row < fields_y1
+        && me.column >= col_area.x
+        && me.column < col_area.x + col_area.width
     {
         let row_idx = (me.row - fields_y0) as usize;
         if let Some(field) = ConfigField::from_list_row(row_idx) {
@@ -1943,11 +2236,11 @@ fn handle_unified_config_click(app: &mut App, me: MouseEvent, content_area: Rect
     let apply_y = col_area.y + col_area.height.saturating_sub(3);
     if me.row == apply_y {
         let x = me.column.saturating_sub(col_area.x + 1);
-        if x >= 1 && x < 22 {
+        if x < 19 {
             apply_extra_config(app, extra_idx, false);
             return;
         }
-        if x >= 24 && x < 43 {
+        if x >= 22 && x < 40 {
             apply_extra_config(app, extra_idx, true);
             return;
         }
@@ -1959,10 +2252,15 @@ fn handle_unified_config_click(app: &mut App, me: MouseEvent, content_area: Rect
         let x = me.column - col_area.x;
         use crate::falcon::cache::extra_level_presets;
         let presets = extra_level_presets();
-        let idx = if x >= 10 && x < 22 { Some(0) }
-            else if x >= 23 && x < 33 { Some(1) }
-            else if x >= 34 && x < 47 { Some(2) }
-            else { None };
+        let idx = if x >= 9 && x < 18 {
+            Some(0)
+        } else if x >= 19 && x < 27 {
+            Some(1)
+        } else if x >= 28 && x < 38 {
+            Some(2)
+        } else {
+            None
+        };
         if let Some(i) = idx {
             if extra_idx < app.cache.extra_pending.len() {
                 app.cache.extra_pending[extra_idx] = presets[i].clone();
@@ -1974,7 +2272,9 @@ fn handle_unified_config_click(app: &mut App, me: MouseEvent, content_area: Rect
 }
 
 fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
-    if extra_idx >= app.cache.extra_pending.len() { return; }
+    if extra_idx >= app.cache.extra_pending.len() {
+        return;
+    }
     let cfg = app.cache.extra_pending[extra_idx].clone();
     if let Err(msg) = cfg.validate() {
         app.cache.config_error = Some(format!("L{} Cache: {msg}", extra_idx + 2));
@@ -1984,8 +2284,12 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
     if keep_history {
         app.cache.config_status = Some("Config applied (history kept).".to_string());
         let old_stats = if extra_idx < app.run.mem.extra_levels.len() {
-            Some(std::mem::take(&mut app.run.mem.extra_levels[extra_idx].stats))
-        } else { None };
+            Some(std::mem::take(
+                &mut app.run.mem.extra_levels[extra_idx].stats,
+            ))
+        } else {
+            None
+        };
         if extra_idx < app.run.mem.extra_levels.len() {
             app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
             if let Some(s) = old_stats {
@@ -2006,17 +2310,57 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
 
 fn update_settings_hover(app: &mut App, me: MouseEvent) {
     app.settings.hover_cache_enabled = false;
+    app.settings.hover_pipeline_enabled = false;
+    app.settings.hover_run_scope = false;
     app.settings.hover_cpi_field = None;
+    app.settings.hover_row = None;
+
+    let (list_x, list_y, list_w, list_h) = app.settings.list_rect.get();
+    let in_list = me.column >= list_x
+        && me.column < list_x.saturating_add(list_w)
+        && me.row >= list_y
+        && me.row < list_y.saturating_add(list_h);
+    if !in_list {
+        return;
+    }
 
     let (btn_y, btn_x0, btn_x1) = app.settings.bool_btn_rect.get();
+    if me.row == btn_y {
+        app.settings.hover_row = Some(SETTINGS_ROW_CACHE_ENABLED);
+    } else if me.row == btn_y.saturating_add(1) {
+        app.settings.hover_row = Some(SETTINGS_ROW_MAX_CORES);
+    } else if me.row == btn_y.saturating_add(2) {
+        app.settings.hover_row = Some(SETTINGS_ROW_RUN_SCOPE);
+    } else if me.row == btn_y.saturating_add(3) {
+        app.settings.hover_row = Some(SETTINGS_ROW_PIPELINE_ENABLED);
+    }
     if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
         app.settings.hover_cache_enabled = true;
+    }
+
+    let (scope_y, scope_x0, scope_x1) = app.settings.run_scope_rect.get();
+    if me.row == scope_y && me.column >= scope_x0 && me.column < scope_x1 {
+        app.settings.hover_run_scope = true;
+    }
+
+    let (pipe_y, pipe_x0, pipe_x1) = app.settings.bool_btn_pipeline_rect.get();
+    if me.row == pipe_y && me.column >= pipe_x0 && me.column < pipe_x1 {
+        app.settings.hover_pipeline_enabled = true;
+    }
+
+    if me.row == btn_y.saturating_add(1) {
+        app.settings.selected = SETTINGS_ROW_MAX_CORES;
+        return;
+    }
+    if me.row == btn_y.saturating_add(2) {
+        app.settings.selected = SETTINGS_ROW_RUN_SCOPE;
         return;
     }
 
     let rows_y = app.settings.cpi_rows_y.get();
     for (i, &y) in rows_y.iter().enumerate() {
         if y > 0 && me.row == y {
+            app.settings.hover_row = Some(SETTINGS_ROW_CPI_START + i);
             app.settings.hover_cpi_field = Some(i);
             return;
         }
@@ -2024,12 +2368,45 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
 }
 
 fn handle_settings_click(app: &mut App, me: MouseEvent) {
-    let (btn_y, btn_x0, btn_x1) = app.settings.bool_btn_rect.get();
-    if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
-        app.run.cache_enabled = !app.run.cache_enabled;
-        app.run.mem.bypass = !app.run.cache_enabled;
-        app.run.mem.flush_all();
+    let (list_x, list_y, list_w, list_h) = app.settings.list_rect.get();
+    let in_list = me.column >= list_x
+        && me.column < list_x.saturating_add(list_w)
+        && me.row >= list_y
+        && me.row < list_y.saturating_add(list_h);
+    if !in_list {
+        return;
+    }
+
+    let (btn_y, _, _) = app.settings.bool_btn_rect.get();
+    if me.row == btn_y {
+        app.set_cache_enabled(!app.run.cache_enabled);
         app.settings.selected = SETTINGS_ROW_CACHE_ENABLED;
+        return;
+    }
+
+    let (scope_y, _, _) = app.settings.run_scope_rect.get();
+    if me.row == scope_y {
+        app.run_scope = app.run_scope.cycle();
+        app.settings.selected = SETTINGS_ROW_RUN_SCOPE;
+        return;
+    }
+
+    let (pipe_y, _, _) = app.settings.bool_btn_pipeline_rect.get();
+    if me.row == pipe_y {
+        app.set_pipeline_enabled(!app.pipeline.enabled);
+        app.settings.selected = SETTINGS_ROW_PIPELINE_ENABLED;
+        return;
+    }
+
+    if me.row == btn_y.saturating_add(1) {
+        app.settings.selected = SETTINGS_ROW_MAX_CORES;
+        app.settings.cpi_editing = true;
+        app.settings.cpi_edit_buf = app.max_cores.to_string();
+        return;
+    }
+    if me.row == btn_y.saturating_add(2) {
+        app.settings.selected = SETTINGS_ROW_RUN_SCOPE;
+        app.run_scope = app.run_scope.cycle();
         return;
     }
 
@@ -2045,4 +2422,138 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     }
 }
 
+// ── Pipeline tab mouse ────────────────────────────────────────────────────────
 
+fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
+    let p = &mut app.pipeline;
+    p.hover_subtab_main = false;
+    p.hover_subtab_config = false;
+    p.hover_core = false;
+    p.hover_reset = false;
+    p.hover_speed = false;
+    p.hover_state = false;
+    p.hover_config_row = None;
+
+    let (main_y, main_x0, main_x1) = p.btn_subtab_main_rect.get();
+    if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
+        p.hover_subtab_main = true;
+        return;
+    }
+    let (cfg_y, cfg_x0, cfg_x1) = p.btn_subtab_config_rect.get();
+    if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
+        p.hover_subtab_config = true;
+        return;
+    }
+    let (core_y, core_x0, core_x1) = p.btn_core_rect.get();
+    if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
+        p.hover_core = true;
+        return;
+    }
+    let (rst_y, rst_x0, rst_x1) = p.btn_reset_rect.get();
+    if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
+        p.hover_reset = true;
+        return;
+    }
+    let (spd_y, spd_x0, spd_x1) = p.btn_speed_rect.get();
+    if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
+        p.hover_speed = true;
+        return;
+    }
+    let (st_y, st_x0, st_x1) = p.btn_state_rect.get();
+    if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
+        p.hover_state = true;
+        return;
+    }
+
+    // Config row hover
+    let rects = p.config_row_rects.get();
+    for i in 0..4 {
+        let (ry, rx0, rx1) = rects[i];
+        if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
+            p.hover_config_row = Some(i);
+            return;
+        }
+    }
+}
+
+fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
+    use crate::ui::pipeline::{BranchPredict, BranchResolve, PipelineMode, PipelineSubtab};
+
+    let (main_y, main_x0, main_x1) = app.pipeline.btn_subtab_main_rect.get();
+    if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
+        app.pipeline.subtab = PipelineSubtab::Main;
+        return;
+    }
+    let (cfg_y, cfg_x0, cfg_x1) = app.pipeline.btn_subtab_config_rect.get();
+    if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
+        app.pipeline.subtab = PipelineSubtab::Config;
+        return;
+    }
+    let (core_y, core_x0, core_x1) = app.pipeline.btn_core_rect.get();
+    if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
+        app.cycle_selected_core(1);
+        return;
+    }
+    let (rst_y, rst_x0, rst_x1) = app.pipeline.btn_reset_rect.get();
+    if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
+        app.restart_simulation();
+        return;
+    }
+    let (spd_y, spd_x0, spd_x1) = app.pipeline.btn_speed_rect.get();
+    if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
+        app.pipeline.speed = app.pipeline.speed.next();
+        app.pipeline.last_tick = std::time::Instant::now();
+        return;
+    }
+    let (st_y, st_x0, st_x1) = app.pipeline.btn_state_rect.get();
+    if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
+        if app.pipeline.enabled && !app.pipeline.faulted {
+            if app.run.is_running {
+                app.run.is_running = false;
+            } else {
+                app.resume_selected_hart();
+                if app.can_start_run() {
+                    app.run.is_running = true;
+                }
+            }
+        }
+        return;
+    }
+
+    // Config row clicks — toggle on click like Cache tab
+    let rects = app.pipeline.config_row_rects.get();
+    for i in 0..4 {
+        let (ry, rx0, rx1) = rects[i];
+        if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
+            match i {
+                0 => app.pipeline.forwarding = !app.pipeline.forwarding,
+                1 => {
+                    app.pipeline.mode = match app.pipeline.mode {
+                        PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
+                        PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
+                    }
+                }
+                2 => {
+                    app.pipeline.branch_resolve = match app.pipeline.branch_resolve {
+                        BranchResolve::Id => BranchResolve::Ex,
+                        BranchResolve::Ex => BranchResolve::Mem,
+                        BranchResolve::Mem => BranchResolve::Id,
+                    }
+                }
+                3 => {
+                    app.pipeline.predict = match app.pipeline.predict {
+                        BranchPredict::NotTaken => BranchPredict::Taken,
+                        BranchPredict::Taken => BranchPredict::NotTaken,
+                    }
+                }
+                _ => {}
+            }
+            app.pipeline.config_cursor = i;
+            return;
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/support/ui_input_mouse.rs"]
+mod tests;
