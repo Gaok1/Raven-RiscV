@@ -13,67 +13,64 @@ use raven_api::syscall::{exit, get_instr_count, hart_exit, pause_sim};
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const N: usize = 32;
-const HALF: usize = N / 2;
+const N: usize = 24;
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 //
-// DATA[0..HALF]  — sorted by the worker hart in the parallel phase.
-// DATA[HALF..N]  — sorted by main hart in the parallel phase.
-// No overlap → no race on the data arrays.
-// WORKER_DONE uses AtomicBool (portable-atomic) for the release/acquire fence.
+// After the top-level partition:
+//   DATA[0 .. pivot_idx]        — owned exclusively by the worker hart
+//   DATA[pivot_idx]             — pivot, already in final position (untouched)
+//   DATA[pivot_idx+1 .. N]      — owned exclusively by the main hart
+//
+// No overlap → no data race on the array cells.
+// WORKER_DONE is the only cross-hart synchronisation point.
 
 static mut DATA: [i32; N] = [0; N];
 static WORKER_DONE: AtomicBool = AtomicBool::new(false);
 
-// 16-byte aligned so that WORKER_STACK.end is also 16-byte aligned (4096 % 16 == 0),
-// satisfying Raven's stack-pointer alignment requirement.
+// 16-byte aligned so the computed stack-top is also 16-byte aligned.
 #[repr(C, align(16))]
-struct AlignedStack([u8; 4096]);
-static mut WORKER_STACK: AlignedStack = AlignedStack([0; 4096]);
+struct AlignedStack([u8; 8192]);
+static mut WORKER_STACK: AlignedStack = AlignedStack([0; 8192]);
 
-// ── Raw-pointer helpers (Rust 2024 forbids &[mut] STATIC_MUT) ─────────────────
+// ── Quicksort (recursive) ─────────────────────────────────────────────────────
 
-#[inline(always)]
-unsafe fn data_slice(offset: usize, len: usize) -> &'static [i32] {
-    unsafe { core::slice::from_raw_parts(addr_of!(DATA[offset]), len) }
-}
-
-#[inline(always)]
-unsafe fn data_slice_mut(offset: usize, len: usize) -> &'static mut [i32] {
-    unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(DATA[offset]), len) }
-}
-
-// ── Insertion sort ────────────────────────────────────────────────────────────
-
-fn insertion_sort(a: &mut [i32]) {
-    for i in 1..a.len() {
-        let key = a[i];
-        let mut j = i;
-        while j > 0 && a[j - 1] > key {
-            a[j] = a[j - 1];
-            j -= 1;
+fn partition(arr: &mut [i32]) -> usize {
+    let last = arr.len() - 1;
+    let pivot = arr[last];
+    let mut store = 0;
+    for j in 0..last {
+        if arr[j] <= pivot {
+            arr.swap(store, j);
+            store += 1;
         }
-        a[j] = key;
     }
+    arr.swap(store, last);
+    store
 }
 
-// ── Merge sorted DATA[0..HALF] ++ DATA[HALF..N] ───────────────────────────────
-
-fn merge(left: &[i32], right: &[i32]) -> alloc::vec::Vec<i32> {
-    let mut out = alloc::vec::Vec::with_capacity(N);
-    let (mut i, mut j) = (0, 0);
-    while i < left.len() && j < right.len() {
-        if left[i] <= right[j] { out.push(left[i]); i += 1; }
-        else                    { out.push(right[j]); j += 1; }
+fn quicksort(arr: &mut [i32]) {
+    if arr.len() <= 1 {
+        return;
     }
-    out.extend_from_slice(&left[i..]);
-    out.extend_from_slice(&right[j..]);
-    out
+    let p = partition(arr);
+    let (left, rest) = arr.split_at_mut(p);
+    quicksort(left);
+    quicksort(&mut rest[1..]); // rest[0] is the pivot — already in place
 }
 
-fn worker_sort_first_half(_: u32) -> ! {
-    insertion_sort(unsafe { data_slice_mut(0, HALF) });
+// ── Worker hart ───────────────────────────────────────────────────────────────
+//
+// Receives the left-partition length as the u32 arg placed in a0 by hart_start.
+// Runs quicksort recursively on DATA[0..left_len], then signals completion.
+
+fn worker_sort_left(left_len: u32) -> ! {
+    // Safety: after the top-level partition main wrote DATA[0..left_len] before
+    // spawning, then only touches DATA[pivot+1..N]. No overlap.
+    let slice = unsafe {
+        core::slice::from_raw_parts_mut(addr_of_mut!(DATA[0]), left_len as usize)
+    };
+    quicksort(slice);
     WORKER_DONE.store(true, Ordering::Release);
     hart_exit()
 }
@@ -82,52 +79,84 @@ fn worker_sort_first_half(_: u32) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    // Fill DATA with random values in [-99, 100]
-    for x in unsafe { data_slice_mut(0, N) } {
+    let data = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(DATA[0]), N) };
+
+    // Seed with random values in [-99, 100]
+    for x in data.iter_mut() {
         *x = rand_range!(0u32, 200u32) as i32 - 99;
     }
 
-    println!("=== Parallel Merge Sort — {N} elements, 2 harts ===\n");
+    println!("=== Parallel Quicksort — {N} elements, 2 harts ===\n");
     print!("Input:  ");
-    for x in unsafe { data_slice(0, N) } { print!("{x:5}"); }
+    for x in data.iter() {
+        print!("{x:5}");
+    }
     println!();
 
     let t0 = get_instr_count();
 
-    // ── Fork ─────────────────────────────────────────────────────────────────
+    // ── Top-level partition ────────────────────────────────────────────────────
+    //
+    //   Before:  [ unsorted array ]
+    //   After:   [ ≤ pivot | pivot | ≥ pivot ]
+    //                 ↑                ↑
+    //            worker hart        main hart  (both recurse independently)
+
+    let pivot_idx = partition(data);
+    let pivot_val = data[pivot_idx];
+
+    println!(
+        "Pivot = {pivot_val} at index {pivot_idx}  \
+         (left {pivot_idx} elems → hart 1,  right {} elems → hart 0)",
+        N - pivot_idx - 1,
+    );
+
+    // ── Fork ──────────────────────────────────────────────────────────────────
     WORKER_DONE.store(false, Ordering::Relaxed);
 
     let worker_stack = unsafe {
-        core::slice::from_raw_parts_mut(addr_of_mut!(WORKER_STACK.0[0]), 4096)
+        core::slice::from_raw_parts_mut(addr_of_mut!(WORKER_STACK.0[0]), 8192)
     };
-    spawn_hart_fn(worker_sort_first_half, worker_stack, 0);
+    spawn_hart_fn(worker_sort_left, worker_stack, pivot_idx as u32);
 
-    // Main hart sorts DATA[HALF..N] in parallel.
-    insertion_sort(unsafe { data_slice_mut(HALF, HALF) });
+    // Main hart recursively sorts the right partition while the worker handles left.
+    if pivot_idx + 1 < N {
+        let right = unsafe {
+            core::slice::from_raw_parts_mut(
+                addr_of_mut!(DATA[pivot_idx + 1]),
+                N - pivot_idx - 1,
+            )
+        };
+        quicksort(right);
+    }
 
-    // ── Join ─────────────────────────────────────────────────────────────────
-    // Acquire: guarantees we see the worker's stores to DATA[0..HALF].
-    while !WORKER_DONE.load(Ordering::Acquire) { /* spin */ }
-
-    let sorted = merge(
-        unsafe { data_slice(0, HALF) },
-        unsafe { data_slice(HALF, HALF) },
-    );
+    // ── Join ──────────────────────────────────────────────────────────────────
+    while !WORKER_DONE.load(Ordering::Acquire) {
+        // spin — wait for worker hart to finish its recursive sort
+    }
 
     let elapsed = get_instr_count() - t0;
 
+    // ── Verify ────────────────────────────────────────────────────────────────
+    let data = unsafe { core::slice::from_raw_parts(addr_of!(DATA[0]), N) };
+
     print!("Sorted: ");
-    for x in &sorted { print!("{x:5}"); }
+    for x in data {
+        print!("{x:5}");
+    }
     println!();
 
-    if sorted.windows(2).all(|w| w[0] <= w[1]) {
-        println!("\n✓ Correct!  Main-hart instructions (fork → join → merge): {elapsed}");
+    let ok = data.windows(2).all(|w| w[0] <= w[1]);
+    if ok {
+        println!("\n✓ Correct!  fork→join (main-hart instructions): {elapsed}");
     } else {
         println!("\n✗ Sort failed!");
     }
 
-    println!("\nTip: open the Pipeline tab and step through to watch both harts\n\
-              sort their halves independently, then observe the merge.");
+    println!(
+        "\nTip: step through the Run tab to watch both harts recurse\n\
+         through their partitions simultaneously."
+    );
 
     pause_sim();
     exit(0)
