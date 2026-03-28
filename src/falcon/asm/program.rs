@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // Structure returned with code and data
 pub struct Program {
@@ -20,4 +20,6 @@ pub struct Program {
     pub label_to_line: HashMap<String, usize>,
     /// Block comments (`##! text`) shown above an instruction, keyed by instruction address.
     pub block_comments: HashMap<u32, String>,
+    /// Instruction PCs that came from an explicit `halt` mnemonic in source.
+    pub halt_pcs: HashSet<u32>,
 }

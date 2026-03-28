@@ -2,10 +2,10 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table};
 
-use crate::ui::theme;
-use super::{App, MemRegion};
 use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
+use super::{App, MemRegion};
+use crate::ui::theme;
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if app.run.show_dyn {
@@ -39,7 +39,9 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
             Some(pc) => format!("  [last write @ 0x{pc:08x}]"),
             None => String::new(),
         }
-    } else { String::new() };
+    } else {
+        String::new()
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -71,7 +73,11 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         let (label, val, age) = register_entry_reg(reg_idx, app);
         let pin_label = format!("◉ {label}");
         let base = age_style(age).add_modifier(Modifier::BOLD);
-        let style = if is_hover { base.bg(Color::Rgb(60, 80, 60)) } else { base };
+        let style = if is_hover {
+            base.bg(Color::Rgb(60, 80, 60))
+        } else {
+            base
+        };
         rows.push(Row::new(vec![
             Cell::from(pin_label).style(style),
             Cell::from(val).style(style),
@@ -81,14 +87,18 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
     // Separator after pinned
     let sep_visual_row = pinned.len();
     if !pinned.is_empty() && visible > pinned.len() {
-        rows.push(Row::new(vec![
-            Cell::from("───────────────"),
-            Cell::from(""),
-        ]).style(Style::default().fg(theme::BORDER)));
+        rows.push(
+            Row::new(vec![Cell::from("───────────────"), Cell::from("")])
+                .style(Style::default().fg(theme::BORDER)),
+        );
     }
 
     // ── Regular scroll section ────────────────────────────────────────────────
-    let offset = if pinned.is_empty() { 0 } else { pinned.len() + 1 };
+    let offset = if pinned.is_empty() {
+        0
+    } else {
+        pinned.len() + 1
+    };
     let max_scroll = total.saturating_sub(visible.saturating_sub(offset));
     let start = app.run.regs_scroll.min(max_scroll);
     let remaining = visible.saturating_sub(rows.len());
@@ -99,7 +109,11 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         let is_cursor = index == app.run.reg_cursor;
         let is_hover = hover == Some(visual_row) && visual_row != sep_visual_row;
         let (label, val, age) = register_entry(index, app);
-        let is_pinned = if index >= 1 { pinned.contains(&((index - 1) as u8)) } else { false };
+        let is_pinned = if index >= 1 {
+            pinned.contains(&((index - 1) as u8))
+        } else {
+            false
+        };
         let marker = if is_pinned { "◉ " } else { "  " };
         let full_label = format!("{marker}{label}");
         let base_style = age_style(age);
@@ -122,23 +136,31 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
 /// Style based on register age (0 = just changed → bright yellow, fades over steps).
 fn age_style(age: u8) -> Style {
     match age {
-        0   => Style::default().fg(Color::Yellow),
-        1   => Style::default().fg(Color::Rgb(210, 170, 0)),
-        2   => Style::default().fg(Color::Rgb(160, 130, 0)),
-        3   => Style::default().fg(Color::Rgb(110, 90, 0)),
-        _   => Style::default().fg(Color::White),
+        0 => Style::default().fg(Color::Yellow),
+        1 => Style::default().fg(Color::Rgb(210, 170, 0)),
+        2 => Style::default().fg(Color::Rgb(160, 130, 0)),
+        3 => Style::default().fg(Color::Rgb(110, 90, 0)),
+        _ => Style::default().fg(Color::White),
     }
 }
 
 /// Returns (label, value, age).
 fn register_entry(index: usize, app: &App) -> (String, String, u8) {
     if index == 0 {
-        let age = if app.run.cpu.pc != app.run.prev_pc { 0 } else { 255 };
+        let age = if app.run.cpu.pc != app.run.prev_pc {
+            0
+        } else {
+            255
+        };
         let val = format_u32_value(app.run.cpu.pc, app.run.fmt_mode, app.run.show_signed);
         ("PC".to_string(), val, age)
     } else {
         let reg_index = (index - 1) as u8;
-        let val = format_u32_value(app.run.cpu.x[reg_index as usize], app.run.fmt_mode, app.run.show_signed);
+        let val = format_u32_value(
+            app.run.cpu.x[reg_index as usize],
+            app.run.fmt_mode,
+            app.run.show_signed,
+        );
         (
             format!("x{reg_index:02} ({})", reg_name(reg_index)),
             val,
@@ -149,7 +171,11 @@ fn register_entry(index: usize, app: &App) -> (String, String, u8) {
 
 /// Returns (label, value, age) for pinned register.
 fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
-    let val = format_u32_value(app.run.cpu.x[reg_idx as usize], app.run.fmt_mode, app.run.show_signed);
+    let val = format_u32_value(
+        app.run.cpu.x[reg_idx as usize],
+        app.run.fmt_mode,
+        app.run.show_signed,
+    );
     (
         format!("x{reg_idx:02} ({})", reg_name(reg_idx)),
         val,
@@ -174,14 +200,18 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
         .skip(scroll)
         .take(visible)
         .map(|i| {
-            let age   = app.run.f_age[i as usize];
-            let bits  = app.run.cpu.f[i as usize];
-            let val   = f32::from_bits(bits);
+            let age = app.run.f_age[i as usize];
+            let bits = app.run.cpu.f[i as usize];
+            let val = f32::from_bits(bits);
             let label = format!("f{i:02} ({}) ", freg_name_short(i));
             let value = if val.is_nan() {
                 "NaN".to_string()
             } else if val.is_infinite() {
-                if val.is_sign_positive() { "+Inf".to_string() } else { "-Inf".to_string() }
+                if val.is_sign_positive() {
+                    "+Inf".to_string()
+                } else {
+                    "-Inf".to_string()
+                }
             } else {
                 format!("{val:.6}")
             };
@@ -199,16 +229,39 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
 
 fn freg_name_short(i: u8) -> &'static str {
     match i {
-        0  => "ft0",  1  => "ft1",  2  => "ft2",  3  => "ft3",
-        4  => "ft4",  5  => "ft5",  6  => "ft6",  7  => "ft7",
-        8  => "fs0",  9  => "fs1",
-        10 => "fa0",  11 => "fa1",  12 => "fa2",  13 => "fa3",
-        14 => "fa4",  15 => "fa5",  16 => "fa6",  17 => "fa7",
-        18 => "fs2",  19 => "fs3",  20 => "fs4",  21 => "fs5",
-        22 => "fs6",  23 => "fs7",  24 => "fs8",  25 => "fs9",
-        26 => "fs10", 27 => "fs11",
-        28 => "ft8",  29 => "ft9",  30 => "ft10", 31 => "ft11",
-        _  => "f?",
+        0 => "ft0",
+        1 => "ft1",
+        2 => "ft2",
+        3 => "ft3",
+        4 => "ft4",
+        5 => "ft5",
+        6 => "ft6",
+        7 => "ft7",
+        8 => "fs0",
+        9 => "fs1",
+        10 => "fa0",
+        11 => "fa1",
+        12 => "fa2",
+        13 => "fa3",
+        14 => "fa4",
+        15 => "fa5",
+        16 => "fa6",
+        17 => "fa7",
+        18 => "fs2",
+        19 => "fs3",
+        20 => "fs4",
+        21 => "fs5",
+        22 => "fs6",
+        23 => "fs7",
+        24 => "fs8",
+        25 => "fs9",
+        26 => "fs10",
+        27 => "fs11",
+        28 => "ft8",
+        29 => "ft9",
+        30 => "ft10",
+        31 => "ft11",
+        _ => "f?",
     }
 }
 
@@ -242,9 +295,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let bg = Color::Rgb(20, 22, 40);
     let q = &app.run.mem_search_query;
 
-    let parsed = u32::from_str_radix(
-        q.trim_start_matches("0x").trim_start_matches("0X"), 16
-    ).ok();
+    let parsed = u32::from_str_radix(q.trim_start_matches("0x").trim_start_matches("0X"), 16).ok();
 
     let valid_span = if let Some(addr) = parsed {
         Span::styled(
@@ -258,21 +309,24 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let line = Line::from(vec![
-        Span::styled(" Go to: 0x", Style::default().fg(theme::ACCENT).bg(bg).bold()),
+        Span::styled(
+            " Go to: 0x",
+            Style::default().fg(theme::ACCENT).bg(bg).bold(),
+        ),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         valid_span,
-        Span::styled("  Esc=close  Enter=ok", Style::default().fg(theme::IDLE).bg(bg)),
+        Span::styled(
+            "  Esc=close  Enter=ok",
+            Style::default().fg(theme::IDLE).bg(bg),
+        ),
     ]);
 
-    f.render_widget(
-        Paragraph::new(line).style(Style::default().bg(bg)),
-        area,
-    );
+    f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
 
     // Blinking cursor after typed text
     let prefix = " Go to: 0x".len() as u16;
-    let cx = (area.x + prefix + q.chars().count() as u16)
-        .min(area.x + area.width.saturating_sub(1));
+    let cx =
+        (area.x + prefix + q.chars().count() as u16).min(area.x + area.width.saturating_sub(1));
     if area.height > 0 {
         f.set_cursor_position((cx, area.y));
     }
@@ -357,12 +411,25 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let is_heap_mode = app.run.mem_region == MemRegion::Heap;
     let is_hb = addr == hb_aligned;
 
-    let cache_loc = if app.run.cache_enabled { app.run.mem.data_cache_location(addr) } else { None };
-    let is_dirty  = app.run.cache_enabled && app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
+    let cache_presence = if app.run.cache_enabled {
+        cache_presence_label(&app.run.mem, addr)
+    } else {
+        None
+    };
+    let data_cache_loc = if app.run.cache_enabled {
+        app.run.mem.data_cache_location(addr)
+    } else {
+        None
+    };
+    let is_dirty =
+        app.run.cache_enabled && app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
 
     // Check if any recent memory access overlaps this row's byte range
     let row_end = addr.wrapping_add(app.run.mem_view_bytes);
-    let access_highlight = app.run.mem_access_log.iter()
+    let access_highlight = app
+        .run
+        .mem_access_log
+        .iter()
         .filter(|(a, s, _)| {
             let end = a.wrapping_add(*s);
             *a < row_end && end > addr
@@ -387,8 +454,11 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
         String::new()
     };
 
-    let trailing_ann = if !sp_offset_ann.is_empty() { sp_offset_ann }
-                       else { hb_offset_ann };
+    let trailing_ann = if !sp_offset_ann.is_empty() {
+        sp_offset_ann
+    } else {
+        hb_offset_ann
+    };
 
     // Leading prefix — SP takes priority if both happen to coincide
     let marker: Option<ratatui::text::Span<'static>> = if is_sp {
@@ -407,17 +477,29 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
 
     // Row fg and background
     let marker_fg = if is_sp { theme::PAUSED } else { HEAP_COLOR };
-    let row_bg = if is_sp || is_hb { Some(theme::BG_HOVER) } else { None };
+    let row_bg = if is_sp || is_hb {
+        Some(theme::BG_HOVER)
+    } else {
+        None
+    };
 
     if !is_dirty {
         let val = format_memory_value(app, addr);
-        let addr_text = format!("0x{addr:08x}: {val}{trailing_ann}");
+        let cache_label = cache_presence
+            .as_deref()
+            .map(|label| format!("{label} "))
+            .unwrap_or_default();
+        let addr_text = format!("{cache_label}0x{addr:08x}: {val}{trailing_ann}");
         let fg = if is_sp || is_hb {
             marker_fg
         } else if let Some(s) = access_highlight {
             return ListItem::new(format!("  {addr_text}")).style(s);
         } else {
-            theme::TEXT
+            if cache_presence.is_some() {
+                PURPLE
+            } else {
+                theme::TEXT
+            }
         };
         let line = if let Some(prefix) = marker {
             ratatui::text::Line::from(vec![
@@ -425,19 +507,34 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
                 prefix,
                 ratatui::text::Span::styled(addr_text, Style::default().fg(fg)),
             ])
+        } else if cache_presence.is_some() {
+            ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled("\u{25cf} ", Style::default().fg(PURPLE).bold()),
+                ratatui::text::Span::styled(addr_text, Style::default().fg(fg)),
+            ])
         } else {
-            ratatui::text::Line::from(
-                ratatui::text::Span::styled(format!("  {addr_text}"), Style::default().fg(fg))
-            )
+            ratatui::text::Line::from(ratatui::text::Span::styled(
+                format!("  {addr_text}"),
+                Style::default().fg(fg),
+            ))
         };
         let mut style = Style::default();
-        if let Some(bg) = row_bg { style = style.bg(bg); }
+        if let Some(bg) = row_bg {
+            style = style.bg(bg);
+        }
         return ListItem::new(line).style(style);
     }
 
     let cache_val = format_memory_value(app, addr);
     let stale_val = format_stale_value(app, addr);
-    let level_label = cache_loc.map(|(n, _)| format!("L{n} ")).unwrap_or_default();
+    let level_label = cache_presence
+        .as_deref()
+        .map(|label| format!("{label} "))
+        .unwrap_or_else(|| {
+            data_cache_loc
+                .map(|(n, _)| format!("D{n} "))
+                .unwrap_or_default()
+        });
 
     let addr_style = if is_sp || is_hb {
         Style::default().fg(PURPLE)
@@ -449,26 +546,67 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
         spans.push(ratatui::text::Span::raw(" "));
         spans.push(prefix);
     } else {
-        spans.push(ratatui::text::Span::styled("\u{25cf} ", Style::default().fg(PURPLE).bold()));
+        spans.push(ratatui::text::Span::styled(
+            "\u{25cf} ",
+            Style::default().fg(PURPLE).bold(),
+        ));
     }
     spans.push(ratatui::text::Span::styled(
         format!("{level_label}0x{addr:08x}: "),
         addr_style,
     ));
-    spans.push(ratatui::text::Span::styled(cache_val, Style::default().fg(PURPLE).bold()));
+    spans.push(ratatui::text::Span::styled(
+        cache_val,
+        Style::default().fg(PURPLE).bold(),
+    ));
     spans.push(ratatui::text::Span::styled(
         format!("  \u{2190} RAM: {stale_val}{trailing_ann}"),
         Style::default().fg(STALE_COLOR),
     ));
     let mut style = Style::default();
-    if let Some(bg) = row_bg { style = style.bg(bg); }
+    if let Some(bg) = row_bg {
+        style = style.bg(bg);
+    }
     ListItem::new(ratatui::text::Line::from(spans)).style(style)
+}
+
+fn cache_presence_label(mem: &crate::falcon::cache::CacheController, addr: u32) -> Option<String> {
+    let mut labels: Vec<String> = Vec::new();
+
+    if let Some(level) = mem.instruction_cache_location(addr) {
+        if level == 1 {
+            labels.push("I1".to_string());
+        } else {
+            labels.push(format!("U{level}"));
+        }
+    }
+
+    if let Some((level, _dirty)) = mem.data_cache_location(addr) {
+        let label = if level == 1 {
+            "D1".to_string()
+        } else {
+            format!("U{level}")
+        };
+        if !labels.iter().any(|existing| existing == &label) {
+            labels.push(label);
+        }
+    }
+
+    if labels.is_empty() {
+        None
+    } else {
+        Some(labels.join("/"))
+    }
 }
 
 // Keep the old format_u32_value usage for format_memory_value compatibility
 #[allow(dead_code)]
 fn _unused_format(app: &App, addr: u32) -> String {
-    format_u32_value(app.run.mem.peek32(addr).unwrap_or(0), app.run.fmt_mode, app.run.show_signed)
+    format_u32_value(
+        app.run.mem.peek32(addr).unwrap_or(0),
+        app.run.fmt_mode,
+        app.run.show_signed,
+    )
 }
 
 // ── ELF Sections viewer ───────────────────────────────────────────────────────
@@ -503,34 +641,48 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
     let mut items: Vec<ListItem<'static>> = Vec::new();
     for sec in &app.run.elf_sections {
         // Section header line
-        let header = format!(
-            "{:<10} 0x{:08x}  {} B",
-            sec.name, sec.addr, sec.size
+        let header = format!("{:<10} 0x{:08x}  {} B", sec.name, sec.addr, sec.size);
+        items.push(
+            ListItem::new(header).style(
+                Style::default()
+                    .fg(theme::LABEL_Y)
+                    .add_modifier(Modifier::BOLD),
+            ),
         );
-        items.push(ListItem::new(header)
-            .style(Style::default().fg(theme::LABEL_Y).add_modifier(Modifier::BOLD)));
 
         if sec.bytes.is_empty() {
             // .bss or no-data section
-            items.push(ListItem::new(format!(
-                "  0x{:08x}: (zeroed, {} B)", sec.addr, sec.size
-            )).style(Style::default().fg(theme::LABEL)));
+            items.push(
+                ListItem::new(format!("  0x{:08x}: (zeroed, {} B)", sec.addr, sec.size))
+                    .style(Style::default().fg(theme::LABEL)),
+            );
         } else {
             let chunks = sec.bytes.chunks(4).take(MAX_LINES_PER_SECTION);
             for (i, chunk) in chunks.enumerate() {
                 let addr = sec.addr + (i * 4) as u32;
                 let mut padded = [0u8; 4];
-                for (j, &b) in chunk.iter().enumerate() { padded[j] = b; }
-                let hex: String = chunk.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+                for (j, &b) in chunk.iter().enumerate() {
+                    padded[j] = b;
+                }
+                let hex: String = chunk
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 let hint = type_hint(chunk);
-                items.push(ListItem::new(format!("  0x{addr:08x}: {hex:<11} │ {hint}"))
-                    .style(Style::default().fg(theme::TEXT)));
+                items.push(
+                    ListItem::new(format!("  0x{addr:08x}: {hex:<11} │ {hint}"))
+                        .style(Style::default().fg(theme::TEXT)),
+                );
             }
             if sec.bytes.len() / 4 > MAX_LINES_PER_SECTION {
-                items.push(ListItem::new(format!(
-                    "  … {} more bytes",
-                    sec.bytes.len() - MAX_LINES_PER_SECTION * 4
-                )).style(Style::default().fg(theme::LABEL)));
+                items.push(
+                    ListItem::new(format!(
+                        "  … {} more bytes",
+                        sec.bytes.len() - MAX_LINES_PER_SECTION * 4
+                    ))
+                    .style(Style::default().fg(theme::LABEL)),
+                );
             }
         }
     }
@@ -555,5 +707,9 @@ fn type_hint(chunk: &[u8]) -> String {
         return format!("\"{}\"  (ASCII)", s);
     }
     // Default: raw hex
-    chunk.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+    chunk
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }

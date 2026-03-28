@@ -5,19 +5,28 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
 
-use crate::ui::app::{App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROWS};
+use crate::ui::app::{
+    App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
+    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROWS,
+};
 use crate::ui::theme;
+use crate::ui::view::components::dense_value;
 
 pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(" Config ", Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            " Config ",
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
-    if inner.height == 0 { return; }
+    if inner.height == 0 {
+        return;
+    }
 
     // Two-column layout: settings list (left) | description panel (right)
     let col_w = inner.width.min(80);
@@ -34,23 +43,21 @@ pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn bool_button(value: bool, hovered: bool) -> Span<'static> {
-    let (label, bg) = if value {
-        ("[ TRUE  ]", theme::RUNNING)
+    let (label, color) = if value {
+        ("true", theme::RUNNING)
     } else {
-        ("[ FALSE ]", theme::DANGER)
+        ("false", theme::DANGER)
     };
-    let style = if hovered {
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(bg)
-    };
-    Span::styled(label, style)
+    dense_value(label, hovered, true, color)
 }
 
 fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let sel = app.settings.selected;
     let names = CpiConfig::field_names();
     let descs = CpiConfig::descriptions();
+    app.settings
+        .list_rect
+        .set((area.x, area.y, area.width, area.height));
 
     // Record geometry for mouse handling
     let mut rows_y = [0u16; 10];
@@ -60,20 +67,117 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     // ── Section: Simulation ──────────────────────────────────────────────
 
     // Row 0: Cache Enabled toggle
-    let is_sel_bool = sel == SETTINGS_ROW_CACHE_ENABLED;
-    let label_style = if is_sel_bool {
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT).bold()
+    let is_sel_cache = sel == SETTINGS_ROW_CACHE_ENABLED;
+    let is_hov_cache = app.settings.hover_row == Some(SETTINGS_ROW_CACHE_ENABLED);
+    let label_style_cache = if is_sel_cache {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_cache {
+        Style::default().fg(theme::TEXT).bold()
     } else {
         Style::default().fg(theme::LABEL)
     };
-    let bool_row = Line::from(vec![
-        Span::styled(format!("{:<20}", "  Cache Enabled"), label_style),
+    let cache_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Cache Enabled"), label_style_cache),
         Span::raw("  "),
         bool_button(app.run.cache_enabled, app.settings.hover_cache_enabled),
-    ]);
-    items.push(ListItem::new(bool_row));
+    ]));
+    items.push(cache_item);
 
-    // Row 1: blank separator
+    // Row 1: Max cores
+    let is_sel_cores = sel == SETTINGS_ROW_MAX_CORES;
+    let is_hov_cores = app.settings.hover_row == Some(SETTINGS_ROW_MAX_CORES);
+    let is_editing_cores = app.settings.cpi_editing && is_sel_cores;
+    let label_style_cores = if is_sel_cores {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_cores {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let cores_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Max Cores"), label_style_cores),
+        Span::raw("  "),
+        Span::styled(
+            if is_editing_cores {
+                format!("[ {:>2}_ ]", app.settings.cpi_edit_buf)
+            } else {
+                format!("[ {:>2} ]", app.max_cores)
+            },
+            if is_editing_cores {
+                Style::default().fg(theme::LABEL_Y).bold()
+            } else {
+                Style::default().fg(theme::LABEL_Y).bold()
+            },
+        ),
+    ]));
+    items.push(cores_item);
+
+    // Row 2: Mem Size
+    let is_sel_mem = sel == SETTINGS_ROW_MEM_SIZE;
+    let is_hov_mem = app.settings.hover_row == Some(SETTINGS_ROW_MEM_SIZE);
+    let is_editing_mem = app.settings.cpi_editing && is_sel_mem;
+    let label_style_mem = if is_sel_mem {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_mem {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let mem_mb = app.run.mem_size / (1024 * 1024);
+    let mem_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Mem Size"), label_style_mem),
+        Span::raw("  "),
+        Span::styled(
+            if is_editing_mem {
+                format!("[ {:>4}_ MB ]", app.settings.cpi_edit_buf)
+            } else {
+                format!("[ {:>4} MB ]", mem_mb)
+            },
+            Style::default().fg(theme::LABEL_Y).bold(),
+        ),
+    ]));
+    items.push(mem_item);
+
+    // Row 3: Run scope
+    let is_sel_scope = sel == SETTINGS_ROW_RUN_SCOPE;
+    let is_hov_scope = app.settings.hover_row == Some(SETTINGS_ROW_RUN_SCOPE);
+    let label_style_scope = if is_sel_scope {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_scope {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let scope_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Run Scope"), label_style_scope),
+        Span::raw("  "),
+        dense_value(
+            app.run_scope.label(),
+            app.settings.hover_run_scope,
+            true,
+            theme::LABEL_Y,
+        ),
+    ]));
+    items.push(scope_item);
+
+    // Row 4: Pipeline Enabled toggle
+    let is_sel_pipe = sel == SETTINGS_ROW_PIPELINE_ENABLED;
+    let is_hov_pipe = app.settings.hover_row == Some(SETTINGS_ROW_PIPELINE_ENABLED);
+    let label_style_pipe = if is_sel_pipe {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_pipe {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let pipe_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Pipeline Enabled"), label_style_pipe),
+        Span::raw("  "),
+        bool_button(app.pipeline.enabled, app.settings.hover_pipeline_enabled),
+    ]));
+    items.push(pipe_item);
+
+    // Row 5: blank separator
     items.push(ListItem::new(Line::raw("")));
 
     // ── Section: CPI Config ──────────────────────────────────────────────
@@ -90,9 +194,9 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         };
 
         let name_style = if is_sel {
-            Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::CPI_PANEL).bold()
+            Style::default().fg(theme::CPI_PANEL).bold()
         } else if is_hov {
-            Style::default().fg(theme::CPI_PANEL).bg(Color::Rgb(30, 50, 40))
+            Style::default().fg(theme::TEXT).bold()
         } else {
             Style::default().fg(theme::CPI_PANEL)
         };
@@ -115,22 +219,28 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!("{val_str:>6}  "), val_style),
             Span::styled(desc.to_string(), desc_style),
         ]);
-        let mut item = ListItem::new(line);
-        if !is_sel && is_hov {
-            item = item.style(Style::default().bg(Color::Rgb(30, 50, 40)));
-        }
+        let item = ListItem::new(line);
         items.push(item);
 
-        // Record y position of each CPI row
+        // Record y position of each CPI row (offset by the number of bool rows above)
         rows_y[i] = area.y + (SETTINGS_ROW_CPI_START + i) as u16;
     }
 
-    // Record the bool button y for mouse detection
-    let bool_btn_y = area.y;
-    // Bool button starts after: 20-char padded label + 2-space gap = column 22
+    // Record bool button positions for mouse detection
+    // Both bool buttons share the same x offset: 20-char label + 2-space gap = column 22
     let bool_btn_x = area.x + 22;
-    let bool_btn_label_w = 9u16; // "[ TRUE  ]" or "[ FALSE ]"
-    app.settings.bool_btn_rect.set((bool_btn_y, bool_btn_x, bool_btn_x + bool_btn_label_w));
+    let bool_btn_label_w = 5u16; // "false"
+    app.settings
+        .bool_btn_rect
+        .set((area.y, bool_btn_x, bool_btn_x + bool_btn_label_w));
+    app.settings
+        .run_scope_rect
+        .set((area.y + 3, bool_btn_x, bool_btn_x + 5));
+    app.settings.bool_btn_pipeline_rect.set((
+        area.y + 4,
+        bool_btn_x,
+        bool_btn_x + bool_btn_label_w,
+    ));
     app.settings.cpi_rows_y.set(rows_y);
 
     f.render_widget(List::new(items), area);
@@ -141,7 +251,10 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
 
     let hint = if sel == SETTINGS_ROW_CACHE_ENABLED {
         vec![
-            Line::from(Span::styled("Cache Enabled", Style::default().fg(theme::ACCENT).bold())),
+            Line::from(Span::styled(
+                "Cache Enabled",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
             Line::raw(""),
             Line::from(Span::styled(
                 "When disabled, all memory accesses",
@@ -166,14 +279,135 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
             ]),
         ]
+    } else if sel == SETTINGS_ROW_PIPELINE_ENABLED {
+        vec![
+            Line::from(Span::styled(
+                "Pipeline Enabled",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Enables the Pipeline tab simulator.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "When ON, the Pipeline tab shows",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "the 5-stage CPU pipeline view.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
+    } else if sel == SETTINGS_ROW_MEM_SIZE {
+        vec![
+            Line::from(Span::styled(
+                "Mem Size",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Total RAM available to the simulator.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "Value is in MB and must be a",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "power of two (1, 2, 4, … 4096 MB).",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Changing it restarts the simulation.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" = edit", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
+    } else if sel == SETTINGS_ROW_RUN_SCOPE {
+        vec![
+            Line::from(Span::styled(
+                "Run Scope",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Controls how the Run tab advances",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "multiple harts when more than one core exists.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "ALL: active harts advance together.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::from(Span::styled(
+                "FOCUS: only the observed hart advances.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
+    } else if sel == SETTINGS_ROW_MAX_CORES {
+        vec![
+            Line::from(Span::styled(
+                "Max Cores",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Maximum number of physical cores",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "available for harts in this run.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Changing it restarts the simulation.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" = edit", Style::default().fg(theme::LABEL)),
+            ]),
+            Line::from(vec![
+                Span::styled("1..32", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" = commit value", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
     } else if sel >= SETTINGS_ROW_CPI_START && sel < SETTINGS_ROWS {
         let i = sel - SETTINGS_ROW_CPI_START;
         let name = CpiConfig::field_names().get(i).copied().unwrap_or("");
         let desc = CpiConfig::descriptions().get(i).copied().unwrap_or("");
         vec![
-            Line::from(Span::styled(name, Style::default().fg(theme::CPI_PANEL).bold())),
+            Line::from(Span::styled(
+                name,
+                Style::default().fg(theme::CPI_PANEL).bold(),
+            )),
             Line::raw(""),
-            Line::from(Span::styled(desc.to_string(), Style::default().fg(theme::TEXT))),
+            Line::from(Span::styled(
+                desc.to_string(),
+                Style::default().fg(theme::TEXT),
+            )),
             Line::raw(""),
             Line::from(Span::styled(
                 format!("Current: {}", app.run.cpi_config.get(i)),
@@ -193,5 +427,8 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
         vec![]
     };
 
-    f.render_widget(Paragraph::new(hint).wrap(ratatui::widgets::Wrap { trim: false }), area);
+    f.render_widget(
+        Paragraph::new(hint).wrap(ratatui::widgets::Wrap { trim: false }),
+        area,
+    );
 }

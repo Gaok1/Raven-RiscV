@@ -2,7 +2,9 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Axis, Block, BorderType, Borders, Chart, Clear, Dataset, Gauge, GraphType, Paragraph},
+    widgets::{
+        Axis, Block, BorderType, Borders, Chart, Clear, Dataset, Gauge, GraphType, Paragraph,
+    },
 };
 
 use crate::ui::app::{App, CacheScope};
@@ -32,9 +34,9 @@ fn render_l1_stats(f: &mut Frame, area: Rect, app: &App) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(11), // cache metrics
-            Constraint::Length(1),  // program summary line
-            Constraint::Min(8),     // chart
+            Constraint::Length(11),        // cache metrics
+            Constraint::Length(1),         // program summary line
+            Constraint::Min(8),            // chart
             Constraint::Length(history_h), // history panel (0 = hidden)
         ])
         .split(area);
@@ -46,7 +48,6 @@ fn render_l1_stats(f: &mut Frame, area: Rect, app: &App) {
         render_history_table(f, layout[3], app);
     }
 }
-
 
 fn render_unified_stats(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let layout = Layout::default()
@@ -64,26 +65,65 @@ fn render_unified_stats(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
 }
 
 fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
-    let total = app.run.mem.total_program_cycles();
-    let cpi   = app.run.mem.overall_cpi();
-    let ipc   = app.run.mem.ipc();
-    let instr = app.run.mem.instruction_count;
+    let (total, cpi, ipc, instr) = if app.pipeline.enabled {
+        let cycles = app.pipeline.cycle_count;
+        let committed = app.pipeline.instr_committed;
+        let cpi = if committed > 0 {
+            cycles as f64 / committed as f64
+        } else {
+            0.0
+        };
+        let ipc = if cycles > 0 {
+            committed as f64 / cycles as f64
+        } else {
+            0.0
+        };
+        (cycles, cpi, ipc, committed)
+    } else {
+        (
+            app.run.mem.total_program_cycles(),
+            app.run.mem.overall_cpi(),
+            app.run.mem.ipc(),
+            app.run.mem.instruction_count,
+        )
+    };
     let i_cyc = app.run.mem.icache.stats.total_cycles;
     let d_cyc = app.run.mem.dcache.stats.total_cycles;
 
     let mut spans = vec![
-        Span::styled(" Program total \u{2014} ", Style::default().fg(theme::LABEL)),
-        Span::styled(format!("Cycles: {total}"), Style::default().fg(theme::METRIC_CYC)),
+        Span::styled(
+            " Program total \u{2014} ",
+            Style::default().fg(theme::LABEL),
+        ),
+        Span::styled(
+            format!("Cycles: {total}"),
+            Style::default().fg(theme::METRIC_CYC),
+        ),
         Span::raw("  "),
-        Span::styled(format!("Cycles/Instr: {cpi:.2}"), Style::default().fg(theme::METRIC_CPI)),
+        Span::styled(
+            format!("Cycles/Instr: {cpi:.2}"),
+            Style::default().fg(theme::METRIC_CPI),
+        ),
         Span::raw("  "),
-        Span::styled(format!("Instrs/Cycle: {ipc:.2}"), Style::default().fg(theme::METRIC_IPC)),
+        Span::styled(
+            format!("Instrs/Cycle: {ipc:.2}"),
+            Style::default().fg(theme::METRIC_IPC),
+        ),
         Span::raw("  "),
-        Span::styled(format!("Instructions: {instr}"), Style::default().fg(theme::LABEL)),
+        Span::styled(
+            format!("Instructions: {instr}"),
+            Style::default().fg(theme::LABEL),
+        ),
         Span::raw("  "),
-        Span::styled(format!("I-Cache: {i_cyc}"), Style::default().fg(theme::CACHE_I)),
+        Span::styled(
+            format!("I-Cache: {i_cyc}"),
+            Style::default().fg(theme::CACHE_I),
+        ),
         Span::raw(" + "),
-        Span::styled(format!("D-Cache: {d_cyc}"), Style::default().fg(theme::CACHE_D)),
+        Span::styled(
+            format!("D-Cache: {d_cyc}"),
+            Style::default().fg(theme::CACHE_D),
+        ),
     ];
 
     for (i, lvl) in app.run.mem.extra_levels.iter().enumerate() {
@@ -109,16 +149,28 @@ fn render_metrics(f: &mut Frame, area: Rect, app: &App) {
         render_cache_metrics(f, cols[0], app, true);
     }
     if matches!(scope, CacheScope::DCache | CacheScope::Both) {
-        let target = if matches!(scope, CacheScope::Both) { cols[1] } else { cols[0] };
+        let target = if matches!(scope, CacheScope::Both) {
+            cols[1]
+        } else {
+            cols[0]
+        };
         render_cache_metrics(f, target, app, false);
     }
 }
 
 fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let (label, cache, instructions) = if icache {
-        ("I-Cache", &app.run.mem.icache, app.run.mem.instruction_count)
+        (
+            "I-Cache",
+            &app.run.mem.icache,
+            app.run.mem.instruction_count,
+        )
     } else {
-        ("D-Cache", &app.run.mem.dcache, app.run.mem.instruction_count)
+        (
+            "D-Cache",
+            &app.run.mem.dcache,
+            app.run.mem.instruction_count,
+        )
     };
     let stats = &cache.stats;
     let cfg = &cache.config;
@@ -136,7 +188,10 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            label,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -230,9 +285,18 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     // Line 6: cycles/access and CPI contribution
     let cycles = stats.total_cycles;
-    let avg = if total == 0 { 0.0_f64 } else { cycles as f64 / total as f64 };
-    let cpi_contrib = if instructions == 0 { 0.0_f64 } else { cycles as f64 / instructions as f64 };
-    let line6 = format!("Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}");
+    let avg = if total == 0 {
+        0.0_f64
+    } else {
+        cycles as f64 / total as f64
+    };
+    let cpi_contrib = if instructions == 0 {
+        0.0_f64
+    } else {
+        cycles as f64 / instructions as f64
+    };
+    let line6 =
+        format!("Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}");
     f.render_widget(
         Paragraph::new(Span::styled(line6, Style::default().fg(theme::METRIC_CPI))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
@@ -243,7 +307,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     }
 
     // Line 7: cost model summary
-    let hit_cyc  = cfg.tag_search_cycles();
+    let hit_cyc = cfg.tag_search_cycles();
     let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
     let line7 = format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc");
     f.render_widget(
@@ -256,14 +320,17 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     }
 
     // Line 8: AMAT
-    let amat = if icache { app.run.mem.icache_amat() } else { app.run.mem.dcache_amat() };
+    let amat = if icache {
+        app.run.mem.icache_amat()
+    } else {
+        app.run.mem.dcache_amat()
+    };
     let line8 = format!("Memory Access Time: {amat:.2} cyc");
     f.render_widget(
         Paragraph::new(Span::styled(line8, Style::default().fg(theme::CACHE_L2))),
         Rect::new(inner.x, inner.y + 7, inner.width, 1),
     );
 }
-
 
 fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
     let is_running = app.run.is_running;
@@ -289,7 +356,11 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
     let visible = inner.height as usize;
 
     // Scroll the view so the selected entry is always visible
-    let start = if scroll + 1 > visible { scroll + 1 - visible } else { 0 };
+    let start = if scroll + 1 > visible {
+        scroll + 1 - visible
+    } else {
+        0
+    };
 
     for (i, snap) in history.iter().enumerate().skip(start).take(visible) {
         let row = (i - start) as u16;
@@ -298,12 +369,23 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         }
 
         let i_total = snap.icache.hits + snap.icache.misses;
-        let i_hit = if i_total == 0 { 0.0 } else { snap.icache.hits as f64 / i_total as f64 * 100.0 };
+        let i_hit = if i_total == 0 {
+            0.0
+        } else {
+            snap.icache.hits as f64 / i_total as f64 * 100.0
+        };
         let d_total = snap.dcache.hits + snap.dcache.misses;
-        let d_hit = if d_total == 0 { 0.0 } else { snap.dcache.hits as f64 / d_total as f64 * 100.0 };
+        let d_hit = if d_total == 0 {
+            0.0
+        } else {
+            snap.dcache.hits as f64 / d_total as f64 * 100.0
+        };
         let total_misses = snap.icache.misses + snap.dcache.misses;
-        let mpki = if snap.instruction_count == 0 { 0.0 }
-            else { total_misses as f64 / snap.instruction_count as f64 * 1000.0 };
+        let mpki = if snap.instruction_count == 0 {
+            0.0
+        } else {
+            total_misses as f64 / snap.instruction_count as f64 * 1000.0
+        };
         let amat_i = snap.icache.amat;
         let cyc = snap.total_cycles;
 
@@ -317,7 +399,9 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         let style = if is_running {
             // Entries are greyed out while running — Enter is disabled
             if is_selected {
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::REVERSED)
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::REVERSED)
             } else {
                 Style::default().fg(Color::DarkGray)
             }
@@ -424,15 +508,10 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
             Axis::default()
                 .style(Style::default().fg(theme::BORDER))
                 .bounds([0.0, 100.0])
-                .labels(vec![
-                    Span::raw("0%"),
-                    Span::raw("50%"),
-                    Span::raw("100%"),
-                ]),
+                .labels(vec![Span::raw("0%"), Span::raw("50%"), Span::raw("100%")]),
         );
     f.render_widget(chart, inner);
 }
-
 
 fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let cache = &app.run.mem.extra_levels[extra_idx];
@@ -443,17 +522,28 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     let instructions = app.run.mem.instruction_count;
 
     let hit_rate = stats.hit_rate();
-    let hit_color = if hit_rate >= 90.0 { theme::RUNNING } else if hit_rate >= 70.0 { theme::PAUSED } else { theme::DANGER };
+    let hit_color = if hit_rate >= 90.0 {
+        theme::RUNNING
+    } else if hit_rate >= 70.0 {
+        theme::PAUSED
+    } else {
+        theme::DANGER
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(label, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            label,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if inner.height == 0 { return; }
+    if inner.height == 0 {
+        return;
+    }
 
     // Line 1: Hit rate gauge
     let gauge_area = Rect::new(inner.x, inner.y, inner.width, 1);
@@ -465,7 +555,9 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
             .label(format!("Hit {hit_rate:.1}%")),
         gauge_area,
     );
-    if inner.height < 2 { return; }
+    if inner.height < 2 {
+        return;
+    }
 
     let hits = stats.hits;
     let misses = stats.misses;
@@ -479,42 +571,69 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         )),
         Rect::new(inner.x, inner.y + 1, inner.width, 1),
     );
-    if inner.height < 3 { return; }
+    if inner.height < 3 {
+        return;
+    }
 
     let fills = if cfg.is_valid_config() && cfg.line_size > 0 {
         stats.bytes_loaded / cfg.line_size as u64
-    } else { 0 };
+    } else {
+        0
+    };
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("Accesses: {total}  Evictions: {}  Writebacks: {}  Line Fills: {fills}", stats.evictions, stats.writebacks),
+            format!(
+                "Accesses: {total}  Evictions: {}  Writebacks: {}  Line Fills: {fills}",
+                stats.evictions, stats.writebacks
+            ),
             Style::default().fg(theme::LABEL),
         )),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
     );
-    if inner.height < 4 { return; }
+    if inner.height < 4 {
+        return;
+    }
 
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("RAM Reads: {}  RAM Writes: {}", fmt_bytes(stats.bytes_loaded), fmt_bytes(stats.ram_write_bytes)),
+            format!(
+                "RAM Reads: {}  RAM Writes: {}",
+                fmt_bytes(stats.bytes_loaded),
+                fmt_bytes(stats.ram_write_bytes)
+            ),
             Style::default().fg(theme::METRIC_CYC),
         )),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
-    if inner.height < 5 { return; }
+    if inner.height < 5 {
+        return;
+    }
 
     let cycles = stats.total_cycles;
-    let avg = if total == 0 { 0.0_f64 } else { cycles as f64 / total as f64 };
-    let cpi_contrib = if instructions == 0 { 0.0_f64 } else { cycles as f64 / instructions as f64 };
+    let avg = if total == 0 {
+        0.0_f64
+    } else {
+        cycles as f64 / total as f64
+    };
+    let cpi_contrib = if instructions == 0 {
+        0.0_f64
+    } else {
+        cycles as f64 / instructions as f64
+    };
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}"),
+            format!(
+                "Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}"
+            ),
             Style::default().fg(theme::METRIC_CPI),
         )),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
-    if inner.height < 6 { return; }
+    if inner.height < 6 {
+        return;
+    }
 
-    let hit_cyc  = cfg.tag_search_cycles();
+    let hit_cyc = cfg.tag_search_cycles();
     let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
     f.render_widget(
         Paragraph::new(Span::styled(
@@ -523,7 +642,9 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         )),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
-    if inner.height < 7 { return; }
+    if inner.height < 7 {
+        return;
+    }
 
     let amat = app.run.mem.extra_level_amat(extra_idx);
     f.render_widget(
@@ -544,10 +665,16 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if inner.height < 3 || inner.width < 10 { return; }
+    if inner.height < 3 || inner.width < 10 {
+        return;
+    }
 
     let data: Vec<(f64, f64)> = app.run.mem.extra_levels[extra_idx]
-        .stats.history.iter().cloned().collect();
+        .stats
+        .history
+        .iter()
+        .cloned()
+        .collect();
 
     if data.is_empty() {
         f.render_widget(
@@ -561,7 +688,9 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
 
     let x_min = data.first().map(|(x, _)| *x).unwrap_or(0.0);
     let mut x_max = data.last().map(|(x, _)| *x).unwrap_or(x_min + 1.0);
-    if x_max <= x_min { x_max = x_min + 1.0; }
+    if x_max <= x_min {
+        x_max = x_min + 1.0;
+    }
     let x_mid = (x_min + x_max) / 2.0;
 
     let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
@@ -642,62 +771,110 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
     // ── Program summary ───────────────────────────────────────────────────────
     lines.push(Line::from(vec![
         Span::styled("Program  ", Style::default().fg(theme::LABEL)),
-        Span::styled(format!("Cycles: {}", snap.total_cycles), Style::default().fg(theme::METRIC_CYC)),
+        Span::styled(
+            format!("Cycles: {}", snap.total_cycles),
+            Style::default().fg(theme::METRIC_CYC),
+        ),
         Span::raw("   "),
-        Span::styled(format!("CPI: {:.2}", snap.cpi), Style::default().fg(theme::METRIC_CPI)),
+        Span::styled(
+            format!("CPI: {:.2}", snap.cpi),
+            Style::default().fg(theme::METRIC_CPI),
+        ),
         Span::raw("   "),
-        Span::styled(format!("IPC: {:.2}", snap.ipc), Style::default().fg(theme::METRIC_IPC)),
+        Span::styled(
+            format!("IPC: {:.2}", snap.ipc),
+            Style::default().fg(theme::METRIC_IPC),
+        ),
         Span::raw("   "),
-        Span::styled(format!("Instructions: {}", snap.instruction_count), Style::default().fg(theme::LABEL)),
+        Span::styled(
+            format!("Instructions: {}", snap.instruction_count),
+            Style::default().fg(theme::LABEL),
+        ),
     ]));
     lines.push(Line::raw(""));
 
     // ── Per-level helper closure ──────────────────────────────────────────────
     let level_lines = |lvl: &crate::ui::app::LevelSnapshot, label: &str| -> Vec<Line<'static>> {
         let total = lvl.hits + lvl.misses;
-        let hit_pct = if total == 0 { 0.0 } else { lvl.hits as f64 / total as f64 * 100.0 };
-        let mpki = if snap.instruction_count == 0 { 0.0 }
-                   else { lvl.misses as f64 / snap.instruction_count as f64 * 1000.0 };
+        let hit_pct = if total == 0 {
+            0.0
+        } else {
+            lvl.hits as f64 / total as f64 * 100.0
+        };
+        let mpki = if snap.instruction_count == 0 {
+            0.0
+        } else {
+            lvl.misses as f64 / snap.instruction_count as f64 * 1000.0
+        };
         let label = label.to_string();
         vec![
             Line::from(vec![
                 Span::styled(format!("{label:<9}"), Style::default().fg(theme::ACCENT)),
-                Span::styled(format!("Hit: {hit_pct:.1}%"), Style::default().fg(
-                    if hit_pct >= 90.0 { theme::RUNNING } else if hit_pct >= 70.0 { theme::PAUSED } else { theme::DANGER }
-                )),
+                Span::styled(
+                    format!("Hit: {hit_pct:.1}%"),
+                    Style::default().fg(if hit_pct >= 90.0 {
+                        theme::RUNNING
+                    } else if hit_pct >= 70.0 {
+                        theme::PAUSED
+                    } else {
+                        theme::DANGER
+                    }),
+                ),
                 Span::raw("   "),
-                Span::styled(format!("Hits: {}  Misses: {}", lvl.hits, lvl.misses), Style::default().fg(theme::TEXT)),
+                Span::styled(
+                    format!("Hits: {}  Misses: {}", lvl.hits, lvl.misses),
+                    Style::default().fg(theme::TEXT),
+                ),
                 Span::raw("   "),
-                Span::styled(format!("Miss/1K: {mpki:.1}"), Style::default().fg(theme::LABEL)),
+                Span::styled(
+                    format!("Miss/1K: {mpki:.1}"),
+                    Style::default().fg(theme::LABEL),
+                ),
                 Span::raw("   "),
-                Span::styled(format!("AMAT: {:.2} cyc", lvl.amat), Style::default().fg(theme::METRIC_CPI)),
+                Span::styled(
+                    format!("AMAT: {:.2} cyc", lvl.amat),
+                    Style::default().fg(theme::METRIC_CPI),
+                ),
             ]),
             Line::from(vec![
                 Span::raw("          "),
                 Span::styled(
-                    format!("Cycles: {}   Evictions: {}   RAM: {} read / {} written",
-                        lvl.total_cycles, lvl.evictions,
-                        fmt_bytes(lvl.bytes_loaded), fmt_bytes(lvl.ram_write_bytes)),
+                    format!(
+                        "Cycles: {}   Evictions: {}   RAM: {} read / {} written",
+                        lvl.total_cycles,
+                        lvl.evictions,
+                        fmt_bytes(lvl.bytes_loaded),
+                        fmt_bytes(lvl.ram_write_bytes)
+                    ),
                     Style::default().fg(theme::LABEL),
                 ),
             ]),
         ]
     };
 
-    for l in level_lines(&snap.icache, "I-Cache") { lines.push(l); }
+    for l in level_lines(&snap.icache, "I-Cache") {
+        lines.push(l);
+    }
     lines.push(Line::raw(""));
-    for l in level_lines(&snap.dcache, "D-Cache") { lines.push(l); }
+    for l in level_lines(&snap.dcache, "D-Cache") {
+        lines.push(l);
+    }
 
     for (i, extra) in snap.extra_levels.iter().enumerate() {
         lines.push(Line::raw(""));
         let name = format!("L{}", i + 2);
-        for l in level_lines(extra, &name) { lines.push(l); }
+        for l in level_lines(extra, &name) {
+            lines.push(l);
+        }
     }
 
     // ── Miss hotspots ─────────────────────────────────────────────────────────
     if !snap.miss_hotspots.is_empty() {
         lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled("I-Cache miss hotspots (top PCs):", Style::default().fg(theme::LABEL))));
+        lines.push(Line::from(Span::styled(
+            "I-Cache miss hotspots (top PCs):",
+            Style::default().fg(theme::LABEL),
+        )));
         for (pc, count) in snap.miss_hotspots.iter().take(5) {
             lines.push(Line::from(vec![
                 Span::raw("  "),

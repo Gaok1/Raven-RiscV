@@ -12,3 +12,4 @@ panic = "abort"
 
 [dependencies]
 linked_list_allocator = { version = "*", default-features = false }
+portable-atomic = { version = "1", default-features = false, features = ["unsafe-assume-single-core"] }

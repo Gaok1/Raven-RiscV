@@ -163,6 +163,8 @@ Encerra o programa.
     ecall
 ```
 
+No modo multi-hart, `exit` e `exit_group` encerram o programa inteiro. O código final de saída vem do hart que executou a syscall.
+
 ---
 
 ### `getrandom` — syscall 278
@@ -198,6 +200,31 @@ rng_buf: .space 4
 Estas são syscalls exclusivas do RAVEN, projetadas para uso em sala de aula. São
 mais simples que os equivalentes Linux ABI e não precisam de loop strlen nem
 argumento fd.
+
+### `1100` — iniciar hart
+
+Inicia um novo hart em um core físico livre.
+
+`hart` significa `hardware thread` na terminologia RISC-V. O RAVEN usa esse nome de propósito para descrever um contexto de execução de hardware, não uma thread gerenciada por SO.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1100` |
+| `a0`       | PC de entrada do filho |
+| `a1`       | ponteiro inicial de stack do filho |
+| `a2`       | argumento inicial do filho |
+| **`a0` (ret)** | hart id em sucesso, código negativo em falha |
+
+Semântica atual de `v1`:
+
+- o hart filho inicia com banco de registradores limpo
+- `pc = entrada do filho`
+- `sp = stack do filho`
+- `a0 = argumento inicial do filho`
+- o novo hart só fica executável no próximo ciclo global, nunca no meio do ciclo atual
+- se não houver core livre, a syscall falha imediatamente
+
+Essa syscall só faz sentido quando a máquina está configurada com mais de um core.
 
 ### `1000` — imprimir inteiro
 

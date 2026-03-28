@@ -164,6 +164,8 @@ Terminate the program.
     ecall
 ```
 
+In multi-hart mode, `exit` and `exit_group` stop the whole program. The final exit code comes from the hart that executed the syscall.
+
 ---
 
 ### `getrandom` — syscall 278
@@ -295,6 +297,31 @@ Time is approximated at 10 ns per instruction (100 MHz equivalent).
 
 These are RAVEN-specific syscalls designed for classroom use. They are higher
 level than the Linux ABI equivalents and need no strlen loop or fd argument.
+
+### `1100` — start hart
+
+Start a new hart on a free physical core.
+
+`hart` means `hardware thread` in RISC-V terminology. RAVEN uses this name intentionally to describe a hardware execution context, not an OS-managed software thread.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1100` |
+| `a0`     | child entry PC |
+| `a1`     | child initial stack pointer |
+| `a2`     | child initial argument |
+| **`a0` (ret)** | hart id on success, negative error code on failure |
+
+Current v1 semantics:
+
+- the child hart starts with a clean register file
+- `pc = child entry`
+- `sp = child stack pointer`
+- `a0 = child initial argument`
+- the new hart becomes runnable on the next global cycle, never mid-cycle
+- if no free core exists, the syscall fails immediately
+
+This syscall is only meaningful when the machine is configured with more than one core.
 
 ### `1000` — print integer
 

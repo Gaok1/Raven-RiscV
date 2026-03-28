@@ -165,6 +165,8 @@ Veja a **[Referência da CLI](cli.pt-BR.md)** para todos os subcomandos e flags.
 - [Formatos de instrução (PT-BR)](format.pt-BR.md) — layouts de bits, encoding, pseudoinstruções
 - [Guia do simulador de cache (PT-BR)](cache.pt-BR.md) — configuração, métricas, exportação
 - [Formats (EN)](format.md) | [Cache (EN)](cache.md)
+- `threads-plan.md` — plano de design para execução multi-core futura, usando o termo `hart` ("hardware thread") para manter a modelagem em nível de hardware, não de SO
+- `Program Examples/hart_spawn_visual_demo.fas` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
 
 ---
 

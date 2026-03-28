@@ -11,4 +11,3 @@ impl fmt::Display for AsmError {
         write!(f, "line {}: {}", self.line + 1, self.msg)
     }
 }
-

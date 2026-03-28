@@ -2,21 +2,28 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph};
 
-use crate::ui::theme;
 use crate::ui::app::{App, PathInputAction};
+use crate::ui::theme;
 
 pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
-    if !app.path_input.open { return; }
+    if !app.path_input.open {
+        return;
+    }
 
     let title = match &app.path_input.action {
-        PathInputAction::OpenFas | PathInputAction::OpenBin
-        | PathInputAction::OpenFcache => " Open File ",
+        PathInputAction::OpenFas
+        | PathInputAction::OpenBin
+        | PathInputAction::OpenFcache
+        | PathInputAction::OpenRcfg
+        | PathInputAction::OpenPcfg => " Open File ",
         _ => " Save File ",
     };
 
     let comp_show = app.path_input.completions.len().min(6) as u16;
     let popup_h = 3 + comp_show; // border(2) + input(1) + completions
-    let popup_w = (area.width * 3 / 4).max(60).min(area.width.saturating_sub(4));
+    let popup_w = (area.width * 3 / 4)
+        .max(60)
+        .min(area.width.saturating_sub(4));
     let popup = Rect::new(
         area.x + (area.width.saturating_sub(popup_w)) / 2,
         area.y + area.height.saturating_sub(popup_h + 1),
@@ -30,7 +37,10 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::ACCENT))
         .border_type(BorderType::Rounded)
-        .title(Span::styled(title, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            title,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
 
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -78,8 +88,15 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
         let sel = app.path_input.completion_sel;
         let visible = comp_area.height as usize; // matches comp_show (up to 6)
         // Scroll so that sel is always in view
-        let scroll = if sel + 1 > visible { sel + 1 - visible } else { 0 };
-        let items: Vec<ListItem<'static>> = app.path_input.completions.iter()
+        let scroll = if sel + 1 > visible {
+            sel + 1 - visible
+        } else {
+            0
+        };
+        let items: Vec<ListItem<'static>> = app
+            .path_input
+            .completions
+            .iter()
             .enumerate()
             .skip(scroll)
             .take(visible)
@@ -93,11 +110,20 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
                 let display = std::path::Path::new(c)
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .map(|n| if c.ends_with('/') { format!("{n}/") } else { n.to_string() })
+                    .map(|n| {
+                        if c.ends_with('/') {
+                            format!("{n}/")
+                        } else {
+                            n.to_string()
+                        }
+                    })
                     .unwrap_or_else(|| c.clone());
                 let max_w = comp_area.width.saturating_sub(4) as usize;
                 let truncated = if display.chars().count() > max_w && max_w > 3 {
-                    format!("{}…", &display[..display.char_indices().nth(max_w - 1).map_or(0, |(i, _)| i)])
+                    format!(
+                        "{}…",
+                        &display[..display.char_indices().nth(max_w - 1).map_or(0, |(i, _)| i)]
+                    )
                 } else {
                     display
                 };

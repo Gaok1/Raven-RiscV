@@ -8,6 +8,7 @@ use ratatui::{
 use crate::falcon::cache::CacheController;
 use crate::ui::app::{App, CacheScope, CacheSubtab, RunButton};
 use crate::ui::theme;
+use crate::ui::view::components::{dense_action, dense_value, push_dense_pair};
 
 mod config;
 mod stats;
@@ -43,7 +44,7 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // level selector bar
-            Constraint::Length(3), // subtab header
+            Constraint::Length(4), // subtab header
             Constraint::Length(4), // exec controls (Speed / State / Cycles)
             Constraint::Min(0),    // content
             Constraint::Length(3), // shared controls bar (Reset / Export / Compare / Scope)
@@ -55,8 +56,8 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     render_cache_exec_controls(f, layout[2], app);
 
     match app.cache.subtab {
-        CacheSubtab::Stats  => stats::render_stats(f, layout[3], app),
-        CacheSubtab::View   => view::render_view(f, layout[3], app),
+        CacheSubtab::Stats => stats::render_stats(f, layout[3], app),
+        CacheSubtab::View => view::render_view(f, layout[3], app),
         CacheSubtab::Config => config::render_config(f, layout[3], app),
     }
 
@@ -74,65 +75,54 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let hover_speed = app.hover_run_button == Some(RunButton::Speed);
     let hover_state = app.hover_run_button == Some(RunButton::State);
 
-    let mk_toggle = |label: &str, hovered: bool| -> Span<'static> {
-        let style = if hovered {
-            Style::default()
-                .fg(theme::HOVER_FG)
-                .bg(theme::HOVER_BG)
-                .add_modifier(Modifier::ITALIC)
-        } else {
-            Style::default()
-                .fg(theme::ACTIVE)
-                .add_modifier(Modifier::BOLD)
-        };
-        Span::styled(format!("[{label}]"), style)
-    };
-
-    let mk_semantic = |label: &str, color: Color, hovered: bool| -> Span<'static> {
-        let style = if hovered {
-            Style::default()
-                .fg(theme::HOVER_FG)
-                .bg(theme::HOVER_BG)
-                .add_modifier(Modifier::ITALIC)
-        } else {
-            Style::default()
-                .fg(Color::Rgb(0, 0, 0))
-                .bg(color)
-                .add_modifier(Modifier::BOLD)
-        };
-        Span::styled(format!("[{label}]"), style)
-    };
-
     let (state_text, state_color) = if app.run.is_running {
-        ("RUN", theme::RUNNING)
+        ("run", theme::RUNNING)
     } else {
-        ("PAUSE", theme::PAUSED)
+        ("pause", theme::PAUSED)
     };
 
     let total = app.run.mem.total_program_cycles();
-    let cpi   = app.run.mem.overall_cpi();
+    let cpi = app.run.mem.overall_cpi();
     let instr = app.run.mem.instruction_count;
 
-    let line1 = Line::from(vec![
-        Span::raw(" "),
-        mk_semantic("Reset", theme::DANGER, hover_reset),
-        Span::raw("  Speed "),
-        mk_toggle(speed_text, hover_speed),
-        Span::raw("  State "),
-        mk_semantic(state_text, state_color, hover_state),
-        Span::styled(
-            if matches!(app.cache.subtab, crate::ui::app::CacheSubtab::Stats) {
-                "   r=reset  f=speed  p=pause  s=capture  ↑↓=history  D=del"
-            } else {
-                "   r=reset  f=speed  p=pause  s=step"
-            },
-            Style::default().fg(theme::LABEL),
-        ),
-    ]);
+    let mut spans = Vec::new();
+    push_dense_pair(
+        &mut spans,
+        "speed",
+        speed_text,
+        hover_speed,
+        true,
+        theme::TEXT,
+    );
+    push_dense_pair(
+        &mut spans,
+        "state",
+        state_text,
+        hover_state,
+        true,
+        state_color,
+    );
+    spans.push(Span::raw("   "));
+    spans.push(dense_action("reset", theme::DANGER, hover_reset));
+    spans.push(Span::styled(
+        if matches!(app.cache.subtab, crate::ui::app::CacheSubtab::Stats) {
+            "   r=reset  f=speed  p=pause  s=capture  ↑↓=history  D=del"
+        } else {
+            "   r=reset  f=speed  p=pause  s=step"
+        },
+        Style::default().fg(theme::LABEL),
+    ));
+    let line1 = Line::from(spans);
     let line2 = Line::from(vec![
-        Span::styled(format!(" Cycles:{total}"), Style::default().fg(theme::METRIC_CYC)),
+        Span::styled(
+            format!(" Cycles:{total}"),
+            Style::default().fg(theme::METRIC_CYC),
+        ),
         Span::raw("  "),
-        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(theme::METRIC_CPI)),
+        Span::styled(
+            format!("CPI:{cpi:.2}"),
+            Style::default().fg(theme::METRIC_CPI),
+        ),
         Span::raw("  "),
         Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
     ]);
@@ -152,42 +142,35 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
     let selected = app.cache.selected_level;
 
     let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::styled("level", Style::default().fg(theme::IDLE)));
     spans.push(Span::raw(" "));
-
-    // L1 button
     let l1_active = selected == 0;
     let l1_hover = app.cache.hover_level.first().copied().unwrap_or(false);
-    spans.push(Span::styled("[ L1 ]", level_btn_style(l1_active, l1_hover)));
+    spans.push(Span::styled("l1", level_btn_style(l1_active, l1_hover)));
 
-    // L2, L3, … buttons
     for i in 0..num_extra {
         let level = i + 1;
         let active = selected == level;
         let hovered = app.cache.hover_level.get(level).copied().unwrap_or(false);
-        spans.push(Span::raw(" "));
-        let label = format!("[ {} ]", CacheController::extra_level_name(i));
+        spans.push(Span::raw("   "));
+        let label = CacheController::extra_level_name(i).to_lowercase();
         spans.push(Span::styled(label, level_btn_style(active, hovered)));
     }
 
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw("   "));
+    spans.push(dense_action(
+        "add",
+        theme::ACCENT,
+        app.cache.hover_add_level,
+    ));
 
-    // Add button
-    let add_style = if app.cache.hover_add_level {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(theme::ACCENT)
-    };
-    spans.push(Span::styled("[+ Add]", add_style));
-
-    // Remove button (only when extra levels exist)
     if num_extra > 0 {
-        spans.push(Span::raw(" "));
-        let rem_style = if app.cache.hover_remove_level {
-            Style::default().fg(theme::HOVER_FG).bg(theme::DANGER)
-        } else {
-            Style::default().fg(theme::DANGER)
-        };
-        spans.push(Span::styled("[- Remove]", rem_style));
+        spans.push(Span::raw("   "));
+        spans.push(dense_action(
+            "remove",
+            theme::DANGER,
+            app.cache.hover_remove_level,
+        ));
     }
 
     spans.push(Span::styled(
@@ -199,14 +182,26 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
-    let stats_style  = subtab_style(matches!(app.cache.subtab, CacheSubtab::Stats),  app.cache.hover_subtab_stats);
-    let view_style   = subtab_style(matches!(app.cache.subtab, CacheSubtab::View),   app.cache.hover_subtab_view);
-    let config_style = subtab_style(matches!(app.cache.subtab, CacheSubtab::Config), app.cache.hover_subtab_config);
+    let stats_style = subtab_style(
+        matches!(app.cache.subtab, CacheSubtab::Stats),
+        app.cache.hover_subtab_stats,
+    );
+    let view_style = subtab_style(
+        matches!(app.cache.subtab, CacheSubtab::View),
+        app.cache.hover_subtab_view,
+    );
+    let config_style = subtab_style(
+        matches!(app.cache.subtab, CacheSubtab::Config),
+        app.cache.hover_subtab_config,
+    );
 
     let level_label = if app.cache.selected_level == 0 {
         "L1 Split I/D".to_string()
     } else {
-        format!("{} Unified", CacheController::extra_level_name(app.cache.selected_level - 1))
+        format!(
+            "{} Unified",
+            CacheController::extra_level_name(app.cache.selected_level - 1)
+        )
     };
 
     // x-offsets from inner left:
@@ -215,14 +210,17 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     //  " View "   = x 10..15 (x >= 10 && x < 16)
     //  "  "       = x 16..17
     //  " Config " = x 18..25 (x >= 18 && x < 26)
-    let line = Line::from(vec![
+    let line1 = Line::from(vec![
         Span::raw(" "),
-        Span::styled(" Stats ",  stats_style),
-        Span::raw("  "),
-        Span::styled(" View ",   view_style),
-        Span::raw("  "),
-        Span::styled(" Config ", config_style),
-        Span::styled("   Tab to switch", Style::default().fg(theme::LABEL)),
+        Span::styled("stats", stats_style),
+        Span::raw("   "),
+        Span::styled("view", view_style),
+        Span::raw("   "),
+        Span::styled("config", config_style),
+    ]);
+    let line2 = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("Tab to switch", Style::default().fg(theme::LABEL)),
     ]);
 
     let block = Block::default()
@@ -235,54 +233,57 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         ));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    f.render_widget(Paragraph::new(line), inner);
+    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 }
 
 /// Shared controls bar — visible on every Cache subtab.
 pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let export_results_style = if app.cache.hover_export_results {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(theme::ACCENT)
-    };
-    let import_cfg_style = if app.cache.hover_import_cfg {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(Color::Rgb(80, 160, 220))
-    };
-    let export_cfg_style = if app.cache.hover_export_cfg {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(Color::Rgb(80, 160, 220))
-    };
-
-    // Scope buttons: only shown when L1 is selected
     let show_scope = app.cache.selected_level == 0;
     let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
-    let scope_i_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::ICache), app.cache.hover_scope_i);
-    let scope_d_style    = scope_btn_style(matches!(app.cache.scope, CacheScope::DCache), app.cache.hover_scope_d);
-    let scope_both_style = scope_btn_style(matches!(app.cache.scope, CacheScope::Both),   app.cache.hover_scope_both);
-
-    // Layout: " [⬆ Results]  [⬇ Import cfg]  [⬆ Export cfg]    View: [I-Cache] [D-Cache] [Both]"
     let mut line_spans = vec![
         Span::raw(" "),
-        Span::styled("[\u{2b06} Results]", export_results_style),
+        dense_action("results", theme::ACCENT, app.cache.hover_export_results),
     ];
 
     if show_cfg_btns {
-        line_spans.push(Span::raw("  "));
-        line_spans.push(Span::styled("[\u{2b07} Import cfg]", import_cfg_style));
-        line_spans.push(Span::raw("  "));
-        line_spans.push(Span::styled("[\u{2b06} Export cfg]", export_cfg_style));
+        line_spans.push(Span::raw("   "));
+        line_spans.push(dense_action(
+            "import cfg",
+            theme::METRIC_CYC,
+            app.cache.hover_import_cfg,
+        ));
+        line_spans.push(Span::raw("   "));
+        line_spans.push(dense_action(
+            "export cfg",
+            theme::METRIC_CYC,
+            app.cache.hover_export_cfg,
+        ));
     }
 
     if show_scope {
-        line_spans.push(Span::raw("    View: "));
-        line_spans.push(Span::styled("[I-Cache]", scope_i_style));
+        line_spans.push(Span::raw("   "));
+        line_spans.push(Span::styled("view", Style::default().fg(theme::IDLE)));
         line_spans.push(Span::raw(" "));
-        line_spans.push(Span::styled("[D-Cache]", scope_d_style));
+        line_spans.push(dense_value(
+            "i-cache",
+            app.cache.hover_scope_i,
+            matches!(app.cache.scope, CacheScope::ICache),
+            theme::TEXT,
+        ));
         line_spans.push(Span::raw(" "));
-        line_spans.push(Span::styled("[Both]",    scope_both_style));
+        line_spans.push(dense_value(
+            "d-cache",
+            app.cache.hover_scope_d,
+            matches!(app.cache.scope, CacheScope::DCache),
+            theme::TEXT,
+        ));
+        line_spans.push(Span::raw(" "));
+        line_spans.push(dense_value(
+            "both",
+            app.cache.hover_scope_both,
+            matches!(app.cache.scope, CacheScope::Both),
+            theme::TEXT,
+        ));
     }
 
     let line = Line::from(line_spans);
@@ -297,38 +298,24 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn level_btn_style(active: bool, hovered: bool) -> Style {
-    if active {
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(theme::RUNNING)
-            .add_modifier(Modifier::BOLD)
-    } else if hovered {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(theme::IDLE)
-    }
+    dense_style(active, hovered, theme::TEXT)
 }
 
 fn subtab_style(active: bool, hovered: bool) -> Style {
-    if active {
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(theme::ACCENT)
-            .add_modifier(Modifier::BOLD)
-    } else if hovered {
-        Style::default().fg(theme::ACTIVE).bg(Color::Rgb(60, 60, 70))
-    } else {
-        Style::default().fg(theme::IDLE)
-    }
+    dense_style(active, hovered, theme::TEXT)
 }
 
 pub(super) fn scope_btn_style(active: bool, hovered: bool) -> Style {
+    dense_style(active, hovered, theme::TEXT)
+}
+
+fn dense_style(active: bool, hovered: bool, color: Color) -> Style {
     if active {
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(theme::ACCENT)
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
     } else if hovered {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
+        Style::default()
+            .fg(theme::TEXT)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme::IDLE)
     }

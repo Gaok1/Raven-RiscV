@@ -1,6 +1,6 @@
 [package]
 name = "raven"
-version = "1.24.0"
+version = "1.25.0"
 edition = "2024"
 
 [dependencies]
@@ -10,6 +10,7 @@ thiserror = "1"
 comfy-table = "7"
 getrandom = { version = "0.3", features = ["std"] }
 unicode-truncate = "1"
+unicode-width = "0.2"
 
 [profile.dev]
 incremental = false

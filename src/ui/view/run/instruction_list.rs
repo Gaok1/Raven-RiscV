@@ -2,10 +2,10 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 
-use crate::ui::theme;
 use super::App;
 use super::instruction_details::disasm_word;
 use super::memory::imem_address_in_range;
+use crate::ui::theme;
 
 pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
     let block = instruction_block(app);
@@ -40,9 +40,16 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let q = &app.run.imem_search_query;
 
     let q_lower = q.to_lowercase();
-    let match_count = if q.is_empty() { 0usize } else {
-        app.run.labels.values()
-            .filter(|labels| labels.iter().any(|l| l.to_lowercase().contains(&q_lower)))
+    let match_count = if q.is_empty() {
+        0usize
+    } else {
+        app.run
+            .labels
+            .iter()
+            .filter(|(addr, labels)| {
+                imem_address_in_range(app, **addr)
+                    && labels.iter().any(|l| l.to_lowercase().contains(&q_lower))
+            })
             .count()
     };
 
@@ -50,7 +57,10 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("", Style::default().bg(bg))
     } else if match_count > 0 {
         Span::styled(
-            format!("  →  {match_count} match{}", if match_count == 1 { "" } else { "es" }),
+            format!(
+                "  →  {match_count} match{}",
+                if match_count == 1 { "" } else { "es" }
+            ),
             Style::default().fg(theme::RUNNING).bg(bg),
         )
     } else {
@@ -64,14 +74,11 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("  Esc/Enter=close", Style::default().fg(theme::IDLE).bg(bg)),
     ]);
 
-    f.render_widget(
-        Paragraph::new(line).style(Style::default().bg(bg)),
-        area,
-    );
+    f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
 
     let prefix = " Label: ".len() as u16;
-    let cx = (area.x + prefix + q.chars().count() as u16)
-        .min(area.x + area.width.saturating_sub(1));
+    let cx =
+        (area.x + prefix + q.chars().count() as u16).min(area.x + area.width.saturating_sub(1));
     if area.height > 0 {
         f.set_cursor_position((cx, area.y));
     }
@@ -106,31 +113,48 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
                 skip -= 1;
             } else {
                 let is_hover = app.run.hover_imem_addr == Some(addr);
-                let bc_style = Style::default().fg(theme::COMMENT)
-                    .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
-                items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("▌ {bc}"), bc_style),
-                ])));
+                let bc_style = Style::default().fg(theme::COMMENT).patch(if is_hover {
+                    Style::default().bg(HOVER_BG)
+                } else {
+                    Style::default()
+                });
+                items.push(ListItem::new(Line::from(vec![Span::styled(
+                    format!("▌ {bc}"),
+                    bc_style,
+                )])));
                 remaining -= 1;
-                if remaining == 0 { break; }
+                if remaining == 0 {
+                    break;
+                }
             }
         }
 
         // Label headers
         if let Some(label_names) = app.run.labels.get(&addr) {
             for name in label_names {
-                if skip > 0 { skip -= 1; continue; }
-                if remaining == 0 { break; }
+                if skip > 0 {
+                    skip -= 1;
+                    continue;
+                }
+                if remaining == 0 {
+                    break;
+                }
                 let is_hover = app.run.hover_imem_addr == Some(addr);
-                let lbl_style = Style::default().fg(theme::LABEL_Y)
-                    .patch(if is_hover { Style::default().bg(HOVER_BG) } else { Style::default() });
-                items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("{name}:"), lbl_style),
-                ])));
+                let lbl_style = Style::default().fg(theme::LABEL_Y).patch(if is_hover {
+                    Style::default().bg(HOVER_BG)
+                } else {
+                    Style::default()
+                });
+                items.push(ListItem::new(Line::from(vec![Span::styled(
+                    format!("{name}:"),
+                    lbl_style,
+                )])));
                 remaining -= 1;
             }
         }
-        if remaining == 0 { break; }
+        if remaining == 0 {
+            break;
+        }
         items.push(instruction_item(app, addr));
         remaining -= 1;
         addr = addr.wrapping_add(4);
@@ -208,10 +232,19 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let is_bp = app.run.breakpoints.contains(&addr);
     let is_pc = addr == app.run.cpu.pc;
     let is_hover = !is_pc && app.run.hover_imem_addr == Some(addr);
-    let marker = if is_pc && is_bp { "●▶" }
-                 else if is_pc     { " ▶" }
-                 else if is_bp     { "● " }
-                 else              { "  " };
+
+    // Collect non-selected harts that are currently at this address.
+    let peer_ids = app.peer_hart_ids_at(addr);
+
+    let marker = if is_pc && is_bp {
+        "●▶"
+    } else if is_pc {
+        " ▶"
+    } else if is_bp {
+        "● "
+    } else {
+        "  "
+    };
     let disasm = disasm_word(word);
 
     let exec_count = app.run.exec_counts.get(&addr).copied().unwrap_or(0);
@@ -232,7 +265,10 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     // Type badge (before main text) — shown only if enabled
     if app.run.show_instr_type {
         let (badge_text, badge_color) = type_badge(word);
-        spans.push(Span::styled(badge_text.to_string(), Style::default().fg(badge_color)));
+        spans.push(Span::styled(
+            badge_text.to_string(),
+            Style::default().fg(badge_color),
+        ));
         spans.push(Span::raw(" "));
     }
 
@@ -260,24 +296,47 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     // Branch/jump indicator on current PC instruction
     if is_pc {
         if let Some((taken, target)) = branch_outcome(word, addr, &app.run.cpu) {
-            let label = app.run.labels.get(&target)
+            let label = app
+                .run
+                .labels
+                .get(&target)
                 .and_then(|v| v.first())
                 .map(|s| format!(" ({s})"))
                 .unwrap_or_default();
             let (arrow, color) = if taken {
-                (format!("  \u{2192} 0x{target:08x}{label}"), Color::Rgb(0, 200, 100))
+                (
+                    format!("  \u{2192} 0x{target:08x}{label}"),
+                    Color::Rgb(0, 200, 100),
+                )
             } else {
-                ("  \u{219b} (not taken)".to_string(), Color::Rgb(150, 150, 150))
+                (
+                    "  \u{219b} (not taken)".to_string(),
+                    Color::Rgb(150, 150, 150),
+                )
             };
             spans.push(Span::styled(arrow, Style::default().fg(color)));
         }
     }
 
+    // Peer-hart PC markers: show [Hn] for each non-selected hart at this address
+    for id in &peer_ids {
+        spans.push(Span::styled(
+            format!(" [H{id}]"),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+
     let line = Line::from(spans);
     let mut style = Style::default();
-    if is_hover { style = style.bg(HOVER_BG); }
-    if let Some(bg) = line_bg { style = style.bg(bg); }
-    if let Some(fg) = line_fg { style = style.fg(fg); }
+    if is_hover {
+        style = style.bg(HOVER_BG);
+    }
+    if let Some(bg) = line_bg {
+        style = style.bg(bg);
+    }
+    if let Some(fg) = line_fg {
+        style = style.fg(fg);
+    }
     ListItem::new(line).style(style)
 }
 
@@ -302,7 +361,10 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Trace (last executed)", Style::default().fg(theme::ACCENT)));
+        .title(Span::styled(
+            "Trace (last executed)",
+            Style::default().fg(theme::ACCENT),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -310,7 +372,11 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
     let total = app.run.exec_trace.len();
     let skip = total.saturating_sub(visible);
 
-    let items: Vec<ListItem<'static>> = app.run.exec_trace.iter().skip(skip)
+    let items: Vec<ListItem<'static>> = app
+        .run
+        .exec_trace
+        .iter()
+        .skip(skip)
         .enumerate()
         .map(|(i, (addr, disasm))| {
             let style = if i + 1 == visible.min(total) {
@@ -319,7 +385,10 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(theme::LABEL)
             };
-            let lbl = app.run.labels.get(addr)
+            let lbl = app
+                .run
+                .labels
+                .get(addr)
                 .and_then(|v| v.first())
                 .map(|s| format!(" <{s}>"))
                 .unwrap_or_default();

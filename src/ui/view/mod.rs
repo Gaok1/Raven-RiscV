@@ -1,38 +1,35 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph, Tabs},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::ui::theme;
 pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
 pub(super) use super::editor::Editor;
+use crate::ui::theme;
 
-pub mod docs;
-mod editor;
-mod run;
+mod cache;
 mod components;
 pub mod disasm;
-mod cache;
-mod splash;
+pub mod docs;
+mod editor;
 mod path_input_overlay;
+mod pipeline;
+pub(crate) mod run;
 mod settings;
+mod splash;
 
+use cache::render_cache;
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};
-use run::render_run;
-use cache::render_cache;
-use splash::render_splash;
 use path_input_overlay::render_path_input;
+use pipeline::render_pipeline;
+use run::render_run;
 use settings::render_settings;
 
-pub fn ui(f: &mut Frame, app: &App) {
-    // Splash screen takes over the full frame
-    if let Some(started) = app.splash_start {
-        render_splash(f, started, 4.0, app.run.mem_size);
-        return;
-    }
+pub(crate) const HELP_BTN_W: u16 = 5;
 
+pub fn ui(f: &mut Frame, app: &App) {
     // Apply app-wide dark background
     f.render_widget(
         Block::default().style(Style::default().bg(theme::BG)),
@@ -51,57 +48,53 @@ pub fn ui(f: &mut Frame, app: &App) {
 
     // Tab bar: tabs on left, [?] help button on right
     let tab_row = chunks[0];
-    let help_btn_w = 5u16; // "[?]  "
-    let tabs_area = Rect::new(tab_row.x, tab_row.y, tab_row.width.saturating_sub(help_btn_w), tab_row.height);
-    let help_btn_area = Rect::new(tab_row.x + tab_row.width.saturating_sub(help_btn_w), tab_row.y, help_btn_w, tab_row.height);
-
-    let titles = Tab::all()
-        .iter()
-        .map(|&tab| {
-            let mut line = Line::from(tab.label());
-            if Some(tab) == app.hover_tab && tab != app.tab {
-                line = line.style(Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG));
-            }
-            line
-        })
-        .collect::<Vec<_>>();
+    let help_btn_w = HELP_BTN_W;
+    let tabs_area = Rect::new(
+        tab_row.x,
+        tab_row.y,
+        tab_row.width.saturating_sub(help_btn_w),
+        tab_row.height,
+    );
+    let help_btn_area = Rect::new(
+        tab_row.x + tab_row.width.saturating_sub(help_btn_w),
+        tab_row.y,
+        help_btn_w,
+        tab_row.height,
+    );
 
     let tutorial_targets_tabbar = app.tutorial.active && {
         use crate::ui::tutorial::get_steps;
         let steps = get_steps(app.tutorial.tab);
-        steps.get(app.tutorial.step_idx)
+        steps
+            .get(app.tutorial.step_idx)
             .and_then(|s| (s.target)(size, app))
             .map(|r| r.height <= 3 && r.y == tab_row.y)
             .unwrap_or(false)
     };
-    let tab_border_style = if tutorial_targets_tabbar {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(theme::BORDER)
-    };
-
-    let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).border_style(tab_border_style).title("RAVEN"))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Rgb(0, 0, 0))
-                .bg(theme::ACCENT)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider(Span::styled(" │ ", Style::default().fg(theme::BORDER)))
-        .select(app.tab.index());
-    f.render_widget(tabs, tabs_area);
+    render_main_tab_bar(f, tabs_area, app, tutorial_targets_tabbar);
 
     // Help button [?]
     let help_style = if app.help_open {
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT).bold()
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(theme::ACCENT)
+            .bold()
     } else if app.hover_help {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG).bold()
+        Style::default()
+            .fg(theme::HOVER_FG)
+            .bg(theme::HOVER_BG)
+            .bold()
     } else {
-        Style::default().fg(theme::ACCENT).add_modifier(Modifier::DIM)
+        Style::default()
+            .fg(theme::ACCENT)
+            .add_modifier(Modifier::DIM)
     };
-    let help_block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme::BORDER));
-    let help_para = Paragraph::new(Span::styled("[?]", help_style)).block(help_block).alignment(Alignment::Center);
+    let help_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER));
+    let help_para = Paragraph::new(Span::styled("[?]", help_style))
+        .block(help_block)
+        .alignment(Alignment::Center);
     f.render_widget(help_para, help_btn_area);
 
     match app.tab {
@@ -115,6 +108,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         }
         Tab::Run => render_run(f, chunks[1], app),
         Tab::Cache => render_cache(f, chunks[1], app),
+        Tab::Pipeline => render_pipeline(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
         Tab::Config => render_settings(f, chunks[1], app),
     }
@@ -123,12 +117,16 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Editor => {
             let mode = match app.mode { EditorMode::Insert => "INSERT", EditorMode::Command => "COMMAND" };
             (
-                format!("{mode}  │  Ctrl+O=Open  Ctrl+S=Save  Ctrl+Z=Undo  Ctrl+F=Find  Ctrl+G=Goto  Ctrl+/=Comment"),
+                format!("{mode}  │  Ctrl+O=Open  Ctrl+S=Save  Ctrl+Z=Undo  Ctrl+F=Find  Ctrl+G=Goto  Ctrl+/=Comment  [?]=Help"),
                 Style::default().fg(theme::LABEL),
             )
         }
         Tab::Run => (
             "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Region  Ctrl+F=Jump RAM  Ctrl+G=Label  [?]=Help".to_string(),
+            Style::default().fg(theme::LABEL),
+        ),
+        Tab::Pipeline => (
+            "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Config  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
         Tab::Cache => {
@@ -144,11 +142,11 @@ pub fn ui(f: &mut Frame, app: &App) {
             }
         }
         Tab::Docs => (
-            "Ctrl+F=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language".to_string(),
+            "Ctrl+F=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
         Tab::Config => (
-            "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field".to_string(),
+            "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
     };
@@ -174,6 +172,65 @@ pub fn ui(f: &mut Frame, app: &App) {
     }
 }
 
+fn render_main_tab_bar(f: &mut Frame, area: Rect, app: &App, tutorial_targeted: bool) {
+    let visible_tabs = app.visible_tabs();
+    let mut labels: Vec<Span<'static>> = vec![Span::raw(" ")];
+    let mut underlines: Vec<Span<'static>> = vec![Span::raw(" ")];
+
+    for (i, &tab) in visible_tabs.iter().enumerate() {
+        let label = format!(" {} ", tab.label());
+        let label_w = label.chars().count();
+        let text_w = tab.label().chars().count();
+        let label_style = if tab == app.tab {
+            Style::default()
+                .fg(theme::ACTIVE)
+                .add_modifier(Modifier::BOLD)
+        } else if Some(tab) == app.hover_tab {
+            Style::default()
+                .fg(theme::TEXT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme::IDLE)
+        };
+        labels.push(Span::styled(label, label_style));
+
+        underlines.push(underline_cell(tab == app.tab, label_w, text_w));
+
+        if i + 1 < visible_tabs.len() {
+            labels.push(Span::raw("  "));
+            underlines.push(Span::raw("  "));
+        }
+    }
+
+    let sep_style = if tutorial_targeted {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(theme::BORDER)
+    };
+    let lines = vec![
+        Line::from(labels),
+        Line::from(underlines),
+        Line::styled("─".repeat(area.width as usize), sep_style),
+    ];
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn underline_cell(active: bool, total_width: usize, line_width: usize) -> Span<'static> {
+    let text = if active && total_width >= line_width {
+        let left = (total_width - line_width) / 2;
+        let right = total_width.saturating_sub(left + line_width);
+        format!(
+            "{}{}{}",
+            " ".repeat(left),
+            "─".repeat(line_width),
+            " ".repeat(right)
+        )
+    } else {
+        " ".repeat(total_width)
+    };
+    Span::styled(text, Style::default().fg(theme::ACCENT))
+}
+
 fn render_exit_popup(f: &mut Frame, area: Rect) {
     let popup = centered_rect(area.width / 3, area.height / 4, area);
     f.render_widget(Clear, popup);
@@ -181,15 +238,24 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(Style::default().fg(theme::DANGER))
-        .title(Span::styled("Confirm Exit", Style::default().fg(theme::DANGER)));
+        .title(Span::styled(
+            "Confirm Exit",
+            Style::default().fg(theme::DANGER),
+        ));
     let lines = vec![
         Line::raw("Do you wish to exit?"),
         Line::raw("Check your code is saved before exiting."),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("[Exit]", Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::DANGER)),
+            Span::styled(
+                "[Exit]",
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::DANGER),
+            ),
             Span::styled("  Enter/y  ", Style::default().fg(theme::LABEL)),
-            Span::styled("[Cancel]", Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT)),
+            Span::styled(
+                "[Cancel]",
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT),
+            ),
             Span::styled("  Esc", Style::default().fg(theme::LABEL)),
         ]),
     ];
@@ -201,8 +267,8 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
 
 // ── ELF prompt popup ─────────────────────────────────────────────────────────
 
-pub(super) const ELF_BTN_CANCEL:  &str = "[ Cancel ]";
-pub(super) const ELF_BTN_EDIT:    &str = "[ Edit opcodes ]";
+pub(super) const ELF_BTN_CANCEL: &str = "[ Cancel ]";
+pub(super) const ELF_BTN_EDIT: &str = "[ Edit opcodes ]";
 pub(super) const ELF_BTN_DISCARD: &str = "[ Discard ELF ]";
 pub(super) const ELF_POPUP_W: u16 = 62;
 pub(super) const ELF_POPUP_H: u16 = 8;
@@ -226,9 +292,8 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
     let btn_x0 = popup.x + 1 + inner_w.saturating_sub(total_btns) / 2;
 
     let btn_style = |label: &str, x: u16| {
-        let hovered = app.mouse_y == btn_y
-            && app.mouse_x >= x
-            && app.mouse_x < x + label.len() as u16;
+        let hovered =
+            app.mouse_y == btn_y && app.mouse_x >= x && app.mouse_x < x + label.len() as u16;
         if hovered {
             Style::default().fg(Color::Black).bg(theme::ACCENT)
         } else {
@@ -236,9 +301,9 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         }
     };
 
-    let x_cancel  = btn_x0;
-    let x_edit    = x_cancel  + ELF_BTN_CANCEL.len()  as u16 + GAP;
-    let x_discard = x_edit    + ELF_BTN_EDIT.len()    as u16 + GAP;
+    let x_cancel = btn_x0;
+    let x_edit = x_cancel + ELF_BTN_CANCEL.len() as u16 + GAP;
+    let x_discard = x_edit + ELF_BTN_EDIT.len() as u16 + GAP;
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -256,9 +321,9 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         Line::raw(""),
         Line::from(vec![
             Span::raw(" ".repeat(inner_w.saturating_sub(total_btns) as usize / 2)),
-            Span::styled(ELF_BTN_CANCEL,  btn_style(ELF_BTN_CANCEL,  x_cancel)),
+            Span::styled(ELF_BTN_CANCEL, btn_style(ELF_BTN_CANCEL, x_cancel)),
             Span::raw("  "),
-            Span::styled(ELF_BTN_EDIT,    btn_style(ELF_BTN_EDIT,    x_edit)),
+            Span::styled(ELF_BTN_EDIT, btn_style(ELF_BTN_EDIT, x_edit)),
             Span::raw("  "),
             Span::styled(ELF_BTN_DISCARD, btn_style(ELF_BTN_DISCARD, x_discard)),
         ]),
@@ -276,14 +341,11 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
 // ── Help popup ───────────────────────────────────────────────────────────────
 
 fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
+    let popup = help_popup_rect(area, app);
     let pages = help_pages(app.tab);
     let total = pages.len();
     let page = app.help_page.min(total.saturating_sub(1));
     let content = &pages[page];
-
-    let popup_w = 60u16.min(area.width.saturating_sub(4));
-    let popup_h = (content.len() as u16 + 5).min(area.height.saturating_sub(4));
-    let popup = centered_rect(popup_w, popup_h, area);
 
     f.render_widget(Clear, popup);
 
@@ -297,21 +359,30 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::ACCENT))
-        .title(Span::styled(title, Style::default().fg(theme::ACCENT).bold()));
+        .title(Span::styled(
+            title,
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
 
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    let mut lines: Vec<Line<'static>> = content.iter().map(|(key, desc)| {
-        if key.is_empty() {
-            Line::from("")
-        } else {
-            Line::from(vec![
-                Span::styled(format!("{key:<18}"), Style::default().fg(theme::LABEL_Y).bold()),
-                Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
-            ])
-        }
-    }).collect();
+    let mut lines: Vec<Line<'static>> = content
+        .iter()
+        .map(|(key, desc)| {
+            if key.is_empty() {
+                Line::from("")
+            } else {
+                Line::from(vec![
+                    Span::styled(
+                        format!("{key:<18}"),
+                        Style::default().fg(theme::LABEL_Y).bold(),
+                    ),
+                    Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
+                ])
+            }
+        })
+        .collect();
 
     if total > 1 {
         lines.push(Line::from(""));
@@ -335,117 +406,166 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+pub(crate) fn help_button_area(area: Rect) -> Rect {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ])
+        .split(area);
+    let tab_row = chunks[0];
+    Rect::new(
+        tab_row.x + tab_row.width.saturating_sub(HELP_BTN_W),
+        tab_row.y,
+        HELP_BTN_W,
+        tab_row.height,
+    )
+}
+
+pub(crate) fn help_popup_rect(area: Rect, app: &App) -> Rect {
+    let pages = help_pages(app.tab);
+    let total = pages.len();
+    let page = app.help_page.min(total.saturating_sub(1));
+    let content = &pages[page];
+
+    let popup_w = 64u16.min(area.width.saturating_sub(2));
+    let popup_h = (content.len() as u16 + 5).min(area.height.saturating_sub(4));
+    let anchor = help_button_area(area);
+    best_popup_rect(anchor, popup_w, popup_h, area)
+}
+
 type HelpEntry = (&'static str, &'static str);
 
 fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
     match tab {
         Tab::Run => vec![
             vec![
-                ("[s]",            "step one instruction"),
-                ("[r]",            "run / stop execution"),
-                ("[p]",            "pause"),
-                ("[R]",            "restart from beginning"),
-                ("[f]",            "cycle execution speed (1x → 2x → 4x → 8x → GO)"),
-                ("[v]",            "cycle sidebar: RAM → REGS → Dyn"),
-                ("[k]",            "cycle RAM region: DATA → STACK → R/W → HEAP"),
-                ("[Tab] REGS",     "toggle integer / float register bank"),
-                ("[F9]",           "toggle breakpoint at hovered / PC"),
-                ("",               ""),
-                ("[Ctrl+F]",       "jump RAM view to address (type hex, live)"),
-                ("[Ctrl+G]",       "jump instruction view to label (type name, live)"),
-                ("[t]",            "toggle instruction trace panel"),
-                ("[e]",            "toggle execution count display (×N)"),
-                ("[y]",            "toggle instruction type badge ([R],[I]…)"),
-                ("[Tab]",          "collapse / expand panels"),
-                ("[↑/↓]",          "scroll memory or registers"),
-                ("[click]",        "select instruction / register"),
-                ("[drag]",         "resize sidebar / instruction panels"),
+                ("[s]", "step one instruction"),
+                ("[r]", "run / stop execution"),
+                ("[p]", "pause"),
+                ("[R]", "restart from beginning"),
+                ("Core [n/m]", "select which core/hart runtime to observe"),
+                ("[f]", "cycle execution speed (1x → 2x → 4x → 8x → GO)"),
+                ("[v]", "cycle sidebar: RAM → REGS → Dyn"),
+                ("[k]", "cycle RAM region: DATA → STACK → R/W → HEAP"),
+                ("[Tab] REGS", "toggle integer / float register bank"),
+                ("[F9]", "toggle breakpoint at hovered / PC"),
+                ("", ""),
+                ("[Ctrl+F]", "jump RAM view to address (type hex, live)"),
+                (
+                    "[Ctrl+G]",
+                    "jump instruction view to label (type name, live)",
+                ),
+                ("[t]", "toggle instruction trace panel"),
+                ("[e]", "toggle execution count display (×N)"),
+                ("[y]", "toggle instruction type badge ([R],[I]…)"),
+                ("[Tab]", "collapse / expand panels"),
+                ("[↑/↓]", "scroll memory or registers"),
+                ("[click]", "select instruction / register"),
+                ("[drag]", "resize sidebar / instruction panels"),
             ],
             vec![
-                ("[P] register",   "pin / unpin register in sidebar"),
-                ("[↑/↓] REGS",     "navigate register list"),
-                ("[↑/↓] RAM",      "scroll memory view"),
-                ("",               ""),
-                ("[Dyn] STORE",    "sidebar → RAM centered on written address"),
+                (
+                    "Hart",
+                    "hardware thread currently bound to the selected core",
+                ),
+                ("Status [FREE]", "no hart on this core yet"),
+                ("[P] register", "pin / unpin register in sidebar"),
+                ("[↑/↓] REGS", "navigate register list"),
+                ("[↑/↓] RAM", "scroll memory view"),
+                ("", ""),
+                ("[Dyn] STORE", "sidebar → RAM centered on written address"),
                 ("[Dyn] LOAD/ALU", "sidebar → register bank (result visible)"),
-                ("",               ""),
+                ("", ""),
                 ("Count [ON/OFF]", "show/hide exec count heat map"),
-                ("Type [ON/OFF]",  "show/hide instruction type badge"),
-                ("Speed [1x…GO]",  "execution speed control"),
-                ("State [RUN]",    "pause / resume execution"),
-                ("Region [DATA]",  "cycle: Data → Stack → R/W → Heap"),
-                ("Bytes [4B]",     "bytes per memory row"),
-                ("Format [HEX]",   "display format: HEX / DEC / STR"),
-                ("Sign [SGN]",     "signed / unsigned display (DEC mode)"),
+                ("Type [ON/OFF]", "show/hide instruction type badge"),
+                ("Speed [1x…GO]", "execution speed control"),
+                ("State [RUN]", "pause / resume execution"),
+                ("Region [DATA]", "cycle: Data → Stack → R/W → Heap"),
+                ("Bytes [4B]", "bytes per memory row"),
+                ("Format [HEX]", "display format: HEX / DEC / STR"),
+                ("Sign [SGN]", "signed / unsigned display (DEC mode)"),
             ],
         ],
-        Tab::Editor => vec![
-            vec![
-                ("[Esc]",          "switch to Command mode (click editor to return)"),
-                ("[Ctrl+Z]",       "undo"),
-                ("[Ctrl+Y]",       "redo"),
-                ("[Ctrl+/]",       "toggle line comment"),
-                ("[Ctrl+F]",       "open find bar"),
-                ("[Ctrl+H]",       "open find & replace bar"),
-                ("[Ctrl+G]",       "goto line number"),
-                ("[Ctrl+O]",       "import file"),
-                ("[Ctrl+S]",       "export / save file"),
-                ("",               ""),
-                ("[Ctrl+A]",       "select all"),
-                ("[Ctrl+C]",       "copy selection"),
-                ("[Ctrl+V]",       "paste"),
-                ("[Ctrl+X]",       "cut selection"),
-            ],
-        ],
-        Tab::Cache => vec![
-            vec![
-                ("[Tab]",          "cycle subtabs: Stats → View → Config"),
-                ("[r]",            "reset statistics"),
-                ("[p]",            "pause / resume execution"),
-                ("[v]",            "cycle sidebar view: RAM → REGS → Dyn"),
-                ("[k]",            "cycle RAM region: DATA → STACK → R/W → HEAP"),
-                ("[f]",            "cycle speed: 1x → 2x → 4x → 8x → GO"),
-                ("[e]",            "toggle exec count display"),
-                ("[y]",            "toggle instruction type badge"),
-                ("[i]",            "scope → I-Cache (Stats/View)"),
-                ("[d]",            "scope → D-Cache (Stats/View)"),
-                ("[b]",            "scope → Both (Stats/View)"),
-                ("[+/-]",          "add / remove cache level"),
-                ("",               ""),
-                ("[m] View",        "cycle data format: HEX → DEC-U → DEC-S → FLOAT"),
-                ("[g] View",        "cycle byte grouping: 1B → 2B → 4B"),
-                ("[t] View",        "toggle address / tag display (0x… ↔ t:…)"),
-                ("[↑/↓]",          "scroll (Stats / View subtabs)"),
-                ("[Ctrl+E]",       "export cache config (.fcache)"),
-                ("[Ctrl+L]",       "import cache config (.fcache)"),
-                ("[Ctrl+R]",       "export simulation results (.fstats / .csv)"),
-                ("[Ctrl+M]",       "load baseline snapshot for comparison"),
-                ("[c] Stats",      "clear loaded baseline"),
-            ],
-        ],
-        Tab::Docs => vec![
-            vec![
-                ("[↑/↓]",          "scroll documentation"),
-                ("[PgUp/PgDn]",    "fast scroll"),
-                ("[Ctrl+F]",       "open search bar (filter by name/desc)"),
-                ("[←/→]",          "navigate type filter"),
-                ("[Space]",        "toggle selected type filter / restore All"),
-            ],
-        ],
-        Tab::Config => vec![
-            vec![
-                ("[↑/↓]",          "navigate settings"),
-                ("[Enter]",        "edit CPI field / toggle bool"),
-                ("[Esc]",          "cancel edit"),
-                ("[Tab]",          "confirm edit and move to next field"),
-                ("[click]",        "toggle bool button / start CPI edit"),
-                ("[Ctrl+E]",       "export .rcfg"),
-                ("[Ctrl+L]",       "import .rcfg"),
-            ],
-        ],
+        Tab::Editor => vec![vec![
+            ("[Esc]", "switch to Command mode (click editor to return)"),
+            ("[Ctrl+Z]", "undo"),
+            ("[Ctrl+Y]", "redo"),
+            ("[Ctrl+/]", "toggle line comment"),
+            ("[Ctrl+F]", "open find bar"),
+            ("[Ctrl+H]", "open find & replace bar"),
+            ("[Ctrl+G]", "goto line number"),
+            ("[Ctrl+O]", "import file"),
+            ("[Ctrl+S]", "export / save file"),
+            ("", ""),
+            ("[Ctrl+A]", "select all"),
+            ("[Ctrl+C]", "copy selection"),
+            ("[Ctrl+V]", "paste"),
+            ("[Ctrl+X]", "cut selection"),
+        ]],
+        Tab::Cache => vec![vec![
+            ("[Tab]", "cycle subtabs: Stats → View → Config"),
+            ("[r]", "reset statistics"),
+            ("[p]", "pause / resume execution"),
+            ("[v]", "cycle sidebar view: RAM → REGS → Dyn"),
+            ("[k]", "cycle RAM region: DATA → STACK → R/W → HEAP"),
+            ("[f]", "cycle speed: 1x → 2x → 4x → 8x → GO"),
+            ("[e]", "toggle exec count display"),
+            ("[y]", "toggle instruction type badge"),
+            ("[i]", "scope → I-Cache (Stats/View)"),
+            ("[d]", "scope → D-Cache (Stats/View)"),
+            ("[b]", "scope → Both (Stats/View)"),
+            ("[+/-]", "add / remove cache level"),
+            ("", ""),
+            ("[m] View", "cycle data format: HEX → DEC-U → DEC-S → FLOAT"),
+            ("[g] View", "cycle byte grouping: 1B → 2B → 4B"),
+            ("[t] View", "toggle address / tag display (0x… ↔ t:…)"),
+            ("[↑/↓]", "scroll (Stats / View subtabs)"),
+            ("[Ctrl+E]", "export cache config (.fcache)"),
+            ("[Ctrl+L]", "import cache config (.fcache)"),
+            ("[Ctrl+R]", "export simulation results (.fstats / .csv)"),
+            ("[Ctrl+M]", "load baseline snapshot for comparison"),
+            ("[c] Stats", "clear loaded baseline"),
+        ]],
+        Tab::Docs => vec![vec![
+            ("[↑/↓]", "scroll documentation"),
+            ("[PgUp/PgDn]", "fast scroll"),
+            ("[Ctrl+F]", "open search bar (filter by name/desc)"),
+            ("[←/→]", "navigate type filter"),
+            ("[Space]", "toggle selected type filter / restore All"),
+        ]],
+        Tab::Pipeline => vec![vec![
+            ("[s]", "step one cycle"),
+            ("[Space/p]", "run / pause"),
+            ("[Tab]", "switch subtab: Main ↔ Config"),
+            ("Core [n/m]", "select which core/hart pipeline to inspect"),
+            ("[e]", "toggle pipeline enabled"),
+            ("[f]", "cycle speed"),
+            ("[b]", "cycle branch resolve stage: ID → EX → MEM"),
+            ("[↑/↓] Config", "navigate config fields"),
+            (
+                "Hazard Map",
+                "shows RAW / load-use / flush / forwarding traces",
+            ),
+            ("History", "last cycles and per-instruction stage timeline"),
+        ]],
+        Tab::Config => vec![vec![
+            ("[↑/↓]", "navigate settings"),
+            ("[Enter]", "edit CPI field / toggle bool"),
+            ("[Esc]", "cancel edit"),
+            ("[Tab]", "confirm edit and move to next field"),
+            ("[click]", "toggle bool button / start CPI edit"),
+            (
+                "Run Scope [ALL/FOCUS]",
+                "ALL advances all harts; FOCUS advances only observed hart in Run",
+            ),
+            ("[Ctrl+E]", "export .rcfg"),
+            ("[Ctrl+L]", "import .rcfg"),
+        ]],
     }
 }
-
 
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
     Rect::new(
@@ -454,4 +574,25 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
         width,
         height,
     )
+}
+
+pub(crate) fn best_popup_rect(target: Rect, pw: u16, ph: u16, term: Rect) -> Rect {
+    let gap = 1;
+    let below_y = target.y + target.height + gap;
+    if below_y + ph <= term.y + term.height {
+        let x = clamp_x(target.x + target.width.saturating_sub(pw), pw, term);
+        return Rect::new(x, below_y, pw, ph);
+    }
+
+    if target.y >= term.y + ph + gap {
+        let x = clamp_x(target.x + target.width.saturating_sub(pw), pw, term);
+        return Rect::new(x, target.y - ph - gap, pw, ph);
+    }
+
+    centered_rect(pw, ph, term)
+}
+
+fn clamp_x(preferred: u16, pw: u16, term: Rect) -> u16 {
+    let max_x = (term.x + term.width).saturating_sub(pw);
+    preferred.min(max_x).max(term.x)
 }

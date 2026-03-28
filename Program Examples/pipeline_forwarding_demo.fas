@@ -1,0 +1,38 @@
+# pipeline_forwarding_demo.fas — chained RAW dependencies with bypassing
+#
+# Best viewed in the Pipeline tab with forwarding enabled.
+# Watch:
+#   - LUI -> ADDI on the same register
+#   - ADDI -> ADD
+#   - ADD -> SLLI
+#   - final store/load path through MEM
+#
+# Expected output: 16418
+
+.data
+slot: .word 0
+msg:  .asciz "PIPE forwarding result: "
+
+.text
+    lui  t0, 0x1          # 4096
+    addi t0, t0, 5        # 4101
+    addi t1, t0, 7        # 4108
+    add  t2, t1, t0       # 8209
+    slli t3, t2, 1        # 16418
+
+    la   t4, slot
+    sw   t3, 0(t4)
+    lw   a0, 0(t4)
+
+    li   a7, 1001
+    la   a0, msg
+    ecall
+    lw   a0, 0(t4)
+    li   a7, 1000
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall

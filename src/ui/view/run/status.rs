@@ -2,8 +2,8 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
-use crate::ui::theme;
 use super::{App, FormatMode, MemRegion, RunButton};
+use crate::ui::theme;
 
 pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
@@ -16,19 +16,56 @@ pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(para, area);
 }
 
+pub(crate) fn run_controls_plain_text(app: &App) -> String {
+    status_spans(app)
+        .into_iter()
+        .map(|span| span.content.to_string())
+        .collect()
+}
+
 fn status_lines(app: &App) -> Vec<Line<'static>> {
     let hint = Line::from(""); // hints removed — use [?] help button
     vec![Line::from(status_spans(app)), cycle_line(app), hint]
 }
 
 fn cycle_line(app: &App) -> Line<'static> {
-    let total = app.run.mem.total_program_cycles();
-    let cpi   = app.run.mem.overall_cpi();
-    let instr = app.run.mem.instruction_count;
+    let (total, cpi, instr) = if app.pipeline.enabled {
+        let cycles = app.pipeline.cycle_count;
+        let cpi = if app.pipeline.instr_committed > 0 {
+            cycles as f64 / app.pipeline.instr_committed as f64
+        } else {
+            0.0
+        };
+        (cycles, cpi, app.pipeline.instr_committed)
+    } else {
+        (
+            app.run.mem.total_program_cycles(),
+            app.run.mem.overall_cpi(),
+            app.run.mem.instruction_count,
+        )
+    };
     Line::from(vec![
-        Span::styled(format!("Cycles:{total}"), Style::default().fg(theme::METRIC_CYC)),
+        Span::styled(
+            format!(
+                "Core:{}  Hart:{}  {}",
+                app.selected_core,
+                app.core_hart_id(app.selected_core)
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                app.core_status(app.selected_core).label()
+            ),
+            Style::default().fg(theme::ACCENT),
+        ),
         Span::raw("  "),
-        Span::styled(format!("CPI:{cpi:.2}"), Style::default().fg(theme::METRIC_CPI)),
+        Span::styled(
+            format!("Cycles:{total}"),
+            Style::default().fg(theme::METRIC_CYC),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("CPI:{cpi:.2}"),
+            Style::default().fg(theme::METRIC_CPI),
+        ),
         Span::raw("  "),
         Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
     ])
@@ -37,72 +74,117 @@ fn cycle_line(app: &App) -> Line<'static> {
 fn status_spans(app: &App) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
-    spans.push(Span::raw("View "));
-    spans.push(toggle_btn(
+    push_dense_pair(
+        &mut spans,
+        "core",
+        &format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1)),
+        app.hover_run_button == Some(RunButton::Core),
+        true,
+        theme::TEXT,
+    );
+
+    push_dense_pair(
+        &mut spans,
+        "view",
         view_text(app),
-        view_active(app),
         app.hover_run_button == Some(RunButton::View),
-    ));
+        view_active(app),
+        theme::TEXT,
+    );
 
     if !app.run.show_registers && !app.run.show_dyn {
-        spans.push(Span::raw("  Region "));
-        spans.push(toggle_btn(
+        push_dense_pair(
+            &mut spans,
+            "region",
             region_text(app),
-            true,
             app.hover_run_button == Some(RunButton::Region),
-        ));
+            true,
+            theme::TEXT,
+        );
     }
 
-    spans.push(Span::raw("  Format "));
-    spans.push(toggle_btn(
+    push_dense_pair(
+        &mut spans,
+        "fmt",
         format_text(app),
-        true,
         app.hover_run_button == Some(RunButton::Format),
-    ));
+        true,
+        theme::TEXT,
+    );
 
-    spans.push(Span::raw("  Sign "));
-    spans.push(toggle_btn(
+    push_dense_pair(
+        &mut spans,
+        "sign",
         sign_text(app),
-        sign_enabled(app),
         sign_enabled(app) && app.hover_run_button == Some(RunButton::Sign),
-    ));
+        sign_enabled(app),
+        if sign_enabled(app) {
+            theme::TEXT
+        } else {
+            theme::IDLE
+        },
+    );
 
     if !app.run.show_registers && !app.run.show_dyn {
-        spans.push(Span::raw("  Bytes "));
-        spans.push(toggle_btn(
+        push_dense_pair(
+            &mut spans,
+            "bytes",
             bytes_text(app),
-            true,
             app.hover_run_button == Some(RunButton::Bytes),
-        ));
+            true,
+            theme::TEXT,
+        );
     }
 
-    spans.push(Span::raw("  Speed "));
-    spans.push(toggle_btn(
+    push_dense_pair(
+        &mut spans,
+        "speed",
         speed_text(app),
-        true,
         app.hover_run_button == Some(RunButton::Speed),
-    ));
+        true,
+        theme::TEXT,
+    );
 
-    spans.push(Span::raw("  State "));
-    spans.push(state_btn(app));
+    push_dense_pair(
+        &mut spans,
+        "state",
+        &state_text(app),
+        app.hover_run_button == Some(RunButton::State),
+        true,
+        state_color(app),
+    );
 
-    spans.push(Span::raw("  Count "));
-    spans.push(toggle_btn(
-        if app.run.show_exec_count { "ON" } else { "OFF" },
-        app.run.show_exec_count,
+    push_dense_pair(
+        &mut spans,
+        "count",
+        if app.run.show_exec_count { "on" } else { "off" },
         app.hover_run_button == Some(RunButton::ExecCount),
-    ));
+        app.run.show_exec_count,
+        if app.run.show_exec_count {
+            theme::TEXT
+        } else {
+            theme::IDLE
+        },
+    );
 
-    spans.push(Span::raw("  Type "));
-    spans.push(toggle_btn(
-        if app.run.show_instr_type { "ON" } else { "OFF" },
-        app.run.show_instr_type,
+    push_dense_pair(
+        &mut spans,
+        "type",
+        if app.run.show_instr_type { "on" } else { "off" },
         app.hover_run_button == Some(RunButton::InstrType),
-    ));
+        app.run.show_instr_type,
+        if app.run.show_instr_type {
+            theme::TEXT
+        } else {
+            theme::IDLE
+        },
+    );
 
-    spans.push(Span::raw("  "));
-    spans.push(semantic_btn(
-        "Reset",
+    if !spans.is_empty() {
+        spans.push(Span::raw("   "));
+    }
+    spans.push(action_btn(
+        "reset",
         theme::DANGER,
         app.hover_run_button == Some(RunButton::Reset),
     ));
@@ -113,9 +195,13 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
 // ── Text helpers ────────────────────────────────────────────────────────────
 
 fn view_text(app: &App) -> &'static str {
-    if app.run.show_dyn      { "DYN" }
-    else if app.run.show_registers { "REGS" }
-    else { "RAM" }
+    if app.run.show_dyn {
+        "dyn"
+    } else if app.run.show_registers {
+        "regs"
+    } else {
+        "ram"
+    }
 }
 
 fn view_active(_app: &App) -> bool {
@@ -125,18 +211,18 @@ fn view_active(_app: &App) -> bool {
 
 fn region_text(app: &App) -> &'static str {
     match app.run.mem_region {
-        MemRegion::Data | MemRegion::Custom => "DATA",
-        MemRegion::Stack => "STACK",
-        MemRegion::Access => "R/W",
-        MemRegion::Heap => "HEAP",
+        MemRegion::Data | MemRegion::Custom => "data",
+        MemRegion::Stack => "stack",
+        MemRegion::Access => "r/w",
+        MemRegion::Heap => "heap",
     }
 }
 
 fn format_text(app: &App) -> &'static str {
     match app.run.fmt_mode {
-        FormatMode::Hex => "HEX",
-        FormatMode::Dec => "DEC",
-        FormatMode::Str => "STR",
+        FormatMode::Hex => "hex",
+        FormatMode::Dec => "dec",
+        FormatMode::Str => "str",
     }
 }
 
@@ -145,65 +231,105 @@ fn sign_enabled(app: &App) -> bool {
 }
 
 fn sign_text(app: &App) -> &'static str {
-    if app.run.show_signed { "SGN" } else { "UNS" }
+    if app.run.show_signed { "sgn" } else { "uns" }
 }
 
 fn bytes_text(app: &App) -> &'static str {
     match app.run.mem_view_bytes {
-        4 => "4B",
-        2 => "2B",
-        _ => "1B",
+        4 => "4b",
+        2 => "2b",
+        _ => "1b",
     }
 }
 
 fn speed_text(app: &App) -> &'static str {
-    app.run.speed.label()
+    match app.run.speed.label() {
+        "1x" => "1x",
+        "2x" => "2x",
+        "4x" => "4x",
+        "8x" => "8x",
+        "GO" => "go",
+        other => other,
+    }
 }
 
-// ── Button span builders ────────────────────────────────────────────────────
+fn state_text(app: &App) -> String {
+    match app.core_status(app.selected_core) {
+        crate::ui::app::HartLifecycle::Free => "free".to_string(),
+        crate::ui::app::HartLifecycle::Running => "run".to_string(),
+        crate::ui::app::HartLifecycle::Paused => {
+            if app.run.cpu.ebreak_hit {
+                "ebrk".to_string()
+            } else {
+                "pause".to_string()
+            }
+        }
+        crate::ui::app::HartLifecycle::Exited => {
+            if app.run.cpu.local_exit {
+                "halt".to_string()
+            } else {
+                "exit".to_string()
+            }
+        }
+        crate::ui::app::HartLifecycle::Faulted => "fault".to_string(),
+    }
+}
 
-/// Generic toggle button: active uses ACTIVE fg+bold, idle uses IDLE fg, hover uses HOVER colors.
-fn toggle_btn(text: &str, active: bool, hovered: bool) -> Span<'static> {
+fn state_color(app: &App) -> Color {
+    match app.core_status(app.selected_core) {
+        crate::ui::app::HartLifecycle::Free => theme::IDLE,
+        crate::ui::app::HartLifecycle::Running => theme::RUNNING,
+        crate::ui::app::HartLifecycle::Paused => theme::PAUSED,
+        crate::ui::app::HartLifecycle::Exited => {
+            if app.run.cpu.local_exit {
+                theme::DANGER
+            } else {
+                theme::LABEL
+            }
+        }
+        crate::ui::app::HartLifecycle::Faulted => theme::DANGER,
+    }
+}
+
+fn push_dense_pair(
+    spans: &mut Vec<Span<'static>>,
+    label: &str,
+    value: &str,
+    hovered: bool,
+    active: bool,
+    active_color: Color,
+) {
+    if !spans.is_empty() {
+        spans.push(Span::raw("   "));
+    }
+    spans.push(Span::styled(
+        label.to_string(),
+        Style::default().fg(theme::IDLE),
+    ));
+    spans.push(Span::raw(" "));
+    spans.push(value_btn(value, hovered, active, active_color));
+}
+
+fn value_btn(text: &str, hovered: bool, active: bool, color: Color) -> Span<'static> {
     let style = if hovered {
         Style::default()
-            .fg(theme::HOVER_FG)
-            .bg(theme::HOVER_BG)
-            .add_modifier(Modifier::ITALIC)
+            .fg(theme::TEXT)
+            .add_modifier(Modifier::BOLD)
     } else if active {
-        Style::default()
-            .fg(theme::ACTIVE)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
-            .fg(theme::IDLE)
-            .add_modifier(Modifier::DIM)
+        Style::default().fg(theme::IDLE)
     };
-    Span::styled(format!("[{text}]"), style)
+    Span::styled(text.to_string(), style)
 }
 
-/// Semantic button (RUN/PAUSE/RESET) with a dedicated background color.
-fn semantic_btn(text: &str, color: Color, hovered: bool) -> Span<'static> {
+fn action_btn(text: &str, color: Color, hovered: bool) -> Span<'static> {
     let style = if hovered {
         Style::default()
-            .fg(theme::HOVER_FG)
-            .bg(theme::HOVER_BG)
-            .add_modifier(Modifier::ITALIC)
-    } else {
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(color)
+            .fg(theme::TEXT)
             .add_modifier(Modifier::BOLD)
-    };
-    Span::styled(format!("[{text}]"), style)
-}
-
-/// State button (RUN/PAUSE) — semantic color depends on running state.
-fn state_btn(app: &App) -> Span<'static> {
-    let hovered = app.hover_run_button == Some(RunButton::State);
-    let (text, color) = if app.run.is_running {
-        ("RUN", theme::RUNNING)
     } else {
-        ("PAUSE", theme::PAUSED)
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
     };
-    semantic_btn(text, color, hovered)
+    Span::styled(text.to_string(), style)
 }

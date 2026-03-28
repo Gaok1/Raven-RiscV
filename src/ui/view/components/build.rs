@@ -1,6 +1,6 @@
+use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::ui::app::App;
 
@@ -21,16 +21,18 @@ pub(crate) fn render_build_status(f: &mut Frame, area: Rect, app: &App) {
             Color::Black,
         )
     } else {
-        ("Not compiled".to_string(), Style::default(), Color::DarkGray)
+        (
+            "Not compiled".to_string(),
+            Style::default(),
+            Color::DarkGray,
+        )
     };
-    let status = Paragraph::new(msg)
-        .style(style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Build status")
-                .border_style(Style::default().fg(build_border))
-                .border_type(BorderType::Rounded),
-        );
+    let status = Paragraph::new(msg).style(style).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Build status")
+            .border_style(Style::default().fg(build_border))
+            .border_type(BorderType::Rounded),
+    );
     f.render_widget(status, area);
 }

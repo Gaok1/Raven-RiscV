@@ -161,8 +161,10 @@ do imediato ou algum detalhe importante.
 
 **`JALR` (`0x67`):** usa `funct3 = 0x0`.
 
-**System (`0x73`):** o RAVEN implementa dois códigos: `ECALL` (`0x00000073`) e `EBREAK` (`0x00100073`). O assembler aceita
-`halt` como alias de `ebreak`.
+**System (`0x73`):** o RAVEN implementa três códigos: `ECALL` (`0x00000073`), `EBREAK`
+(`0x00100073`) e `HALT` (`0x00200073`). `ebreak` é um breakpoint de debug retomável; `halt`
+interrompe permanentemente apenas o hart atual e deve ser usado como marca semântica de "este hart
+terminou aqui" nos exemplos.
 
 <a id="comportamento-do-assembler-e-pseudoinstrucoes"></a>
 ## Comportamento do assembler e pseudoinstruções

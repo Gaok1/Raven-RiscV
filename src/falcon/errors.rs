@@ -11,4 +11,3 @@ pub enum FalconError {
     #[error("Bus error: {0}")]
     Bus(String),
 }
-

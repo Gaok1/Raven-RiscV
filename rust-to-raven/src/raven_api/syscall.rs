@@ -486,6 +486,49 @@ pub unsafe fn strcmp(s1: *const u8, s2: *const u8) -> i32 {
     ret
 }
 
+// ── Hart management (syscall 1100) ────────────────────────────────────────────
+
+/// Spawn a new hart starting at `entry_pc` with stack pointer `stack_ptr`.
+///
+/// `arg` is placed in `a0` of the new hart so the entry point receives a
+/// single `u32` argument. Returns 0 on success.
+///
+/// `stack_ptr` must point to the **top** (high address) of a valid stack region.
+///
+/// # Example
+/// ```rust
+/// static mut HART1_STACK: [u8; 4096] = [0; 4096];
+///
+/// extern "C" fn worker(id: u32) -> ! { /* ... */ exit(0) }
+///
+/// let sp = unsafe { HART1_STACK.as_ptr().add(4096) as u32 };
+/// hart_start(worker as u32, sp, /*arg=*/1);
+/// ```
+#[inline(always)]
+pub fn hart_start(entry_pc: u32, stack_ptr: u32, arg: u32) -> i32 {
+    let ret: i32;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1100_u32,
+            in("a0") entry_pc,
+            in("a1") stack_ptr,
+            in("a2") arg,
+            lateout("a0") ret,
+        );
+    }
+    ret
+}
+
+/// Terminate **only this hart** without affecting any other running harts.
+/// Equivalent to returning from the top-level hart function; use this instead
+/// of `exit()` inside a spawned worker so the main hart keeps running.
+pub fn hart_exit() -> ! {
+    unsafe {
+        core::arch::asm!("ecall", in("a7") 1101_u32, options(noreturn));
+    }
+}
+
 // ── Panic handler ─────────────────────────────────────────────────────────────
 
 #[panic_handler]

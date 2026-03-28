@@ -1,0 +1,39 @@
+# pipeline_load_use_demo.fas — repeated load-use hazards
+#
+# Best viewed in the Pipeline tab with forwarding both on and off.
+# Each ADD immediately consumes the value loaded by the previous LW.
+#
+# Expected output: 110
+
+.data
+arr: .word 10, 20, 30, 40
+msg: .asciz "PIPE load-use sum: "
+
+.text
+    la   t0, arr
+
+    lw   t1, 0(t0)
+    add  t2, t1, t1       # 20
+
+    lw   t3, 4(t0)
+    add  t4, t3, t2       # 40
+
+    lw   t5, 8(t0)
+    add  t6, t5, t4       # 70
+
+    lw   s0, 12(t0)
+    add  a0, s0, t6       # 110
+    mv   s1, a0
+
+    li   a7, 1001
+    la   a0, msg
+    ecall
+    mv   a0, s1
+    li   a7, 1000
+    ecall
+    li   a7, 1008
+    ecall
+
+    li   a0, 0
+    li   a7, 93
+    ecall
