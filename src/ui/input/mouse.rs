@@ -7,7 +7,8 @@ use crate::ui::{
     app::{
         App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion,
         PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START,
-        SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, Tab,
+        SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
+        SETTINGS_ROW_RUN_SCOPE, Tab,
     },
     editor::Editor,
 };
@@ -2330,8 +2331,10 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     } else if me.row == btn_y.saturating_add(1) {
         app.settings.hover_row = Some(SETTINGS_ROW_MAX_CORES);
     } else if me.row == btn_y.saturating_add(2) {
-        app.settings.hover_row = Some(SETTINGS_ROW_RUN_SCOPE);
+        app.settings.hover_row = Some(SETTINGS_ROW_MEM_SIZE);
     } else if me.row == btn_y.saturating_add(3) {
+        app.settings.hover_row = Some(SETTINGS_ROW_RUN_SCOPE);
+    } else if me.row == btn_y.saturating_add(4) {
         app.settings.hover_row = Some(SETTINGS_ROW_PIPELINE_ENABLED);
     }
     if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
@@ -2353,7 +2356,7 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
         return;
     }
     if me.row == btn_y.saturating_add(2) {
-        app.settings.selected = SETTINGS_ROW_RUN_SCOPE;
+        app.settings.selected = SETTINGS_ROW_MEM_SIZE;
         return;
     }
 
@@ -2405,8 +2408,9 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
         return;
     }
     if me.row == btn_y.saturating_add(2) {
-        app.settings.selected = SETTINGS_ROW_RUN_SCOPE;
-        app.run_scope = app.run_scope.cycle();
+        app.settings.selected = SETTINGS_ROW_MEM_SIZE;
+        app.settings.cpi_editing = true;
+        app.settings.cpi_edit_buf = (app.run.mem_size / (1024 * 1024)).to_string();
         return;
     }
 
