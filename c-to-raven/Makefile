@@ -48,12 +48,12 @@ FLOAT_SRCS   = crt0.S float_demo.c
 
 all: $(TARGET)
 
-$(TARGET): $(SRCS) raven.h
+$(TARGET): $(SRCS) raven.h internal/raven_internal.h internal/raven_syscall.h internal/raven_libc.h internal/raven_heap.h internal/raven_teaching.h
 	$(CC) $(CFLAGS_IM) $(LFLAGS) -o $@ $(SRCS)
 
 float-demo: $(FLOAT_TARGET)
 
-$(FLOAT_TARGET): $(FLOAT_SRCS) raven.h
+$(FLOAT_TARGET): $(FLOAT_SRCS) raven.h internal/raven_internal.h internal/raven_syscall.h internal/raven_libc.h internal/raven_heap.h internal/raven_teaching.h
 	$(CC) $(CFLAGS_IMF) $(LFLAGS) -o $@ $(FLOAT_SRCS)
 
 clean:

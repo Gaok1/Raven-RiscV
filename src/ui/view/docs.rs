@@ -1961,7 +1961,8 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
     vec![
         h1("RAVEN — Memory Map"),
         blank(),
-        note("RAM = 128 KB · addresses 0x00000000 .. 0x0001FFFF · no MMU, no virtual memory"),
+        note("Default RAM = 16 MB · addresses 0x00000000 .. RAM_SIZE-1 · no MMU, no virtual memory"),
+        note("RAM size is configurable in the Config tab (accepts e.g. 16mb, 8192kb, 4096)."),
         blank(),
         // ── ASCII diagram ──
         h2("Layout"),
@@ -1981,7 +1982,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         ),
         mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
         mono(
-            "  0x0001FFFF  │  stack  (grows ↓)   │  ← sp = 0x20000 (one past end); push: sp-=4, sw rs,0(sp)",
+            "  RAM_SIZE-1  │  stack  (grows ↓)   │  ← sp = RAM_SIZE (one past end); push: sp-=4, sw rs,0(sp)",
         ),
         mono("              └─────────────────────┘"),
         blank(),
@@ -2008,7 +2009,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         kv("data_base", "Start of .data / .bss = base_pc + 0x1000."),
         kv(
             "sp (initial)",
-            "0x00020000 — one past end of RAM (RISC-V ABI). First push writes to 0x1FFFC.",
+            "RAM_SIZE — one past end of RAM (RISC-V ABI). First push writes to RAM_SIZE-4.",
         ),
         blank(),
         // ── Free space note ──
@@ -2016,7 +2017,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         blank(),
         raw("  The region between bss_end and the stack is ordinary RAM with no"),
         raw("  management. You can use it directly with sw/lw if you know the address."),
-        raw("  There is no malloc/free — RAVEN has a flat, fixed 128 KB address space"),
+        raw("  There is no malloc/free — RAVEN has a flat address space"),
         raw("  with no pagination or memory protection."),
         blank(),
         note("Tip: use .bss labels to reserve named buffers without wasting binary space."),
@@ -2051,6 +2052,23 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         mono("      ret"),
         blank(),
         note("There is no free() — allocations are permanent for the lifetime of the program."),
+        blank(),
+        // ── Keyboard shortcuts ──
+        h2("Keyboard Shortcuts — Run tab"),
+        blank(),
+        kv("Ctrl+G", "Open label/address search in Instruction Memory."),
+        kv("", "Type a label name or 0x… address; Enter = next match; Esc = close."),
+        kv("Space", "Step one instruction (single hart)."),
+        kv("R", "Run / pause continuous execution."),
+        kv("Ctrl+R", "Restart simulation from the beginning."),
+        kv("B", "Toggle breakpoint at hovered instruction."),
+        blank(),
+        h2("Keyboard Shortcuts — Config tab"),
+        blank(),
+        kv("Mem Size", "Accepts plain KB number, or suffix: 16mb / 8192kb."),
+        kv("", "Value is snapped to the nearest power of two."),
+        kv("Enter", "Open edit mode on the selected field."),
+        kv("↑ / ↓", "Navigate between fields."),
     ]
 }
 
@@ -2058,7 +2076,8 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
     vec![
         h1("RAVEN — Mapa de Memória"),
         blank(),
-        note("RAM = 128 KB · endereços 0x00000000 .. 0x0001FFFF · sem MMU, sem memória virtual"),
+        note("RAM padrão = 16 MB · endereços 0x00000000 .. RAM_SIZE-1 · sem MMU, sem memória virtual"),
+        note("Tamanho configurável na aba Config (aceita ex.: 16mb, 8192kb, 4096)."),
         blank(),
         // ── Diagrama ASCII ──
         h2("Layout"),
@@ -2078,7 +2097,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         ),
         mono("              ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤"),
         mono(
-            "  0x0001FFFF  │  pilha  (cresce ↓)  │  ← sp = 0x20000 (um além do fim); push: sp-=4, sw rs,0(sp)",
+            "  RAM_SIZE-1  │  pilha  (cresce ↓)  │  ← sp = RAM_SIZE (um além do fim); push: sp-=4, sw rs,0(sp)",
         ),
         mono("              └─────────────────────┘"),
         blank(),
@@ -2105,7 +2124,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         kv("data_base", "Início do .data / .bss = base_pc + 0x1000."),
         kv(
             "sp (inicial)",
-            "0x00020000 — um além do fim da RAM (ABI RISC-V). Primeiro push escreve em 0x1FFFC.",
+            "RAM_SIZE — um além do fim da RAM (ABI RISC-V). Primeiro push escreve em RAM_SIZE-4.",
         ),
         blank(),
         // ── Espaço livre ──
@@ -2114,7 +2133,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         raw("  A região entre o fim do .bss e a pilha é RAM comum, sem gerenciamento."),
         raw("  Você pode usá-la diretamente com sw/lw se souber o endereço."),
         raw("  Não existe malloc/free — o RAVEN tem um espaço de endereçamento"),
-        raw("  plano e fixo de 128 KB, sem paginação nem proteção de memória."),
+        raw("  plano e sem paginação nem proteção de memória."),
         blank(),
         note(
             "Dica: use labels no .bss para reservar buffers nomeados sem desperdiçar espaço no binário.",
@@ -2150,6 +2169,23 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         mono("      ret"),
         blank(),
         note("Não existe free() — as alocações são permanentes durante a execução do programa."),
+        blank(),
+        // ── Atalhos de teclado ──
+        h2("Atalhos de Teclado — aba Run"),
+        blank(),
+        kv("Ctrl+G", "Abre pesquisa de label/endereço na Memória de Instruções."),
+        kv("", "Digite o nome da label ou 0x…; Enter = próximo; Esc = fechar."),
+        kv("Space", "Avança uma instrução (hart selecionado)."),
+        kv("R", "Rodar / pausar execução contínua."),
+        kv("Ctrl+R", "Reinicia a simulação do início."),
+        kv("B", "Toggle de breakpoint na instrução sob o cursor."),
+        blank(),
+        h2("Atalhos de Teclado — aba Config"),
+        blank(),
+        kv("Mem Size", "Aceita número em KB, ou sufixo: 16mb / 8192kb."),
+        kv("", "Valor arredondado para a potência de dois mais próxima."),
+        kv("Enter", "Abre edição no campo selecionado."),
+        kv("↑ / ↓", "Navega entre os campos."),
     ]
 }
 

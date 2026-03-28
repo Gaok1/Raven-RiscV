@@ -1,57 +1,51 @@
-// main.c — guessing game
-//
-// Demonstrates:
-//   - rand_range()           random number in [lo, hi)
-//   - read_int()             read a signed integer from stdin
-//   - print_int/str/ln()     basic output helpers
-//   - print_bin()            32-bit binary display (try it with the secret number!)
-//   - eprint_str()           stderr debug messages
-//   - raven_pause()          freeze execution to inspect state in Raven
-//
-// Run in Raven, open the Console tab, and play!
-
 #include "raven.h"
 
-int main(void) {
-    print_str("=== Guess the number! ===\n");
-    print_str("I picked a number between 1 and 100.\n\n");
+// ── Workers ───────────────────────────────────────────────────────────────────
 
-    unsigned int secret = rand_range(1, 101);   // [1, 100]
-    eprint_str("[debug] secret = ");             // visible on stderr (red in console)
-    eprint_int((int)secret);
-    eprint_ln();
+RAVEN_HART_STACK(sum_stack,   4096);
+RAVEN_HART_STACK(count_stack, 4096);
 
-    int attempts = 0;
+static void sum_worker(unsigned int n) {
+    unsigned int sum = 0;
+    for (unsigned int i = 1; i <= n; i++) sum += i;
+    raven_print_str("sum 1..");
+    raven_print_uint(n);
+    raven_print_str(" = ");
+    raven_print_uint(sum);
+    raven_print_newline();
+}
 
-    while (1) {
-        print_str("Your guess: ");
-        int guess = read_int();
-        attempts++;
-
-        if (guess < 1 || guess > 100) {
-            print_str("  Out of range! Try between 1 and 100.\n");
-            continue;
-        }
-
-        if ((unsigned int)guess < secret) {
-            print_str("  Too low!\n");
-        } else if ((unsigned int)guess > secret) {
-            print_str("  Too high!\n");
-        } else {
-            print_str("\nCorrect! You got it in ");
-            print_int(attempts);
-            print_str(attempts == 1 ? " attempt.\n" : " attempts.\n");
-
-            print_str("The number ");
-            print_uint(secret);
-            print_str(" in binary: ");
-            print_bin(secret);
-            print_ln();
-
-            break;
-        }
+static void count_worker(unsigned int start) {
+    raven_print_str("counting: ");
+    for (unsigned int i = start; i < start + 5; i++) {
+        raven_print_uint(i);
+        if (i < start + 4) raven_print_str(", ");
     }
+    raven_print_newline();
+}
 
-    raven_pause(); // inspect registers and memory before exit
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+int main(void) {
+    print_str("=== c-to-raven hart demo ===\n\n");
+
+    // ── Pattern 1: task descriptor + join ─────────────────────────────────────
+    RavenHartTask task = raven_hart_task_array(sum_worker, sum_stack, 100);
+    RavenHartHandle handle = raven_hart_task_start(&task);
+
+    print_str("main hart: waiting for sum_worker...\n");
+    handle.join(&handle);
+    print_str("main hart: sum_worker done.\n\n");
+
+    // ── Pattern 2: quick spawn + poll ─────────────────────────────────────────
+    RavenHartHandle h2 = raven_spawn_hart_array(count_worker, count_stack, 10);
+
+    print_str("main hart: count_worker running...\n");
+
+    while (!h2.is_finished(&h2)) { print_str("Spinning...");}
+
+    print_str("main hart: count_worker finished.\n");
+
+    __sys_exit(0);
     return 0;
 }

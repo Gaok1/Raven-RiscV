@@ -25,12 +25,14 @@ impl fmt::Write for StderrWriter {
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 #[doc(hidden)]
+#[unsafe(no_mangle)]
 pub fn _print(args: fmt::Arguments) {
     use fmt::Write;
     StdoutWriter.write_fmt(args).ok();
 }
 
 #[doc(hidden)]
+#[unsafe(no_mangle)]
 pub fn _eprint(args: fmt::Arguments) {
     use fmt::Write;
     StderrWriter.write_fmt(args).ok();
@@ -42,6 +44,7 @@ pub fn _eprint(args: fmt::Arguments) {
 /// full. The newline is **not** included. Returns the number of bytes written
 /// into `buf`.
 #[doc(hidden)]
+#[unsafe(no_mangle)]
 pub fn _read_line(buf: &mut [u8]) -> usize {
     let mut n = 0;
     for slot in buf.iter_mut() {
@@ -60,6 +63,7 @@ pub fn _read_line(buf: &mut [u8]) -> usize {
 
 /// Parse a signed decimal integer from one line of stdin.
 #[doc(hidden)]
+#[unsafe(no_mangle)]
 pub fn _read_int() -> i32 {
     let mut buf = [0u8; 24];
     let n = _read_line(&mut buf);
@@ -72,6 +76,7 @@ pub fn _read_int() -> i32 {
 
 /// Parse an unsigned decimal integer from one line of stdin.
 #[doc(hidden)]
+#[unsafe(no_mangle)]
 pub fn _read_uint() -> u32 {
     let mut buf = [0u8; 24];
     let n = _read_line(&mut buf);

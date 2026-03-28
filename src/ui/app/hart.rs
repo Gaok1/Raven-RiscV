@@ -103,10 +103,13 @@ pub(crate) fn step_hart_bg_inner(
         );
         if let Some(info) = commit {
             *hart.exec_counts.entry(info.pc).or_insert(0) += 1;
-            let cpi_cycles = classify_cpi_cycles(info.pc, &hart.cpu, mem, cpi);
+            let cpi_word = mem.peek32(info.pc).unwrap_or(0);
+            let cpi_cycles = classify_cpi_cycles(cpi_word, &hart.cpu, cpi);
             mem.add_instruction_cycles(cpi_cycles);
             mem.instruction_count = mem.instruction_count.saturating_add(1);
-            mem.snapshot_stats();
+            if mem.instruction_count % 32 == 0 {
+                mem.snapshot_stats();
+            }
         }
         if pipe.faulted {
             hart.faulted = true;
@@ -125,7 +128,8 @@ pub(crate) fn step_hart_bg_inner(
         return true;
     }
 
-    let cpi_cycles = classify_cpi_cycles(step_pc, &hart.cpu, mem, cpi);
+    let word = mem.peek32(step_pc).unwrap_or(0);
+    let cpi_cycles = classify_cpi_cycles(word, &hart.cpu, cpi);
 
     let alive = match falcon::exec::step(&mut hart.cpu, mem, console) {
         Ok(v) => v,
@@ -152,7 +156,9 @@ pub(crate) fn step_hart_bg_inner(
 
     mem.add_instruction_cycles(cpi_cycles);
     mem.instruction_count = mem.instruction_count.saturating_add(1);
-    mem.snapshot_stats();
+    if mem.instruction_count % 32 == 0 {
+        mem.snapshot_stats();
+    }
 
     *hart.exec_counts.entry(step_pc).or_insert(0) += 1;
 

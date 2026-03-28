@@ -58,6 +58,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
+    if app.splash_start.is_some() {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                app.splash_start = None;
+            }
+            KeyCode::Esc | KeyCode::Char('q') => return Ok(true),
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // Path input bar intercept
     if app.path_input.open {
         match key.code {
@@ -324,22 +335,36 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
         return Ok(false);
     }
 
-    // Imem label search bar intercept
+    // Imem label/address search bar intercept
     if matches!(app.tab, Tab::Run) && app.run.imem_search_open {
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
+            KeyCode::Esc => {
                 app.run.imem_search_open = false;
                 app.run.imem_search_query.clear();
+                app.run.imem_search_matches.clear();
+                app.run.imem_search_cursor = 0;
+                app.run.imem_search_match_count = 0;
+            }
+            KeyCode::Enter => {
+                // Advance to next match (wraps around); query stays open
+                let n = app.run.imem_search_matches.len();
+                if n > 0 {
+                    app.run.imem_search_cursor =
+                        (app.run.imem_search_cursor + 1) % n;
+                    let addr = app.run.imem_search_matches[app.run.imem_search_cursor];
+                    app.scroll_imem_to_addr(addr);
+                }
             }
             KeyCode::Backspace => {
                 app.run.imem_search_query.pop();
+                apply_imem_search(app);
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.run.imem_search_query.push(c);
+                apply_imem_search(app);
             }
             _ => {}
         }
-        apply_imem_search(app);
         return Ok(false);
     }
 
@@ -1513,10 +1538,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                                 }
                             }
                         } else if app.settings.selected == SETTINGS_ROW_MEM_SIZE {
-                            if let Ok(v) = app.settings.cpi_edit_buf.trim().parse::<usize>() {
+                            let raw = app.settings.cpi_edit_buf.trim().to_lowercase();
+                            let kb: Option<usize> = if let Some(n) = raw.strip_suffix("mb") {
+                                n.trim().parse::<usize>().ok().map(|v| v * 1024)
+                            } else if let Some(n) = raw.strip_suffix("kb") {
+                                n.trim().parse::<usize>().ok()
+                            } else {
+                                raw.parse::<usize>().ok()
+                            };
+                            if let Some(v) = kb {
                                 let snapped =
-                                    crate::ui::app::nearest_pow2_clamp(v.max(1), 1, 4096);
-                                let new_bytes = snapped * 1024 * 1024;
+                                    crate::ui::app::nearest_pow2_clamp(v.max(4), 4, 4 * 1024 * 1024);
+                                let new_bytes = snapped * 1024;
                                 if new_bytes != app.run.mem_size {
                                     app.ram_override = Some(new_bytes);
                                     app.restart_simulation();
@@ -1562,7 +1595,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                                 }
                             }
                         }
-                        KeyCode::Char(c) if c.is_ascii_digit() => {
+                        KeyCode::Char(c)
+                            if c.is_ascii_digit()
+                                || (app.settings.selected == SETTINGS_ROW_MEM_SIZE
+                                    && matches!(c, 'k' | 'K' | 'm' | 'M' | 'b' | 'B')) =>
+                        {
                             app.settings.cpi_edit_buf.push(c);
                         }
                         KeyCode::Backspace => {
@@ -1601,8 +1638,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                                 app.settings.cpi_edit_buf = app.max_cores.to_string();
                                 app.settings.cpi_editing = true;
                             } else if app.settings.selected == SETTINGS_ROW_MEM_SIZE {
-                                let mb = app.run.mem_size / (1024 * 1024);
-                                app.settings.cpi_edit_buf = mb.to_string();
+                                app.settings.cpi_edit_buf =
+                                    (app.run.mem_size / 1024).to_string();
                                 app.settings.cpi_editing = true;
                             } else if app.settings.selected == SETTINGS_ROW_RUN_SCOPE {
                                 app.run_scope = app.run_scope.cycle();

@@ -210,13 +210,12 @@ hart_start(worker as u32, sp, /*arg=*/1);
 - `hart_start(entry_pc, stack_ptr, arg) -> i32` — syscall 1100. Spawns a new hart at `entry_pc`. `arg` arrives in `a0`. `stack_ptr` must point to the **top** (high address) of the stack.
 - `hart_exit() -> !` — syscall 1101. Terminates only the calling hart; all other harts continue.
 
-### High-level: `spawn_hart_fn` / `spawn_hart`
+### High-level: `spawn_hart_fn` / `HartTask` / `spawn_hart`
 
 ```rust
-use raven_api::{spawn_hart_fn, spawn_hart};
+use raven_api::{spawn_hart_fn, HartTask};
 
 static mut STACK_A: [u8; 4096] = [0; 4096];
-static mut STACK_B: [u8; 8192] = [0; 8192];
 
 // Function pointer — no heap allocation
 fn worker(id: u32) -> ! {
@@ -225,23 +224,39 @@ fn worker(id: u32) -> ! {
 }
 spawn_hart_fn(worker, unsafe { &mut STACK_A }, /*arg=*/1);
 
-// Closure — boxes the closure on the heap
+// Preferred builder form
 let value = 42u32;
-spawn_hart(move || {
-    println!("closure hart got {}", value);
-    exit(0);
-}, unsafe { &mut STACK_B });
+let task = HartTask::new(
+    move || {
+        println!("closure hart got {}", value);
+    },
+);
+let handle = task.start().expect("failed to start hart");
+handle.join();
+
+// Explicit stack size in bytes
+let task = HartTask::with_stack_size(
+    move || {
+        println!("custom stack size hart");
+    },
+    16 * 1024,
+);
+let handle = task.start().expect("failed to start hart");
+handle.join();
 ```
 
 | Function | Description |
 |---|---|
 | `spawn_hart_fn(entry, stack, arg) -> i32` | Spawn from a function pointer; zero allocation |
-| `spawn_hart(closure, stack) -> i32` | Spawn from a `FnOnce() + Send` closure; heap-allocates the task |
+| `HartTask::new(closure) -> HartTask` | Build a closure-backed hart task with the default stack size |
+| `HartTask::with_stack_size(closure, bytes) -> HartTask` | Build a closure-backed hart task with an explicit stack size in bytes |
+| `HartTask::start(self) -> Result<HartHandle, i32>` | Start the task and return a join handle |
+| `HartHandle::join(self)` | Wait until the hart finishes |
+| `spawn_hart(closure, stack) -> Result<HartHandle, i32>` | Convenience wrapper when you already have a stack slice |
 
-Both compute the stack-top automatically from the slice.
-`stack` must be a `&'static mut [u8]`.
-
-> The closure passed to `spawn_hart` must never return — call `exit(code)` or `hart_exit()` before the closure ends.
+`HartTask` allocates and owns its own stack internally.
+Closure-backed tasks automatically mark themselves finished when the closure returns;
+`join()` spins until that internal completion flag is observed.
 
 ---
 

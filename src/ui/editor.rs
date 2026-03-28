@@ -446,12 +446,6 @@ impl Editor {
             self.delete_range(start, end);
         }
         self.ensure_line();
-        // Auto-indent: carry the leading whitespace of the current line.
-        let indent: String = self
-            .current_line()
-            .chars()
-            .take_while(|c| c.is_whitespace())
-            .collect();
         let (idx_bytes, rest) = {
             let line = self.current_line();
             let idx = Self::byte_at(line, self.cursor_col.min(Self::char_count(line)));
@@ -462,8 +456,8 @@ impl Editor {
             line_mut.truncate(idx_bytes);
         }
         self.cursor_row += 1;
-        self.cursor_col = indent.chars().count();
-        self.lines.insert(self.cursor_row, indent + &rest);
+        self.cursor_col = 0;
+        self.lines.insert(self.cursor_row, rest);
     }
 
     /// Toggle `;` comment on the current line (or each selected line).
@@ -787,4 +781,24 @@ fn word_right_col_inclusive(line: &str, col: usize) -> usize {
         c += 1;
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Editor;
+
+    #[test]
+    fn enter_does_not_carry_indentation_to_next_line() {
+        let mut editor = Editor::with_sample();
+        editor.lines = vec!["    addi a0, zero, 1".into()];
+        editor.cursor_row = 0;
+        editor.cursor_col = 4;
+
+        editor.enter();
+
+        assert_eq!(editor.lines[0], "    ");
+        assert_eq!(editor.lines[1], "addi a0, zero, 1");
+        assert_eq!(editor.cursor_row, 1);
+        assert_eq!(editor.cursor_col, 0);
+    }
 }
