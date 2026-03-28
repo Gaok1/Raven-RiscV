@@ -1784,6 +1784,10 @@ impl Bus for CacheController {
             line_data[offset + 3],
         ]))
     }
+
+    fn total_cycles(&self) -> u64 {
+        self.total_program_cycles()
+    }
 }
 
 impl CacheController {

@@ -26,10 +26,16 @@ use path_input_overlay::render_path_input;
 use pipeline::render_pipeline;
 use run::render_run;
 use settings::render_settings;
+use splash::render_splash;
 
 pub(crate) const HELP_BTN_W: u16 = 5;
 
 pub fn ui(f: &mut Frame, app: &App) {
+    if let Some(started) = app.splash_start {
+        render_splash(f, started, 4.0, app.run.mem_size);
+        return;
+    }
+
     // Apply app-wide dark background
     f.render_widget(
         Block::default().style(Style::default().bg(theme::BG)),

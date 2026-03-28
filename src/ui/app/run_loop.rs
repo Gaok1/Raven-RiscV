@@ -31,7 +31,14 @@ fn run_inner(
             break;
         }
 
-        match event::poll(Duration::from_millis(10)) {
+        let poll_timeout = if app.run.is_running
+            && matches!(app.run.speed, RunSpeed::Instant)
+        {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(10)
+        };
+        match event::poll(poll_timeout) {
             Ok(true) => match event::read() {
                 Ok(Event::Key(key)) => {
                     if handle_key(app, key)? {

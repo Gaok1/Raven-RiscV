@@ -123,15 +123,20 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     } else {
         Style::default().fg(theme::LABEL)
     };
-    let mem_mb = app.run.mem_size / (1024 * 1024);
+    let mem_kb = app.run.mem_size / 1024;
+    let mem_display = if mem_kb % 1024 == 0 {
+        format!("{} MB", mem_kb / 1024)
+    } else {
+        format!("{} KB", mem_kb)
+    };
     let mem_item = ListItem::new(Line::from(vec![
         Span::styled(format!("{:<20}", "  Mem Size"), label_style_mem),
         Span::raw("  "),
         Span::styled(
             if is_editing_mem {
-                format!("[ {:>4}_ MB ]", app.settings.cpi_edit_buf)
+                format!("[ {}_]", app.settings.cpi_edit_buf)
             } else {
-                format!("[ {:>4} MB ]", mem_mb)
+                format!("[ {}]", mem_display)
             },
             Style::default().fg(theme::LABEL_Y).bold(),
         ),
@@ -316,12 +321,17 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme::TEXT),
             )),
             Line::from(Span::styled(
-                "Value is in MB and must be a",
+                "Must be a power of two.",
                 Style::default().fg(theme::TEXT),
             )),
+            Line::raw(""),
             Line::from(Span::styled(
-                "power of two (1, 2, 4, … 4096 MB).",
-                Style::default().fg(theme::TEXT),
+                "Accepts: 16mb  8192kb  4096",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::from(Span::styled(
+                "Plain number = KB.",
+                Style::default().fg(theme::LABEL),
             )),
             Line::raw(""),
             Line::from(Span::styled(

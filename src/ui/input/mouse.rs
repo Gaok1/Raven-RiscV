@@ -2410,7 +2410,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     if me.row == btn_y.saturating_add(2) {
         app.settings.selected = SETTINGS_ROW_MEM_SIZE;
         app.settings.cpi_editing = true;
-        app.settings.cpi_edit_buf = (app.run.mem_size / (1024 * 1024)).to_string();
+        app.settings.cpi_edit_buf = (app.run.mem_size / 1024).to_string();
         return;
     }
 

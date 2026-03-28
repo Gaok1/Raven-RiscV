@@ -46,6 +46,12 @@ pub trait Bus {
     fn dcache_read32(&mut self, addr: u32) -> Result<u32, FalconError> {
         self.load32(addr)
     }
+
+    /// Total simulated cycles (instruction cycles + cache penalties).
+    /// CacheController overrides this; other Bus impls return 0.
+    fn total_cycles(&self) -> u64 {
+        0
+    }
 }
 
 pub struct Ram {

@@ -1,16 +1,11 @@
 use super::*;
 
 pub(super) fn classify_cpi_cycles(
-    pc: u32,
+    word: u32,
     cpu: &crate::falcon::Cpu,
-    mem: &crate::falcon::CacheController,
     cpi: &CpiConfig,
 ) -> u64 {
     use crate::falcon::instruction::Instruction::*;
-    let word = match mem.peek32(pc) {
-        Ok(w) => w,
-        Err(_) => return 1,
-    };
     match crate::falcon::decoder::decode(word) {
         Ok(
             Add { .. }

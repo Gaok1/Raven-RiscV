@@ -183,8 +183,15 @@ pub fn handle_syscall<B: Bus>(
         FALCON_READ_U32 => falcon_read_u32(cpu, mem, console),
         FALCON_READ_INT => falcon_read_int(cpu, mem, console),
         FALCON_READ_FLOAT => falcon_read_float(cpu, mem, console),
-        FALCON_GET_INSTR_COUNT | FALCON_GET_CYCLE_COUNT => {
+        FALCON_GET_INSTR_COUNT => {
             cpu.write(10, cpu.instr_count as u32);
+            cpu.write(11, (cpu.instr_count >> 32) as u32);
+            Ok(true)
+        }
+        FALCON_GET_CYCLE_COUNT => {
+            let cycles = mem.total_cycles();
+            cpu.write(10, cycles as u32);
+            cpu.write(11, (cycles >> 32) as u32);
             Ok(true)
         }
 
@@ -255,7 +262,6 @@ pub fn handle_syscall<B: Bus>(
             cpu.local_exit = true;
             Ok(false)
         }
-
         _ => {
             console.push_error(format!("Unimplemented syscall {code}"));
             Ok(false)

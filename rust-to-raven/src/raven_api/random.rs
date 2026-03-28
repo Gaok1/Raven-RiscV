@@ -3,6 +3,7 @@ use crate::raven_api::syscall::getrandom;
 // ── Raw random helpers ────────────────────────────────────────────────────────
 
 /// Return a uniformly random `u32` via `getrandom`.
+#[unsafe(no_mangle)]
 pub fn rand_u32() -> u32 {
     let mut v = 0u32;
     unsafe { getrandom(&mut v as *mut u32 as *mut u8, 4, 0) };
@@ -10,6 +11,7 @@ pub fn rand_u32() -> u32 {
 }
 
 /// Return a uniformly random byte (0–255).
+#[unsafe(no_mangle)]
 pub fn rand_u8() -> u8 {
     let mut v = 0u8;
     unsafe { getrandom(&mut v as *mut u8, 1, 0) };
@@ -17,6 +19,7 @@ pub fn rand_u8() -> u8 {
 }
 
 /// Return a random `i32` (full signed range).
+#[unsafe(no_mangle)]
 pub fn rand_i32() -> i32 {
     rand_u32() as i32
 }
@@ -24,6 +27,7 @@ pub fn rand_i32() -> i32 {
 /// Return a random `u32` in `[lo, hi)`. Returns `lo` if `hi <= lo`.
 ///
 /// Uses modulo reduction — good for teaching, not for cryptographic use.
+#[unsafe(no_mangle)]
 pub fn rand_range(lo: u32, hi: u32) -> u32 {
     if hi <= lo {
         return lo;
@@ -32,6 +36,7 @@ pub fn rand_range(lo: u32, hi: u32) -> u32 {
 }
 
 /// Return `true` or `false` with equal probability.
+#[unsafe(no_mangle)]
 pub fn rand_bool() -> bool {
     rand_u8() & 1 != 0
 }

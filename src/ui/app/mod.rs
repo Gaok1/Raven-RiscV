@@ -364,6 +364,11 @@ impl App {
                 imem_collapsed: false,
                 imem_search_open: false,
                 imem_search_query: String::new(),
+                imem_vrow_cache: std::collections::HashMap::new(),
+                labels_lower: std::collections::HashMap::new(),
+                imem_search_matches: Vec::new(),
+                imem_search_cursor: 0,
+                imem_search_match_count: 0,
                 details_collapsed: false,
                 console_height: 5,
                 hover_console_bar: false,
@@ -490,12 +495,12 @@ impl App {
             clipboard: Clipboard::new().ok(),
             last_bracketed_paste: None,
             ram_override,
-            splash_start: None,
+            splash_start: Some(Instant::now()),
             path_input: PathInput::new(),
             tutorial: TutorialState::default(),
             settings: SettingsState::default(),
             pipeline: crate::ui::pipeline::PipelineSimState::new(),
-            max_cores: 1,
+            max_cores: 4,
             selected_core: 0,
             run_scope: RunScope::AllHarts,
             next_hart_id: 1,
@@ -568,6 +573,7 @@ impl App {
                 self.editor.label_to_line = prog.label_to_line;
                 self.editor.line_to_addr = prog.line_addrs;
                 self.editor.last_ok_text = Some(prog.text.clone());
+                self.rebuild_imem_vrow_cache();
                 self.editor.last_ok_data = Some(prog.data.clone());
                 self.editor.last_ok_data_base = Some(prog.data_base);
                 self.editor.last_ok_bss_size = Some(prog.bss_size);
@@ -720,17 +726,19 @@ impl App {
             self.run.block_comments = self.editor.last_ok_block_comments.clone();
             self.run.labels = self.editor.last_ok_labels.clone();
             self.run.halt_pcs = self.editor.last_ok_halt_pcs.clone();
+            let text_len = text.len();
+            let data_len = data.len();
             self.editor.last_build_stats = Some(BuildStats {
-                instruction_count: text.len(),
-                data_bytes: data.len(),
+                instruction_count: text_len,
+                data_bytes: data_len,
             });
-
             self.editor.last_assemble_msg = Some(format!(
                 "Loaded last successful build: {} instructions, {} data bytes, {} bss bytes.",
-                text.len(),
-                data.len(),
+                text_len,
+                data_len,
                 bss_sz
             ));
+            self.rebuild_imem_vrow_cache();
             self.run.imem_scroll = 0;
             self.run.hover_imem_addr = None;
             // Reset pipeline stages so it picks up the reloaded program
@@ -821,6 +829,7 @@ impl App {
             let entry = info.entry;
             let data_base = info.data_base;
             self.editor.last_ok_text = Some(words);
+            self.rebuild_imem_vrow_cache();
             self.editor.last_ok_data = Some(Vec::new());
             self.editor.last_ok_data_base = Some(data_base);
             self.editor.last_ok_bss_size = Some(0);
@@ -1249,15 +1258,23 @@ impl App {
     }
 
     /// Visual row of an arbitrary address within the full instruction list.
+    /// O(1) — reads the pre-computed cache built by `rebuild_imem_vrow_cache`.
     pub(super) fn imem_visual_row_of_addr(&self, target: u32) -> Option<usize> {
-        if target < self.run.base_pc {
-            return None;
-        }
+        self.run.imem_vrow_cache.get(&target).copied()
+    }
+
+    /// Rebuild the addr→visual-row cache and the pre-lowercased label index.
+    /// Must be called whenever `run.labels` or `run.block_comments` change
+    /// (i.e. after every program load).
+    pub(super) fn rebuild_imem_vrow_cache(&mut self) {
+        let mut cache = std::collections::HashMap::with_capacity(
+            (self.run.mem_size / 4).min(1 << 20),
+        );
         let mut vrow = 0usize;
         let mut addr = self.run.base_pc;
         loop {
             if !self.imem_in_range(addr) {
-                return None;
+                break;
             }
             if self.run.block_comments.contains_key(&addr) {
                 vrow += 1;
@@ -1265,12 +1282,14 @@ impl App {
             if let Some(names) = self.run.labels.get(&addr) {
                 vrow += names.len();
             }
-            if addr == target {
-                return Some(vrow);
-            }
+            cache.insert(addr, vrow);
             vrow += 1;
             addr = addr.wrapping_add(4);
         }
+        self.run.imem_vrow_cache = cache;
+        self.run.labels_lower = self.run.labels.iter()
+            .map(|(&a, names)| (a, names.iter().map(|n| n.to_lowercase()).collect()))
+            .collect();
     }
 
     /// Scroll the instruction memory panel to bring `addr` near the top.
@@ -1347,7 +1366,7 @@ impl App {
                         }
                     }
                     RunSpeed::Instant => {
-                        let budget = Duration::from_millis(8);
+                        let budget = Duration::from_millis(14);
                         let start = Instant::now();
                         while self.run.is_running && start.elapsed() < budget {
                             self.single_step();
@@ -1359,6 +1378,19 @@ impl App {
         // Scroll instruction list to follow PC (skipped in Instant to avoid pointless churn)
         if self.run.is_running && !matches!(self.run.speed, RunSpeed::Instant) {
             self.ensure_pc_visible_in_imem();
+        }
+        // Auto-follow SP/HB in Stack and Heap views — runs every tick so it works
+        // regardless of execution path (sequential or pipeline).
+        match self.run.mem_region {
+            MemRegion::Stack => {
+                let sp = self.run.cpu.x[2];
+                self.run.mem_view_addr = sp & !(self.run.mem_view_bytes - 1);
+            }
+            MemRegion::Heap => {
+                let hb = self.run.cpu.heap_break;
+                self.run.mem_view_addr = hb & !(self.run.mem_view_bytes - 1);
+            }
+            _ => {}
         }
         if matches!(self.tab, Tab::Editor) && self.editor.dirty {
             if let Some(t) = self.editor.last_edit_at {
@@ -1501,6 +1533,12 @@ impl App {
         } else if !matches!(lifecycle, HartLifecycle::Running) && !self.any_running_harts() {
             self.run.is_running = false;
         }
+
+        // If this hart blocked on keyboard input, pause the entire run loop.
+        // The keyboard handler resumes is_running when Enter is pressed.
+        if self.console.reading {
+            self.run.is_running = false;
+        }
     }
 
     pub(crate) fn can_start_run(&self) -> bool {
@@ -1592,11 +1630,13 @@ impl App {
             self.run.prev_f = self.run.cpu.f;
             self.run.prev_pc = info.pc;
 
-            let cpi_cycles =
-                classify_cpi_cycles(info.pc, &self.run.cpu, &self.run.mem, &self.run.cpi_config);
+            let cpi_word = self.run.mem.peek32(info.pc).unwrap_or(0);
+            let cpi_cycles = classify_cpi_cycles(cpi_word, &self.run.cpu, &self.run.cpi_config);
             self.run.mem.add_instruction_cycles(cpi_cycles);
             self.run.mem.instruction_count = self.run.mem.instruction_count.saturating_add(1);
-            self.run.mem.snapshot_stats();
+            if self.run.mem.instruction_count % 32 == 0 {
+                self.run.mem.snapshot_stats();
+            }
             true
         } else {
             false
@@ -1632,6 +1672,11 @@ impl App {
         // CpiConfig is ~80 bytes; cheap to clone once per round.
         let cpi = self.run.cpi_config.clone();
 
+        // In run mode is_running starts true; in single-step mode it starts false.
+        // We only want to abort the round early when a hart *causes* a stop during
+        // this round — not because is_running was already false before we began.
+        let was_running = self.run.is_running;
+
         for core_idx in 0..self.max_cores {
             if core_idx == original {
                 // ── Selected core: already live in self.run — no sync needed ─
@@ -1664,11 +1709,10 @@ impl App {
                 let _ = faulted; // lifecycle determined inside finalize_bg_hart via hart.faulted
                 self.finalize_bg_hart(core_idx, bp_hit);
             }
-            // Check AFTER stepping: if a hart caused a global exit mid-round, stop
-            // before stepping the next core. Using post-check (not pre-check) ensures
-            // this function works in both single-step mode (is_running=false initially)
-            // and run mode (is_running starts true, may become false during the round).
-            if !self.run.is_running {
+            // Only abort early if a hart *caused* a stop during this round.
+            // When single-stepping, is_running is false from the start — that
+            // must not be treated as a mid-round exit signal.
+            if was_running && !self.run.is_running {
                 break;
             }
         }
@@ -1702,31 +1746,23 @@ impl App {
     }
 
     pub(super) fn single_step(&mut self) {
-        let all_harts_scope =
-            self.max_cores > 1 && !matches!(self.run_scope, RunScope::FocusedHart);
-
         if self.core_status(self.selected_core) == HartLifecycle::Paused {
-            // A paused hart only resumes after explicit user interaction on the
-            // selected core, even in AllHarts scope.
             self.resume_selected_hart();
-            if !all_harts_scope {
-                self.step_selected_core_once();
-                if !self.run.is_running {
-                    self.ensure_pc_visible_in_imem();
-                }
-                return;
-            }
         }
 
         if self.max_cores > 1 {
-            let focused_run = matches!(self.run_scope, RunScope::FocusedHart)
-                && !matches!(self.tab, Tab::Pipeline);
-            if focused_run && self.pipeline.enabled {
+            let all_scope = matches!(self.run_scope, RunScope::AllHarts);
+
+            if self.pipeline.enabled && !matches!(self.tab, Tab::Pipeline) {
                 for _ in 0..200 {
                     if self.core_status(self.selected_core) != HartLifecycle::Running {
                         break;
                     }
-                    let committed = self.step_selected_core_once();
+                    let committed = if all_scope {
+                        self.step_all_cores_once()
+                    } else {
+                        self.step_selected_core_once()
+                    };
                     if committed || self.core_status(self.selected_core) != HartLifecycle::Running {
                         break;
                     }
@@ -1734,30 +1770,13 @@ impl App {
                 if !self.run.is_running {
                     self.ensure_pc_visible_in_imem();
                 }
-            } else if focused_run {
-                self.step_selected_core_once();
-            } else if self.pipeline.enabled && !matches!(self.tab, Tab::Pipeline) {
-                if self.core_status(self.selected_core) != HartLifecycle::Running {
-                    self.step_all_cores_once();
-                    if !self.run.is_running {
-                        self.ensure_pc_visible_in_imem();
-                    }
-                    return;
-                }
-                for _ in 0..200 {
-                    if self.core_status(self.selected_core) != HartLifecycle::Running {
-                        break;
-                    }
-                    let committed = self.step_all_cores_once();
-                    if committed || self.core_status(self.selected_core) != HartLifecycle::Running {
-                        break;
-                    }
-                }
-                if !self.run.is_running {
-                    self.ensure_pc_visible_in_imem();
-                }
-            } else {
+            } else if all_scope {
                 self.step_all_cores_once();
+            } else {
+                self.step_selected_core_once();
+            }
+            if !self.run.is_running {
+                self.ensure_pc_visible_in_imem();
             }
             return;
         }
@@ -1786,8 +1805,12 @@ impl App {
     }
 
     fn single_step_selected_sequential(&mut self) {
-        self.run.prev_x = self.run.cpu.x;
-        self.run.prev_f = self.run.cpu.f;
+        let go_mode = matches!(self.run.speed, RunSpeed::Instant);
+        // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.
+        if !go_mode {
+            self.run.prev_x = self.run.cpu.x;
+            self.run.prev_f = self.run.cpu.f;
+        }
         self.run.prev_pc = self.run.cpu.pc;
         let step_pc = self.run.cpu.pc;
 
@@ -1801,15 +1824,11 @@ impl App {
             return;
         }
 
-        // Classify instruction BEFORE stepping (registers still hold pre-step values)
-        let cpi_cycles =
-            classify_cpi_cycles(step_pc, &self.run.cpu, &self.run.mem, &self.run.cpi_config);
-        let mem_access = self
-            .run
-            .mem
-            .peek32(step_pc)
-            .ok()
-            .and_then(|w| classify_mem_access(w, &self.run.cpu));
+        // Fetch word once — reused for CPI, mem-access tracking, and disasm below.
+        let word = self.run.mem.peek32(step_pc).unwrap_or(0);
+        let cpi_cycles = classify_cpi_cycles(word, &self.run.cpu, &self.run.cpi_config);
+        // In GO mode mem-access tracking is skipped (not visible while running).
+        let mem_access = if go_mode { None } else { classify_mem_access(word, &self.run.cpu) };
 
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
@@ -1841,64 +1860,60 @@ impl App {
             }
         };
         self.run.mem.add_instruction_cycles(cpi_cycles);
-        self.run.mem.snapshot_stats();
+        if self.run.mem.instruction_count % 32 == 0 {
+            self.run.mem.snapshot_stats();
+        }
 
-        // Track execution statistics
+        // Track execution counts (heatmap) — always kept.
         *self.run.exec_counts.entry(step_pc).or_insert(0) += 1;
-        let disasm = {
-            let word = self.run.mem.peek32(step_pc).unwrap_or(0);
-            match falcon::decoder::decode(word) {
+
+        // In GO mode skip all display-only instrumentation: exec_trace formatting,
+        // mem_access_log, and reg/float age tracking. None of these are visible
+        // while the simulation is running at full speed.
+        if !go_mode {
+            let disasm = match falcon::decoder::decode(word) {
                 Ok(instr) => format!("{instr:?}"),
                 Err(_) => format!("0x{word:08x}"),
+            };
+            self.run.exec_trace.push_back((step_pc, disasm));
+            if self.run.exec_trace.len() > 200 {
+                self.run.exec_trace.pop_front();
             }
-        };
-        self.run.exec_trace.push_back((step_pc, disasm));
-        if self.run.exec_trace.len() > 200 {
-            self.run.exec_trace.pop_front();
-        }
 
-        // Update memory access log (age existing entries, insert new if load/store)
-        for entry in &mut self.run.mem_access_log {
-            entry.2 = entry.2.saturating_add(1);
-        }
-        self.run.mem_access_log.retain(|e| e.2 < 3);
-        if let Some((addr, size, _)) = mem_access {
-            self.run.mem_access_log.push((addr, size, 0));
-        }
+            // Update memory access log (age existing entries, insert new if load/store)
+            for entry in &mut self.run.mem_access_log {
+                entry.2 = entry.2.saturating_add(1);
+            }
+            self.run.mem_access_log.retain(|e| e.2 < 3);
+            if let Some((addr, size, _)) = mem_access {
+                self.run.mem_access_log.push((addr, size, 0));
+            }
 
-        // Update register age (fading highlight) and track last write PC
-        for i in 0..32usize {
-            if self.run.cpu.x[i] != self.run.prev_x[i] {
-                self.run.reg_age[i] = 0;
-                self.run.reg_last_write_pc[i] = Some(step_pc);
-            } else {
-                self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
+            // Update register age (fading highlight) and track last write PC
+            for i in 0..32usize {
+                if self.run.cpu.x[i] != self.run.prev_x[i] {
+                    self.run.reg_age[i] = 0;
+                    self.run.reg_last_write_pc[i] = Some(step_pc);
+                } else {
+                    self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
+                }
+            }
+            // Update float register age
+            for i in 0..32usize {
+                if self.run.cpu.f[i] != self.run.prev_f[i] {
+                    self.run.f_age[i] = 0;
+                    self.run.f_last_write_pc[i] = Some(step_pc);
+                } else {
+                    self.run.f_age[i] = self.run.f_age[i].saturating_add(1).min(8);
+                }
             }
         }
-        // Update float register age
-        for i in 0..32usize {
-            if self.run.cpu.f[i] != self.run.prev_f[i] {
-                self.run.f_age[i] = 0;
-                self.run.f_last_write_pc[i] = Some(step_pc);
-            } else {
-                self.run.f_age[i] = self.run.f_age[i].saturating_add(1).min(8);
-            }
-        }
-        // Auto-follow SP when Stack region is active in the memory view
-        if self.run.mem_region == crate::ui::app::MemRegion::Stack {
-            let sp = self.run.cpu.x[2];
-            self.run.mem_view_addr = sp & !(self.run.mem_view_bytes - 1);
-        }
-        // Auto-follow last memory R/W when Access region is active
+        // Auto-follow last memory R/W when Access region is active.
+        // Stack and Heap follow is handled in tick() so it covers all execution paths.
         if self.run.mem_region == crate::ui::app::MemRegion::Access {
             if let Some((addr, _, _)) = mem_access {
                 self.run.mem_view_addr = addr & !(self.run.mem_view_bytes - 1);
             }
-        }
-        // Auto-follow heap_break (sbrk pointer) when Heap region is active
-        if self.run.mem_region == crate::ui::app::MemRegion::Heap {
-            let hb = self.run.cpu.heap_break;
-            self.run.mem_view_addr = hb & !(self.run.mem_view_bytes - 1);
         }
         // Dyn view: remember last access; update mem_view_addr for memory sub-view
         self.run.dyn_mem_access = mem_access;
@@ -1921,6 +1936,10 @@ impl App {
                 self.run.faulted = self.run.cpu.exit_code.is_none()
                     && !self.run.cpu.ebreak_hit
                     && !self.run.cpu.local_exit;
+            } else {
+                // Hart is blocking on keyboard input — pause the run loop.
+                // The keyboard handler resumes is_running when Enter is pressed.
+                self.run.is_running = false;
             }
         }
         // Keep PC visible (single-step case — running case handled in tick())

@@ -2,7 +2,7 @@
 
 A bare-metal C project that compiles to a RISC-V ELF binary ready to run in the [Raven](https://github.com/Gaok1/Raven-RiscV) simulator.
 
-No OS. No libc. `raven.h` is the only runtime you need — it gives you syscalls, I/O, strings, memory utilities, a heap allocator, and simulator control, all as `static inline` functions.
+No OS. No libc. `raven.h` is the public runtime surface — it gives you the intended syscalls, I/O, strings, memory utilities, heap allocator, random, hart, and simulator helpers as `static inline` functions.
 
 ---
 
@@ -10,7 +10,12 @@ No OS. No libc. `raven.h` is the only runtime you need — it gives you syscalls
 
 | File | Purpose |
 |------|---------|
-| `raven.h` | The entire runtime: syscalls, I/O, strings, memory, malloc, assert |
+| `raven.h` | Public API surface intended for normal user code |
+| `internal/raven_internal.h` | Internal allocator state and private structs |
+| `internal/raven_syscall.h` | Internal syscall/simulator-control implementation |
+| `internal/raven_libc.h` | Internal libc-like helpers, random, text I/O, panic |
+| `internal/raven_heap.h` | Internal allocator implementation |
+| `internal/raven_teaching.h` | Internal Raven teaching wrappers and hart helpers |
 | `crt0.S` | Minimal startup: calls `main()`, forwards return value to `exit` |
 | `main.c` | Example: malloc/free, string ops, sorting, raven_pause |
 | `float_demo.c` | Example: RV32F hardware float — sum, dot product, basic arithmetic |
@@ -64,25 +69,27 @@ pacman -S mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld
 
 ## `raven.h` API reference
 
+`raven.h` is the curated public surface. The implementation headers live under `internal/`, so user code only needs to include one file.
+
 ### Syscall wrappers — Linux ABI
 
 Raw `ecall` wrappers matching the Linux RISC-V ABI (`a7` = syscall number, `a0`..`a5` = args, `a0` = return).
 
 | Function | Syscall | Description |
 |----------|---------|-------------|
-| `sys_read(fd, buf, len)` | 63 | Read up to `len` bytes; `fd=STDIN` only |
-| `sys_write(fd, buf, len)` | 64 | Write `len` bytes; `fd=STDOUT` or `STDERR` |
-| `sys_exit(code)` | 93 | Terminate (no return) |
-| `sys_exit_group(code)` | 94 | Alias of `sys_exit` (single-threaded) |
-| `sys_getpid()` | 172 | Always returns `1` |
-| `sys_getuid()` | 174 | Always returns `0` |
-| `sys_getgid()` | 176 | Always returns `0` |
-| `sys_brk(addr)` | 214 | Advance heap break; pass `NULL` to query |
-| `sys_munmap(addr, len)` | 215 | No-op; always returns `0` |
-| `sys_mmap(addr, len, prot, flags, fd, offset)` | 222 | Anonymous heap alloc (`MAP_ANONYMOUS\|MAP_PRIVATE`, `fd=-1`) |
-| `sys_getrandom(buf, len, flags)` | 278 | Fill buffer with cryptographic random bytes |
-| `sys_clock_gettime(clockid, tp)` | 403 | Fill `raven_timespec*` with instruction-based time |
-| `sys_writev(fd, iov, iovcnt)` | 66 | Scatter-write from `raven_iovec[]` array |
+| `_sys_read(fd, buf, len)` | 63 | Low-level read wrapper; `fd=STDIN` only |
+| `_sys_write(fd, buf, len)` | 64 | Low-level write wrapper; `fd=STDOUT` or `STDERR` |
+| `_sys_exit(code)` | 93 | Low-level terminate wrapper (no return) |
+| `_sys_exit_group(code)` | 94 | Alias of `_sys_exit` (single-threaded) |
+| `_sys_getpid()` | 172 | Always returns `1` |
+| `_sys_getuid()` | 174 | Always returns `0` |
+| `_sys_getgid()` | 176 | Always returns `0` |
+| `_sys_brk(addr)` | 214 | Advance heap break; pass `NULL` to query |
+| `_sys_munmap(addr, len)` | 215 | No-op; always returns `0` |
+| `_sys_mmap(addr, len, prot, flags, fd, offset)` | 222 | Anonymous heap alloc (`MAP_ANONYMOUS\|MAP_PRIVATE`, `fd=-1`) |
+| `_sys_getrandom(buf, len, flags)` | 278 | Fill buffer with cryptographic random bytes |
+| `_sys_clock_gettime(clockid, tp)` | 403 | Fill `raven_timespec*` with instruction-based time |
+| `_sys_writev(fd, iov, iovcnt)` | 66 | Scatter-write from `raven_iovec[]` array |
 
 **Structs:**
 ```c
@@ -99,7 +106,7 @@ Note: only anonymous mappings (`MAP_ANONYMOUS`, `fd=-1`) are supported. `munmap`
 |----------|-------------|
 | `raven_pause()` | Emit `ebreak` — Raven pauses so you can inspect registers and memory |
 
-### I/O helpers (C implementation via `sys_write`)
+### I/O helpers (C implementation via `_sys_write`)
 
 | Function | Description |
 |----------|-------------|
@@ -144,7 +151,7 @@ Note: only anonymous mappings (`MAP_ANONYMOUS`, `fd=-1`) are supported. `munmap`
 
 ### Random utilities
 
-Backed by `sys_getrandom` — cryptographic quality, not a PRNG.
+Backed by `_sys_getrandom` — cryptographic quality, not a PRNG.
 
 | Function | Description |
 |----------|-------------|
@@ -192,41 +199,51 @@ Change the heap size before including the header:
 
 > **Tip:** single-step with Raven's **[Dyn]** view active (`v` until `DYN` shows in the status bar). Every `sw` that writes a malloc header will flip the sidebar to show exactly what was written in RAM and where.
 
-### Falcon teaching extensions (syscall-based shortcuts)
+### Raven teaching extensions (syscall-based shortcuts)
 
 Single-ecall wrappers — faster than the C I/O helpers above for simple programs.
 Useful when you want minimal instruction count overhead.
 
+The API uses the `raven_*` prefix to match `rust-to-raven`. The old `falcon_*` names were removed.
+
 | Function | Syscall | Description |
 |----------|---------|-------------|
-| `falcon_print_int(n)` | 1000 | Print signed 32-bit integer (no newline) |
-| `falcon_print_str(s)` | 1001 | Print NUL-terminated string (no newline) |
-| `falcon_println_str(s)` | 1002 | Print NUL-terminated string + newline |
-| `falcon_read_line(buf)` | 1003 | Read console line into `buf` (NUL-terminated, no newline) |
-| `falcon_print_uint(n)` | 1004 | Print unsigned 32-bit integer (no newline) |
-| `falcon_print_hex(n)` | 1005 | Print as hex, e.g. `0xDEADBEEF` (no newline) |
-| `falcon_print_char(c)` | 1006 | Print a single ASCII character |
-| `falcon_print_newline()` | 1008 | Print a newline |
-| `falcon_read_u8(dst)` | 1010 | Read decimal/hex from stdin → store as `u8` at `*dst` |
-| `falcon_read_u16(dst)` | 1011 | Read decimal/hex from stdin → store as `u16` at `*dst` |
-| `falcon_read_u32(dst)` | 1012 | Read decimal/hex from stdin → store as `u32` at `*dst` |
-| `falcon_read_int(dst)` | 1013 | Read signed integer (accepts `-`) → store as `int` at `*dst` |
-| `falcon_read_float(dst)` | 1014 | Read float from stdin → store as `float` at `*dst` |
-| `falcon_print_float(v)` | 1015 | Print `float` value (up to 6 significant digits, no newline) |
-| `falcon_get_instr_count()` | 1030 | Return instructions executed since start (low 32 bits) |
-| `falcon_get_cycle_count()` | 1031 | Alias of `falcon_get_instr_count` |
-| `falcon_memset(dst, byte, len)` | 1050 | Fill `len` bytes at `dst` with `byte` (via simulator) |
-| `falcon_memcpy(dst, src, len)` | 1051 | Copy `len` bytes from `src` to `dst` (via simulator) |
-| `falcon_strlen(s)` | 1052 | Return length of NUL-terminated string (via simulator) |
-| `falcon_strcmp(s1, s2)` | 1053 | Compare strings; returns `<0` / `0` / `>0` |
+| `raven_print_int(n)` | 1000 | Print signed 32-bit integer (no newline) |
+| `raven_print_str(s)` | 1001 | Print NUL-terminated string (no newline) |
+| `raven_println_str(s)` | 1002 | Print NUL-terminated string + newline |
+| `raven_read_line(buf)` | 1003 | Read console line into `buf` (NUL-terminated, no newline) |
+| `raven_print_uint(n)` | 1004 | Print unsigned 32-bit integer (no newline) |
+| `raven_print_hex(n)` | 1005 | Print as hex, e.g. `0xDEADBEEF` (no newline) |
+| `raven_print_char(c)` | 1006 | Print a single ASCII character |
+| `raven_print_newline()` | 1008 | Print a newline |
+| `raven_read_u8(dst)` | 1010 | Read decimal/hex from stdin → store as `u8` at `*dst` |
+| `raven_read_u16(dst)` | 1011 | Read decimal/hex from stdin → store as `u16` at `*dst` |
+| `raven_read_u32(dst)` | 1012 | Read decimal/hex from stdin → store as `u32` at `*dst` |
+| `raven_read_int(dst)` | 1013 | Read signed integer (accepts `-`) → store as `int` at `*dst` |
+| `raven_read_float(dst)` | 1014 | Read float from stdin → store as `float` at `*dst` |
+| `raven_print_float(v)` | 1015 | Print `float` value (up to 6 significant digits, no newline) |
+| `raven_get_instr_count() -> raven_u64` | 1030 | Return instructions executed since start (64-bit) |
+| `raven_get_cycle_count() -> raven_u64` | 1031 | Return simulated cycle count (64-bit) |
+| `raven_get_instr_count32()` | 1030 | Low 32 bits compatibility helper |
+| `raven_get_cycle_count32()` | 1031 | Low 32 bits compatibility helper |
+| `raven_memset(dst, byte, len)` | 1050 | Fill `len` bytes at `dst` with `byte` (via simulator) |
+| `raven_memcpy(dst, src, len)` | 1051 | Copy `len` bytes from `src` to `dst` (via simulator) |
+| `raven_strlen(s)` | 1052 | Return length of NUL-terminated string (via simulator) |
+| `raven_strcmp(s1, s2)` | 1053 | Compare strings; returns `<0` / `0` / `>0` |
+| `raven_spawn_hart(entry, stack_base, stack_size, arg)` | 1100 | Typed helper that computes the stack top |
+| `raven_hart_task(entry, stack_base, stack_size, arg)` | helper | Build a `RavenHartTask` value |
+| `raven_hart_task_start(task)` | helper | Start a previously described hart task |
+| `raven_stack_top(stack_base, stack_size)` | helper | Compute the top address of a stack region |
+| `raven_hart_task_array(fn_ptr, stack_arr, arg)` | macro | Build a task from a stack array |
+| `raven_spawn_hart_array(fn_ptr, stack_arr, arg)` | macro | Spawn directly from a stack array |
 
 **Measuring algorithm cost:**
 ```c
-unsigned int t0 = falcon_get_instr_count();
+unsigned int t0 = raven_get_instr_count32();
 bubble_sort(arr, n);
-unsigned int cost = falcon_get_instr_count() - t0;
-falcon_print_uint(cost);
-falcon_println_str(" instructions");
+unsigned int cost = raven_get_instr_count32() - t0;
+raven_print_uint(cost);
+raven_println_str(" instructions");
 ```
 
 ---

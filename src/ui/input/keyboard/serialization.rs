@@ -38,11 +38,11 @@ pub(super) fn serialize_rcfg(
     cpi: &CpiConfig,
     cache_enabled: bool,
     run_scope: RunScope,
-    mem_mb: usize,
+    mem_kb: usize,
 ) -> String {
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!("cache_enabled={}\n", cache_enabled));
-    s.push_str(&format!("mem_mb={}\n", mem_mb));
+    s.push_str(&format!("mem_kb={}\n", mem_kb));
     s.push_str(&format!(
         "run_scope={}\n",
         match run_scope {
@@ -127,10 +127,17 @@ pub(super) fn parse_rcfg(text: &str) -> Result<(CpiConfig, bool, RunScope, Optio
         "focus" | "focused" => RunScope::FocusedHart,
         other => return Err(format!("invalid run_scope: {other}")),
     };
-    let mem_bytes = map.get("mem_mb").and_then(|v| v.parse::<usize>().ok()).map(|mb| {
+    let mem_bytes = if let Some(kb) = map.get("mem_kb").and_then(|v| v.parse::<usize>().ok()) {
+        // Current format: value in KB
+        let snapped = crate::ui::app::nearest_pow2_clamp(kb.max(4), 4, 4 * 1024 * 1024);
+        Some(snapped * 1024)
+    } else if let Some(mb) = map.get("mem_mb").and_then(|v| v.parse::<usize>().ok()) {
+        // Legacy format: value in MB (backward compat)
         let snapped = crate::ui::app::nearest_pow2_clamp(mb.max(1), 1, 4096);
-        snapped * 1024 * 1024
-    });
+        Some(snapped * 1024 * 1024)
+    } else {
+        None
+    };
     Ok((cpi, cache_enabled, run_scope, mem_bytes))
 }
 
@@ -419,7 +426,7 @@ pub(super) fn do_export_rcfg(app: &mut App) {
         &app.run.cpi_config,
         app.run.cache_enabled,
         app.run_scope,
-        app.run.mem_size / (1024 * 1024),
+        app.run.mem_size / 1024,
     );
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Sim Config", &["rcfg"])
@@ -798,22 +805,49 @@ pub(super) fn serialize_results_csv(snap: &CacheResultsSnapshot, windows: &[Cach
 pub(super) fn apply_imem_search(app: &mut App) {
     let q = app.run.imem_search_query.trim().to_lowercase();
     if q.is_empty() {
+        app.run.imem_search_matches.clear();
+        app.run.imem_search_cursor = 0;
+        app.run.imem_search_match_count = 0;
         return;
     }
-    let mut matches: Vec<u32> = app
-        .run
-        .labels
-        .iter()
-        .filter(|(addr, labels)| {
-            app.imem_visual_row_of_addr(**addr).is_some()
-                && labels.iter().any(|l| l.to_lowercase().contains(&q))
-        })
-        .map(|(&addr, _)| addr)
-        .collect();
-    matches.sort();
+
+    let matches: Vec<u32> = if q.starts_with("0x") {
+        // Address lookup: parse hex, check if it's within the loaded program
+        let hex = q.trim_start_matches("0x");
+        if let Ok(addr) = u32::from_str_radix(hex, 16) {
+            // Align to 4 bytes (instructions are word-aligned)
+            let addr = addr & !3;
+            if app.run.imem_vrow_cache.contains_key(&addr) {
+                vec![addr]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        let vrow_cache = &app.run.imem_vrow_cache;
+        let mut v: Vec<u32> = app
+            .run
+            .labels_lower
+            .iter()
+            .filter(|(addr, labels_lc)| {
+                vrow_cache.contains_key(*addr)
+                    && labels_lc.iter().any(|l| l.contains(&q))
+            })
+            .map(|(&addr, _)| addr)
+            .collect();
+        v.sort();
+        v
+    };
+
+    app.run.imem_search_match_count = matches.len();
+    // Scroll to first match; cursor is reset to 0 on every query change
     if let Some(&addr) = matches.first() {
         app.scroll_imem_to_addr(addr);
     }
+    app.run.imem_search_cursor = 0;
+    app.run.imem_search_matches = matches;
 }
 
 pub(super) fn apply_mem_search(app: &mut App) {
@@ -1151,7 +1185,7 @@ pub(super) fn dispatch_path_input(app: &mut App, action: PathInputAction, path: 
         &app.run.cpi_config,
         app.run.cache_enabled,
         app.run_scope,
-        app.run.mem_size / (1024 * 1024),
+        app.run.mem_size / 1024,
     );
             match std::fs::write(&path, &text) {
                 Ok(()) => {

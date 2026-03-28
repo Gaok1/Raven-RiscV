@@ -36,7 +36,7 @@ pub(crate) enum RunSpeed {
     X4,
     /// ~800 steps/sec — very fast
     X8,
-    /// Time-budgeted bulk (8 ms/frame) — effectively instant
+    /// Time-budgeted bulk — effectively instant
     Instant,
 }
 
@@ -177,6 +177,16 @@ pub(crate) struct RunState {
     pub(crate) imem_collapsed: bool,
     pub(crate) imem_search_open: bool,
     pub(crate) imem_search_query: String,
+    /// addr → visual row: pre-computed at load, replaces O(N) scan with O(1) lookup.
+    pub(crate) imem_vrow_cache: std::collections::HashMap<u32, usize>,
+    /// Pre-lowercased label names: avoids per-search String allocation.
+    pub(crate) labels_lower: std::collections::HashMap<u32, Vec<String>>,
+    /// Sorted list of matching addresses from the last apply_imem_search call.
+    pub(crate) imem_search_matches: Vec<u32>,
+    /// Index into imem_search_matches for the currently highlighted match.
+    pub(crate) imem_search_cursor: usize,
+    /// Match count from the last apply_imem_search call; read by the renderer.
+    pub(crate) imem_search_match_count: usize,
 
     // Details panel (collapsible)
     pub(crate) details_collapsed: bool,

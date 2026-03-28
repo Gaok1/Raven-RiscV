@@ -361,6 +361,48 @@ fn all_harts_step_does_not_auto_resume_non_selected_ebreak_hart() {
 }
 
 #[test]
+fn all_harts_step_on_selected_secondary_only_advances_selected_hart() {
+    let mut app = App::new(None);
+    app.max_cores = 2;
+    app.run_scope = RunScope::AllHarts;
+    load_program(
+        &mut app,
+        &[
+            ".text",
+            ".globl _start",
+            "_start:",
+            "addi a0, zero, 1",
+            "halt",
+            "worker:",
+            "addi a1, zero, 9",
+            "halt",
+        ],
+    );
+    app.rebuild_harts_for_debug();
+
+    let worker_pc = app
+        .run
+        .labels
+        .iter()
+        .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr))
+        .expect("worker label present");
+    app.harts[1].hart_id = Some(1);
+    app.harts[1].lifecycle = HartLifecycle::Running;
+    app.harts[1].cpu.pc = worker_pc;
+    app.harts[1].prev_pc = worker_pc;
+
+    let main_pc_before = app.harts[0].cpu.pc;
+
+    app.switch_selected_core(1);
+    app.single_step();
+    app.sync_selected_core_to_runtime();
+
+    assert_eq!(app.harts[0].cpu.pc, main_pc_before);
+    assert_eq!(app.harts[1].cpu.x[11], 9);
+    assert_eq!(app.harts[1].cpu.pc, worker_pc.wrapping_add(4));
+}
+
+#[test]
 fn all_harts_run_cannot_start_from_non_selected_paused_hart() {
     let mut app = App::new(None);
     app.max_cores = 2;
