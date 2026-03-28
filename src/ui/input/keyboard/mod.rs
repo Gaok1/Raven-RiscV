@@ -1563,14 +1563,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> io::Result<bool> {
                             }
                         }
                         KeyCode::Char(c) if c.is_ascii_digit() => {
-                            if app.settings.selected == SETTINGS_ROW_MAX_CORES
-                                || app.settings.selected == SETTINGS_ROW_MEM_SIZE
-                            {
-                                app.settings.cpi_edit_buf.clear();
-                                app.settings.cpi_edit_buf.push(c);
-                            } else {
-                                app.settings.cpi_edit_buf.push(c);
-                            }
+                            app.settings.cpi_edit_buf.push(c);
                         }
                         KeyCode::Backspace => {
                             app.settings.cpi_edit_buf.pop();
