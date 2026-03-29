@@ -1346,6 +1346,21 @@ impl CacheController {
             self.extra_levels[from_level].stats.hits += 1;
             self.extra_levels[from_level].stats.total_cycles += level_tag_search;
             self.extra_levels[from_level].sets[idx].touch(way, level_replacement);
+            // When this level's line is smaller than needed_size (L2 < L1 line size),
+            // fetch the remainder from the same level recursively.
+            if data.len() < needed_size {
+                let mut result = data;
+                while result.len() < needed_size {
+                    let next_addr = addr.wrapping_add(result.len() as u32);
+                    let chunk =
+                        self.fetch_line(next_addr, needed_size - result.len(), from_level)?;
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    result.extend_from_slice(&chunk);
+                }
+                return Ok(result);
+            }
             return Ok(data);
         }
 
@@ -1401,9 +1416,20 @@ impl CacheController {
             level_replacement,
         );
 
-        // Return only the needed_size bytes the caller asked for
+        // Return only the needed_size bytes the caller asked for.
+        // When this level's line is smaller than needed_size (L2 < L1 line size),
+        // fetch the remainder from the same level recursively.
         let end = (byte_offset + needed_size).min(line_data.len());
-        Ok(line_data[byte_offset..end].to_vec())
+        let mut result = line_data[byte_offset..end].to_vec();
+        while result.len() < needed_size {
+            let next_addr = addr.wrapping_add(result.len() as u32);
+            let chunk = self.fetch_line(next_addr, needed_size - result.len(), from_level)?;
+            if chunk.is_empty() {
+                break;
+            }
+            result.extend_from_slice(&chunk);
+        }
+        Ok(result)
     }
 
     pub fn overall_cpi(&self) -> f64 {

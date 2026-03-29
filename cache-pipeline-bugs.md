@@ -145,3 +145,25 @@ What happens:
 - `CacheConfig` exposes `inclusion: InclusionPolicy`.
 - Docs describe `Inclusive` and `Exclusive` as real hierarchy behaviors.
 - The cache implementation never branches on `config.inclusion`.
+
+## ✅ 10. `fetch_line()` hit path can return fewer bytes than `needed_size`
+
+**FIXED** — both the hit path and the miss-path return now loop to collect remaining bytes
+from the same level when this level's line is smaller than `needed_size`.
+
+Files:
+- `src/falcon/cache.rs:1343` (hit path)
+- `src/falcon/cache.rs:1420` (miss path return)
+
+What happens:
+- Hit path: `line_data[byte_offset..end]` where `end = (byte_offset + needed_size).min(line_data.len())`.
+  When an extra level has smaller lines than L1 (e.g., L2 line = 8 B, L1 line = 16 B),
+  `byte_offset = 0` and `end = 8`, returning only 8 bytes while the caller expects 16.
+- Miss path return: same clamped slice on `line_data` which was filled to `level_line_size` bytes.
+- Callers (`fetch32`, `dcache_read8/16/32`) index into the returned vector by offset,
+  causing an out-of-bounds panic when the vector is shorter than expected.
+
+Why this is a bug:
+- `fetch_line` documents "Returns a Vec<u8> of length `needed_size`"; the hit and miss-return
+  paths violated this contract for any config where a lower level has smaller cache lines.
+- Panics are immediate and silent data corruption is possible before the panic.
