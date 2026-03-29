@@ -221,6 +221,7 @@ fn parse_sections(
     // ── Find .symtab section ──────────────────────────────────────────────
     const SHT_SYMTAB: u32 = 2;
     const SHT_STRTAB: u32 = 3;
+    const STT_NOTYPE: u8 = 0; // plain assembly labels — no type annotation
     const STT_OBJECT: u8 = 1;
     const STT_FUNC: u8 = 2;
 
@@ -250,7 +251,8 @@ fn parse_sections(
                 let st_value = u32::from_le_bytes(sym_data[o + 4..o + 8].try_into().unwrap());
                 let st_info = sym_data[o + 12];
                 let sym_type = st_info & 0x0F;
-                if sym_type != STT_FUNC && sym_type != STT_OBJECT {
+                // Include STT_NOTYPE (plain asm labels), STT_OBJECT, STT_FUNC
+                if sym_type != STT_FUNC && sym_type != STT_OBJECT && sym_type != STT_NOTYPE {
                     continue;
                 }
                 if st_value == 0 {

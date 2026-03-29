@@ -1654,14 +1654,9 @@ fn handle_elf_prompt_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         // Cancelar
         app.editor.elf_prompt_open = false;
     } else if col >= x_edit && col < x_edit + ELF_BTN_EDIT.len() as u16 {
-        // Editar opcodes: unlock editor, keep current disassembly text
+        // Editar opcodes: generate assembly source from ELF and load it into editor
         app.editor.elf_prompt_open = false;
-        app.editor.last_ok_elf_bytes = None;
-        app.editor.dirty = true;
-        app.editor.last_edit_at = Some(std::time::Instant::now());
-        app.editor.last_build_stats = None;
-        app.editor.last_assemble_msg = Some("ELF unloaded — edit opcodes and save.".to_string());
-        app.mode = EditorMode::Insert;
+        app.load_elf_as_asm();
     } else if col >= x_discard && col < x_discard + ELF_BTN_DISCARD.len() as u16 {
         // Descartar ELF: clear editor, unlock
         app.editor.elf_prompt_open = false;

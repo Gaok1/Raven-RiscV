@@ -615,18 +615,27 @@ const MAX_LINES_PER_SECTION: usize = 16;
 
 /// Compute the height (in terminal rows) needed by the sections viewer.
 fn elf_sections_height(app: &App) -> u16 {
-    // border (2) + header line per section + data lines per section
+    // border (2) + header line per section + label lines + data lines per section
     let mut lines = 2usize; // block border
     for sec in &app.run.elf_sections {
         lines += 1; // section header line
-        let data_lines = if sec.bytes.is_empty() {
-            1 // .bss: just show a single placeholder line
+        if sec.bytes.is_empty() {
+            // Count any symbol label at the section base address
+            lines += app.run.labels.get(&sec.addr).map(|v| v.len()).unwrap_or(0);
+            lines += 1; // bss placeholder line
         } else {
-            (sec.bytes.len() / 4).min(MAX_LINES_PER_SECTION)
-        };
-        lines += data_lines;
+            let word_count = (sec.bytes.len() / 4).min(MAX_LINES_PER_SECTION);
+            // Count symbol labels that fall in this section
+            let label_lines: usize = (0..word_count)
+                .map(|i| {
+                    let addr = sec.addr + (i * 4) as u32;
+                    app.run.labels.get(&addr).map(|v| v.len()).unwrap_or(0)
+                })
+                .sum();
+            lines += word_count + label_lines;
+        }
     }
-    lines.min(40) as u16
+    lines.min(50) as u16
 }
 
 fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
@@ -651,7 +660,15 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
         );
 
         if sec.bytes.is_empty() {
-            // .bss or no-data section
+            // .bss or no-data section: show symbol labels if any fall inside this range
+            if let Some(names) = app.run.labels.get(&sec.addr) {
+                for name in names {
+                    items.push(
+                        ListItem::new(format!("  {name}:"))
+                            .style(Style::default().fg(theme::LABEL_Y)),
+                    );
+                }
+            }
             items.push(
                 ListItem::new(format!("  0x{:08x}: (zeroed, {} B)", sec.addr, sec.size))
                     .style(Style::default().fg(theme::LABEL)),
@@ -660,9 +677,14 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
             let chunks = sec.bytes.chunks(4).take(MAX_LINES_PER_SECTION);
             for (i, chunk) in chunks.enumerate() {
                 let addr = sec.addr + (i * 4) as u32;
-                let mut padded = [0u8; 4];
-                for (j, &b) in chunk.iter().enumerate() {
-                    padded[j] = b;
+                // Symbol label at this address
+                if let Some(names) = app.run.labels.get(&addr) {
+                    for name in names {
+                        items.push(
+                            ListItem::new(format!("  {name}:"))
+                                .style(Style::default().fg(theme::LABEL_Y)),
+                        );
+                    }
                 }
                 let hex: String = chunk
                     .iter()
