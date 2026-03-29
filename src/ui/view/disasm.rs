@@ -441,22 +441,33 @@ pub fn elf_to_asm_source(
     }
 
     // ── Data sections ────────────────────────────────────────────────────
-    if !sections.is_empty() {
-        let _ = writeln!(out);
-        let _ = writeln!(out, ".data");
-        for sec in sections {
+    // Group sections: .bss-like (no file bytes) need ".bss" context;
+    // others need ".data" context.  Track which section we're currently in.
+    let mut cur_section: Option<&str> = None;
+    for sec in sections {
+        let is_bss = sec.bytes.is_empty();
+        let needed = if is_bss { ".bss" } else { ".data" };
+        if cur_section != Some(needed) {
             let _ = writeln!(out);
-            let _ = writeln!(
-                out,
-                "# --- {} (0x{:08x}, {} bytes) ---",
-                sec.name, sec.addr, sec.size
-            );
-            if sec.bytes.is_empty() {
-                // .bss: emit placeholder comment; actual zeroing is done by the linker
-                let _ = writeln!(out, "    .skip {}", sec.size);
-            } else {
-                emit_data_words(&mut out, &sec.bytes, sec.addr, symbols);
+            let _ = writeln!(out, "{needed}");
+            cur_section = Some(needed);
+        }
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "# --- {} (0x{:08x}, {} bytes) ---",
+            sec.name, sec.addr, sec.size
+        );
+        if is_bss {
+            // Symbol labels at the bss base, then .skip for size
+            if let Some(names) = symbols.get(&sec.addr) {
+                for name in names {
+                    let _ = writeln!(out, "{name}:");
+                }
             }
+            let _ = writeln!(out, "    .skip {}", sec.size);
+        } else {
+            emit_data_words(&mut out, &sec.bytes, sec.addr, symbols);
         }
     }
 
