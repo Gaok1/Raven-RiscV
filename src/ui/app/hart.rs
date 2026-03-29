@@ -155,7 +155,8 @@ pub(crate) fn step_hart_bg_inner(
     };
 
     mem.add_instruction_cycles(cpi_cycles);
-    mem.instruction_count = mem.instruction_count.saturating_add(1);
+    // instruction_count was already incremented by fetch32 inside exec::step;
+    // do not add 1 again here — pipeline mode increments on commit instead.
     if mem.instruction_count % 32 == 0 {
         mem.snapshot_stats();
     }
