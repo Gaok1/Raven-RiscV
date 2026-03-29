@@ -1441,9 +1441,11 @@ impl App {
                     hart.cpu.exit_code = Some(code);
                 }
             }
+            self.run.mem.flush_all();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Faulted) {
             // A fault in any hart stops the whole run.
+            self.run.mem.flush_all();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Paused) {
             // In AllHarts scope: only stop the run when no other harts are still running.
@@ -1457,6 +1459,7 @@ impl App {
             }
         } else if !matches!(lifecycle, HartLifecycle::Running) && !self.any_running_harts() {
             // Last hart finished (halt/local-exit) — stop.
+            self.run.mem.flush_all();
             self.run.is_running = false;
         }
     }
@@ -1515,6 +1518,7 @@ impl App {
                 }
             }
             self.run.cpu.exit_code = Some(code);
+            self.run.mem.flush_all();
             self.run.is_running = false;
             return;
         }
@@ -1523,6 +1527,7 @@ impl App {
         self.harts[core_idx].faulted = matches!(lifecycle, HartLifecycle::Faulted);
 
         if matches!(lifecycle, HartLifecycle::Faulted) {
+            self.run.mem.flush_all();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Paused) {
             // step_all_cores_once is only called in AllHarts scope; keep running
@@ -1531,6 +1536,7 @@ impl App {
                 self.run.is_running = false;
             }
         } else if !matches!(lifecycle, HartLifecycle::Running) && !self.any_running_harts() {
+            self.run.mem.flush_all();
             self.run.is_running = false;
         }
 
@@ -1717,12 +1723,29 @@ impl App {
             }
         }
 
+        // If multiple non-selected harts called sbrk in the same round, each
+        // finalize_bg_hart propagated its own heap_break, overwriting the previous.
+        // Propagate the maximum heap_break across all harts so none is lost.
+        let max_break = self
+            .harts
+            .iter()
+            .filter(|h| h.hart_id.is_some())
+            .map(|h| h.cpu.heap_break)
+            .chain(std::iter::once(self.run.cpu.heap_break))
+            .max()
+            .unwrap_or(self.run.cpu.heap_break);
+        if max_break != self.run.cpu.heap_break {
+            self.propagate_heap_break(max_break);
+        }
+
         // Sync selected core's CPU snapshot to harts[original] (cheap — skips
         // exec_counts/exec_trace).  Keeps harts[selected].cpu current so that
         // UI code and tests that read it directly get a consistent view.
         if let Some(runtime) = self.harts.get_mut(original) {
             runtime.cpu = self.run.cpu.clone();
             runtime.prev_pc = self.run.prev_pc;
+            runtime.prev_x = self.run.prev_x;
+            runtime.prev_f = self.run.prev_f;
             runtime.faulted = self.run.faulted;
         }
 

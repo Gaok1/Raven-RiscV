@@ -203,7 +203,7 @@ fn exec_rtype<B: Bus>(
     instr: Instruction,
     cpu: &mut Cpu,
     _mem: &mut B,
-    console: &mut Console,
+    _console: &mut Console,
 ) -> Result<bool, FalconError> {
     match instr {
         Instruction::Add { rd, rs1, rs2 } => {
@@ -257,39 +257,29 @@ fn exec_rtype<B: Bus>(
         Instruction::Div { rd, rs1, rs2 } => {
             let num = cpu.read(rs1) as i32;
             let den = cpu.read(rs2) as i32;
-            if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
-            }
-            let val = num.wrapping_div(den);
+            // RV32M spec: division by zero yields -1; signed overflow (MIN/-1) yields MIN
+            let val = if den == 0 { -1i32 } else { num.wrapping_div(den) };
             cpu.write(rd, val as u32);
         }
         Instruction::Divu { rd, rs1, rs2 } => {
+            let num = cpu.read(rs1);
             let den = cpu.read(rs2);
-            if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
-            }
-            let val = cpu.read(rs1).wrapping_div(den);
+            // RV32M spec: division by zero yields 2^32-1 (all ones)
+            let val = if den == 0 { u32::MAX } else { num.wrapping_div(den) };
             cpu.write(rd, val);
         }
         Instruction::Rem { rd, rs1, rs2 } => {
             let num = cpu.read(rs1) as i32;
             let den = cpu.read(rs2) as i32;
-            if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
-            }
-            let val = num.wrapping_rem(den);
+            // RV32M spec: remainder by zero yields the dividend; signed overflow yields 0
+            let val = if den == 0 { num } else { num.wrapping_rem(den) };
             cpu.write(rd, val as u32);
         }
         Instruction::Remu { rd, rs1, rs2 } => {
+            let num = cpu.read(rs1);
             let den = cpu.read(rs2);
-            if den == 0 {
-                console.push_error("Division by zero");
-                return Ok(false);
-            }
-            let val = cpu.read(rs1).wrapping_rem(den);
+            // RV32M spec: remainder by zero yields the dividend
+            let val = if den == 0 { num } else { num.wrapping_rem(den) };
             cpu.write(rd, val);
         }
         _ => unreachable!(),
