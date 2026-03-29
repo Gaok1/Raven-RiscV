@@ -140,6 +140,12 @@ impl CacheConfig {
                 bytes_per_set * next
             ));
         }
+        if !matches!(self.inclusion, InclusionPolicy::NonInclusive) {
+            return Err(
+                "Inclusive and Exclusive policies are not yet implemented; use NonInclusive"
+                    .to_string(),
+            );
+        }
         Ok(())
     }
 
@@ -393,6 +399,19 @@ impl Cache {
                 line.valid = false;
                 line.dirty = false;
             }
+        }
+    }
+
+    /// Invalidate (without writeback) the single line covering `addr`, if present.
+    pub fn invalidate_line(&mut self, addr: u32) {
+        if !self.config.is_valid_config() {
+            return;
+        }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        if let Some(way) = self.sets[idx].lookup(tag) {
+            self.sets[idx].lines[way].valid = false;
+            self.sets[idx].lines[way].dirty = false;
         }
     }
 
@@ -1186,6 +1205,15 @@ impl CacheController {
             }
         }
 
+        // After any L1 D-cache write, invalidate the matching line in lower
+        // unified levels so they don't serve stale data on a future L1 miss.
+        // We only do this when the cache is actually active (not bypassed/invalid).
+        if !self.bypass && self.dcache.config.is_valid_config() {
+            for level in &mut self.extra_levels {
+                level.invalidate_line(addr);
+            }
+        }
+
         Ok(())
     }
 
@@ -1326,8 +1354,19 @@ impl CacheController {
         self.extra_levels[from_level].stats.total_cycles +=
             level_tag_search + level_miss_penalty + level_transfer_cyc;
 
-        // Recurse: fetch the full line for THIS level from the next level/RAM
-        let line_data = self.fetch_line(level_line_base, level_line_size, from_level + 1)?;
+        // Recurse: fetch the full line for THIS level from the next level/RAM.
+        // The next level may have smaller lines; assemble enough to fill ours.
+        let mut line_data = Vec::with_capacity(level_line_size);
+        let mut fill_addr = level_line_base;
+        while line_data.len() < level_line_size {
+            let chunk =
+                self.fetch_line(fill_addr, level_line_size - line_data.len(), from_level + 1)?;
+            if chunk.is_empty() {
+                break; // should not happen; guard against infinite loop
+            }
+            fill_addr = fill_addr.wrapping_add(chunk.len() as u32);
+            line_data.extend_from_slice(&chunk);
+        }
 
         // Install into this level (handle dirty eviction to RAM)
         let way = self.extra_levels[from_level].sets[idx].find_victim(level_replacement);
@@ -1388,13 +1427,13 @@ impl CacheController {
         } else {
             self.icache.stats.misses as f64 / total as f64
         };
+        let miss_cost = (self.icache.config.miss_penalty
+            + self.icache.config.line_transfer_cycles()) as f64;
         if self.extra_levels.is_empty() {
-            hit_lat
-                + miss_rate
-                    * (self.icache.config.miss_penalty + self.icache.config.line_transfer_cycles())
-                        as f64
+            hit_lat + miss_rate * miss_cost
         } else {
-            hit_lat + miss_rate * self.extra_level_amat(0)
+            // miss_cost is the L1→L2 access overhead; add L2 AMAT on top
+            hit_lat + miss_rate * (miss_cost + self.extra_level_amat(0))
         }
     }
 
@@ -1407,13 +1446,13 @@ impl CacheController {
         } else {
             self.dcache.stats.misses as f64 / total as f64
         };
+        let miss_cost = (self.dcache.config.miss_penalty
+            + self.dcache.config.line_transfer_cycles()) as f64;
         if self.extra_levels.is_empty() {
-            hit_lat
-                + miss_rate
-                    * (self.dcache.config.miss_penalty + self.dcache.config.line_transfer_cycles())
-                        as f64
+            hit_lat + miss_rate * miss_cost
         } else {
-            hit_lat + miss_rate * self.extra_level_amat(0)
+            // miss_cost is the L1→L2 access overhead; add L2 AMAT on top
+            hit_lat + miss_rate * (miss_cost + self.extra_level_amat(0))
         }
     }
 
@@ -1427,10 +1466,13 @@ impl CacheController {
         } else {
             level.stats.misses as f64 / total as f64
         };
+        // Miss cost includes this level's penalty + transfer, then recurse
+        let miss_cost =
+            (level.config.miss_penalty + level.config.line_transfer_cycles()) as f64;
         let next_penalty = if idx + 1 < self.extra_levels.len() {
-            self.extra_level_amat(idx + 1)
+            miss_cost + self.extra_level_amat(idx + 1)
         } else {
-            (level.config.miss_penalty + level.config.line_transfer_cycles()) as f64
+            miss_cost
         };
         hit_lat + miss_rate * next_penalty
     }

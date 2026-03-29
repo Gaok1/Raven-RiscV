@@ -843,6 +843,19 @@ fn apply_forwarding_to_id(
     if let Some(v) = forward_value(slot.rs2, operand_reg_file(instr, 2), &producers) {
         slot.rs2_val = v;
     }
+    // Fused multiply-add instructions have a third source register (rs3) whose
+    // value is stored in slot.mem_addr at ID time.  Forward it like rs1/rs2.
+    match instr {
+        Instruction::FmaddS { rs3, .. }
+        | Instruction::FmsubS { rs3, .. }
+        | Instruction::FnmsubS { rs3, .. }
+        | Instruction::FnmaddS { rs3, .. } => {
+            if let Some(v) = forward_value(Some(rs3), Some(RegFile::Float), &producers) {
+                slot.mem_addr = Some(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn resolve_control_in_id(slot: &mut PipeSlot) {
@@ -946,26 +959,29 @@ fn apply_branch_prediction(state: &mut PipelineSimState) {
 }
 
 /// **MEM stage** — Memory access (loads/stores/atomics).
+/// Returns `(latency, faulted)`.  On a bus fault, the error is logged and
+/// `faulted=true` is returned so the caller can stop the pipeline.
 fn stage_mem(
     slot: &mut PipeSlot,
     cpu: &mut Cpu,
     mem: &mut CacheController,
     console: &mut Console,
-) -> u64 {
+) -> (u64, bool) {
     if slot.is_bubble {
-        return 0;
+        return (0, false);
     }
     let instr = match slot.instr {
         Some(i) => i,
-        None => return 0,
+        None => return (0, false),
     };
 
     let addr = match slot.mem_addr {
         Some(a) => a,
-        None => return 0, // no memory op for this instruction
+        None => return (0, false), // no memory op for this instruction
     };
 
     let mut latency = 0u64;
+    let mut faulted = false;
 
     match instr {
         // ── Integer loads ────────────────────────────────────────────────
@@ -976,6 +992,7 @@ fn stage_mem(
                 Ok(v) => slot.mem_result = Some((v as i8 as i32) as u32),
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                    faulted = true;
                 }
             }
         }
@@ -986,6 +1003,7 @@ fn stage_mem(
                 Ok(v) => slot.mem_result = Some((v as i16 as i32) as u32),
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                    faulted = true;
                 }
             }
         }
@@ -996,6 +1014,7 @@ fn stage_mem(
                 Ok(v) => slot.mem_result = Some(v),
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                    faulted = true;
                 }
             }
         }
@@ -1006,6 +1025,7 @@ fn stage_mem(
                 Ok(v) => slot.mem_result = Some(v as u32),
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                    faulted = true;
                 }
             }
         }
@@ -1016,6 +1036,7 @@ fn stage_mem(
                 Ok(v) => slot.mem_result = Some(v as u32),
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                    faulted = true;
                 }
             }
         }
@@ -1027,6 +1048,7 @@ fn stage_mem(
                 Ok(v) => slot.mem_result = Some(v),
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                    faulted = true;
                 }
             }
         }
@@ -1037,6 +1059,7 @@ fn stage_mem(
             latency += access_latency;
             if let Err(e) = result {
                 console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                faulted = true;
             }
         }
         Instruction::Sh { .. } => {
@@ -1044,6 +1067,7 @@ fn stage_mem(
             latency += access_latency;
             if let Err(e) = result {
                 console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                faulted = true;
             }
         }
         Instruction::Sw { .. } => {
@@ -1051,6 +1075,7 @@ fn stage_mem(
             latency += access_latency;
             if let Err(e) = result {
                 console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                faulted = true;
             }
         }
         // ── FP store ────────────────────────────────────────────────────
@@ -1059,6 +1084,7 @@ fn stage_mem(
             latency += access_latency;
             if let Err(e) = result {
                 console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                faulted = true;
             }
         }
 
@@ -1073,6 +1099,7 @@ fn stage_mem(
                 }
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+                    faulted = true;
                 }
             }
         }
@@ -1186,7 +1213,7 @@ fn stage_mem(
         _ => {} // non-memory instructions
     }
 
-    latency
+    (latency, faulted)
 }
 
 /// **WB stage** — Write result to destination register, handle system instructions.
@@ -1345,6 +1372,7 @@ fn stage_wb(
 
         // ── System instructions (handled fully at WB) ───────────────────
         Instruction::Ecall => {
+            cpu.instr_count += 1;
             let code = cpu.read(17); // a7
             match crate::falcon::syscall::handle_syscall(code, cpu, mem, console) {
                 Ok(cont) => {
@@ -1368,6 +1396,7 @@ fn stage_wb(
             }
         }
         Instruction::Ebreak | Instruction::Halt => {
+            cpu.instr_count += 1;
             if matches!(instr, Instruction::Halt) {
                 cpu.local_exit = true;
                 cpu.ebreak_hit = false;
@@ -1865,8 +1894,8 @@ fn detect_stall(state: &mut PipelineSimState) -> Option<(usize, HazardType)> {
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn detect_name_hazards(state: &mut PipelineSimState) {
-    // Collect writers: (stage_index, rd, mnemonic) — owned Strings to avoid borrow conflict
-    let writers: Vec<(usize, u8, String)> = state
+    // Collect writers: (stage_index, reg_file, rd, mnemonic)
+    let writers: Vec<(usize, RegFile, u8, String)> = state
         .stages
         .iter()
         .enumerate()
@@ -1875,8 +1904,8 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
             if s.is_bubble {
                 return None;
             }
-            let rd = s.rd?;
-            if rd == 0 {
+            let (rf, rd) = slot_destination(s)?;
+            if rd == 0 && rf == RegFile::Int {
                 return None;
             }
             let mnem = s
@@ -1885,7 +1914,7 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                 .next()
                 .unwrap_or("?")
                 .to_string();
-            Some((i, rd, mnem))
+            Some((i, rf, rd, mnem))
         })
         .collect();
 
@@ -1909,18 +1938,23 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
         })
         .collect();
 
-    // WAW: two in-flight instructions writing to the same rd
+    // WAW: two in-flight instructions writing to the same (reg_file, rd) pair
     let mut waw_tags: Vec<usize> = Vec::new();
     for i in 0..writers.len() {
         for j in (i + 1)..writers.len() {
-            if writers[i].1 == writers[j].1 {
+            if writers[i].1 == writers[j].1 && writers[i].2 == writers[j].2 {
+                let dest_name = if writers[j].1 == RegFile::Float {
+                    format!("f{}", writers[j].2)
+                } else {
+                    reg_name(writers[j].2).to_string()
+                };
                 let msg = format!(
                     "WAW: {} in {} and {} in {} both write {}",
-                    writers[j].2,
+                    writers[j].3,
                     Stage::all()[writers[j].0].label(),
-                    writers[i].2,
+                    writers[i].3,
                     Stage::all()[writers[i].0].label(),
-                    reg_name(writers[j].1),
+                    dest_name,
                 );
                 state.hazard_msgs.push((HazardType::Waw, msg));
                 push_trace(
@@ -1928,7 +1962,7 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                     TraceKind::Hazard(HazardType::Waw),
                     writers[j].0,
                     writers[i].0,
-                    format!("{} = {}", writers[j].2, reg_name(writers[j].1)),
+                    format!("{} = {}", writers[j].3, dest_name),
                 );
                 waw_tags.push(writers[j].0);
             }
@@ -1945,22 +1979,22 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
     // WAR: younger instruction (closer to IF) writes rd that an older
     // instruction (closer to WB) still reads as rs1/rs2.
     let mut war_tags: Vec<usize> = Vec::new();
-    for &(w_idx, w_rd, ref w_name) in &writers {
-        let writer_reg_file = state.stages[w_idx]
-            .as_ref()
-            .and_then(slot_destination)
-            .map(|(rf, _)| rf)
-            .unwrap_or(RegFile::Int);
+    for &(w_idx, w_rf, w_rd, ref w_name) in &writers {
         for &(r_idx, ref r_name, ref reader_slot) in &readers {
             if r_idx <= w_idx {
                 continue;
             } // reader must be older (closer to WB)
-            if slot_reads_register(reader_slot, writer_reg_file, w_rd) {
+            if slot_reads_register(reader_slot, w_rf, w_rd) {
+                let dest_name = if w_rf == RegFile::Float {
+                    format!("f{}", w_rd)
+                } else {
+                    reg_name(w_rd).to_string()
+                };
                 let msg = format!(
                     "WAR: {} in {} writes {} read by {} in {}",
                     w_name,
                     Stage::all()[w_idx].label(),
-                    reg_name(w_rd),
+                    dest_name,
                     r_name,
                     Stage::all()[r_idx].label(),
                 );
@@ -2076,6 +2110,16 @@ fn advance_stages(
         }
     }
 
+    // ── BranchResolve::Id — resolve before the branch leaves ID ──────────
+    // Must happen here, while the branch is still in stages[ID].  After the
+    // advance below it moves to EX and stages[ID] holds a different instruction.
+    if matches!(state.branch_resolve, BranchResolve::Id) {
+        if let Some(ref mut s) = state.stages[Stage::ID as usize] {
+            resolve_control_in_id(s);
+        }
+        resolve_branch(state, Stage::ID as usize);
+    }
+
     // ── Normal advance / IF cache hold ───────────────────────────────────
     state.stages[4] = state.stages[3].take(); // MEM → WB
     state.stages[3] = state.stages[2].take(); // EX  → MEM
@@ -2133,7 +2177,11 @@ fn advance_stages(
                     !s.is_bubble && matches!(s.class, InstrClass::Branch | InstrClass::Jump)
                 });
 
-        state.stages[0] = fetch_slot(state.fetch_pc, mem);
+        let (fetched, fetch_fault) = fetch_slot(state.fetch_pc, mem);
+        if fetch_fault {
+            state.faulted = true;
+        }
+        state.stages[0] = fetched;
         if let Some(ref mut slot) = state.stages[0] {
             slot.is_speculative = branch_in_flight;
             if slot.if_stall_cycles > 0 {
@@ -2150,24 +2198,24 @@ fn advance_stages(
         // Handle fused multiply-add rs3 reading (was done at ID, stored in mem_addr)
         // This is already handled in stage_id via special code below
     }
+    let mut mem_faulted = false;
     if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
         if state.forwarding {
             apply_forwarding_to_mem(s, &wb_producer);
         }
-        let latency = stage_mem(s, cpu, mem, console);
+        let (latency, fault) = stage_mem(s, cpu, mem, console);
         s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
+        mem_faulted = fault;
+    }
+    if mem_faulted {
+        state.faulted = true;
     }
 
     // ── Branch resolution ────────────────────────────────────────────────
     use super::BranchResolve;
     match state.branch_resolve {
         BranchResolve::Id => {
-            if let Some(ref mut s) = state.stages[Stage::ID as usize] {
-                resolve_control_in_id(s);
-            }
-            // For Id resolution, check the ID stage slot
-            // (branches in ID were resolved using the values just read in stage_id)
-            resolve_branch(state, Stage::ID as usize);
+            // Already resolved before the pipeline advanced (see above).
         }
         BranchResolve::Ex => {
             resolve_branch(state, Stage::EX as usize);
@@ -2200,11 +2248,16 @@ fn insert_stall(
     if let Some(ref mut s) = state.stages[stall_point] {
         s.hazard = Some(hazard);
     }
+    let mut mem_faulted2 = false;
     if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
         if !s.is_bubble {
-            let latency = stage_mem(s, cpu, mem, console);
+            let (latency, fault) = stage_mem(s, cpu, mem, console);
             s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
+            mem_faulted2 = fault;
         }
+    }
+    if mem_faulted2 {
+        state.faulted = true;
     }
     if stall_point == Stage::ID as usize {
         let ex_producer = state.stages[Stage::EX as usize].clone();
@@ -2223,15 +2276,17 @@ fn insert_stall(
 // ── Fetch ────────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
-fn fetch_slot(pc: u32, mem: &mut CacheController) -> Option<PipeSlot> {
+/// Returns `(slot, faulted)`.  A fetch bus error yields `(None, true)`;
+/// a normal empty cycle yields `(None, false)`.
+fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, bool) {
     let (result, latency) = mem.fetch32_timed_no_count(pc);
     match result {
         Ok(word) => {
             let mut slot = PipeSlot::from_word(pc, word);
             slot.if_stall_cycles = latency.saturating_sub(1).min(255) as u8;
-            Some(slot)
+            (Some(slot), false)
         }
-        Err(_) => None,
+        Err(_) => (None, true),
     }
 }
 
