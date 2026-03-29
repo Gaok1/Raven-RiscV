@@ -47,6 +47,9 @@ pub fn pipeline_tick(
     if let Some((stall_stage, hazard)) = stall {
         insert_stall(state, stall_stage, hazard, cpu, mem, console);
         state.stall_count += 1;
+        if let Some(idx) = hazard.as_stall_index() {
+            state.stall_by_type[idx] += 1;
+        }
     } else {
         advance_stages(state, cpu, mem, cpi, console);
     }
@@ -434,17 +437,12 @@ fn stage_ex(slot: &mut PipeSlot) {
                 _ => 0x000,
             };
         }
+        // Fused multiply-add family: rs3 is read at ID and stored in slot.mem_addr
+        // (the FP ALU instructions never use mem_addr for actual addressing).
+        // Forwarding for rs3 is handled in apply_forwarding_to_id (same field).
         Instruction::FmaddS { .. } => {
             let a = f32::from_bits(slot.rs1_val);
             let b = f32::from_bits(slot.rs2_val);
-            // rs3 is not in our slot — we only have rs1/rs2. For fused ops, we stored rs3's
-            // value... actually we don't have an rs3_val field. We'll need the instruction's rs3.
-            // For now, use the decoded instruction to get rs3 index and read from the slot's
-            // existing values. But we need a workaround here.
-            // Actually: fmadd uses rs1, rs2, rs3 — but we only read rs1, rs2 at ID.
-            // For rs3, we need to handle it specially at ID stage.
-            // WORKAROUND: store rs3 value in mem_addr field (reusing unused field for FP arith)
-            // This is set in stage_id via special handling.
             let c = f32::from_bits(slot.mem_addr.unwrap_or(0));
             slot.alu_result = (a * b + c).to_bits();
         }
@@ -1481,6 +1479,9 @@ fn commit_wb(
 
     state.instr_committed += 1;
     state.class_counts[slot.class.as_usize()] += 1;
+    if matches!(slot.class, InstrClass::Branch | InstrClass::Jump) {
+        state.branches_executed += 1;
+    }
 
     Some(CommitInfo {
         pc: slot.pc,
@@ -2087,6 +2088,8 @@ fn advance_stages(
                     s.hazard = Some(HazardType::MemLatency);
                 }
             }
+            state.stall_count += 1;
+            state.stall_by_type[HazardType::FuBusy.as_stall_index().unwrap()] += 1;
             return;
         }
     }
@@ -2145,6 +2148,7 @@ fn advance_stages(
             s.hazard = Some(HazardType::MemLatency);
         }
         state.stall_count += 1;
+        state.stall_by_type[HazardType::MemLatency.as_stall_index().unwrap()] += 1;
     }
 
     let ex_producer = state.stages[Stage::EX as usize].clone();
@@ -2303,6 +2307,7 @@ fn update_gantt(state: &mut PipelineSimState) {
             None => continue,
             Some(s) if s.is_bubble && s.hazard == Some(HazardType::BranchFlush) => GanttCell::Flush,
             Some(s) if s.is_bubble => GanttCell::Bubble,
+            Some(s) if s.is_speculative => GanttCell::Speculative(stage),
             Some(_) => GanttCell::InStage(stage),
         };
         if let Some(slot) = maybe_slot {
@@ -2317,15 +2322,20 @@ fn update_gantt(state: &mut PipelineSimState) {
             };
             let row = state.gantt.iter_mut().find(|r| r.pc == pc && !r.done);
             if let Some(row) = row {
-                let emit_cell = if let GanttCell::InStage(s) = cell {
-                    if row.last_stage == Some(s) {
-                        GanttCell::Stall
-                    } else {
-                        row.last_stage = Some(s);
-                        GanttCell::InStage(s)
+                let emit_cell = match cell {
+                    GanttCell::InStage(s) => {
+                        if row.last_stage == Some(s) {
+                            GanttCell::Stall
+                        } else {
+                            row.last_stage = Some(s);
+                            GanttCell::InStage(s)
+                        }
                     }
-                } else {
-                    cell
+                    GanttCell::Speculative(s) => {
+                        row.last_stage = Some(s);
+                        GanttCell::Speculative(s)
+                    }
+                    _ => cell,
                 };
                 let expected_len = (cycle - row.first_cycle) as usize;
                 while row.cells.len() < expected_len {
@@ -2340,10 +2350,9 @@ fn update_gantt(state: &mut PipelineSimState) {
                     row.cells.pop_front();
                 }
             } else {
-                let initial_stage = if let GanttCell::InStage(s) = cell {
-                    Some(s)
-                } else {
-                    None
+                let initial_stage = match cell {
+                    GanttCell::InStage(s) | GanttCell::Speculative(s) => Some(s),
+                    _ => None,
                 };
                 let mut new_row = GanttRow {
                     pc,

@@ -941,6 +941,9 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
+    // Speculative stages: same label as InStage but in orange — shows instruction
+    // was fetched/decoded speculatively while a branch was unresolved.
+    let spec_style = Style::default().fg(Color::Rgb(220, 140, 40));
     match cell {
         GanttCell::Empty => ("·", Style::default().fg(theme::BORDER)),
         GanttCell::InStage(Stage::IF) => ("IF", Style::default().fg(theme::ACCENT)),
@@ -948,6 +951,11 @@ fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
         GanttCell::InStage(Stage::EX) => ("EX", Style::default().fg(theme::RUNNING)),
         GanttCell::InStage(Stage::MEM) => ("MM", Style::default().fg(theme::LABEL_Y)),
         GanttCell::InStage(Stage::WB) => ("WB", Style::default().fg(theme::ACCENT)),
+        GanttCell::Speculative(Stage::IF) => ("IF", spec_style),
+        GanttCell::Speculative(Stage::ID) => ("ID", spec_style),
+        GanttCell::Speculative(Stage::EX) => ("EX", spec_style),
+        GanttCell::Speculative(Stage::MEM) => ("MM", spec_style),
+        GanttCell::Speculative(Stage::WB) => ("WB", spec_style),
         GanttCell::Stall => ("──", Style::default().fg(theme::PAUSED)),
         GanttCell::Bubble => (
             "NOP",
