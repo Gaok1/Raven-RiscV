@@ -348,6 +348,9 @@ pub enum HazardType {
 }
 
 impl HazardType {
+    /// Number of stall-causing hazard types (WAW/WAR are informational, not counted).
+    pub const STALL_TYPE_COUNT: usize = 5;
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Raw => "RAW",
@@ -357,6 +360,19 @@ impl HazardType {
             Self::MemLatency => "cache stall",
             Self::Waw => "WAW",
             Self::War => "WAR",
+        }
+    }
+
+    /// Index into the `stall_by_type` array.  Returns `None` for WAW/WAR which
+    /// are informational only and do not cause pipeline stalls in an in-order pipeline.
+    pub fn as_stall_index(self) -> Option<usize> {
+        match self {
+            Self::Raw => Some(0),
+            Self::LoadUse => Some(1),
+            Self::BranchFlush => Some(2),
+            Self::FuBusy => Some(3),
+            Self::MemLatency => Some(4),
+            Self::Waw | Self::War => None,
         }
     }
     pub fn color(self) -> Color {
@@ -540,11 +556,12 @@ pub const MAX_GANTT_COLS: usize = 20;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GanttCell {
-    Empty,          // instruction not in pipeline yet / already done
-    InStage(Stage), // instruction is in this stage
-    Stall,          // stalled in current stage
-    Bubble,         // NOP bubble occupies this slot
-    Flush,          // instruction was flushed
+    Empty,               // instruction not in pipeline yet / already done
+    InStage(Stage),      // instruction is in this stage
+    Speculative(Stage),  // instruction is in this stage but was fetched speculatively
+    Stall,               // stalled in current stage
+    Bubble,              // NOP bubble occupies this slot
+    Flush,               // instruction was flushed (branch misprediction)
 }
 
 #[derive(Clone)]
@@ -746,7 +763,12 @@ pub struct PipelineSimState {
     pub cycle_count: u64,
     pub instr_committed: u64,
     pub stall_count: u64,
+    /// Stall cycles broken down by hazard type (indexed by HazardType::as_stall_index).
+    /// Indices: 0=RAW, 1=LoadUse, 2=BranchFlush, 3=FuBusy, 4=MemLatency.
+    pub stall_by_type: [u64; HazardType::STALL_TYPE_COUNT],
     pub flush_count: u64,
+    /// Total branch and jump instructions committed.
+    pub branches_executed: u64,
     pub class_counts: [u64; InstrClass::COUNT],
 
     // ── Gantt history ──
@@ -802,7 +824,9 @@ impl PipelineSimState {
             cycle_count: 0,
             instr_committed: 0,
             stall_count: 0,
+            stall_by_type: [0; HazardType::STALL_TYPE_COUNT],
             flush_count: 0,
+            branches_executed: 0,
             class_counts: [0; InstrClass::COUNT],
             gantt: VecDeque::new(),
             speed: PipelineSpeed::Normal,

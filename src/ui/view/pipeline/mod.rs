@@ -167,20 +167,36 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     ));
     let line1 = Line::from(spans);
 
-    let cpi_str = if p.instr_committed > 0 {
-        format!(
-            " Cycle:{}  CPI:{:.2}  instrs:{}  stalls:{}  flushes:{}",
-            p.cycle_count,
-            p.cycle_count as f64 / p.instr_committed as f64,
-            p.instr_committed,
-            p.stall_count,
-            p.flush_count,
-        )
+    let (cpi_str, stall_str) = if p.instr_committed > 0 {
+        let cpi = p.cycle_count as f64 / p.instr_committed as f64;
+        let branch_str = if p.branches_executed > 0 {
+            let mispredict_pct =
+                p.flush_count as f64 / p.branches_executed as f64 * 100.0;
+            format!(
+                "  branches:{}  mispred:{} ({:.0}%)",
+                p.branches_executed, p.flush_count, mispredict_pct
+            )
+        } else {
+            String::new()
+        };
+        let main = format!(
+            " Cycle:{}  CPI:{cpi:.2}  instrs:{}  stalls:{}{}",
+            p.cycle_count, p.instr_committed, p.stall_count, branch_str,
+        );
+        let [raw, lu, br, fu, mem] = p.stall_by_type;
+        let detail = format!(
+            " Stalls — RAW:{raw}  Load-Use:{lu}  Branch:{br}  FU:{fu}  Mem:{mem}"
+        );
+        (main, detail)
     } else {
-        format!(" Cycle:{}  (nenhuma instrução committed)", p.cycle_count)
+        (
+            format!(" Cycle:{}  (no instructions committed)", p.cycle_count),
+            String::new(),
+        )
     };
 
     let line2 = Line::from(Span::styled(cpi_str, Style::default().fg(theme::LABEL)));
+    let line3 = Line::from(Span::styled(stall_str, Style::default().fg(theme::LABEL)));
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -189,7 +205,7 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         .title(Span::styled("Execução", Style::default().fg(theme::LABEL)));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
+    f.render_widget(Paragraph::new(vec![line1, line2, line3]), inner);
 
     // Record button geometry for mouse
     // speed <label>   state <label>   reset
