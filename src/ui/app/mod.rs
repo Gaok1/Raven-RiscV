@@ -963,6 +963,35 @@ impl App {
         self.rebuild_harts();
     }
 
+    /// Convert the currently-loaded ELF into an editable assembly source and load
+    /// it into the editor buffer.  Called when the user chooses "Edit opcodes".
+    pub(super) fn load_elf_as_asm(&mut self) {
+        let Some(text_words) = self.editor.last_ok_text.as_ref() else { return; };
+        let source = crate::ui::view::disasm::elf_to_asm_source(
+            text_words,
+            self.run.base_pc,
+            &self.run.labels,
+            &self.run.elf_sections,
+        );
+        // Load source into editor
+        self.editor.buf.lines = source.lines().map(|l| l.to_string()).collect();
+        if self.editor.buf.lines.is_empty() {
+            self.editor.buf.lines.push(String::new());
+        }
+        self.editor.buf.cursor_row = 0;
+        self.editor.buf.cursor_col = 0;
+        // Discard ELF lock; editor now holds assembly source
+        self.editor.last_ok_elf_bytes = None;
+        self.editor.dirty = true;
+        self.editor.last_edit_at = Some(std::time::Instant::now());
+        self.editor.last_build_stats = None;
+        self.editor.last_assemble_msg =
+            Some("ELF disassembled — edit and press Run to re-assemble.".to_string());
+        self.mode = crate::ui::app::EditorMode::Insert;
+        // Trigger live syntax check so labels and diagnostics appear immediately
+        self.check_assemble();
+    }
+
     /// Commit the current numeric edit_buf into pending config for the selected level.
     pub(super) fn commit_cache_edit(&mut self) {
         if let Some((is_icache, field)) = self.cache.edit_field {
