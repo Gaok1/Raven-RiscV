@@ -1,6 +1,6 @@
 # Hardware threads (harts)
 
-> [Read in English](hart.md)
+> [Read in English](../en/hart.md)
 
 Um **hart** — *hardware thread* — é um contexto de execução independente dentro de um sistema RISC-V: seu próprio contador de programa, banco de registradores e pilha. No Raven, cada hart é mapeado para um núcleo físico simulado. Múltiplos harts compartilham o mesmo espaço de endereçamento plano e conteúdo de memória; eles diferem apenas no estado dos registradores e na posição de execução.
 
@@ -202,5 +202,5 @@ Alterações em `max_cores` têm efeito após o próximo reset do programa.
 
 ## Veja também
 
-- [Referência de syscalls](syscalls.pt-BR.md) — tabela completa incluindo `1100` e `1101`
-- [Simulação de pipeline](pipeline.md) — estado e visualização do pipeline por hart
+- [Referência de syscalls](syscalls.md) — tabela completa incluindo `1100` e `1101`
+- [Simulação de pipeline](../en/pipeline.md) — estado e visualização do pipeline por hart

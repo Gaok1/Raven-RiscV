@@ -258,14 +258,22 @@ fn exec_rtype<B: Bus>(
             let num = cpu.read(rs1) as i32;
             let den = cpu.read(rs2) as i32;
             // RV32M spec: division by zero yields -1; signed overflow (MIN/-1) yields MIN
-            let val = if den == 0 { -1i32 } else { num.wrapping_div(den) };
+            let val = if den == 0 {
+                -1i32
+            } else {
+                num.wrapping_div(den)
+            };
             cpu.write(rd, val as u32);
         }
         Instruction::Divu { rd, rs1, rs2 } => {
             let num = cpu.read(rs1);
             let den = cpu.read(rs2);
             // RV32M spec: division by zero yields 2^32-1 (all ones)
-            let val = if den == 0 { u32::MAX } else { num.wrapping_div(den) };
+            let val = if den == 0 {
+                u32::MAX
+            } else {
+                num.wrapping_div(den)
+            };
             cpu.write(rd, val);
         }
         Instruction::Rem { rd, rs1, rs2 } => {

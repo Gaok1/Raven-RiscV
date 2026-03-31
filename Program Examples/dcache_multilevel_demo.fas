@@ -1,0 +1,31 @@
+# dcache_multilevel_demo.fas
+#
+# Short D-cache workload for manual validation of multi-level load/store stalls
+# and writeback propagation. Tiny write-back caches make the three lines below
+# bounce through L1/L2/L3 in a predictable order.
+# Expected final values:
+#   a0 = 0x11111111
+#   a1 = 0x22222222
+#   a2 = 0x11111111
+
+.data
+.align 4
+buf: .space 64
+
+.text
+.globl _start
+_start:
+    la   t0, buf
+    li   t1, 0x11111111
+    li   t2, 0x22222222
+
+    sw   t1, 0(t0)
+    lw   a0, 0(t0)
+
+    sw   t2, 16(t0)
+    lw   a1, 16(t0)
+
+    sw   a0, 32(t0)
+    lw   a2, 32(t0)
+
+    halt

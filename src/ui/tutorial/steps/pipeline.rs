@@ -26,6 +26,7 @@ fn pipeline_layout(term: Rect) -> PipelineLayout {
             Constraint::Length(4),
             Constraint::Length(4),
             Constraint::Min(0),
+            Constraint::Length(3),
         ])
         .split(c);
     PipelineLayout {
@@ -152,61 +153,61 @@ fn setup_config(app: &mut App) {
 pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
         title_en: "Pipeline Tabs & Core",
-        title_pt: "Subtabs e core do pipeline",
+        title_pt: "Pipeline Tabs & Core",
         body_en: "The top bar switches between Main and Config. The Core selector lets you inspect the pipeline of a specific core/hart pair.\
 \n\nRun and Pipeline share the same selected core, so changing it here also changes the observed runtime core.",
-        body_pt: "A barra superior alterna entre Main e Config. O seletor de Core permite inspecionar o pipeline de um par core/hart específico.\
-\n\nRun e Pipeline compartilham o mesmo core selecionado, então trocar aqui também muda o core observado no runtime.",
+        body_pt: "The top bar switches between Main and Config. The Core selector lets you inspect the pipeline of a specific core/hart pair.\
+\n\nRun and Pipeline share the same selected core, so changing it here also changes the observed runtime core.",
         target: target_subtab,
         setup: Some(setup_main),
     },
     TutorialStep {
         title_en: "Execution Controls",
-        title_pt: "Controles de execução",
+        title_pt: "Execution Controls",
         body_en: "The controls bar drives the pipeline clock: Step advances one cycle, State runs or pauses, Reset restarts, and Speed changes the animation rate.\
 \n\nIn multi-core mode, these controls observe the selected core while the simulator advances the configured runtime model.",
-        body_pt: "A barra de controles dirige o clock do pipeline: Step avança um ciclo, State executa ou pausa, Reset reinicia e Speed altera a taxa da animação.\
-\n\nEm modo multi-core, esses controles observam o core selecionado enquanto o simulador avança o modelo de runtime configurado.",
+        body_pt: "The controls bar drives the pipeline clock: Step advances one cycle, State runs or pauses, Reset restarts, and Speed changes the animation rate.\
+\n\nIn multi-core mode, these controls observe the selected core while the simulator advances the configured runtime model.",
         target: target_controls,
         setup: Some(setup_main),
     },
     TutorialStep {
         title_en: "Stage View",
-        title_pt: "Visão de estágios",
+        title_pt: "Stage View",
         body_en: "The stage boxes show what is currently in IF, ID, EX, MEM and WB.\
-\n\nSpeculative instructions, hazards, bubbles and squashed work are all marked directly in the stage titles and badges.",
-        body_pt: "Os blocos de estágios mostram o que está atualmente em IF, ID, EX, MEM e WB.\
-\n\nInstruções especulativas, hazards, bubbles e trabalho descartado são marcados diretamente nos títulos e badges dos estágios.",
+\n\nThe UI distinguishes a stalled instruction from an empty stage waiting on fetch, a control squash, and an injected bubble, so front-end waits are easier to read.",
+        body_pt: "The stage boxes show what is currently in IF, ID, EX, MEM and WB.\
+\n\nA interface distingue uma instrução parada de um estágio vazio aguardando fetch, de um squash de controle e de uma bolha injetada, para deixar esperas do front-end mais claras.",
         target: target_stages,
         setup: Some(setup_main),
     },
     TutorialStep {
         title_en: "Hazard / Forwarding Map",
-        title_pt: "Mapa de hazard / forwarding",
-        body_en: "This panel explains pipeline conflicts in a didactic way: RAW, load-use, branch flush and bypass/forwarding paths are rendered as traces with matching colors.\
+        title_pt: "Hazard / Forwarding Map",
+        body_en: "This panel explains pipeline conflicts in a didactic way: RAW, load-use, branch flush and bypass paths are rendered as traces with matching colors.\
 \n\nWhen a hart is idle or free, this area naturally becomes quieter because there are no active dependencies to draw.",
-        body_pt: "Este painel explica conflitos do pipeline de forma didática: RAW, load-use, branch flush e caminhos de bypass/forwarding são renderizados como traces com cores coerentes.\
-\n\nQuando um hart está parado ou livre, esta área naturalmente fica mais vazia porque não há dependências ativas para desenhar.",
+        body_pt: "This panel explains pipeline conflicts in a didactic way: RAW, load-use, branch flush and bypass paths are rendered as traces with matching colors.\
+\n\nWhen a hart is idle or free, this area naturally becomes quieter because there are no active dependencies to draw.",
         target: target_hazards,
         setup: Some(setup_main),
     },
     TutorialStep {
         title_en: "History / Gantt",
-        title_pt: "Histórico / Gantt",
+        title_pt: "History / Gantt",
         body_en: "The bottom history shows the last cycles and where each instruction spent time.\
 \n\nFlushes, stalls and long-latency operations become visible here, which is especially useful when comparing different cores.",
-        body_pt: "O histórico inferior mostra os últimos ciclos e onde cada instrução passou tempo.\
-\n\nFlushes, stalls e operações de longa latência ficam visíveis aqui, o que é especialmente útil ao comparar cores diferentes.",
+        body_pt: "The bottom history shows the last cycles and where each instruction spent time.\
+\n\nFlushes, stalls and long-latency operations become visible here, which is especially useful when comparing different cores.",
         target: target_gantt,
         setup: Some(setup_main),
     },
     TutorialStep {
         title_en: "Pipeline Config",
-        title_pt: "Configuração do pipeline",
-        body_en: "The Config subtab changes the simulator model itself: forwarding, pipeline mode, branch resolution stage and prediction policy.\
-\n\nThese options affect how hazards are resolved and how much wrong-path work appears in the Main view.",
-        body_pt: "A subtab Config altera o próprio modelo do simulador: forwarding, modo do pipeline, estágio de resolução de branch e política de predição.\
-\n\nEssas opções afetam como hazards são resolvidos e quanto trabalho de caminho errado aparece na visão Main.",
+        title_pt: "Pipeline Config",
+        body_en: "The Config subtab changes the simulator model itself: EX->EX, MEM->EX, WB->ID and Store->Load bypass paths, pipeline mode, branch resolution stage and prediction policy.\
+\n\nPrediction now includes static and dynamic modes, so wrong-path work and flush rate visibly change as you compare Not-Taken, Always-Taken, BTFNT and 2-bit Dynamic.",
+        body_pt: "The Config subtab changes the simulator model itself: EX->EX, MEM->EX, WB->ID and Store->Load bypass paths, pipeline mode, branch resolution stage and prediction policy.\
+\n\nPrediction now includes static and dynamic modes, so wrong-path work and flush rate visibly change as you compare Not-Taken, Always-Taken, BTFNT and 2-bit Dynamic.",
         target: target_config,
         setup: Some(setup_config),
     },

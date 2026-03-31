@@ -1,5 +1,6 @@
 use super::{
-    HeadlessHart, parse_expect_mem_spec, parse_expect_reg_spec, run_headless_multihart_sequential,
+    HeadlessHart, PipelineReport, format_csv, format_fstats, format_json,
+    parse_expect_mem_spec, parse_expect_reg_spec, run_headless_multihart_sequential,
     run_headless_sequential, service_pending_hart_start, validate_expectations,
 };
 use crate::falcon::asm::assemble;
@@ -214,4 +215,39 @@ fn headless_invalid_instruction_is_reported_as_fault() {
     let err = run_headless_sequential(&mut cpu, &mut mem, &mut console, 8, &mut stdout, 1)
         .expect_err("invalid instruction should fault");
     assert!(err.contains("fault at PC"));
+}
+
+#[test]
+fn pipeline_output_formats_do_not_emit_serial_cycle_breakdown() {
+    let mut mem =
+        CacheController::new(CacheConfig::default(), CacheConfig::default(), vec![], 4096);
+    mem.instruction_count = 77;
+    mem.extra_cycles = 55;
+    let pipeline = PipelineReport {
+        enabled: true,
+        committed: 3,
+        cycles: 11,
+        stalls: 4,
+        flushes: 1,
+        cpi: 11.0 / 3.0,
+    };
+
+    let json = format_json(&mem, "demo.fas", Some(0), Some(pipeline));
+    assert!(json.contains("\"clock_model\": \"pipeline\""));
+    assert!(json.contains("\"total_cycles\": 11"));
+    assert!(!json.contains("\"base_cycles\""));
+    assert!(!json.contains("\"cache_cycles\""));
+
+    let fstats = format_fstats(&mem, "demo.fas", Some(0), Some(pipeline));
+    assert!(fstats.starts_with("# FALCON-ASM Simulation Results v2\n"));
+    assert!(fstats.contains("prog.clock_model=pipeline\n"));
+    assert!(fstats.contains("prog.total_cycles=11\n"));
+    assert!(!fstats.contains("prog.base_cycles="));
+    assert!(!fstats.contains("prog.cache_cycles="));
+
+    let csv = format_csv(&mem, "demo.fas", Some(pipeline));
+    assert!(csv.contains("Clock Model,Instructions,Total Cycles,CPI,IPC\n"));
+    assert!(csv.contains("pipeline,3,11,"));
+    assert!(!csv.contains("Base Cycles"));
+    assert!(!csv.contains("Cache Cycles"));
 }

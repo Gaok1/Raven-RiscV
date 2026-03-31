@@ -15,8 +15,8 @@ use self::formatting::{classify_mem_access, word_at};
 // Re-export pub(crate) items from submodules so they are accessible as
 // `crate::ui::app::X` from other modules in the crate.
 pub(crate) use self::cache_state::{
-    CacheDataFmt, CacheDataGroup, CacheResultsSnapshot, CacheScope, CacheState, CacheSubtab,
-    ConfigField, LevelSnapshot,
+    CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheResultsSnapshot, CacheScope, CacheState,
+    CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot, PipelineResultsSnapshot,
 };
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
@@ -26,9 +26,9 @@ pub(crate) use self::run_state::{
     BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunSpeed, RunState,
 };
 pub(crate) use self::settings_state::{
-    nearest_pow2_clamp, RunScope, SettingsState, SETTINGS_ROW_CACHE_ENABLED,
-    SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
-    SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROWS,
+    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
+    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROWS,
+    SettingsState, nearest_pow2_clamp,
 };
 
 use super::{
@@ -160,7 +160,7 @@ impl CpiConfig {
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
-pub(super) enum Tab {
+pub(crate) enum Tab {
     Editor,
     Run,
     Cache,
@@ -339,6 +339,7 @@ impl App {
                 breakpoints: std::collections::HashSet::new(),
                 base_pc,
                 data_base,
+                heap_start: data_base,
                 mem_view_addr: data_base,
                 mem_view_bytes: 4,
                 mem_region: MemRegion::Data,
@@ -425,32 +426,40 @@ impl App {
                 scope: CacheScope::Both,
                 stats_scroll: 0,
                 selected_level: 0,
-                hover_level: vec![false],
-                hover_add_level: false,
-                hover_remove_level: false,
-                hover_subtab_stats: false,
-                hover_subtab_config: false,
-                hover_subtab_view: false,
+                hover: None,
+                view_focus: CacheViewFocus::ICache,
                 view_scroll: 0,
+                view_scroll_d: 0,
                 view_h_scroll: 0,
                 view_h_scroll_d: 0,
                 data_fmt: CacheDataFmt::Hex,
                 data_group: CacheDataGroup::B1,
                 show_tag: false,
+                subtab_stats_btn: std::cell::Cell::new((0, 0, 0)),
+                subtab_view_btn: std::cell::Cell::new((0, 0, 0)),
+                subtab_config_btn: std::cell::Cell::new((0, 0, 0)),
+                level_btns: std::cell::RefCell::new(Vec::new()),
+                add_level_btn: std::cell::Cell::new((0, 0, 0)),
+                remove_level_btn: std::cell::Cell::new((0, 0, 0)),
+                ctrl_results_btn: std::cell::Cell::new((0, 0, 0)),
+                ctrl_import_btn: std::cell::Cell::new((0, 0, 0)),
+                ctrl_export_btn: std::cell::Cell::new((0, 0, 0)),
+                ctrl_scope_i_btn: std::cell::Cell::new((0, 0, 0)),
+                ctrl_scope_d_btn: std::cell::Cell::new((0, 0, 0)),
+                ctrl_scope_both_btn: std::cell::Cell::new((0, 0, 0)),
+                exec_speed_btn: std::cell::Cell::new((0, 0, 0)),
+                exec_state_btn: std::cell::Cell::new((0, 0, 0)),
+                exec_reset_btn: std::cell::Cell::new((0, 0, 0)),
                 view_fmt_btn: std::cell::Cell::new((0, 0, 0)),
                 view_group_btn: std::cell::Cell::new((0, 0, 0)),
                 view_tag_btn: std::cell::Cell::new((0, 0, 0)),
-                hover_view_fmt: false,
-                hover_view_group: false,
-                hover_view_tag: false,
-                hover_scope_i: false,
-                hover_scope_d: false,
-                hover_scope_both: false,
-                hover_apply: false,
-                hover_apply_keep: false,
-                hover_preset_i: None,
-                hover_preset_d: None,
-                hover_config_field: None,
+                config_hitboxes_i: std::cell::Cell::new([(0, 0, 0); 11]),
+                config_hitboxes_d: std::cell::Cell::new([(0, 0, 0); 11]),
+                config_hitboxes_u: std::cell::Cell::new([(0, 0, 0); 11]),
+                config_preset_btns_i: std::cell::Cell::new([(0, 0, 0); 3]),
+                config_preset_btns_d: std::cell::Cell::new([(0, 0, 0); 3]),
+                config_preset_btns_u: std::cell::Cell::new([(0, 0, 0); 3]),
+                config_apply_btns: std::cell::Cell::new([(0, 0, 0); 2]),
                 pending_icache: CacheConfig::default(),
                 pending_dcache: CacheConfig::default(),
                 extra_pending: vec![],
@@ -461,17 +470,10 @@ impl App {
                 cpi_selected: 0,
                 cpi_editing: false,
                 cpi_edit_buf: String::new(),
-                hover_cpi_field: None,
-                hover_export_results: false,
-                hover_export_cfg: false,
-                hover_import_cfg: false,
                 session_history: Vec::new(),
                 history_scroll: 0,
                 viewing_snapshot: None,
                 window_start_instr: 0,
-                hover_hscrollbar: false,
-                hscroll_hover_track_x: 0,
-                hscroll_hover_track_w: 0,
                 hscroll_drag: false,
                 hscroll_drag_start_x: 0,
                 hscroll_start: 0,
@@ -480,7 +482,13 @@ impl App {
                 hscroll_drag_is_dcache: false,
                 hscroll_row: std::cell::Cell::new(0),
                 hscroll_tracks: std::cell::Cell::new([(0, 0); 2]),
-                hscroll_max: std::cell::Cell::new(0),
+                hscroll_max_by_panel: std::cell::Cell::new([0, 0]),
+                view_num_sets: std::cell::Cell::new(0),
+                view_num_sets_d: std::cell::Cell::new(0),
+                view_visible_sets: std::cell::Cell::new(0),
+                view_visible_sets_d: std::cell::Cell::new(0),
+                view_scroll_max: std::cell::Cell::new(0),
+                view_scroll_max_d: std::cell::Cell::new(0),
             },
             show_exit_popup: false,
             should_quit: false,
@@ -560,7 +568,8 @@ impl App {
                 let bss_end = prog
                     .data_base
                     .wrapping_add(prog.data.len() as u32 + prog.bss_size);
-                self.run.cpu.heap_break = (bss_end.wrapping_add(15)) & !15;
+                self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
+                self.run.cpu.heap_break = self.run.heap_start;
 
                 self.run.comments = prog.comments;
                 self.run.block_comments = prog.block_comments;
@@ -717,7 +726,8 @@ impl App {
             let bss_end = data_base
                 .wrapping_add(data.len() as u32)
                 .wrapping_add(bss_sz);
-            self.run.cpu.heap_break = (bss_end.wrapping_add(15)) & !15;
+            self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
+            self.run.cpu.heap_break = self.run.heap_start;
 
             self.run.reg_age = [255u8; 32];
             self.run.f_age = [255u8; 32];
@@ -734,9 +744,7 @@ impl App {
             });
             self.editor.last_assemble_msg = Some(format!(
                 "Loaded last successful build: {} instructions, {} data bytes, {} bss bytes.",
-                text_len,
-                data_len,
-                bss_sz
+                text_len, data_len, bss_sz
             ));
             self.rebuild_imem_vrow_cache();
             self.run.imem_scroll = 0;
@@ -816,6 +824,7 @@ impl App {
             self.run.labels = info.symbols;
             self.run.halt_pcs.clear();
             self.run.elf_sections = info.sections;
+            self.run.heap_start = info.heap_start;
             self.run.cpu.heap_break = info.heap_start;
 
             let mut words = Vec::with_capacity(info.text_bytes.len() / 4);
@@ -908,7 +917,8 @@ impl App {
                 .data_base
                 .wrapping_add(data_bytes.len() as u32)
                 .wrapping_add(bss_size);
-            self.run.cpu.heap_break = (bss_end.wrapping_add(15)) & !15;
+            self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
+            self.run.cpu.heap_break = self.run.heap_start;
 
             let mut words = Vec::with_capacity(text_bytes.len() / 4);
             for chunk in text_bytes.chunks(4) {
@@ -961,12 +971,15 @@ impl App {
         // Reset pipeline stages (shares cpu/mem with RunState)
         self.pipeline.reset_stages(self.run.cpu.pc);
         self.rebuild_harts();
+        self.pipeline.reset_stages(self.run.cpu.pc);
     }
 
     /// Convert the currently-loaded ELF into an editable assembly source and load
     /// it into the editor buffer.  Called when the user chooses "Edit opcodes".
     pub(super) fn load_elf_as_asm(&mut self) {
-        let Some(text_words) = self.editor.last_ok_text.as_ref() else { return; };
+        let Some(text_words) = self.editor.last_ok_text.as_ref() else {
+            return;
+        };
         let source = crate::ui::view::disasm::elf_to_asm_source(
             text_words,
             self.run.base_pc,
@@ -1164,8 +1177,6 @@ impl App {
         self.run.mem.add_extra_level(cfg);
         // Select the newly added level
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
-        // Grow hover_level vec
-        self.cache.hover_level.push(false);
     }
 
     /// Remove the last extra cache level.
@@ -1176,9 +1187,6 @@ impl App {
             let max_level = self.cache.extra_pending.len();
             if self.cache.selected_level > max_level {
                 self.cache.selected_level = max_level;
-            }
-            if !self.cache.hover_level.is_empty() {
-                self.cache.hover_level.pop();
             }
         }
     }
@@ -1296,9 +1304,8 @@ impl App {
     /// Must be called whenever `run.labels` or `run.block_comments` change
     /// (i.e. after every program load).
     pub(super) fn rebuild_imem_vrow_cache(&mut self) {
-        let mut cache = std::collections::HashMap::with_capacity(
-            (self.run.mem_size / 4).min(1 << 20),
-        );
+        let mut cache =
+            std::collections::HashMap::with_capacity((self.run.mem_size / 4).min(1 << 20));
         let mut vrow = 0usize;
         let mut addr = self.run.base_pc;
         loop {
@@ -1316,7 +1323,10 @@ impl App {
             addr = addr.wrapping_add(4);
         }
         self.run.imem_vrow_cache = cache;
-        self.run.labels_lower = self.run.labels.iter()
+        self.run.labels_lower = self
+            .run
+            .labels
+            .iter()
             .map(|(&a, names)| (a, names.iter().map(|n| n.to_lowercase()).collect()))
             .collect();
     }
@@ -1470,11 +1480,11 @@ impl App {
                     hart.cpu.exit_code = Some(code);
                 }
             }
-            self.run.mem.flush_all();
+            self.run.mem.sync_to_ram();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Faulted) {
             // A fault in any hart stops the whole run.
-            self.run.mem.flush_all();
+            self.run.mem.sync_to_ram();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Paused) {
             // In AllHarts scope: only stop the run when no other harts are still running.
@@ -1488,7 +1498,7 @@ impl App {
             }
         } else if !matches!(lifecycle, HartLifecycle::Running) && !self.any_running_harts() {
             // Last hart finished (halt/local-exit) — stop.
-            self.run.mem.flush_all();
+            self.run.mem.sync_to_ram();
             self.run.is_running = false;
         }
     }
@@ -1547,7 +1557,7 @@ impl App {
                 }
             }
             self.run.cpu.exit_code = Some(code);
-            self.run.mem.flush_all();
+            self.run.mem.sync_to_ram();
             self.run.is_running = false;
             return;
         }
@@ -1556,7 +1566,7 @@ impl App {
         self.harts[core_idx].faulted = matches!(lifecycle, HartLifecycle::Faulted);
 
         if matches!(lifecycle, HartLifecycle::Faulted) {
-            self.run.mem.flush_all();
+            self.run.mem.sync_to_ram();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Paused) {
             // step_all_cores_once is only called in AllHarts scope; keep running
@@ -1565,7 +1575,7 @@ impl App {
                 self.run.is_running = false;
             }
         } else if !matches!(lifecycle, HartLifecycle::Running) && !self.any_running_harts() {
-            self.run.mem.flush_all();
+            self.run.mem.sync_to_ram();
             self.run.is_running = false;
         }
 
@@ -1665,13 +1675,8 @@ impl App {
             self.run.prev_f = self.run.cpu.f;
             self.run.prev_pc = info.pc;
 
-            let cpi_word = self.run.mem.peek32(info.pc).unwrap_or(0);
-            let cpi_cycles = classify_cpi_cycles(cpi_word, &self.run.cpu, &self.run.cpi_config);
-            self.run.mem.add_instruction_cycles(cpi_cycles);
             self.run.mem.instruction_count = self.run.mem.instruction_count.saturating_add(1);
-            if self.run.mem.instruction_count % 32 == 0 {
-                self.run.mem.snapshot_stats();
-            }
+            self.run.mem.snapshot_stats();
             true
         } else {
             false
@@ -1736,8 +1741,14 @@ impl App {
                     let mem = &mut self.run.mem;
                     let console = &mut self.console;
                     step_hart_bg_inner(
-                        hart, mem, console, &cpi,
-                        imem_start, imem_end, mem_size, pipeline_enabled,
+                        hart,
+                        mem,
+                        console,
+                        &cpi,
+                        imem_start,
+                        imem_end,
+                        mem_size,
+                        pipeline_enabled,
                     )
                 };
                 let bp_hit = self.run.breakpoints.contains(&self.harts[core_idx].cpu.pc);
@@ -1797,9 +1808,47 @@ impl App {
         }
     }
 
+    fn pipeline_tab_step_once(&mut self) -> bool {
+        if self.max_cores > 1 {
+            if matches!(self.run_scope, RunScope::AllHarts) {
+                self.step_all_cores_once()
+            } else {
+                self.step_selected_core_once()
+            }
+        } else {
+            self.pipeline_step()
+        }
+    }
+
     pub(super) fn single_step(&mut self) {
         if self.core_status(self.selected_core) == HartLifecycle::Paused {
             self.resume_selected_hart();
+        }
+
+        if self.pipeline.enabled && matches!(self.tab, Tab::Pipeline) {
+            // Pipeline tab: advance one cycle, then skip only consecutive
+            // cache-only hold cycles. If a cycle advanced stages or committed,
+            // stop immediately so EX/MEM/WB remain visible to the user.
+            let committed = self.pipeline_tab_step_once();
+            if committed || !self.pipeline.last_cycle_cache_only {
+                if !self.run.is_running {
+                    self.ensure_pc_visible_in_imem();
+                }
+                return;
+            }
+            for _ in 0..1_000_000 {
+                if self.pipeline.halted || self.pipeline.faulted {
+                    break;
+                }
+                let committed = self.pipeline_tab_step_once();
+                if committed || !self.pipeline.last_cycle_cache_only {
+                    break;
+                }
+            }
+            if !self.run.is_running {
+                self.ensure_pc_visible_in_imem();
+            }
+            return;
         }
 
         if self.max_cores > 1 {
@@ -1807,15 +1856,33 @@ impl App {
 
             if self.pipeline.enabled && !matches!(self.tab, Tab::Pipeline) {
                 for _ in 0..200 {
-                    if self.core_status(self.selected_core) != HartLifecycle::Running {
+                    let selected_running =
+                        self.core_status(self.selected_core) == HartLifecycle::Running;
+                    let can_progress = if all_scope {
+                        self.any_running_harts()
+                    } else if selected_running {
+                        true
+                    } else {
+                        false
+                    };
+                    if !can_progress {
                         break;
                     }
                     let committed = if all_scope {
                         self.step_all_cores_once()
-                    } else {
+                    } else if selected_running {
                         self.step_selected_core_once()
+                    } else {
+                        false
                     };
-                    if committed || self.core_status(self.selected_core) != HartLifecycle::Running {
+                    let should_stop = if all_scope {
+                        committed || !self.any_running_harts()
+                    } else if selected_running {
+                        committed || self.core_status(self.selected_core) != HartLifecycle::Running
+                    } else {
+                        true
+                    };
+                    if should_stop {
                         break;
                     }
                 }
@@ -1834,17 +1901,12 @@ impl App {
         }
 
         if self.pipeline.enabled {
-            if matches!(self.tab, Tab::Pipeline) {
-                // Pipeline tab: advance one cycle (educational single-cycle view)
-                self.pipeline_step();
-            } else {
-                // Run/Cache/other tabs: advance until one instruction commits
-                // Safety limit to prevent infinite loop on stall/halt/fault
-                for _ in 0..200 {
-                    let committed = self.pipeline_step();
-                    if committed || self.pipeline.halted || self.pipeline.faulted {
-                        break;
-                    }
+            // Run/Cache/other tabs: advance until one instruction commits
+            // Safety limit to prevent infinite loop on stall/halt/fault
+            for _ in 0..200 {
+                let committed = self.pipeline_step();
+                if committed || self.pipeline.halted || self.pipeline.faulted {
+                    break;
                 }
             }
             if !self.run.is_running {
@@ -1880,7 +1942,11 @@ impl App {
         let word = self.run.mem.peek32(step_pc).unwrap_or(0);
         let cpi_cycles = classify_cpi_cycles(word, &self.run.cpu, &self.run.cpi_config);
         // In GO mode mem-access tracking is skipped (not visible while running).
-        let mem_access = if go_mode { None } else { classify_mem_access(word, &self.run.cpu) };
+        let mem_access = if go_mode {
+            None
+        } else {
+            classify_mem_access(word, &self.run.cpu)
+        };
 
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
@@ -1912,9 +1978,7 @@ impl App {
             }
         };
         self.run.mem.add_instruction_cycles(cpi_cycles);
-        if self.run.mem.instruction_count % 32 == 0 {
-            self.run.mem.snapshot_stats();
-        }
+        self.run.mem.snapshot_stats();
 
         // Track execution counts (heatmap) — always kept.
         *self.run.exec_counts.entry(step_pc).or_insert(0) += 1;
@@ -1999,6 +2063,28 @@ impl App {
             self.ensure_pc_visible_in_imem();
         }
         self.finalize_selected_core_after_step();
+    }
+
+    pub(crate) fn align_mem_view_addr_to_last_access(&mut self) {
+        let Some((addr, _, _)) = self.run.dyn_mem_access else {
+            return;
+        };
+        let align = self.run.mem_view_bytes.max(1);
+        self.run.mem_view_addr = addr & !(align - 1);
+    }
+
+    pub(crate) fn sync_mem_focus_for_active_sidebar_mode(&mut self) {
+        if self.run.mem_region == crate::ui::app::MemRegion::Access {
+            self.align_mem_view_addr_to_last_access();
+        }
+        if self.run.show_dyn
+            && self
+                .run
+                .dyn_mem_access
+                .is_some_and(|(_, _, is_store)| is_store)
+        {
+            self.align_mem_view_addr_to_last_access();
+        }
     }
 
     /// Jump editor cursor to the definition of the label under the cursor.

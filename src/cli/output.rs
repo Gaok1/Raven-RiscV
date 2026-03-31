@@ -1,11 +1,11 @@
 // output.rs — JSON, fstats, and CSV output formatters; expectation validators
 
+use super::{PipelineReport, PipelineTraceHazard, PipelineTraceStage, PipelineTraceStep};
+use crate::falcon::asm::utils::parse_reg;
 use crate::falcon::cache::Cache;
 use crate::falcon::memory::Bus;
 use crate::falcon::{CacheController, Cpu};
 use crate::ui::pipeline::{HazardType, Stage, TraceKind};
-use super::{PipelineReport, PipelineTraceStep, PipelineTraceStage, PipelineTraceHazard};
-use crate::falcon::asm::utils::parse_reg;
 
 // ── JSON output ───────────────────────────────────────────────────────────────
 
@@ -15,10 +15,23 @@ pub(super) fn format_json(
     exit_code: Option<u32>,
     pipeline: Option<PipelineReport>,
 ) -> String {
-    let instr = mem.instruction_count;
-    let total_cyc = mem.total_program_cycles();
-    let cpi = mem.overall_cpi();
-    let ipc = mem.ipc();
+    let (instr, total_cyc, base_cyc, cpi, ipc, clock_model) = if let Some(p) = pipeline {
+        let ipc = if p.cycles > 0 {
+            p.committed as f64 / p.cycles as f64
+        } else {
+            0.0
+        };
+        (p.committed, p.cycles, None, p.cpi, ipc, "pipeline")
+    } else {
+        (
+            mem.instruction_count,
+            mem.total_program_cycles(),
+            Some(mem.extra_cycles),
+            mem.overall_cpi(),
+            mem.ipc(),
+            "serial",
+        )
+    };
 
     let mut s = String::from("{\n");
     s.push_str(&format!("  \"file\": \"{}\",\n", json_escape(file)));
@@ -27,12 +40,15 @@ pub(super) fn format_json(
         None => s.push_str("  \"exit_code\": null,\n"),
     }
     s.push_str(&format!("  \"instructions\": {instr},\n"));
+    s.push_str(&format!("  \"clock_model\": \"{clock_model}\",\n"));
     s.push_str(&format!("  \"total_cycles\": {total_cyc},\n"));
-    s.push_str(&format!("  \"base_cycles\": {},\n", mem.extra_cycles));
-    s.push_str(&format!(
-        "  \"cache_cycles\": {},\n",
-        total_cyc.saturating_sub(mem.extra_cycles)
-    ));
+    if let Some(base_cyc) = base_cyc {
+        s.push_str(&format!("  \"base_cycles\": {base_cyc},\n"));
+        s.push_str(&format!(
+            "  \"cache_cycles\": {},\n",
+            total_cyc.saturating_sub(base_cyc)
+        ));
+    }
     s.push_str(&format!("  \"cpi\": {cpi:.4},\n"));
     s.push_str(&format!("  \"ipc\": {ipc:.4},\n"));
     if let Some(p) = pipeline {
@@ -71,7 +87,13 @@ pub(super) fn format_json(
     s
 }
 
-pub(super) fn append_cache_json(s: &mut String, cache: &Cache, name: &str, instructions: u64, amat: f64) {
+pub(super) fn append_cache_json(
+    s: &mut String,
+    cache: &Cache,
+    name: &str,
+    instructions: u64,
+    amat: f64,
+) {
     let stats = &cache.stats;
     let cfg = &cache.config;
     let total = stats.total_accesses();
@@ -123,7 +145,21 @@ pub(super) fn append_cache_json(s: &mut String, cache: &Cache, name: &str, instr
 }
 
 pub(super) fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 pub(super) fn flush_cpu_stdout(cpu: &mut Cpu, captured_stdout: &mut Vec<u8>) {
@@ -235,7 +271,7 @@ pub(super) fn hazard_type_label(hazard: HazardType) -> &'static str {
         HazardType::LoadUse => "LOAD",
         HazardType::BranchFlush => "CTRL",
         HazardType::FuBusy => "FU",
-        HazardType::MemLatency => "MEM",
+        HazardType::MemLatency => "STALL",
         HazardType::Waw => "WAW",
         HazardType::War => "WAR",
     }
@@ -391,23 +427,48 @@ pub(super) fn format_fstats(
     exit_code: Option<u32>,
     pipeline: Option<PipelineReport>,
 ) -> String {
-    let instr = mem.instruction_count;
-    let total_cyc = mem.total_program_cycles();
-    let cpi = mem.overall_cpi();
-    let ipc = mem.ipc();
+    let (instr, total_cyc, base_cyc, cpi, ipc, header, clock_model) = if let Some(p) = pipeline {
+        let ipc = if p.cycles > 0 {
+            p.committed as f64 / p.cycles as f64
+        } else {
+            0.0
+        };
+        (
+            p.committed,
+            p.cycles,
+            None,
+            p.cpi,
+            ipc,
+            "# FALCON-ASM Simulation Results v2\n",
+            "pipeline",
+        )
+    } else {
+        (
+            mem.instruction_count,
+            mem.total_program_cycles(),
+            Some(mem.extra_cycles),
+            mem.overall_cpi(),
+            mem.ipc(),
+            "# FALCON-ASM Simulation Results v1\n",
+            "serial",
+        )
+    };
 
-    let mut s = String::from("# FALCON-ASM Simulation Results v1\n");
+    let mut s = String::from(header);
     s.push_str(&format!("label={file}\n"));
+    s.push_str(&format!("prog.clock_model={clock_model}\n"));
     if let Some(code) = exit_code {
         s.push_str(&format!("prog.exit_code={code}\n"));
     }
     s.push_str(&format!("prog.instructions={instr}\n"));
     s.push_str(&format!("prog.total_cycles={total_cyc}\n"));
-    s.push_str(&format!("prog.base_cycles={}\n", mem.extra_cycles));
-    s.push_str(&format!(
-        "prog.cache_cycles={}\n",
-        total_cyc.saturating_sub(mem.extra_cycles)
-    ));
+    if let Some(base_cyc) = base_cyc {
+        s.push_str(&format!("prog.base_cycles={base_cyc}\n"));
+        s.push_str(&format!(
+            "prog.cache_cycles={}\n",
+            total_cyc.saturating_sub(base_cyc)
+        ));
+    }
     s.push_str(&format!("prog.cpi={cpi:.4}\n"));
     s.push_str(&format!("prog.ipc={ipc:.4}\n"));
     s.push_str(&format!("extra_levels={}\n", mem.extra_levels.len()));
@@ -513,23 +574,44 @@ pub(super) fn write_cache_level_fstats(
 
 // ── CSV output ────────────────────────────────────────────────────────────────
 
-pub(super) fn format_csv(mem: &CacheController, file: &str, pipeline: Option<PipelineReport>) -> String {
-    let instr = mem.instruction_count;
-    let total_cyc = mem.total_program_cycles();
+pub(super) fn format_csv(
+    mem: &CacheController,
+    file: &str,
+    pipeline: Option<PipelineReport>,
+) -> String {
+    let (instr, total_cyc, base_cyc, cpi, ipc, clock_model) = if let Some(p) = pipeline {
+        let ipc = if p.cycles > 0 {
+            p.committed as f64 / p.cycles as f64
+        } else {
+            0.0
+        };
+        (p.committed, p.cycles, None, p.cpi, ipc, "pipeline")
+    } else {
+        (
+            mem.instruction_count,
+            mem.total_program_cycles(),
+            Some(mem.extra_cycles),
+            mem.overall_cpi(),
+            mem.ipc(),
+            "serial",
+        )
+    };
 
     let mut s = String::new();
     s.push_str(&format!("# {file}\n"));
     s.push_str("PROGRAM SUMMARY\n");
-    s.push_str("Instructions,Total Cycles,Base Cycles,Cache Cycles,CPI,IPC\n");
-    s.push_str(&format!(
-        "{},{},{},{},{:.4},{:.4}\n",
-        instr,
-        total_cyc,
-        mem.extra_cycles,
-        total_cyc.saturating_sub(mem.extra_cycles),
-        mem.overall_cpi(),
-        mem.ipc()
-    ));
+    if let Some(base_cyc) = base_cyc {
+        s.push_str("Clock Model,Instructions,Total Cycles,Base Cycles,Cache Cycles,CPI,IPC\n");
+        s.push_str(&format!(
+            "{clock_model},{instr},{total_cyc},{base_cyc},{},{cpi:.4},{ipc:.4}\n",
+            total_cyc.saturating_sub(base_cyc)
+        ));
+    } else {
+        s.push_str("Clock Model,Instructions,Total Cycles,CPI,IPC\n");
+        s.push_str(&format!(
+            "{clock_model},{instr},{total_cyc},{cpi:.4},{ipc:.4}\n"
+        ));
+    }
     s.push('\n');
 
     if let Some(p) = pipeline {

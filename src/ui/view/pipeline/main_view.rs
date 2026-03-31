@@ -2,7 +2,7 @@ use crate::ui::app::App;
 use crate::ui::pipeline::sim::reg_name;
 use crate::ui::pipeline::{
     GanttCell, HazardTrace, HazardType, InstrClass, PipelineMode, Stage, TraceKind,
-    fu_latency_for_class,
+    fu_latency_for_class, gantt_max_scroll, gantt_visible_rows, gantt_window_bounds,
 };
 use crate::ui::theme;
 use ratatui::{
@@ -36,9 +36,15 @@ pub fn render_pipeline_main(f: &mut Frame, area: Rect, app: &App) {
     } else {
         p.hazard_msgs.len().min(2) as u16
     };
-    let hazards_h: u16 = (2 + trace_rows + legend_rows + msg_rows)
-        .min(area.height.saturating_sub(stages_h).saturating_sub(3))
-        .clamp(4, 13);
+    let remaining_after_stages = area.height.saturating_sub(stages_h);
+    let hazards_cap = remaining_after_stages.saturating_sub(3);
+    let hazards_h: u16 = if hazards_cap == 0 {
+        0
+    } else {
+        (2 + trace_rows + legend_rows + msg_rows)
+            .min(hazards_cap)
+            .clamp(1, 13)
+    };
 
     // Layout: stages | hazards (3) | gantt (rest)
     let chunks = Layout::default()
@@ -46,7 +52,7 @@ pub fn render_pipeline_main(f: &mut Frame, area: Rect, app: &App) {
         .constraints([
             Constraint::Length(stages_h),
             Constraint::Length(hazards_h),
-            Constraint::Min(4),
+            Constraint::Min(1),
         ])
         .split(area);
 
@@ -91,8 +97,8 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
 
         let border_style = match slot {
             Some(s) if s.class == InstrClass::Unknown => Style::default().fg(Color::DarkGray),
-            Some(s) if s.is_bubble => Style::default().fg(theme::PAUSED),
             Some(s) if s.hazard.is_some() => Style::default().fg(s.hazard.unwrap().color()),
+            Some(s) if s.is_bubble => Style::default().fg(theme::PAUSED),
             Some(s) if s.is_speculative => Style::default().fg(theme::PAUSED),
             Some(_) => Style::default().fg(theme::ACCENT),
             None => Style::default().fg(theme::BORDER),
@@ -124,15 +130,10 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme::BORDER),
             ))],
             Some(s) if s.is_bubble => {
-                let label = match s.hazard {
-                    Some(HazardType::BranchFlush) => "✕ squashed",
-                    _ => "NOP",
-                };
+                let label = bubble_label_for_stage(i, s);
                 vec![Line::from(Span::styled(
                     label,
-                    Style::default()
-                        .fg(theme::PAUSED)
-                        .add_modifier(Modifier::BOLD),
+                    border_style.add_modifier(Modifier::BOLD),
                 ))]
             }
             Some(s) if s.class == InstrClass::Unknown => {
@@ -161,18 +162,7 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
                 let class_color = s.class.color();
                 let hazard_indicator = s.hazard.map(|h| {
                     Span::styled(
-                        format!(
-                            " ⚠{}",
-                            match h {
-                                HazardType::Raw => "RAW",
-                                HazardType::LoadUse => "LU",
-                                HazardType::BranchFlush => "BR",
-                                HazardType::FuBusy => "FU",
-                                HazardType::MemLatency => "MEM",
-                                HazardType::Waw => "WAW",
-                                HazardType::War => "WAR",
-                            }
-                        ),
+                        format!(" ⚠{}", compact_stage_hazard_label(i, Some(s), h)),
                         Style::default().fg(h.color()),
                     )
                 });
@@ -266,7 +256,7 @@ fn stage_status_badges(
         if let Some(h) = s.hazard {
             push_badge(
                 &mut tags,
-                compact_stage_hazard_label(h).to_string(),
+                compact_stage_hazard_label(stage_idx, slot, h).to_string(),
                 Style::default().fg(h.color()),
             );
         }
@@ -292,7 +282,7 @@ fn stage_status_badges(
             TraceKind::Hazard(h) => {
                 push_badge(
                     &mut tags,
-                    compact_stage_hazard_label(h).to_string(),
+                    compact_stage_hazard_label(stage_idx, slot, h).to_string(),
                     Style::default().fg(h.color()),
                 );
             }
@@ -312,13 +302,43 @@ fn push_badge(tags: &mut Vec<(String, Style)>, label: String, style: Style) {
     tags.push((label, style));
 }
 
-fn compact_stage_hazard_label(h: HazardType) -> &'static str {
+fn bubble_label_for_stage(stage_idx: usize, slot: &crate::ui::pipeline::PipeSlot) -> &'static str {
+    match slot.hazard {
+        Some(HazardType::BranchFlush) => "✕ squashed",
+        Some(HazardType::MemLatency) => match stage_idx {
+            x if x == Stage::ID as usize => "waiting for IF",
+            x if x > Stage::ID as usize => "front-end bubble",
+            _ => "wait",
+        },
+        _ => "NOP bubble",
+    }
+}
+
+fn compact_stage_hazard_label(
+    stage_idx: usize,
+    slot: Option<&crate::ui::pipeline::PipeSlot>,
+    h: HazardType,
+) -> &'static str {
     match h {
         HazardType::Raw => "RAW",
         HazardType::LoadUse => "LOAD",
         HazardType::BranchFlush => "CTRL",
         HazardType::FuBusy => "FU",
-        HazardType::MemLatency => "MEM",
+        HazardType::MemLatency => {
+            if slot.is_some_and(|s| s.is_bubble) {
+                if stage_idx == Stage::ID as usize {
+                    "UP"
+                } else {
+                    "BUBL"
+                }
+            } else if stage_idx == Stage::IF as usize {
+                "IFWT"
+            } else if stage_idx == Stage::MEM as usize {
+                "MEMWT"
+            } else {
+                "WAIT"
+            }
+        }
         HazardType::Waw => "WAW",
         HazardType::War => "WAR",
     }
@@ -353,8 +373,8 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
 
     // Borda colorida baseada no estado do EX slot
     let border_style = match ex_slot {
-        Some(s) if s.is_bubble => Style::default().fg(theme::PAUSED),
         Some(s) if s.hazard.is_some() => Style::default().fg(s.hazard.unwrap().color()),
+        Some(s) if s.is_bubble => Style::default().fg(theme::PAUSED),
         Some(_) => Style::default().fg(theme::ACCENT),
         None => Style::default().fg(theme::BORDER),
     };
@@ -373,32 +393,13 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
 
     // Lista de UFs: (nome, classe que a ocupa, latência via CPI config)
     let cpi = &app.run.cpi_config;
-    let fu_defs: &[(&str, InstrClass, u8)] = &[
-        (
-            "ALU",
-            InstrClass::Alu,
-            fu_latency_for_class(InstrClass::Alu, cpi),
-        ),
-        (
-            "MUL",
-            InstrClass::Mul,
-            fu_latency_for_class(InstrClass::Mul, cpi),
-        ),
-        (
-            "DIV",
-            InstrClass::Div,
-            fu_latency_for_class(InstrClass::Div, cpi),
-        ),
-        (
-            "FPU",
-            InstrClass::Fp,
-            fu_latency_for_class(InstrClass::Fp, cpi),
-        ),
-        (
-            "LSU",
-            InstrClass::Load,
-            fu_latency_for_class(InstrClass::Load, cpi),
-        ),
+    let fu_defs: &[(&str, InstrClass)] = &[
+        ("ALU", InstrClass::Alu),
+        ("MUL", InstrClass::Mul),
+        ("DIV", InstrClass::Div),
+        ("FPU", InstrClass::Fp),
+        ("LSU", InstrClass::Load),
+        ("SYS", InstrClass::System),
     ];
 
     // Cada FU ocupa uma linha dentro do box
@@ -408,7 +409,7 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
         .constraints(row_constraints)
         .split(fu_area);
 
-    for (i, (fu_name, fu_class, latency)) in fu_defs.iter().enumerate() {
+    for (i, (fu_name, fu_class)) in fu_defs.iter().enumerate() {
         if i >= rows.len() {
             break;
         }
@@ -420,7 +421,11 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
 
         let line = if is_active {
             let s = ex_slot.unwrap();
-            let total = *latency;
+            let latency_class = match s.class {
+                InstrClass::Store if *fu_class == InstrClass::Load => InstrClass::Store,
+                _ => *fu_class,
+            };
+            let total = fu_latency_for_class(latency_class, cpi);
             let done = total.saturating_sub(s.fu_cycles_left);
             // Barra de progresso
             let bar_w = (rows[i].width as usize).saturating_sub(20).min(12).max(4);
@@ -453,6 +458,19 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
                     Style::default().fg(theme::LABEL_Y),
                 ),
                 Span::styled(bar, Style::default().fg(theme::RUNNING)),
+            ])
+        } else if *fu_class == InstrClass::System {
+            Line::from(vec![
+                Span::styled(
+                    format!("{:<3} ", fu_name),
+                    Style::default().fg(theme::BORDER),
+                ),
+                Span::styled(
+                    "trap / syscall handoff",
+                    Style::default()
+                        .fg(theme::LABEL)
+                        .add_modifier(Modifier::DIM),
+                ),
             ])
         } else {
             Line::from(vec![
@@ -700,6 +718,7 @@ fn render_trace_detail_line(trace: &HazardTrace, detail: &str, width: usize) -> 
         TraceKind::Forward => "bypass  ",
         TraceKind::Hazard(HazardType::LoadUse) => "stall   ",
         TraceKind::Hazard(HazardType::BranchFlush) => "squash  ",
+        TraceKind::Hazard(HazardType::MemLatency) => "wait    ",
         _ => "hazard  ",
     };
     let text = format!("{}{}", prefix, detail);
@@ -718,6 +737,42 @@ fn trace_detail_for(trace: &HazardTrace, hazard_msgs: &[(HazardType, String)]) -
             .find(|(msg_ht, _)| *msg_ht == ht)
             .map(|(_, msg)| msg.clone())
             .unwrap_or_else(|| trace.detail.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bubble_label_for_stage, compact_stage_hazard_label};
+    use crate::ui::pipeline::{HazardType, PipeSlot, Stage};
+
+    #[test]
+    fn mem_latency_bubble_in_id_reads_as_waiting_for_if() {
+        let mut slot = PipeSlot::bubble();
+        slot.hazard = Some(HazardType::MemLatency);
+
+        assert_eq!(bubble_label_for_stage(Stage::ID as usize, &slot), "waiting for IF");
+        assert_eq!(
+            compact_stage_hazard_label(Stage::ID as usize, Some(&slot), HazardType::MemLatency),
+            "UP"
+        );
+    }
+
+    #[test]
+    fn mem_latency_on_if_and_mem_uses_stage_specific_badges() {
+        let mut if_slot = PipeSlot::from_word(0, 0x0000_0013);
+        if_slot.hazard = Some(HazardType::MemLatency);
+
+        let mut mem_slot = PipeSlot::from_word(4, 0x0000_0013);
+        mem_slot.hazard = Some(HazardType::MemLatency);
+
+        assert_eq!(
+            compact_stage_hazard_label(Stage::IF as usize, Some(&if_slot), HazardType::MemLatency),
+            "IFWT"
+        );
+        assert_eq!(
+            compact_stage_hazard_label(Stage::MEM as usize, Some(&mem_slot), HazardType::MemLatency),
+            "MEMWT"
+        );
     }
 }
 
@@ -837,16 +892,14 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     const LABEL_W: usize = 12;
     const CELL_W: usize = 4;
     let preview_inner_w = area.width.saturating_sub(2) as usize;
-    let visible_cols = ((preview_inner_w.saturating_sub(LABEL_W)) / CELL_W).max(1);
+    let preview_cols = ((preview_inner_w.saturating_sub(LABEL_W)) / CELL_W).max(1);
+    let visible_cols = preview_cols.min(crate::ui::pipeline::MAX_GANTT_COLS);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::BORDER))
         .title(Span::styled(
-            format!(
-                " HISTORY  last {} cycles ",
-                visible_cols.min(crate::ui::pipeline::MAX_GANTT_COLS)
-            ),
+            format!(" HISTORY  up to {} cycles ", visible_cols),
             Style::default().fg(theme::LABEL),
         ));
 
@@ -866,21 +919,26 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let max_cols = ((inner.width as usize).saturating_sub(LABEL_W)) / CELL_W;
+    let history_cols = max_cols.min(crate::ui::pipeline::MAX_GANTT_COLS).max(1);
     let max_rows = inner.height as usize;
 
-    let visible_rows: Vec<_> = p
-        .gantt
-        .iter()
-        .skip(p.gantt_scroll)
+    let visible_rows = gantt_visible_rows(area.height);
+    p.gantt_visible_rows_cache.set(visible_rows);
+    let max_scroll = gantt_max_scroll(p, area.height);
+    p.gantt_max_scroll_cache.set(max_scroll);
+    let scroll = p.gantt_scroll.min(max_scroll);
+    let scrolled_rows: Vec<_> = p.gantt.iter().skip(scroll).collect();
+    let (start_cycle, end_cycle) = gantt_window_bounds(&scrolled_rows, history_cols);
+
+    let visible_rows: Vec<_> = scrolled_rows
+        .into_iter()
+        .filter(|row| {
+            !row.done
+                || (row.first_cycle < end_cycle
+                    && row.first_cycle + row.cells.len() as u64 > start_cycle)
+        })
         .take(max_rows.saturating_sub(2))
         .collect();
-
-    let start_cycle = visible_rows
-        .iter()
-        .map(|r| r.first_cycle)
-        .min()
-        .unwrap_or(p.cycle_count.saturating_sub(max_cols as u64));
-    let end_cycle = start_cycle + max_cols as u64;
 
     let mut header_spans = vec![Span::styled(
         format!("{:<width$}", "instr", width = LABEL_W),
@@ -895,7 +953,7 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    let separator = format!("{}{}", "-".repeat(LABEL_W), "----".repeat(max_cols));
+    let separator = format!("{}{}", "-".repeat(LABEL_W), "----".repeat(history_cols));
 
     let mut lines: Vec<Line<'_>> = vec![
         Line::from(header_spans),
@@ -918,8 +976,12 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
         )];
 
         for c in start_cycle..end_cycle {
-            let cell_idx = c.saturating_sub(row.first_cycle) as usize;
-            let cell = row.cells.get(cell_idx).copied().unwrap_or(GanttCell::Empty);
+            let cell = if c < row.first_cycle {
+                GanttCell::Empty
+            } else {
+                let cell_idx = (c - row.first_cycle) as usize;
+                row.cells.get(cell_idx).copied().unwrap_or(GanttCell::Empty)
+            };
             let (text, style) = if is_invalid {
                 let (t, _) = cell_to_span(cell);
                 (

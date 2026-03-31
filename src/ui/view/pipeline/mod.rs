@@ -13,28 +13,30 @@ use ratatui::{
 };
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
-    // Layout: subtab_header (3) | exec_controls (4) | content (min)
+    // Layout: subtab_header (3) | exec_controls (4) | content (min) | controls (3)
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Min(0),
+            Constraint::Length(3),
         ])
         .split(area);
 
     render_subtab_header(f, layout[0], app);
     render_exec_controls(f, layout[1], app);
+    render_controls_bar(f, layout[3], app);
 
     if !app.pipeline.enabled {
         let p = Paragraph::new(vec![
             Line::raw(""),
             Line::from(Span::styled(
-                "  Pipeline desabilitado.",
+                "  Pipeline disabled.",
                 Style::default().fg(theme::PAUSED).bold(),
             )),
             Line::from(Span::styled(
-                "  Ative na aba Config (Config → Pipeline Enabled).",
+                "  Enable it in the Config tab (Config -> Pipeline Enabled).",
                 Style::default().fg(theme::LABEL),
             )),
         ]);
@@ -45,11 +47,11 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
         let p = Paragraph::new(vec![
             Line::raw(""),
             Line::from(Span::styled(
-                "  Nenhum programa carregado.",
+                "  No program loaded.",
                 Style::default().fg(theme::PAUSED).bold(),
             )),
             Line::from(Span::styled(
-                "  Compile na aba Editor para carregar.",
+                "  Compile in the Editor tab to load one.",
                 Style::default().fg(theme::LABEL),
             )),
         ]);
@@ -170,10 +172,9 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let (cpi_str, stall_str) = if p.instr_committed > 0 {
         let cpi = p.cycle_count as f64 / p.instr_committed as f64;
         let branch_str = if p.branches_executed > 0 {
-            let mispredict_pct =
-                p.flush_count as f64 / p.branches_executed as f64 * 100.0;
+            let mispredict_pct = p.flush_count as f64 / p.branches_executed as f64 * 100.0;
             format!(
-                "  branches:{}  mispred:{} ({:.0}%)",
+                "  control:{}  mispred:{} ({:.0}%)",
                 p.branches_executed, p.flush_count, mispredict_pct
             )
         } else {
@@ -184,9 +185,7 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
             p.cycle_count, p.instr_committed, p.stall_count, branch_str,
         );
         let [raw, lu, br, fu, mem] = p.stall_by_type;
-        let detail = format!(
-            " Stalls — RAW:{raw}  Load-Use:{lu}  Branch:{br}  FU:{fu}  Mem:{mem}"
-        );
+        let detail = format!(" Stalls — RAW:{raw}  Load-Use:{lu}  Branch:{br}  FU:{fu}  Mem:{mem}");
         (main, detail)
     } else {
         (
@@ -202,27 +201,28 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Execução", Style::default().fg(theme::LABEL)));
+        .title(Span::styled("Execution", Style::default().fg(theme::LABEL)));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(vec![line1, line2, line3]), inner);
 
     // Record button geometry for mouse
-    // speed <label>   state <label>   reset
-    let reset_x = inner.x + 27;
-    app.pipeline
-        .btn_reset_rect
-        .set((inner.y, reset_x, reset_x + 5));
-    let speed_x = inner.x + 7;
+    // Layout: "speed <speed_label>   state <state_label>   reset"
+    // Offsets: speed_label at +6, state_label at +15+speed_w, reset at +18+speed_w+state_w
+    let speed_x = inner.x + 6;
     let speed_label_w = p.speed.label().len() as u16;
     app.pipeline
         .btn_speed_rect
         .set((inner.y, speed_x, speed_x + speed_label_w));
-    let state_x = speed_x + speed_label_w + 10;
+    let state_x = inner.x + 15 + speed_label_w;
     let state_label_w = state_label.len() as u16;
     app.pipeline
         .btn_state_rect
         .set((inner.y, state_x, state_x + state_label_w));
+    let reset_x = inner.x + 18 + speed_label_w + state_label_w;
+    app.pipeline
+        .btn_reset_rect
+        .set((inner.y, reset_x, reset_x + 5));
 }
 
 fn subtab_style(active: bool, hovered: bool) -> Style {
@@ -232,5 +232,48 @@ fn subtab_style(active: bool, hovered: bool) -> Style {
         Style::default().fg(theme::TEXT).bold()
     } else {
         Style::default().fg(theme::IDLE)
+    }
+}
+
+fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
+    let p = &app.pipeline;
+    let mut spans = vec![
+        Span::raw(" "),
+        dense_action("results", theme::ACCENT, p.hover_export_results),
+    ];
+
+    if matches!(p.subtab, PipelineSubtab::Config) {
+        spans.push(Span::raw("   "));
+        spans.push(dense_action(
+            "import cfg",
+            theme::METRIC_CYC,
+            p.hover_import_cfg,
+        ));
+        spans.push(Span::raw("   "));
+        spans.push(dense_action(
+            "export cfg",
+            theme::METRIC_CYC,
+            p.hover_export_cfg,
+        ));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
+
+    let y = inner.y;
+    let x = inner.x;
+    app.pipeline.btn_export_results_rect.set((y, x + 1, x + 8));
+
+    if matches!(p.subtab, PipelineSubtab::Config) {
+        app.pipeline.btn_import_cfg_rect.set((y, x + 11, x + 21));
+        app.pipeline.btn_export_cfg_rect.set((y, x + 24, x + 34));
+    } else {
+        app.pipeline.btn_import_cfg_rect.set((0, 0, 0));
+        app.pipeline.btn_export_cfg_rect.set((0, 0, 0));
     }
 }

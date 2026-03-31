@@ -234,8 +234,8 @@ The API uses the `raven_*` prefix to match `rust-to-raven`. The old `falcon_*` n
 | `raven_hart_task(entry, stack_base, stack_size, arg)` | helper | Build a `RavenHartTask` value |
 | `raven_hart_task_start(task)` | helper | Start a previously described hart task |
 | `raven_stack_top(stack_base, stack_size)` | helper | Compute the top address of a stack region |
-| `raven_hart_task_array(fn_ptr, stack_arr, arg)` | macro | Build a task from a stack array |
-| `raven_spawn_hart_array(fn_ptr, stack_arr, arg)` | macro | Spawn directly from a stack array |
+| `raven_hart_task_array(fn_ptr, stack_arr, arg)` | macro | Build a task from a real array; rejects pointers |
+| `raven_spawn_hart_array(fn_ptr, stack_arr, arg)` | macro | Spawn directly from a real array; rejects pointers |
 
 **Measuring algorithm cost:**
 ```c

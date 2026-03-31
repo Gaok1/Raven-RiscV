@@ -159,7 +159,10 @@ Default: `NonInclusive`
 
 ## CPI config (optional)
 
-Controls the per-instruction-class cycle counts used for overall CPI calculation. If omitted, Raven uses defaults.
+Controls the per-instruction-class latency model. If omitted, Raven uses defaults.
+
+- Sequential mode: these values contribute to the serial CPI/total-cycle model.
+- Pipeline mode: these values become stage latency and stall behavior inside the pipeline wall-clock.
 
 ```
 # --- CPI Config ---
@@ -354,4 +357,3 @@ miss_penalty     integer     0–9999
 assoc_penalty    integer     0–99  (default 1)
 transfer_width   integer     1–512 (default 8)
 ```
-

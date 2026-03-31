@@ -377,7 +377,9 @@ RavenHartTask raven_hart_task(raven_hart_fn entry,
                               void *stack_base, size_t stack_size,
                               unsigned int arg);
 
-// Macro that fills stack_size from sizeof(stack_arr) automatically:
+// Macro for real arrays (including VLAs). Pointers are rejected, so
+// malloc()-backed stacks must call raven_hart_task(..., stack_ptr, stack_size, ...)
+// explicitly.
 #define raven_hart_task_array(fn_ptr, stack_arr, arg_value)
 
 // Launch the task.  Returns a handle for join / poll.
@@ -393,7 +395,8 @@ RavenHartHandle raven_spawn_hart(raven_hart_fn entry,
                                  void *stack_base, size_t stack_size,
                                  unsigned int arg);
 
-// Macro variant — computes stack_size automatically:
+// Macro variant for real arrays (including VLAs). For malloc() or any pointer,
+// call raven_spawn_hart(entry, stack_ptr, stack_size, arg) explicitly.
 #define raven_spawn_hart_array(fn_ptr, stack_arr, arg)
 ```
 
@@ -430,6 +433,17 @@ static char stack[4096];
 
 RavenHartHandle h = raven_spawn_hart_array(worker, stack, /*arg=*/50);
 while (!h.is_finished(&h)) { /* do other work */ }
+```
+
+**Heap / dynamic stack** — pass the size explicitly:
+
+```c
+char *stack = malloc(stack_size);
+if (!stack) return 1;
+
+RavenHartHandle h = raven_spawn_hart(worker, stack, stack_size, /*arg=*/50);
+h.join(&h);
+free(stack);
 ```
 
 **Fire and forget (detach)** — hart cleans itself up, no need to join:

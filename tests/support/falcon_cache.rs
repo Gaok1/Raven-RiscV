@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::falcon::memory::Bus;
 
@@ -37,6 +36,22 @@ fn dcfg(
         miss_penalty: 10,
         assoc_penalty: 1,
         transfer_width: 8,
+    }
+}
+
+fn slow_level(line_size: usize, size: usize, hit_latency: u64) -> CacheConfig {
+    CacheConfig {
+        size,
+        line_size,
+        associativity: 1,
+        replacement: ReplacementPolicy::Lru,
+        write_policy: WritePolicy::WriteBack,
+        write_alloc: WriteAllocPolicy::WriteAllocate,
+        inclusion: InclusionPolicy::NonInclusive,
+        hit_latency,
+        miss_penalty: 0,
+        assoc_penalty: 0,
+        transfer_width: line_size as u32,
     }
 }
 
@@ -158,6 +173,40 @@ fn store_miss_write_allocate_uses_extra_level_latency() {
     assert_eq!(ctrl.load32(0x20).unwrap(), 0xDEAD_BEEF);
 }
 
+#[test]
+fn l1_dirty_writeback_installs_into_l2_before_ram() {
+    let l1 = slow_level(16, 16, 1);
+    let l2 = slow_level(16, 32, 5);
+    let mut ctrl = CacheController::new(CacheConfig::default(), l1, vec![l2], 256);
+
+    ctrl.store8(0x00, 0xAA).unwrap();
+    ctrl.store8(0x10, 0xBB).unwrap();
+
+    assert_eq!(ctrl.dcache.stats.writebacks, 1);
+    assert_eq!(ctrl.dcache.stats.ram_write_bytes, 0);
+    assert_eq!(ctrl.data_cache_location(0x00), Some((2, true)));
+    assert_eq!(ctrl.ram.load8(0x00).unwrap(), 0);
+    assert_eq!(ctrl.effective_read8(0x00).unwrap(), 0xAA);
+}
+
+#[test]
+fn l2_dirty_writeback_installs_into_l3_before_ram() {
+    let l1 = slow_level(16, 16, 1);
+    let l2 = slow_level(16, 16, 5);
+    let l3 = slow_level(16, 32, 9);
+    let mut ctrl = CacheController::new(CacheConfig::default(), l1, vec![l2, l3], 256);
+
+    ctrl.store8(0x00, 0x11).unwrap();
+    ctrl.store8(0x10, 0x22).unwrap();
+    ctrl.store8(0x20, 0x33).unwrap();
+
+    assert_eq!(ctrl.extra_levels[0].stats.writebacks, 1);
+    assert_eq!(ctrl.extra_levels[0].stats.ram_write_bytes, 0);
+    assert_eq!(ctrl.data_cache_location(0x00), Some((3, true)));
+    assert_eq!(ctrl.ram.load8(0x00).unwrap(), 0);
+    assert_eq!(ctrl.effective_read8(0x00).unwrap(), 0x11);
+}
+
 // ── Unaligned accesses should not panic ───────────────────────────────────
 
 #[test]
@@ -184,6 +233,55 @@ fn unaligned_dcache_read32_across_line_does_not_panic() {
     // addr=13 reads bytes [13,14,15,16] across the 16-byte line boundary
     let v = ctrl.dcache_read32(13).unwrap();
     assert_eq!(v, u32::from_le_bytes([13, 14, 15, 16]));
+}
+
+#[test]
+fn unaligned_dcache_read16_cross_line_uses_two_line_accesses_with_l2() {
+    let l1 = slow_level(16, 32, 1);
+    let l2 = slow_level(16, 64, 5);
+    let mut ctrl = CacheController::new(CacheConfig::default(), l1, vec![l2], 256);
+    for i in 0u32..32 {
+        ctrl.ram.store8(i, i as u8).unwrap();
+    }
+
+    let (value, latency) = ctrl.dcache_read16_timed(15);
+    assert_eq!(value.unwrap(), u16::from_le_bytes([15, 16]));
+    assert_eq!(latency, 16);
+    assert_eq!(ctrl.dcache.stats.total_accesses(), 2);
+    assert_eq!(ctrl.extra_levels[0].stats.total_accesses(), 2);
+}
+
+#[test]
+fn unaligned_dcache_read32_cross_line_uses_two_line_accesses_with_l2() {
+    let l1 = slow_level(16, 32, 1);
+    let l2 = slow_level(16, 64, 5);
+    let mut ctrl = CacheController::new(CacheConfig::default(), l1, vec![l2], 256);
+    for i in 0u32..32 {
+        ctrl.ram.store8(i, i as u8).unwrap();
+    }
+
+    let (value, latency) = ctrl.dcache_read32_timed(13);
+    assert_eq!(value.unwrap(), u32::from_le_bytes([13, 14, 15, 16]));
+    assert_eq!(latency, 16);
+    assert_eq!(ctrl.dcache.stats.total_accesses(), 2);
+    assert_eq!(ctrl.extra_levels[0].stats.total_accesses(), 2);
+}
+
+#[test]
+fn unaligned_fetch32_cross_line_uses_icache_hierarchy_with_l2() {
+    let l1 = slow_level(16, 32, 1);
+    let l2 = slow_level(16, 64, 5);
+    let mut ctrl = CacheController::new(l1, CacheConfig::default(), vec![l2], 256);
+    for i in 0u32..32 {
+        ctrl.ram.store8(i, i as u8).unwrap();
+    }
+
+    let (value, latency) = ctrl.fetch32_timed_no_count(13);
+    assert_eq!(value.unwrap(), u32::from_le_bytes([13, 14, 15, 16]));
+    assert_eq!(latency, 16);
+    assert_eq!(ctrl.icache.stats.total_accesses(), 2);
+    assert_eq!(ctrl.extra_levels[0].stats.total_accesses(), 2);
+    assert_eq!(ctrl.instruction_count, 0);
 }
 
 #[test]

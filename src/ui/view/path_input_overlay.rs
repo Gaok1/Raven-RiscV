@@ -61,8 +61,10 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
     let avail = input_area.width.saturating_sub(2) as usize; // subtract "> " prefix
     let q_chars: Vec<char> = q.chars().collect();
     let display_q = if q_chars.len() > avail && avail > 1 {
-        // Show the tail of the path with a "…" prefix so the user sees what they typed
-        let tail: String = q_chars[q_chars.len() - (avail - 1)..].iter().collect();
+        // Show the tail of the path with a "…" prefix.
+        // Reserve 1 column so the cursor lands *after* the last visible char, not on it.
+        let visible = avail.saturating_sub(2);
+        let tail: String = q_chars[q_chars.len() - visible..].iter().collect();
         format!("…{tail}")
     } else {
         q.clone()

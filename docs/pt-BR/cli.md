@@ -1,6 +1,6 @@
 # Referência da CLI do Raven
 
-> [Read in English](cli.md)
+> [Read in English](../en/cli.md)
 
 O Raven possui uma CLI completa para uso sem interface gráfica, em paralelo à TUI interativa.
 Execute `raven help` a qualquer momento para ver um resumo.

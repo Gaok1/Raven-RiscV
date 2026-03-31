@@ -77,7 +77,7 @@ pub struct TutorialState {
     pub active: bool,
     pub(crate) tab: Tab,
     pub step_idx: usize,
-    pub lang: DocsLang,
+    pub(crate) lang: DocsLang,
 }
 
 impl Default for TutorialState {
@@ -107,6 +107,7 @@ pub(crate) enum PathInputAction {
     OpenPcfg,
     SavePcfg,
     SaveResults,
+    SavePipelineResults,
 }
 
 pub(crate) struct PathInput {

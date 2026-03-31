@@ -334,6 +334,31 @@ Lê um inteiro da entrada (faixa 0..4294967295) e armazena como `u32` (little-en
 
 ---
 
+### `1030` — contar instruções
+
+Retorna a quantidade de instruções já executadas desde o início da execução.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1030` |
+| **`a0` (ret)** | contagem de instruções |
+
+---
+
+### `1031` — contar ciclos
+
+Retorna o total de ciclos decorridos no modo de execução atual.
+
+- Modo sequencial: retorna o total do modelo sequencial/cache.
+- Modo pipeline: retorna o clock global do pipeline.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1031` |
+| **`a0` (ret)** | contagem de ciclos |
+
+---
+
 ## Pseudo-instruções que usam ecall
 
 | Pseudo | Expansão | Syscall(s) | Corrompe |
@@ -384,4 +409,6 @@ Num   Nome             a0        a1        a2        retorno
 1010  read_u8          end. dst  —         —         —
 1011  read_u16         end. dst  —         —         —
 1012  read_u32         end. dst  —         —         —
+1030  get_instr_count  —         —         —         contagem (u32)
+1031  get_cycle_count  —         —         —         contagem (u32)
 ```

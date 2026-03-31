@@ -1,6 +1,6 @@
+use super::CpiConfig;
 use crate::falcon::{CacheController, Cpu};
 use crate::ui::editor::Editor;
-use super::CpiConfig;
 use std::time::{Duration, Instant};
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -142,6 +142,7 @@ pub(crate) struct RunState {
     pub(crate) mem_size: usize,
     pub(crate) base_pc: u32,
     pub(crate) data_base: u32,
+    pub(crate) heap_start: u32,
 
     // Memory view
     pub(crate) mem_view_addr: u32,

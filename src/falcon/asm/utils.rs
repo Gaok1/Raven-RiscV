@@ -342,10 +342,6 @@ pub(crate) fn fp_store_like(ops: &[String]) -> Result<(u8, i32, u8), String> {
     Ok((rs2, imm, rs1))
 }
 
-pub(crate) fn get_freg(s: &str) -> Result<u8, String> {
-    parse_freg(s).ok_or_else(|| format!("invalid float register: {s}"))
-}
-
 /// Parse a floating-point rounding mode name → rm bits (RISC-V ISA encoding).
 /// rne=0, rtz=1, rdn=2, rup=3, rmm=4, dyn=7
 pub(crate) fn parse_rm(s: &str) -> Option<u8> {

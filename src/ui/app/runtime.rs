@@ -1,6 +1,128 @@
 use super::*;
 
 impl App {
+    pub(crate) fn aggregate_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
+        if !self.pipeline.enabled {
+            return None;
+        }
+
+        let mut saw_pipeline = false;
+        let mut cycles = 0u64;
+        let mut committed = 0u64;
+        let mut stalls = 0u64;
+        let mut flushes = 0u64;
+        let mut branches = 0u64;
+        let mut stall_by_type = [0u64; crate::ui::pipeline::HazardType::STALL_TYPE_COUNT];
+
+        let mut accumulate = |pipe: &crate::ui::pipeline::PipelineSimState| {
+            saw_pipeline = true;
+            cycles = cycles.max(pipe.cycle_count);
+            committed = committed.saturating_add(pipe.instr_committed);
+            stalls = stalls.saturating_add(pipe.stall_count);
+            flushes = flushes.saturating_add(pipe.flush_count);
+            branches = branches.saturating_add(pipe.branches_executed);
+            for (dst, src) in stall_by_type.iter_mut().zip(pipe.stall_by_type.iter()) {
+                *dst = dst.saturating_add(*src);
+            }
+        };
+
+        if self.core_hart_id(self.selected_core).is_some()
+            || !matches!(self.core_status(self.selected_core), HartLifecycle::Free)
+        {
+            accumulate(&self.pipeline);
+        }
+
+        for (idx, hart) in self.harts.iter().enumerate() {
+            if idx == self.selected_core || hart.hart_id.is_none() {
+                continue;
+            }
+            if let Some(pipe) = hart.pipeline.as_ref() {
+                accumulate(pipe);
+            }
+        }
+
+        if !saw_pipeline {
+            return None;
+        }
+
+        let [
+            raw_stalls,
+            load_use_stalls,
+            branch_stalls,
+            fu_stalls,
+            mem_stalls,
+        ] = stall_by_type;
+        let cpi = if committed > 0 {
+            cycles as f64 / committed as f64
+        } else {
+            0.0
+        };
+
+        Some(PipelineResultsSnapshot {
+            scope: "aggregate".to_string(),
+            committed,
+            cycles,
+            stalls,
+            flushes,
+            cpi,
+            branches,
+            raw_stalls,
+            load_use_stalls,
+            branch_stalls,
+            fu_stalls,
+            mem_stalls,
+            bypass: self.pipeline.bypass.summary(),
+            mode: format!("{:?}", self.pipeline.mode),
+            branch_resolve: format!("{:?}", self.pipeline.branch_resolve),
+            branch_predict: format!("{:?}", self.pipeline.predict),
+        })
+    }
+
+    pub(crate) fn selected_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
+        if !self.pipeline.enabled {
+            return None;
+        }
+
+        let pipe = &self.pipeline;
+        let [
+            raw_stalls,
+            load_use_stalls,
+            branch_stalls,
+            fu_stalls,
+            mem_stalls,
+        ] = pipe.stall_by_type;
+        let cpi = if pipe.instr_committed > 0 {
+            pipe.cycle_count as f64 / pipe.instr_committed as f64
+        } else {
+            0.0
+        };
+
+        Some(PipelineResultsSnapshot {
+            scope: format!(
+                "selected-core:{}:hart:{}",
+                self.selected_core,
+                self.core_hart_id(self.selected_core)
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            committed: pipe.instr_committed,
+            cycles: pipe.cycle_count,
+            stalls: pipe.stall_count,
+            flushes: pipe.flush_count,
+            cpi,
+            branches: pipe.branches_executed,
+            raw_stalls,
+            load_use_stalls,
+            branch_stalls,
+            fu_stalls,
+            mem_stalls,
+            bypass: pipe.bypass.summary(),
+            mode: format!("{:?}", pipe.mode),
+            branch_resolve: format!("{:?}", pipe.branch_resolve),
+            branch_predict: format!("{:?}", pipe.predict),
+        })
+    }
+
     pub(in crate::ui) fn tab_visible(&self, tab: Tab) -> bool {
         match tab {
             Tab::Cache => self.run.cache_enabled,
@@ -32,7 +154,28 @@ impl App {
 
     pub(in crate::ui) fn set_pipeline_enabled(&mut self, enabled: bool) {
         self.pipeline.enabled = enabled;
+        self.reconfigure_pipeline_model();
         self.ensure_visible_tab();
+    }
+
+    pub(crate) fn reconfigure_pipeline_model(&mut self) {
+        self.run.is_running = false;
+        self.pipeline.reset_stages(self.run.cpu.pc);
+
+        for (idx, hart) in self.harts.iter_mut().enumerate() {
+            if idx == self.selected_core {
+                continue;
+            }
+            if let Some(p) = hart.pipeline.as_mut() {
+                p.enabled = self.pipeline.enabled;
+                p.bypass = self.pipeline.bypass;
+                p.branch_resolve = self.pipeline.branch_resolve;
+                p.mode = self.pipeline.mode;
+                p.set_predict(self.pipeline.predict);
+                p.speed = self.pipeline.speed;
+                p.reset_stages(hart.cpu.pc);
+            }
+        }
     }
 
     pub(super) fn selected_runtime_mut(&mut self) -> Option<&mut HartCoreRuntime> {
@@ -264,10 +407,10 @@ impl App {
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
             p.enabled = self.pipeline.enabled;
-            p.forwarding = self.pipeline.forwarding;
+            p.bypass = self.pipeline.bypass;
             p.branch_resolve = self.pipeline.branch_resolve;
             p.mode = self.pipeline.mode;
-            p.predict = self.pipeline.predict;
+            p.set_predict(self.pipeline.predict);
             p.speed = self.pipeline.speed;
             p.reset_stages(child.cpu.pc);
         }
@@ -359,10 +502,10 @@ impl App {
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
             p.enabled = self.pipeline.enabled;
-            p.forwarding = self.pipeline.forwarding;
+            p.bypass = self.pipeline.bypass;
             p.branch_resolve = self.pipeline.branch_resolve;
             p.mode = self.pipeline.mode;
-            p.predict = self.pipeline.predict;
+            p.set_predict(self.pipeline.predict);
             p.speed = self.pipeline.speed;
             p.reset_stages(child.cpu.pc);
         }

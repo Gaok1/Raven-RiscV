@@ -1,6 +1,6 @@
 # Hardware threads (harts)
 
-> [Leia em Português](hart.pt-BR.md)
+> [Leia em Português](../pt-BR/hart.md)
 
 A **hart** — *hardware thread* — is an independent execution context within a RISC-V system: its own program counter, register file, and stack. In Raven, each hart maps to one simulated physical core. Multiple harts share the same flat address space and memory contents; they differ only in their register state and execution position.
 

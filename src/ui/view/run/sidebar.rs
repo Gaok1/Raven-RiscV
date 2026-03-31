@@ -50,7 +50,7 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         .title(if app.run.show_dyn {
             format!("Registers [Dyn]{cursor_info}")
         } else {
-            format!("Registers  [p]=pin  [Tab]=float{cursor_info}")
+            format!("Registers  [P]=pin  [Tab]=float{cursor_info}")
         });
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
@@ -316,7 +316,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         valid_span,
         Span::styled(
-            "  Esc=close  Enter=ok",
+            "  Ctrl+V=paste  Esc=close  Enter=ok",
             Style::default().fg(theme::IDLE).bg(bg),
         ),
     ]);
@@ -333,39 +333,41 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn memory_block(app: &App) -> Block<'static> {
-    let title = if app.run.show_dyn {
-        if let Some((addr, _, true)) = app.run.dyn_mem_access {
-            format!("Memory [Dyn]  @0x{addr:08x}")
-        } else {
-            "Memory [Dyn]".to_string()
-        }
-    } else {
-        match app.run.mem_region {
-            MemRegion::Stack => {
-                let sp = app.run.cpu.x[2];
-                format!("Memory [Stack]  SP=0x{sp:08x}")
-            }
-            MemRegion::Access => format!("Memory [R/W]  @0x{:08x}", app.run.mem_view_addr),
-            MemRegion::Heap => {
-                let hb = app.run.cpu.heap_break;
-                format!("Memory [Heap]  HB=0x{hb:08x}")
-            }
-            _ => "Memory".to_string(),
-        }
-    };
+    let base_addr = visible_memory_base_addr(app, None);
+    let section = memory_title_section(app, base_addr);
+    let accent = memory_accent_color(app, section);
+    let title = Line::from(vec![
+        Span::styled("Memory", Style::default().fg(theme::TEXT).bold()),
+        Span::styled(
+            format!("  0x{base_addr:08x}"),
+            Style::default().fg(accent).bold(),
+        ),
+        Span::styled(format!(" [{}]", section), Style::default().fg(accent)),
+    ]);
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
+        .border_style(Style::default().fg(accent))
         .border_type(BorderType::Rounded)
         .title(title)
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
+    let base = visible_memory_base_addr(app, Some(inner.height as u32));
     let bytes = app.run.mem_view_bytes;
     let lines = inner.height as u32;
     let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
 
-    // Center the view for Stack, R/W (Access), Heap, and Dyn-store modes
+    (0..lines)
+        .map(|i| i * bytes)
+        .map(|offset| base.wrapping_add(offset))
+        .filter(|&addr| addr <= max)
+        .map(|addr| memory_line(app, addr))
+        .collect()
+}
+
+fn visible_memory_base_addr(app: &App, lines_override: Option<u32>) -> u32 {
+    let bytes = app.run.mem_view_bytes.max(1);
+    let lines = lines_override.unwrap_or(0);
     let center = app.run.mem_region == MemRegion::Stack
         || app.run.mem_region == MemRegion::Access
         || app.run.mem_region == MemRegion::Heap
@@ -376,13 +378,67 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
     } else {
         app.run.mem_view_addr
     };
+    let align_mask = !(bytes - 1);
+    base & align_mask
+}
 
-    (0..lines)
-        .map(|i| i * bytes)
-        .map(|offset| base.wrapping_add(offset))
-        .filter(|&addr| addr <= max)
-        .map(|addr| memory_line(app, addr))
-        .collect()
+fn memory_title_section<'a>(app: &'a App, addr: u32) -> &'a str {
+    classify_memory_section(app, addr)
+}
+
+fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
+    let sp_aligned = app.run.cpu.x[2] & !(app.run.mem_view_bytes.saturating_sub(1));
+    if addr >= sp_aligned && (addr as usize) < app.run.mem_size {
+        return "stack";
+    }
+
+    for section in &app.run.elf_sections {
+        let end = section.addr.saturating_add(section.size);
+        if addr >= section.addr && addr < end {
+            return section.name.as_str();
+        }
+    }
+
+    let data_base = app.editor.last_ok_data_base.unwrap_or(app.run.data_base);
+    let data_len = app
+        .editor
+        .last_ok_data
+        .as_ref()
+        .map(|bytes| bytes.len() as u32)
+        .unwrap_or(0);
+    let bss_size = app.editor.last_ok_bss_size.unwrap_or(0);
+    let data_end = data_base.saturating_add(data_len);
+    let bss_end = data_end.saturating_add(bss_size);
+
+    if addr >= app.run.base_pc && super::memory::imem_address_in_range(app, addr) {
+        return ".text";
+    }
+    if addr >= data_base && addr < data_end {
+        return ".data";
+    }
+    if addr >= data_end && addr < bss_end {
+        return ".bss";
+    }
+    if addr >= app.run.heap_start && addr < app.run.cpu.heap_break {
+        return "heap";
+    }
+
+    "free"
+}
+
+fn memory_accent_color(_app: &App, section: &str) -> Color {
+    match section {
+        ".text" => theme::CACHE_I,
+        ".data" | ".rodata" => theme::CACHE_D,
+        s if s.starts_with(".rodata.") => theme::CACHE_D,
+        s if s.starts_with(".data.") => theme::CACHE_D,
+        ".bss" => theme::PAUSED,
+        s if s.starts_with(".bss.") => theme::PAUSED,
+        "heap" => theme::RUNNING,
+        "stack" => theme::ACCENT,
+        "free" => theme::LABEL,
+        _ => theme::ACCENT,
+    }
 }
 
 const PURPLE: Color = theme::DIRTY;
@@ -734,4 +790,57 @@ fn type_hint(chunk: &[u8]) -> String {
         .map(|b| format!("{b:02x}"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_memory_section, memory_title_section};
+    use crate::falcon::program::ElfSection;
+    use crate::ui::app::App;
+
+    fn make_app() -> App {
+        let mut app = App::new(Some(0x2000));
+        app.editor.last_ok_text = Some(vec![0; 4]);
+        app.editor.last_ok_data = Some(vec![0; 0x20]);
+        app.editor.last_ok_data_base = Some(0x1000);
+        app.editor.last_ok_bss_size = Some(0x20);
+        app.run.base_pc = 0x0000;
+        app.run.data_base = 0x1000;
+        app.run.heap_start = 0x1040;
+        app.run.cpu.heap_break = 0x1080;
+        app.run.cpu.write(2, 0x2000);
+        app.run.mem_size = 0x2000;
+        app.run.mem_view_bytes = 4;
+        app
+    }
+
+    #[test]
+    fn classifies_text_data_bss_heap_and_free_from_real_layout() {
+        let app = make_app();
+        assert_eq!(classify_memory_section(&app, 0x0004), ".text");
+        assert_eq!(classify_memory_section(&app, 0x1008), ".data");
+        assert_eq!(classify_memory_section(&app, 0x1024), ".bss");
+        assert_eq!(classify_memory_section(&app, 0x1050), "heap");
+        assert_eq!(classify_memory_section(&app, 0x1100), "free");
+    }
+
+    #[test]
+    fn stack_classification_uses_current_sp_boundary() {
+        let mut app = make_app();
+        app.run.cpu.write(2, 0x1ff0);
+        assert_eq!(classify_memory_section(&app, 0x1ff0), "stack");
+        assert_eq!(classify_memory_section(&app, 0x1fec), "free");
+    }
+
+    #[test]
+    fn elf_sections_override_generic_data_buckets() {
+        let mut app = make_app();
+        app.run.elf_sections = vec![ElfSection {
+            name: ".rodata".to_string(),
+            addr: 0x1000,
+            size: 0x20,
+            bytes: vec![0; 0x20],
+        }];
+        assert_eq!(memory_title_section(&app, 0x1008), ".rodata");
+    }
 }

@@ -43,7 +43,8 @@ Each visible pipeline step corresponds to exactly one CPU clock cycle. Cache lat
 - Evaluates branches and jumps
 - Computes effective addresses for loads/stores/atomics
 - Applies forwarding again for EX-stage consumers
-- Supports functional-unit latency for `MUL`, `DIV`, and FP classes when that mode is enabled
+- Holds instructions for the configured `CPIConfig` latency in both pipeline modes
+- Uses the functional-unit panel only as an expanded visualization when that mode is enabled
 
 ### MEM
 
@@ -119,6 +120,7 @@ The Gantt/history view distinguishes a flushed instruction from a normal bubble.
 - I-cache latency stalls `IF`
 - D-cache latency stalls `MEM`
 - If `MEM` is already blocking the pipe, `IF` does not silently burn its own pending stall cycles in the background
+- The UI labels these separately from data stalls: a valid instruction can be shown as waiting in `IF`/`MEM`, while `ID` can show an upstream/front-end wait if no new instruction arrived
 
 ---
 
@@ -154,6 +156,7 @@ Visual markers:
 
 - predicted instructions receive prediction badges
 - squashed instructions receive flush/squash markers
+- front-end bubbles and fetch waits are labeled separately from instruction stalls
 - the hazard map shows control-flush paths separately from data hazards
 
 ---
@@ -172,7 +175,7 @@ In functional-unit mode, `EX` can remain busy for multiple cycles depending on c
 - `SYSTEM`
 - `FP`
 
-While a long-latency functional unit holds `EX`, the front of the pipe remains blocked and Raven keeps that state visible without letting unrelated IF latency progress incorrectly.
+While a long-latency instruction holds `EX`, the front of the pipe remains blocked and Raven keeps that state visible without letting unrelated IF latency progress incorrectly. In `FunctionalUnits`, the same latency is also broken down by FU in the expanded EX panel.
 
 ---
 
@@ -182,7 +185,7 @@ The pipeline and cache now share one clock model:
 
 - an access returns a total latency
 - the pipeline turns that latency into `N` visible stall cycles
-- stats remain accumulated in the cache model
+- per-level stats remain accumulated in the cache model as local service cost
 - timing stays visible in the pipeline model
 
 This applies to:
@@ -190,6 +193,7 @@ This applies to:
 - I-cache fetch stalls in `IF`
 - D-cache stalls in `MEM`
 - extra cache levels when configured
+- all latency paid on the access path, including outer levels and writeback/fill work
 
 The RAM sidebar also distinguishes cache presence by source:
 

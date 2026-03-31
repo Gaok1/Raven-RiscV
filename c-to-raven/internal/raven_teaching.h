@@ -254,6 +254,14 @@ static inline void raven_hart_handle_detach(RavenHartHandle *h)             { __
 #define RAVEN_HART_STACK(name, size) \
     static char name[(size)] __attribute__((aligned(16)))
 
+// Reject pointers in *_array macros so malloc()/pointer-backed stacks do not
+// silently pass sizeof(pointer) as the stack size. Real arrays, including
+// VLAs, are accepted.
+#define __RAVEN_REQUIRE_ARRAY(value)                                           \
+    ((void)sizeof(char[                                                         \
+        __builtin_types_compatible_p(__typeof__(value),                         \
+                                     __typeof__(&(value)[0])) ? -1 : 1]))
+
 // ── RavenHartTask ─────────────────────────────────────────────────────────────
 // Describes a hart before launching it.
 // Create with raven_hart_task() or raven_hart_task_array(), then call
@@ -280,7 +288,9 @@ static inline RavenHartTask raven_hart_task(raven_hart_fn entry,
 
 // Create a RavenHartTask from a stack array — size computed automatically.
 #define raven_hart_task_array(fn_ptr, stack_arr, arg_value) \
-    raven_hart_task((fn_ptr), (stack_arr), sizeof(stack_arr), (unsigned int)(arg_value))
+    (__RAVEN_REQUIRE_ARRAY(stack_arr),                                          \
+     raven_hart_task((fn_ptr), (stack_arr), sizeof(stack_arr),                  \
+                     (unsigned int)(arg_value)))
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -356,4 +366,6 @@ static inline RavenHartHandle raven_spawn_hart(raven_hart_fn entry,
 
 // Spawn from a stack array — size computed automatically.
 #define raven_spawn_hart_array(fn_ptr, stack_arr, arg) \
-    raven_spawn_hart((fn_ptr), (stack_arr), sizeof(stack_arr), (unsigned int)(arg))
+    (__RAVEN_REQUIRE_ARRAY(stack_arr),                                          \
+     raven_spawn_hart((fn_ptr), (stack_arr), sizeof(stack_arr),                 \
+                      (unsigned int)(arg)))

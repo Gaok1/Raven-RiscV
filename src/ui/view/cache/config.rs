@@ -9,11 +9,18 @@ use crate::falcon::cache::{
     CacheConfig, InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy,
     extra_level_presets,
 };
-use crate::ui::app::{App, ConfigField};
+use crate::ui::app::{App, CacheHoverTarget, ConfigField};
 use crate::ui::theme;
 use crate::ui::view::components::{dense_action, dense_value};
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
+    app.cache.config_hitboxes_i.set([(0, 0, 0); 11]);
+    app.cache.config_hitboxes_d.set([(0, 0, 0); 11]);
+    app.cache.config_hitboxes_u.set([(0, 0, 0); 11]);
+    app.cache.config_preset_btns_i.set([(0, 0, 0); 3]);
+    app.cache.config_preset_btns_d.set([(0, 0, 0); 3]);
+    app.cache.config_preset_btns_u.set([(0, 0, 0); 3]);
+    app.cache.config_apply_btns.set([(0, 0, 0); 2]);
     if app.cache.selected_level == 0 {
         // L1: two-column layout (I-Cache | D-Cache)
         let cols = Layout::default()
@@ -50,8 +57,8 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         Some((panel, field)) if panel == icache => (Some(field), app.cache.edit_buf.as_str()),
         _ => (None, ""),
     };
-    let hovered_field = match app.cache.hover_config_field {
-        Some((panel, field)) if panel == icache => Some(field),
+    let hovered_field = match app.cache.hover {
+        Some(CacheHoverTarget::ConfigField(panel, field)) if panel == icache => Some(field),
         _ => None,
     };
 
@@ -80,6 +87,7 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         .split(inner);
 
     let is_last_level = app.cache.extra_pending.is_empty();
+    record_config_field_hitboxes(app, layout[0], Some(icache), is_last_level);
     render_fields(
         f,
         layout[0],
@@ -117,7 +125,10 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
         Some((_, field)) => (Some(field), app.cache.edit_buf.as_str()),
         _ => (None, ""),
     };
-    let hovered_field = app.cache.hover_config_field.map(|(_, f)| f);
+    let hovered_field = match app.cache.hover {
+        Some(CacheHoverTarget::ConfigField(_, f)) => Some(f),
+        _ => None,
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -149,6 +160,7 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
         .split(col_area);
 
     let is_last_level = extra_idx == app.cache.extra_pending.len().saturating_sub(1);
+    record_config_field_hitboxes(app, layout[0], None, is_last_level);
     render_fields(
         f,
         layout[0],
@@ -161,6 +173,24 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
     );
     render_unified_presets(f, layout[1], app, extra_idx);
     render_apply_row(f, layout[2], app);
+}
+
+fn record_config_field_hitboxes(app: &App, area: Rect, icache: Option<bool>, is_last_level: bool) {
+    let mut hitboxes = [(0, 0, 0); 11];
+    for &field in ConfigField::all_editable() {
+        if field == ConfigField::Inclusion && is_last_level {
+            continue;
+        }
+        let row_y = area.y.saturating_add(field.list_row() as u16);
+        if row_y < area.y.saturating_add(area.height) {
+            hitboxes[field.hitbox_index()] = (row_y, area.x, area.x.saturating_add(area.width));
+        }
+    }
+    match icache {
+        Some(true) => app.cache.config_hitboxes_i.set(hitboxes),
+        Some(false) => app.cache.config_hitboxes_d.set(hitboxes),
+        None => app.cache.config_hitboxes_u.set(hitboxes),
+    }
 }
 
 fn render_fields(
@@ -319,9 +349,11 @@ fn render_fields(
 }
 
 fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
-    let preset_i = app.cache.hover_preset_i;
-    let preset_d = app.cache.hover_preset_d;
-    let hovered = if icache { preset_i } else { preset_d };
+    let hovered = match app.cache.hover {
+        Some(CacheHoverTarget::PresetI(i)) if icache => Some(i),
+        Some(CacheHoverTarget::PresetD(i)) if !icache => Some(i),
+        _ => None,
+    };
 
     let small_s = preset_btn_style(hovered == Some(0));
     let med_s = preset_btn_style(hovered == Some(1));
@@ -342,12 +374,25 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
+    let btns = [
+        (inner.y, inner.x + 9, inner.x + 14),
+        (inner.y, inner.x + 15, inner.x + 21),
+        (inner.y, inner.x + 22, inner.x + 27),
+    ];
+    if icache {
+        app.cache.config_preset_btns_i.set(btns);
+    } else {
+        app.cache.config_preset_btns_d.set(btns);
+    }
     f.render_widget(Paragraph::new(line), inner);
 }
 
 fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usize) {
-    // hover_preset_d is reused for unified presets
-    let hovered = app.cache.hover_preset_d;
+    // PresetD is reused for unified presets
+    let hovered = match app.cache.hover {
+        Some(CacheHoverTarget::PresetD(i)) => Some(i),
+        _ => None,
+    };
     let small_s = preset_btn_style(hovered == Some(0));
     let med_s = preset_btn_style(hovered == Some(1));
     let large_s = preset_btn_style(hovered == Some(2));
@@ -368,6 +413,23 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
         .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
+    let small_label = format!("small {}kb", presets[0].size / 1024);
+    let med_label = format!("med {}kb", presets[1].size / 1024);
+    let large_label = format!("large {}kb", presets[2].size / 1024);
+    let x0 = inner.x + 9;
+    app.cache.config_preset_btns_u.set([
+        (inner.y, x0, x0 + small_label.len() as u16),
+        (
+            inner.y,
+            x0 + small_label.len() as u16 + 1,
+            x0 + small_label.len() as u16 + 1 + med_label.len() as u16,
+        ),
+        (
+            inner.y,
+            x0 + small_label.len() as u16 + med_label.len() as u16 + 2,
+            x0 + small_label.len() as u16 + med_label.len() as u16 + 2 + large_label.len() as u16,
+        ),
+    ]);
     f.render_widget(Paragraph::new(line), inner);
 }
 
@@ -385,12 +447,16 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
     } else {
         Line::from(vec![
             Span::raw(" "),
-            dense_action("apply + reset stats", theme::RUNNING, app.cache.hover_apply),
+            dense_action(
+                "apply + reset stats",
+                theme::RUNNING,
+                matches!(app.cache.hover, Some(CacheHoverTarget::Apply)),
+            ),
             Span::raw("   "),
             dense_action(
                 "apply keep history",
                 theme::ACCENT,
-                app.cache.hover_apply_keep,
+                matches!(app.cache.hover, Some(CacheHoverTarget::ApplyKeep)),
             ),
         ])
     };
@@ -400,6 +466,10 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(theme::BORDER));
     let inner = block.inner(area);
     f.render_widget(block, area);
+    app.cache.config_apply_btns.set([
+        (inner.y, inner.x + 1, inner.x + 20),
+        (inner.y, inner.x + 23, inner.x + 41),
+    ]);
     f.render_widget(Paragraph::new(line), inner);
 }
 

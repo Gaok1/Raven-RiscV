@@ -1,51 +1,87 @@
 #include "raven.h"
+#include <stdint.h>
 
-// ── Workers ───────────────────────────────────────────────────────────────────
+RAVEN_HART_STACK(worker_stack_1, 1024);
+RAVEN_HART_STACK(worker_stack_2, 1024);
 
-RAVEN_HART_STACK(sum_stack,   4096);
-RAVEN_HART_STACK(count_stack, 4096);
+enum {
+    ARRAY_LEN = 20,
+    SORTING_OFFSET = 10,
+};
 
-static void sum_worker(unsigned int n) {
-    unsigned int sum = 0;
-    for (unsigned int i = 1; i <= n; i++) sum += i;
-    raven_print_str("sum 1..");
-    raven_print_uint(n);
-    raven_print_str(" = ");
-    raven_print_uint(sum);
-    raven_print_newline();
+typedef struct {
+    int *arr;
+    unsigned int left;
+    unsigned int right;
+} SortingArgs;
+
+static int *random_arr(int len)
+{
+    int *arr = malloc((size_t)len * sizeof(int));
+    
+    for (int i = 0; i < len; i++) {
+        arr[i] = (int)(rand_i32() % 100);
+    }
+
+    return arr;
 }
 
-static void count_worker(unsigned int start) {
-    raven_print_str("counting: ");
-    for (unsigned int i = start; i < start + 5; i++) {
-        raven_print_uint(i);
-        if (i < start + 4) raven_print_str(", ");
+static void print_array(const int *arr, unsigned int len)
+{
+    for (unsigned int i = 0; i < len; i++) {
+        raven_print_int(arr[i]);
+        if (i + 1 < len) {
+            raven_print_str(", ");
+        }
     }
     raven_print_newline();
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
+static void sort_range(int *arr, unsigned int left, unsigned int right)
+{
+    for (unsigned int i = left; i < right; i++) {
+        unsigned int min_index = i;
 
-int main(void) {
-    print_str("=== c-to-raven hart demo ===\n\n");
+        for (unsigned int j = i + 1; j < right; j++) {
+            if (arr[j] < arr[min_index]) {
+                min_index = j;
+            }
+        }
 
-    // ── Pattern 1: task descriptor + join ─────────────────────────────────────
-    RavenHartTask task = raven_hart_task_array(sum_worker, sum_stack, 100);
-    RavenHartHandle handle = raven_hart_task_start(&task);
+        if (min_index != i) {
+            int temp = arr[i];
+            arr[i] = arr[min_index];
+            arr[min_index] = temp;
+        }
+    }
+}
 
-    print_str("main hart: waiting for sum_worker...\n");
-    handle.join(&handle);
-    print_str("main hart: sum_worker done.\n\n");
+static void sort_worker(unsigned int raw_arg)
+{
+    SortingArgs *args = (SortingArgs *)(uintptr_t)raw_arg;
+    sort_range(args->arr, args->left, args->right);
+}
 
-    // ── Pattern 2: quick spawn + poll ─────────────────────────────────────────
-    RavenHartHandle h2 = raven_spawn_hart_array(count_worker, count_stack, 10);
+int main(void)
+{
+    int *arr = random_arr(ARRAY_LEN);
+    SortingArgs first = { arr, 0, SORTING_OFFSET };
+    SortingArgs second = { arr, SORTING_OFFSET, ARRAY_LEN };
 
-    print_str("main hart: count_worker running...\n");
+    raven_println_str("Before:");
+    print_array(arr, ARRAY_LEN);
 
-    while (!h2.is_finished(&h2)) { print_str("Spinning...");}
+    RavenHartHandle h1 =
+        raven_spawn_hart_array(sort_worker, worker_stack_1, (unsigned int)(uintptr_t)&first);
+    RavenHartHandle h2 =
+        raven_spawn_hart_array(sort_worker, worker_stack_2, (unsigned int)(uintptr_t)&second);
 
-    print_str("main hart: count_worker finished.\n");
+    h1.join(&h1);
+    h2.join(&h2);
 
-    __sys_exit(0);
+    raven_println_str("After sorting each half:");
+    print_array(arr, ARRAY_LEN);
+
+    free(arr);
     return 0;
 }

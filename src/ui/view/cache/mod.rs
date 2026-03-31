@@ -81,11 +81,43 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         ("pause", theme::PAUSED)
     };
 
-    let total = app.run.mem.total_program_cycles();
-    let cpi = app.run.mem.overall_cpi();
-    let instr = app.run.mem.instruction_count;
+    let (total, cpi, instr) = if let Some(pipeline) = app.aggregate_pipeline_snapshot() {
+        let cycles = pipeline.cycles;
+        let committed = pipeline.committed;
+        let cpi = if committed > 0 {
+            cycles as f64 / committed as f64
+        } else {
+            0.0
+        };
+        (cycles, cpi, committed)
+    } else {
+        (
+            app.run.mem.total_program_cycles(),
+            app.run.mem.overall_cpi(),
+            app.run.mem.instruction_count,
+        )
+    };
 
     let mut spans = Vec::new();
+    let inner_for_hits = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER))
+        .border_type(BorderType::Rounded)
+        .inner(area);
+    let line1_y = inner_for_hits.y;
+    let mut x = inner_for_hits.x;
+    let speed_x0 = x + "speed ".len() as u16;
+    let speed_x1 = speed_x0 + speed_text.len() as u16;
+    x = speed_x1 + 3;
+    let state_x0 = x + "state ".len() as u16;
+    let state_x1 = state_x0 + state_text.len() as u16;
+    x = state_x1 + 3;
+    let reset_x0 = x;
+    let reset_x1 = reset_x0 + "reset".len() as u16;
+    app.cache.exec_speed_btn.set((line1_y, speed_x0, speed_x1));
+    app.cache.exec_state_btn.set((line1_y, state_x0, state_x1));
+    app.cache.exec_reset_btn.set((line1_y, reset_x0, reset_x1));
+
     push_dense_pair(
         &mut spans,
         "speed",
@@ -140,36 +172,65 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
 fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
     let num_extra = app.cache.extra_pending.len();
     let selected = app.cache.selected_level;
+    app.cache.level_btns.borrow_mut().clear();
+    app.cache.add_level_btn.set((0, 0, 0));
+    app.cache.remove_level_btn.set((0, 0, 0));
 
     let mut spans: Vec<Span> = Vec::new();
     spans.push(Span::styled("level", Style::default().fg(theme::IDLE)));
     spans.push(Span::raw(" "));
+    let mut x = area.x;
+    x += "level ".len() as u16;
     let l1_active = selected == 0;
-    let l1_hover = app.cache.hover_level.first().copied().unwrap_or(false);
+    let l1_hover = matches!(
+        app.cache.hover,
+        Some(crate::ui::app::CacheHoverTarget::Level(0))
+    );
+    app.cache
+        .level_btns
+        .borrow_mut()
+        .push((area.y, x, x + 2));
     spans.push(Span::styled("l1", level_btn_style(l1_active, l1_hover)));
+    x += 2;
 
     for i in 0..num_extra {
         let level = i + 1;
         let active = selected == level;
-        let hovered = app.cache.hover_level.get(level).copied().unwrap_or(false);
+        let hovered = matches!(app.cache.hover, Some(crate::ui::app::CacheHoverTarget::Level(l)) if l == level);
         spans.push(Span::raw("   "));
         let label = CacheController::extra_level_name(i).to_lowercase();
+        x += 3;
+        app.cache
+            .level_btns
+            .borrow_mut()
+            .push((area.y, x, x + label.len() as u16));
         spans.push(Span::styled(label, level_btn_style(active, hovered)));
+        x += CacheController::extra_level_name(i).len() as u16;
     }
 
     spans.push(Span::raw("   "));
+    x += 3;
+    app.cache.add_level_btn.set((area.y, x, x + 3));
     spans.push(dense_action(
         "add",
         theme::ACCENT,
-        app.cache.hover_add_level,
+        matches!(
+            app.cache.hover,
+            Some(crate::ui::app::CacheHoverTarget::AddLevel)
+        ),
     ));
 
     if num_extra > 0 {
         spans.push(Span::raw("   "));
+        x += 3;
+        app.cache.remove_level_btn.set((area.y, x, x + 6));
         spans.push(dense_action(
             "remove",
             theme::DANGER,
-            app.cache.hover_remove_level,
+            matches!(
+                app.cache.hover,
+                Some(crate::ui::app::CacheHoverTarget::RemoveLevel)
+            ),
         ));
     }
 
@@ -184,15 +245,24 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
 fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let stats_style = subtab_style(
         matches!(app.cache.subtab, CacheSubtab::Stats),
-        app.cache.hover_subtab_stats,
+        matches!(
+            app.cache.hover,
+            Some(crate::ui::app::CacheHoverTarget::SubtabStats)
+        ),
     );
     let view_style = subtab_style(
         matches!(app.cache.subtab, CacheSubtab::View),
-        app.cache.hover_subtab_view,
+        matches!(
+            app.cache.hover,
+            Some(crate::ui::app::CacheHoverTarget::SubtabView)
+        ),
     );
     let config_style = subtab_style(
         matches!(app.cache.subtab, CacheSubtab::Config),
-        app.cache.hover_subtab_config,
+        matches!(
+            app.cache.hover,
+            Some(crate::ui::app::CacheHoverTarget::SubtabConfig)
+        ),
     );
 
     let level_label = if app.cache.selected_level == 0 {
@@ -204,12 +274,35 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         )
     };
 
-    // x-offsets from inner left:
-    //  " Stats "  = x 1..7   (x >= 1 && x < 8)
-    //  "  "       = x 8..9
-    //  " View "   = x 10..15 (x >= 10 && x < 16)
-    //  "  "       = x 16..17
-    //  " Config " = x 18..25 (x >= 18 && x < 26)
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(
+            format!("Cache Simulation — {level_label}"),
+            Style::default().fg(theme::ACCENT).bold(),
+        ));
+    let inner = block.inner(area);
+    let row_y = inner.y;
+    let mut x = inner.x;
+    x += 1; // leading space
+    let stats_x0 = x;
+    x += "stats".len() as u16;
+    let stats_x1 = x;
+    x += 3; // separator
+    let view_x0 = x;
+    x += "view".len() as u16;
+    let view_x1 = x;
+    x += 3; // separator
+    let config_x0 = x;
+    x += "config".len() as u16;
+    let config_x1 = x;
+    app.cache.subtab_stats_btn.set((row_y, stats_x0, stats_x1));
+    app.cache.subtab_view_btn.set((row_y, view_x0, view_x1));
+    app.cache
+        .subtab_config_btn
+        .set((row_y, config_x0, config_x1));
+
     let line1 = Line::from(vec![
         Span::raw(" "),
         Span::styled("stats", stats_style),
@@ -223,15 +316,6 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("Tab to switch", Style::default().fg(theme::LABEL)),
     ]);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            format!("Cache Simulation — {level_label}"),
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 }
@@ -240,9 +324,75 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     let show_scope = app.cache.selected_level == 0;
     let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER));
+    let inner = block.inner(area);
+    let row_y = inner.y;
+    let mut x = inner.x + 1; // leading space
+    let results_x0 = x;
+    x += "results".len() as u16;
+    let results_x1 = x;
+    app.cache
+        .ctrl_results_btn
+        .set((row_y, results_x0, results_x1));
+    app.cache.ctrl_import_btn.set((0, 0, 0));
+    app.cache.ctrl_export_btn.set((0, 0, 0));
+    app.cache.ctrl_scope_i_btn.set((0, 0, 0));
+    app.cache.ctrl_scope_d_btn.set((0, 0, 0));
+    app.cache.ctrl_scope_both_btn.set((0, 0, 0));
+
+    if show_cfg_btns {
+        x += 3;
+        let import_x0 = x;
+        x += "import cfg".len() as u16;
+        let import_x1 = x;
+        app.cache.ctrl_import_btn.set((row_y, import_x0, import_x1));
+
+        x += 3;
+        let export_x0 = x;
+        x += "export cfg".len() as u16;
+        let export_x1 = x;
+        app.cache.ctrl_export_btn.set((row_y, export_x0, export_x1));
+    }
+
+    if show_scope {
+        x += 3;
+        x += "view".len() as u16;
+        x += 1;
+        let scope_i_x0 = x;
+        x += "i-cache".len() as u16;
+        let scope_i_x1 = x;
+        x += 1;
+        let scope_d_x0 = x;
+        x += "d-cache".len() as u16;
+        let scope_d_x1 = x;
+        x += 1;
+        let scope_both_x0 = x;
+        x += "both".len() as u16;
+        let scope_both_x1 = x;
+        app.cache
+            .ctrl_scope_i_btn
+            .set((row_y, scope_i_x0, scope_i_x1));
+        app.cache
+            .ctrl_scope_d_btn
+            .set((row_y, scope_d_x0, scope_d_x1));
+        app.cache
+            .ctrl_scope_both_btn
+            .set((row_y, scope_both_x0, scope_both_x1));
+    }
+
     let mut line_spans = vec![
         Span::raw(" "),
-        dense_action("results", theme::ACCENT, app.cache.hover_export_results),
+        dense_action(
+            "results",
+            theme::ACCENT,
+            matches!(
+                app.cache.hover,
+                Some(crate::ui::app::CacheHoverTarget::ExportResults)
+            ),
+        ),
     ];
 
     if show_cfg_btns {
@@ -250,13 +400,19 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         line_spans.push(dense_action(
             "import cfg",
             theme::METRIC_CYC,
-            app.cache.hover_import_cfg,
+            matches!(
+                app.cache.hover,
+                Some(crate::ui::app::CacheHoverTarget::ImportCfg)
+            ),
         ));
         line_spans.push(Span::raw("   "));
         line_spans.push(dense_action(
             "export cfg",
             theme::METRIC_CYC,
-            app.cache.hover_export_cfg,
+            matches!(
+                app.cache.hover,
+                Some(crate::ui::app::CacheHoverTarget::ExportCfg)
+            ),
         ));
     }
 
@@ -266,33 +422,36 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         line_spans.push(Span::raw(" "));
         line_spans.push(dense_value(
             "i-cache",
-            app.cache.hover_scope_i,
+            matches!(
+                app.cache.hover,
+                Some(crate::ui::app::CacheHoverTarget::ScopeI)
+            ),
             matches!(app.cache.scope, CacheScope::ICache),
             theme::TEXT,
         ));
         line_spans.push(Span::raw(" "));
         line_spans.push(dense_value(
             "d-cache",
-            app.cache.hover_scope_d,
+            matches!(
+                app.cache.hover,
+                Some(crate::ui::app::CacheHoverTarget::ScopeD)
+            ),
             matches!(app.cache.scope, CacheScope::DCache),
             theme::TEXT,
         ));
         line_spans.push(Span::raw(" "));
         line_spans.push(dense_value(
             "both",
-            app.cache.hover_scope_both,
+            matches!(
+                app.cache.hover,
+                Some(crate::ui::app::CacheHoverTarget::ScopeBoth)
+            ),
             matches!(app.cache.scope, CacheScope::Both),
             theme::TEXT,
         ));
     }
 
     let line = Line::from(line_spans);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(line), inner);
 }

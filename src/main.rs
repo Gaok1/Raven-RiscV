@@ -61,26 +61,60 @@ fn parse_cores_arg(s: &str) -> Result<usize, String> {
     Ok(cores)
 }
 
-/// Return the value of `--flag <value>` from the arg list, skipping values that look like flags.
+/// Return the value of `--flag <value>` or `--flag=<value>` from the arg list.
+/// Values starting with `-` are accepted when passed via the `--flag=value` form.
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    // --flag=value form (allows values that start with '-')
+    let prefix = format!("{flag}=");
+    if let Some(a) = args.iter().find(|a| a.starts_with(&prefix)) {
+        return Some(a[prefix.len()..].to_string());
+    }
+    // --flag value form (rejects next arg that looks like another flag)
     let pos = args.iter().position(|a| a == flag)?;
     args.get(pos + 1).filter(|a| !a.starts_with('-')).cloned()
 }
 
 fn flag_values(args: &[String], flag: &str) -> Vec<String> {
+    let prefix = format!("{flag}=");
     let mut values = Vec::new();
     let mut i = 0;
     while i < args.len() {
-        if args[i] == flag {
+        if args[i].starts_with(&prefix) {
+            values.push(args[i][prefix.len()..].to_string());
+            i += 1;
+        } else if args[i] == flag {
             if let Some(value) = args.get(i + 1).filter(|a| !a.starts_with('-')) {
                 values.push(value.clone());
                 i += 2;
                 continue;
             }
+            i += 1;
+        } else {
+            i += 1;
         }
-        i += 1;
     }
     values
+}
+
+/// Error if any flag that requires a value is present but has no value following it.
+fn validate_value_flags(args: &[String], flags: &[&str]) -> Result<(), String> {
+    for &flag in flags {
+        let prefix = format!("{flag}=");
+        // --flag=value form is always valid
+        if args.iter().any(|a| a.starts_with(&prefix)) {
+            continue;
+        }
+        if let Some(pos) = args.iter().position(|a| a == flag) {
+            match args.get(pos + 1) {
+                None => return Err(format!("{flag} requires a value")),
+                Some(next) if next.starts_with('-') => {
+                    return Err(format!("{flag} requires a value (got '{next}')"));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 fn has_flag(args: &[String], flag: &str) -> bool {
@@ -185,12 +219,18 @@ fn dispatch_subcommand(args: &[String]) -> Result<(), String> {
         Some("check-cache-config") | Some("import-config") => cmd_check_cache_config(&args[2..]),
 
         // ── Sim settings ──────────────────────────────────────────────────
-        Some("export-sim-settings") | Some("export-settings") => cmd_export_sim_settings(&args[2..]),
+        Some("export-sim-settings") | Some("export-settings") => {
+            cmd_export_sim_settings(&args[2..])
+        }
         Some("check-sim-settings") | Some("import-settings") => cmd_check_sim_settings(&args[2..]),
 
         // ── Pipeline config ───────────────────────────────────────────────
-        Some("export-pipeline-config") | Some("export-pipeline") => cmd_export_pipeline_config(&args[2..]),
-        Some("check-pipeline-config") | Some("import-pipeline") => cmd_check_pipeline_config(&args[2..]),
+        Some("export-pipeline-config") | Some("export-pipeline") => {
+            cmd_export_pipeline_config(&args[2..])
+        }
+        Some("check-pipeline-config") | Some("import-pipeline") => {
+            cmd_check_pipeline_config(&args[2..])
+        }
 
         // ── Debug utilities ───────────────────────────────────────────────
         Some("debug-run-controls") => cmd_debug_run_controls(&args[2..]),
@@ -248,6 +288,7 @@ fn dispatch_subcommand(args: &[String]) -> Result<(), String> {
 // ── raven build <file> [--out <path>] [--nout] ───────────────────────────────
 
 fn cmd_build(args: &[String]) -> Result<(), String> {
+    validate_value_flags(args, &["--out"])?;
     let file = positional(args)
         .ok_or("build requires a file argument\n\nUsage: raven build <input> [output] [--nout]")?;
     let nout = has_flag(args, "--nout");
@@ -259,6 +300,23 @@ fn cmd_build(args: &[String]) -> Result<(), String> {
 // ── raven run <file> [options] ───────────────────────────────────────────────
 
 fn cmd_run(args: &[String]) -> Result<(), String> {
+    validate_value_flags(
+        args,
+        &[
+            "--cache-config",
+            "--sim-settings",
+            "--settings",
+            "--pipeline-config",
+            "--pipeline-trace-out",
+            "--out",
+            "--mem",
+            "--max-cycles",
+            "--format",
+            "--cores",
+            "--expect-exit",
+            "--expect-stdout",
+        ],
+    )?;
     let file = positional(args)
         .ok_or("run requires a file argument\n\nUsage: raven run <file> [options]")?;
 
@@ -519,7 +577,7 @@ OPTIONS  run:
     --pipeline-trace-out <file> Write per-cycle pipeline trace JSON (requires --pipeline)
     --cores <n>                 Max physical cores / harts for the run (default: settings or 1)
     --mem <size>                RAM size, e.g. 16mb, 256kb, 1gb   (default: sim-settings or 16mb)
-    --max-cycles <n>            Instruction limit                  (default: 1000000000)
+    --max-cycles <n>            Execution budget: steps (sequential), rounds (multi-hart), or pipeline cycles (default: 1000000000)
     --expect-exit <code>        Fail if the final exit code differs
     --expect-stdout <text>      Fail if captured stdout differs exactly
     --expect-reg <reg=value>    Fail if a register differs; repeatable

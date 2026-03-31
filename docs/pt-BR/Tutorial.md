@@ -169,7 +169,7 @@ Controles:
 
 Você pode editar parâmetros (size, line size, associativity) e policies, e aplicar em runtime.
 
-Para mais detalhes, veja [`cache.pt-BR.md`](cache.pt-BR.md).
+Para mais detalhes, veja [`cache.md`](cache.md).
 
 ## **6. Executando IO**
 O RAVEN foi projetado para ser intuitivo e direto, sem perder a fidelidade ao comportamento real da arquitetura RISC-V.
@@ -241,7 +241,7 @@ Em seguida, abra o RAVEN, vá para a aba **Editor**, pressione `Ctrl+O` (ou cliq
 
 ### Exemplo
 
-Um exemplo completo e funcional está disponível em [`RustCompatibleABI.rs`](RustCompatibleABI.rs). Ele demonstra:
+Um exemplo completo e funcional está disponível em [`rust-to-raven/src/main.rs`](../../rust-to-raven/src/main.rs). Ele demonstra:
 
 - Estrutura mínima de um programa `#![no_std]`
 - Ponto de entrada `_start`

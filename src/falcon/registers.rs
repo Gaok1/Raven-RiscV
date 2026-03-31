@@ -8,9 +8,9 @@ pub struct HartStartRequest {
 
 #[derive(Default, Clone)]
 pub struct Cpu {
-    pub x: [u32; 32], // x0..x31 (integer registers)
-    pub f: [u32; 32], // f0..f31 (float registers, stored as IEEE 754 bits)
-    pub fcsr: u32,    // float control/status register (fflags only; FRM=RNE)
+    pub(crate) x: [u32; 32], // x0..x31 (integer registers) — write via write()/fwrite() to enforce x0=0
+    pub(crate) f: [u32; 32], // f0..f31 (float registers, stored as IEEE 754 bits)
+    pub fcsr: u32,           // float control/status register (fflags only; FRM=RNE)
     pub pc: u32,
     /// buffer emulado de entrada (STDIN)
     pub stdin: Vec<u8>,

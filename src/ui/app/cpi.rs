@@ -1,10 +1,6 @@
 use super::*;
 
-pub(super) fn classify_cpi_cycles(
-    word: u32,
-    cpu: &crate::falcon::Cpu,
-    cpi: &CpiConfig,
-) -> u64 {
+pub(super) fn classify_cpi_cycles(word: u32, cpu: &crate::falcon::Cpu, cpi: &CpiConfig) -> u64 {
     use crate::falcon::instruction::Instruction::*;
     match crate::falcon::decoder::decode(word) {
         Ok(
