@@ -23,13 +23,20 @@ use unicode_truncate::UnicodeTruncateStr;
 use crate::falcon::cache::{
     CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy,
 };
-use crate::ui::app::{App, CacheDataFmt, CacheDataGroup, CacheScope};
+use crate::ui::app::{App, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope};
 use crate::ui::theme;
 
 const DIRTY_COLOR: Color = theme::DIRTY;
 const DIRTY_ADDR_COLOR: Color = theme::DIRTY_DIM;
 
 pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
+    app.cache.view_num_sets.set(0);
+    app.cache.view_num_sets_d.set(0);
+    app.cache.view_visible_sets.set(0);
+    app.cache.view_visible_sets_d.set(0);
+    app.cache.view_scroll_max.set(0);
+    app.cache.view_scroll_max_d.set(0);
+
     if app.cache.selected_level == 0 {
         render_l1_view(f, area, app);
     } else {
@@ -79,13 +86,7 @@ fn render_unified_view(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
 
 fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let cfg = &app.run.mem.extra_levels[extra_idx].config;
-    let num_sets = if cfg.is_valid_config() {
-        cfg.num_sets()
-    } else {
-        0
-    };
-    let scroll = app.cache.view_scroll.min(num_sets.saturating_sub(1));
-    let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
+    let scroll_hint = vertical_scroll_hint(app);
     let policy_hint = policy_hint_str(cfg.replacement);
 
     let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
@@ -150,38 +151,7 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
         }
     };
 
-    // Scroll indicator (use the cache with more sets as reference)
-    let num_sets = match scope {
-        CacheScope::ICache => {
-            if icfg.is_valid_config() {
-                icfg.num_sets()
-            } else {
-                0
-            }
-        }
-        CacheScope::DCache => {
-            if dcfg.is_valid_config() {
-                dcfg.num_sets()
-            } else {
-                0
-            }
-        }
-        CacheScope::Both => {
-            let i = if icfg.is_valid_config() {
-                icfg.num_sets()
-            } else {
-                0
-            };
-            let d = if dcfg.is_valid_config() {
-                dcfg.num_sets()
-            } else {
-                0
-            };
-            i.max(d)
-        }
-    };
-    let scroll = app.cache.view_scroll.min(num_sets.saturating_sub(1));
-    let scroll_hint = format!("↑↓ ←→  {}/{} sets", scroll + 1, num_sets);
+    let scroll_hint = vertical_scroll_hint(app);
 
     let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
         legend_button_styles(app);
@@ -264,19 +234,19 @@ fn legend_button_styles(app: &App) -> (Style, Style, Style, String, String, Stri
         "[t:ADDR]".to_string()
     };
 
-    let fmt_style = if app.cache.hover_view_fmt {
+    let fmt_style = if matches!(app.cache.hover, Some(CacheHoverTarget::ViewFmt)) {
         Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
         Style::default().fg(theme::ACCENT)
     };
     let group_style = if is_float {
         Style::default().fg(theme::IDLE)
-    } else if app.cache.hover_view_group {
+    } else if matches!(app.cache.hover, Some(CacheHoverTarget::ViewGroup)) {
         Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
         Style::default().fg(theme::CACHE_D)
     };
-    let tag_style = if app.cache.hover_view_tag {
+    let tag_style = if matches!(app.cache.hover, Some(CacheHoverTarget::ViewTag)) {
         Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
         Style::default().fg(theme::LABEL_Y)
@@ -290,6 +260,68 @@ fn legend_button_styles(app: &App) -> (Style, Style, Style, String, String, Stri
         group_label,
         tag_label,
     )
+}
+
+fn update_vertical_scroll_stats(
+    app: &App,
+    icache: bool,
+    num_sets: usize,
+    visible_sets: usize,
+    max_scroll: usize,
+) {
+    let num_sets_cell = if icache {
+        &app.cache.view_num_sets
+    } else {
+        &app.cache.view_num_sets_d
+    };
+    num_sets_cell.set(num_sets_cell.get().max(num_sets));
+    let visible_cell = if icache {
+        &app.cache.view_visible_sets
+    } else {
+        &app.cache.view_visible_sets_d
+    };
+    let cur_visible = visible_cell.get();
+    visible_cell.set(if cur_visible == 0 {
+        visible_sets
+    } else {
+        cur_visible.min(visible_sets)
+    });
+    let max_cell = if icache {
+        &app.cache.view_scroll_max
+    } else {
+        &app.cache.view_scroll_max_d
+    };
+    max_cell.set(max_cell.get().max(max_scroll));
+}
+
+fn vertical_scroll_hint(app: &App) -> String {
+    let use_d = app.cache.selected_level == 0
+        && matches!(app.cache.scope, CacheScope::DCache)
+        || (app.cache.selected_level == 0
+            && matches!(app.cache.scope, CacheScope::Both)
+            && matches!(app.cache.view_focus, crate::ui::app::CacheViewFocus::DCache));
+    let num_sets = if use_d {
+        app.cache.view_num_sets_d.get()
+    } else {
+        app.cache.view_num_sets.get()
+    };
+    if num_sets == 0 {
+        return "↑↓ ←→  0/0 sets".to_string();
+    }
+    let visible_sets = if use_d {
+        app.cache.view_visible_sets_d.get()
+    } else {
+        app.cache.view_visible_sets.get()
+    }
+    .max(1);
+    let scroll = if use_d {
+        app.cache.view_scroll_d.min(app.cache.view_scroll_max_d.get())
+    } else {
+        app.cache.view_scroll.min(app.cache.view_scroll_max.get())
+    };
+    let start = scroll + 1;
+    let end = (scroll + visible_sets).min(num_sets);
+    format!("↑↓ ←→  sets {start}-{end}/{num_sets}")
 }
 
 /// Full policy hint (for single-scope display).
@@ -432,6 +464,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let visible_sets = (rows_h as usize) / row_height;
     let max_scroll = num_sets.saturating_sub(visible_sets.max(1));
     let scroll = app.cache.view_scroll.min(max_scroll);
+    update_vertical_scroll_stats(app, true, num_sets, visible_sets.max(1), max_scroll);
 
     // Header
     {
@@ -527,8 +560,10 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         // Unified/extra levels use slot 0 only
         app.cache.hscroll_tracks.set([(track_x, track_w), (0, 0)]);
         app.cache.hscroll_row.set(sb_y);
-        app.cache.hscroll_max.set(max_h_scroll);
-        let hovered = app.cache.hover_hscrollbar && app.cache.hscroll_hover_track_x == track_x;
+        let mut maxes = app.cache.hscroll_max_by_panel.get();
+        maxes[0] = max_h_scroll;
+        app.cache.hscroll_max_by_panel.set(maxes);
+        let hovered = matches!(app.cache.hover, Some(CacheHoverTarget::Hscrollbar { track_x: tx, .. }) if tx == track_x);
         let style = if hovered {
             Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
         } else {
@@ -674,7 +709,13 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     // Clamp vertical scroll
     let visible_sets = (rows_h as usize) / row_height;
     let max_scroll = num_sets.saturating_sub(visible_sets.max(1));
-    let scroll = app.cache.view_scroll.min(max_scroll);
+    let scroll = if icache {
+        app.cache.view_scroll
+    } else {
+        app.cache.view_scroll_d
+    }
+    .min(max_scroll);
+    update_vertical_scroll_stats(app, icache, num_sets, visible_sets.max(1), max_scroll);
 
     // ── Header row ───────────────────────────────────────────────────────────
     {
@@ -773,9 +814,11 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         tracks[slot] = (track_x, track_w);
         app.cache.hscroll_tracks.set(tracks);
         app.cache.hscroll_row.set(sb_y);
-        app.cache.hscroll_max.set(max_h_scroll);
+        let mut maxes = app.cache.hscroll_max_by_panel.get();
+        maxes[slot] = max_h_scroll;
+        app.cache.hscroll_max_by_panel.set(maxes);
         // Highlight if this specific scrollbar is hovered
-        let hovered = app.cache.hover_hscrollbar && app.cache.hscroll_hover_track_x == track_x;
+        let hovered = matches!(app.cache.hover, Some(CacheHoverTarget::Hscrollbar { track_x: tx, .. }) if tx == track_x);
         let style = if hovered {
             Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
         } else {

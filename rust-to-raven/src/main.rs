@@ -164,12 +164,10 @@ mod raven_api;
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     
-    let a = 0;
-    let b = 20;
-
+    #[unsafe(no_mangle)]
     let closure = move ||{
-        let result = a +b;
-        println!("sum = {result}");
+        raven_api::syscall::print_str("To na closure!".as_ptr());
+        
     };
 
     let task = HartTask::new(closure);

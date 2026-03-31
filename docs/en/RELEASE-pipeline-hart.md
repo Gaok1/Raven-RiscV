@@ -70,7 +70,7 @@ Switch from *Single-cycle* to *Functional Units* in the pipeline config. Each in
 
 ### Cache integration
 
-The pipeline and cache share one clock model. A cache miss in IF stalls the `IF` stage for exactly as many cycles as the miss penalty. A cache miss in MEM does the same. The cache stats tab and the pipeline Gantt stay in sync — you can see the same access from both sides.
+The pipeline and cache share one clock model. An IF or MEM access pays the full latency returned by the cache hierarchy, including outer levels and any writeback/fill work triggered by that access. The cache stats tab and the pipeline Gantt stay in sync: the pipeline pays the wall-clock time, while each cache level keeps its own local service-cost stats.
 
 ### Configuration file
 

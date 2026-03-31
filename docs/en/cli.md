@@ -1,6 +1,6 @@
 # Raven CLI Reference
 
-> [Leia em Português](cli.pt-BR.md)
+> [Leia em Português](../pt-BR/cli.md)
 
 Raven has a full headless CLI alongside the interactive TUI.
 Run `raven help` at any time to see a summary.

@@ -1,5 +1,5 @@
-use crate::falcon::cache::CacheConfig;
 use super::CpiConfig;
+use crate::falcon::cache::CacheConfig;
 
 // ── Cache tab state ─────────────────────────────────────────────────────────
 
@@ -27,6 +27,21 @@ pub(crate) enum ConfigField {
 }
 
 impl ConfigField {
+    pub(crate) fn hitbox_index(self) -> usize {
+        match self {
+            Self::Size => 0,
+            Self::LineSize => 1,
+            Self::Associativity => 2,
+            Self::Replacement => 3,
+            Self::WritePolicy => 4,
+            Self::WriteAlloc => 5,
+            Self::HitLatency => 6,
+            Self::MissPenalty => 7,
+            Self::AssocPenalty => 8,
+            Self::TransferWidth => 9,
+            Self::Inclusion => 10,
+        }
+    }
     pub(crate) fn is_numeric(self) -> bool {
         matches!(
             self,
@@ -105,6 +120,12 @@ pub(crate) enum CacheScope {
     Both,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub(crate) enum CacheViewFocus {
+    ICache,
+    DCache,
+}
+
 #[derive(PartialEq, Eq, Copy, Clone, Default)]
 pub(crate) enum CacheDataFmt {
     #[default]
@@ -163,40 +184,86 @@ impl CacheDataGroup {
     }
 }
 
+/// Which UI element in the Cache tab the mouse is currently hovering over.
+/// At most one target is active at a time — enforced by resetting `CacheState::hover`
+/// to `None` at the start of every `update_cache_hover` call before any hit tests.
+/// To add a new hover target: add a variant here and handle it in `update_cache_hover`.
+#[derive(PartialEq, Eq, Clone)]
+pub(crate) enum CacheHoverTarget {
+    SubtabStats,
+    SubtabConfig,
+    SubtabView,
+    Level(usize),
+    AddLevel,
+    RemoveLevel,
+    ExportResults,
+    ImportCfg,
+    ExportCfg,
+    ScopeI,
+    ScopeD,
+    ScopeBoth,
+    /// `(is_icache, field)` — `is_icache` is ignored for L2+ unified panels.
+    ConfigField(bool, ConfigField),
+    Apply,
+    ApplyKeep,
+    /// Preset button index (0=small, 1=medium, 2=large) for I-cache or L1 I panel.
+    PresetI(usize),
+    /// Preset button index for D-cache or unified L2+ panel.
+    PresetD(usize),
+    ViewFmt,
+    ViewGroup,
+    ViewTag,
+    /// Horizontal scrollbar — stores which track is hovered for render highlighting.
+    Hscrollbar {
+        track_x: u16,
+        track_w: u16,
+    },
+}
+
 pub(crate) struct CacheState {
     pub(crate) subtab: CacheSubtab,
     pub(crate) scope: CacheScope,
     pub(crate) stats_scroll: usize,
     // Level selector
-    pub(crate) selected_level: usize,  // 0 = L1, 1 = L2, …
-    pub(crate) hover_level: Vec<bool>, // one per level (L1 + extra)
-    pub(crate) hover_add_level: bool,
-    pub(crate) hover_remove_level: bool,
-    // Hover flags
-    pub(crate) hover_subtab_stats: bool,
-    pub(crate) hover_subtab_config: bool,
-    pub(crate) hover_subtab_view: bool,
+    pub(crate) selected_level: usize, // 0 = L1, 1 = L2, …
+    /// Which element the mouse is currently hovering (None = no hover or mouse not in Cache tab).
+    /// Reset to None at the start of every mouse-move frame by `update_cache_hover`.
+    pub(crate) hover: Option<CacheHoverTarget>,
+    pub(crate) view_focus: CacheViewFocus,
     pub(crate) view_scroll: usize,
+    pub(crate) view_scroll_d: usize,
     pub(crate) view_h_scroll: usize, // I-cache (or unified/L2+) horizontal scroll
     pub(crate) view_h_scroll_d: usize, // D-cache horizontal scroll (separate from I-cache)
     pub(crate) data_fmt: CacheDataFmt,
     pub(crate) data_group: CacheDataGroup,
     pub(crate) show_tag: bool,
+    pub(crate) subtab_stats_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) subtab_view_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) subtab_config_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) level_btns: std::cell::RefCell<Vec<(u16, u16, u16)>>,
+    pub(crate) add_level_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) remove_level_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_results_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_import_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_export_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_scope_i_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_scope_d_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_scope_both_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) exec_speed_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) exec_state_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) exec_reset_btn: std::cell::Cell<(u16, u16, u16)>,
     // View legend button positions (set by render each frame, read by mouse)
     pub(crate) view_fmt_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
     pub(crate) view_group_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
     pub(crate) view_tag_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
-    pub(crate) hover_view_fmt: bool,
-    pub(crate) hover_view_group: bool,
-    pub(crate) hover_view_tag: bool,
-    pub(crate) hover_scope_i: bool,
-    pub(crate) hover_scope_d: bool,
-    pub(crate) hover_scope_both: bool,
-    pub(crate) hover_apply: bool,
-    pub(crate) hover_apply_keep: bool,
-    pub(crate) hover_preset_i: Option<usize>,
-    pub(crate) hover_preset_d: Option<usize>,
-    pub(crate) hover_config_field: Option<(bool, ConfigField)>,
+    // Config field hitboxes, recorded by render and consumed by mouse hit-test.
+    pub(crate) config_hitboxes_i: std::cell::Cell<[(u16, u16, u16); 11]>,
+    pub(crate) config_hitboxes_d: std::cell::Cell<[(u16, u16, u16); 11]>,
+    pub(crate) config_hitboxes_u: std::cell::Cell<[(u16, u16, u16); 11]>,
+    pub(crate) config_preset_btns_i: std::cell::Cell<[(u16, u16, u16); 3]>,
+    pub(crate) config_preset_btns_d: std::cell::Cell<[(u16, u16, u16); 3]>,
+    pub(crate) config_preset_btns_u: std::cell::Cell<[(u16, u16, u16); 3]>,
+    pub(crate) config_apply_btns: std::cell::Cell<[(u16, u16, u16); 2]>,
     // Config form (pending values before Apply)
     pub(crate) pending_icache: CacheConfig,
     pub(crate) pending_dcache: CacheConfig,
@@ -212,20 +279,12 @@ pub(crate) struct CacheState {
     pub(crate) cpi_selected: usize, // 0-8 field index
     pub(crate) cpi_editing: bool,
     pub(crate) cpi_edit_buf: String,
-    pub(crate) hover_cpi_field: Option<usize>,
-    // Export / Import buttons
-    pub(crate) hover_export_results: bool,
-    pub(crate) hover_export_cfg: bool,
-    pub(crate) hover_import_cfg: bool,
     // Session run history (captured with `s` key)
     pub(crate) session_history: Vec<CacheResultsSnapshot>,
     pub(crate) history_scroll: usize,
     pub(crate) viewing_snapshot: Option<usize>, // index into session_history, Some = popup open
     pub(crate) window_start_instr: u64,         // start of current capture window, reset on restart
     // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse
-    pub(crate) hover_hscrollbar: bool,
-    pub(crate) hscroll_hover_track_x: u16, // track_x of hovered scrollbar
-    pub(crate) hscroll_hover_track_w: u16, // track_w of hovered scrollbar
     pub(crate) hscroll_drag: bool,
     pub(crate) hscroll_drag_start_x: u16,
     pub(crate) hscroll_start: usize,
@@ -237,7 +296,13 @@ pub(crate) struct CacheState {
     // Each entry: (track_x, track_w).
     pub(crate) hscroll_row: std::cell::Cell<u16>,
     pub(crate) hscroll_tracks: std::cell::Cell<[(u16, u16); 2]>,
-    pub(crate) hscroll_max: std::cell::Cell<usize>,
+    pub(crate) hscroll_max_by_panel: std::cell::Cell<[usize; 2]>,
+    pub(crate) view_num_sets: std::cell::Cell<usize>,
+    pub(crate) view_num_sets_d: std::cell::Cell<usize>,
+    pub(crate) view_visible_sets: std::cell::Cell<usize>,
+    pub(crate) view_visible_sets_d: std::cell::Cell<usize>,
+    pub(crate) view_scroll_max: std::cell::Cell<usize>,
+    pub(crate) view_scroll_max_d: std::cell::Cell<usize>,
 }
 
 // ── Simulation results snapshot ──────────────────────────────────────────────
@@ -280,4 +345,25 @@ pub(crate) struct CacheResultsSnapshot {
     pub miss_hotspots: Vec<(u32, u64)>,
     pub hit_rate_history_i: Vec<(f64, f64)>,
     pub hit_rate_history_d: Vec<(f64, f64)>,
+    pub pipeline: Option<PipelineResultsSnapshot>,
+}
+
+#[derive(Clone)]
+pub(crate) struct PipelineResultsSnapshot {
+    pub scope: String,
+    pub committed: u64,
+    pub cycles: u64,
+    pub stalls: u64,
+    pub flushes: u64,
+    pub cpi: f64,
+    pub branches: u64,
+    pub raw_stalls: u64,
+    pub load_use_stalls: u64,
+    pub branch_stalls: u64,
+    pub fu_stalls: u64,
+    pub mem_stalls: u64,
+    pub bypass: String,
+    pub mode: String,
+    pub branch_resolve: String,
+    pub branch_predict: String,
 }

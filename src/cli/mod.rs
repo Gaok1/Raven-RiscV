@@ -2,7 +2,7 @@ mod loaders;
 mod output;
 use self::loaders::*;
 use self::output::*;
-pub use self::output::{parse_expect_reg_spec, parse_expect_mem_spec};
+pub use self::output::{parse_expect_mem_spec, parse_expect_reg_spec};
 
 // cli.rs — headless CLI commands (build, run, export-config, import-config)
 
@@ -215,7 +215,12 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
                 .map_err(|e| format!("Cannot read settings '{}': {e}", path))?;
             parse_rcfg_cli_full(&text)?
         } else {
-            (default_cpi_config(), true, DEFAULT_MAX_CORES, 16 * 1024 * 1024)
+            (
+                default_cpi_config(),
+                true,
+                DEFAULT_MAX_CORES,
+                16 * 1024 * 1024,
+            )
         };
     let max_cores = if args.max_cores == 0 {
         settings_max_cores
@@ -399,38 +404,9 @@ pub fn export_sim_settings(output: Option<&str>) -> Result<(), String> {
 /// Optionally re-export the normalized settings to `output`.
 pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
-    let mut cache_enabled = true;
-    let mut max_cores = DEFAULT_MAX_CORES;
-    let mut mem_mb: usize = 16;
-    let mut kv: HashMap<String, String> = HashMap::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=') {
-            kv.insert(k.trim().to_string(), v.trim().to_string());
-        }
-    }
-    if let Some(v) = kv.get("cache_enabled") {
-        cache_enabled = v == "true";
-    }
-    if let Some(v) = kv.get("max_cores") {
-        max_cores = v
-            .parse::<usize>()
-            .map_err(|_| "invalid max_cores: expected integer".to_string())?;
-        if !(1..=32).contains(&max_cores) {
-            return Err(format!("invalid max_cores {} (use 1..=32)", max_cores));
-        }
-    }
-    if let Some(v) = kv.get("mem_mb") {
-        mem_mb = v
-            .parse::<usize>()
-            .map_err(|_| "invalid mem_mb: expected integer".to_string())?;
-        if !(1..=4096).contains(&mem_mb) {
-            return Err(format!("invalid mem_mb {} (use 1..=4096)", mem_mb));
-        }
-    }
+    // Reuse the same strict parser as `run --sim-settings`
+    let (cpi, cache_enabled, max_cores, mem_size) = parse_rcfg_cli_full(&text)?;
+    let mem_mb = mem_size / (1024 * 1024);
     let cpi_keys = [
         "alu",
         "mul",
@@ -443,30 +419,32 @@ pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), Strin
         "system",
         "fp",
     ];
-    let defaults = [1u64, 3, 20, 0, 0, 3, 1, 2, 10, 5];
+    let cpi_vals = [
+        cpi.alu,
+        cpi.mul,
+        cpi.div,
+        cpi.load,
+        cpi.store,
+        cpi.branch_taken,
+        cpi.branch_not_taken,
+        cpi.jump,
+        cpi.system,
+        cpi.fp,
+    ];
     eprintln!("{}: valid", file);
     eprintln!("  cache_enabled = {}", cache_enabled);
     eprintln!("  mem_mb        = {}", mem_mb);
     eprintln!("  max_cores     = {}", max_cores);
-    for (key, def) in cpi_keys.iter().zip(defaults.iter()) {
-        let val: u64 = kv
-            .get(&format!("cpi.{}", key))
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(*def);
+    for (key, val) in cpi_keys.iter().zip(cpi_vals.iter()) {
         eprintln!("  cpi.{:<20} = {}", key, val);
     }
     if let Some(out) = output {
-        // Re-serialize with parsed values
         let mut out_text = String::from("# Raven Sim Config v2\n");
         out_text.push_str(&format!(
             "cache_enabled={}\nmem_mb={}\nmax_cores={}\n\n# CPI (cycles per instruction)\n",
             cache_enabled, mem_mb, max_cores
         ));
-        for (key, def) in cpi_keys.iter().zip(defaults.iter()) {
-            let val: u64 = kv
-                .get(&format!("cpi.{}", key))
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(*def);
+        for (key, val) in cpi_keys.iter().zip(cpi_vals.iter()) {
             out_text.push_str(&format!("cpi.{}={}\n", key, val));
         }
         std::fs::write(out, out_text).map_err(|e| format!("Cannot write '{}': {e}", out))?;
@@ -551,118 +529,6 @@ fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, usize, usize), St
         None => 16 * 1024 * 1024,
     };
     Ok((cpi, cache_enabled, max_cores, mem_size))
-}
-
-fn classify_cpi_cycles_cli(pc: u32, cpu: &Cpu, mem: &CacheController, cpi: &CpiConfig) -> u64 {
-    use crate::falcon::instruction::Instruction::*;
-    let word = match mem.peek32(pc) {
-        Ok(w) => w,
-        Err(_) => return 1,
-    };
-    match crate::falcon::decoder::decode(word) {
-        Ok(
-            Add { .. }
-            | Sub { .. }
-            | And { .. }
-            | Or { .. }
-            | Xor { .. }
-            | Sll { .. }
-            | Srl { .. }
-            | Sra { .. }
-            | Slt { .. }
-            | Sltu { .. }
-            | Addi { .. }
-            | Andi { .. }
-            | Ori { .. }
-            | Xori { .. }
-            | Slti { .. }
-            | Sltiu { .. }
-            | Slli { .. }
-            | Srli { .. }
-            | Srai { .. }
-            | Lui { .. }
-            | Auipc { .. },
-        ) => 1 + cpi.alu,
-        Ok(Mul { .. } | Mulh { .. } | Mulhsu { .. } | Mulhu { .. }) => 1 + cpi.mul,
-        Ok(Div { .. } | Divu { .. } | Rem { .. } | Remu { .. }) => 1 + cpi.div,
-        Ok(Lb { .. } | Lh { .. } | Lw { .. } | Lbu { .. } | Lhu { .. } | LrW { .. }) => {
-            1 + cpi.load
-        }
-        Ok(Sb { .. } | Sh { .. } | Sw { .. } | ScW { .. }) => 1 + cpi.store,
-        Ok(Jal { .. } | Jalr { .. }) => 1 + cpi.jump,
-        Ok(Ecall | Ebreak | Halt) => 1 + cpi.system,
-        Ok(Beq { rs1, rs2, .. }) => {
-            if cpu.x[rs1 as usize] == cpu.x[rs2 as usize] {
-                1 + cpi.branch_taken
-            } else {
-                1 + cpi.branch_not_taken
-            }
-        }
-        Ok(Bne { rs1, rs2, .. }) => {
-            if cpu.x[rs1 as usize] != cpu.x[rs2 as usize] {
-                1 + cpi.branch_taken
-            } else {
-                1 + cpi.branch_not_taken
-            }
-        }
-        Ok(Blt { rs1, rs2, .. }) => {
-            if (cpu.x[rs1 as usize] as i32) < (cpu.x[rs2 as usize] as i32) {
-                1 + cpi.branch_taken
-            } else {
-                1 + cpi.branch_not_taken
-            }
-        }
-        Ok(Bge { rs1, rs2, .. }) => {
-            if (cpu.x[rs1 as usize] as i32) >= (cpu.x[rs2 as usize] as i32) {
-                1 + cpi.branch_taken
-            } else {
-                1 + cpi.branch_not_taken
-            }
-        }
-        Ok(Bltu { rs1, rs2, .. }) => {
-            if cpu.x[rs1 as usize] < cpu.x[rs2 as usize] {
-                1 + cpi.branch_taken
-            } else {
-                1 + cpi.branch_not_taken
-            }
-        }
-        Ok(Bgeu { rs1, rs2, .. }) => {
-            if cpu.x[rs1 as usize] >= cpu.x[rs2 as usize] {
-                1 + cpi.branch_taken
-            } else {
-                1 + cpi.branch_not_taken
-            }
-        }
-        Ok(
-            Flw { .. }
-            | Fsw { .. }
-            | FaddS { .. }
-            | FsubS { .. }
-            | FmulS { .. }
-            | FdivS { .. }
-            | FsqrtS { .. }
-            | FminS { .. }
-            | FmaxS { .. }
-            | FsgnjS { .. }
-            | FsgnjnS { .. }
-            | FsgnjxS { .. }
-            | FeqS { .. }
-            | FltS { .. }
-            | FleS { .. }
-            | FcvtWS { .. }
-            | FcvtWuS { .. }
-            | FcvtSW { .. }
-            | FcvtSWu { .. }
-            | FmvXW { .. }
-            | FmvWX { .. }
-            | FclassS { .. }
-            | FmaddS { .. }
-            | FmsubS { .. }
-            | FnmsubS { .. }
-            | FnmaddS { .. },
-        ) => 1 + cpi.fp,
-        _ => 1,
-    }
 }
 
 fn run_headless_sequential(
@@ -906,9 +772,7 @@ fn run_headless_pipeline(
         if capture_trace {
             trace_steps.push(snapshot_pipeline_trace_step(&state, commit.as_ref()));
         }
-        if let Some(info) = commit {
-            let cpi_cycles = classify_cpi_cycles_cli(info.pc, cpu, mem, cpi);
-            mem.add_instruction_cycles(cpi_cycles);
+        if commit.is_some() {
             mem.instruction_count = mem.instruction_count.saturating_add(1);
             mem.snapshot_stats();
         }
@@ -956,7 +820,10 @@ pub fn import_pipeline_settings(file: &str, output: Option<&str>) -> Result<(), 
 
     eprintln!("{}: valid", file);
     eprintln!("  enabled        = {}", cfg.enabled);
-    eprintln!("  forwarding     = {}", cfg.forwarding);
+    eprintln!("  bypass.ex_to_ex     = {}", cfg.bypass.ex_to_ex);
+    eprintln!("  bypass.mem_to_ex    = {}", cfg.bypass.mem_to_ex);
+    eprintln!("  bypass.wb_to_id     = {}", cfg.bypass.wb_to_id);
+    eprintln!("  bypass.store_to_load= {}", cfg.bypass.store_to_load);
     eprintln!("  mode           = {:?}", cfg.mode);
     eprintln!("  branch_resolve = {:?}", cfg.branch_resolve);
     eprintln!("  predict        = {:?}", cfg.predict);

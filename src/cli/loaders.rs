@@ -26,7 +26,11 @@ pub(super) fn looks_like_text(b: &[u8]) -> bool {
     printable * 100 / b.len() >= 85
 }
 
-pub(super) fn load_asm_text(bytes: &[u8], cpu: &mut Cpu, mem: &mut CacheController) -> Result<(), String> {
+pub(super) fn load_asm_text(
+    bytes: &[u8],
+    cpu: &mut Cpu,
+    mem: &mut CacheController,
+) -> Result<(), String> {
     let text = String::from_utf8_lossy(bytes).to_string();
     let prog = falcon::asm::assemble(&text, 0x0)
         .map_err(|e| format!("Assembly error at line {}: {}", e.line + 1, e.msg))?;

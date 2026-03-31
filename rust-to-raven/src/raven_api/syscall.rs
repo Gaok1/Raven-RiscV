@@ -1,4 +1,3 @@
-use core::arch::riscv32::pause;
 
 use crate::{eprintln, raven_api::ENABLED_DEBUG_MESSAGES};
 

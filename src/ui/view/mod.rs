@@ -131,10 +131,18 @@ pub fn ui(f: &mut Frame, app: &App) {
             "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Region  Ctrl+F=Jump RAM  Ctrl+G=Label  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
-        Tab::Pipeline => (
-            "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Config  [?]=Help".to_string(),
-            Style::default().fg(theme::LABEL),
-        ),
+        Tab::Pipeline => {
+            if let Some(ref err) = app.pipeline.status_error {
+                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+            } else if let Some(ref ok) = app.pipeline.status_msg {
+                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+            } else {
+                (
+                    "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Config  Ctrl+E/L=Config  Ctrl+R=Results  [?]=Help".to_string(),
+                    Style::default().fg(theme::LABEL),
+                )
+            }
+        }
         Tab::Cache => {
             if let Some(ref err) = app.cache.config_error {
                 (format!("✗  {err}"), Style::default().fg(theme::DANGER))
@@ -142,7 +150,7 @@ pub fn ui(f: &mut Frame, app: &App) {
                 (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
             } else {
                 (
-                    "Tab=Subtabs  Ctrl+E=Export config  Ctrl+L=Import config  Ctrl+R=Results  Ctrl+M=Baseline  [?]=Help".to_string(),
+                    "Tab=Subtabs  Ctrl+E=Export config  Ctrl+L=Import config  Ctrl+R=Results  [?]=Help".to_string(),
                     Style::default().fg(theme::LABEL),
                 )
             }
@@ -452,7 +460,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[r]", "run / stop execution"),
                 ("[p]", "pause"),
                 ("[R]", "restart from beginning"),
-                ("Core [n/m]", "select which core/hart runtime to observe"),
+                ("Core [[]/]]", "select which core/hart runtime to observe"),
                 ("[f]", "cycle execution speed (1x → 2x → 4x → 8x → GO)"),
                 ("[v]", "cycle sidebar: RAM → REGS → Dyn"),
                 ("[k]", "cycle RAM region: DATA → STACK → R/W → HEAP"),
@@ -467,7 +475,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[t]", "toggle instruction trace panel"),
                 ("[e]", "toggle execution count display (×N)"),
                 ("[y]", "toggle instruction type badge ([R],[I]…)"),
-                ("[Tab]", "collapse / expand panels"),
+                ("[Ctrl+↑/↓]", "scroll console"),
                 ("[↑/↓]", "scroll memory or registers"),
                 ("[click]", "select instruction / register"),
                 ("[drag]", "resize sidebar / instruction panels"),
@@ -484,6 +492,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("", ""),
                 ("[Dyn] STORE", "sidebar → RAM centered on written address"),
                 ("[Dyn] LOAD/ALU", "sidebar → register bank (result visible)"),
+                ("[R/W]", "still RAM view; follows last LOAD/STORE address"),
                 ("", ""),
                 ("Count [ON/OFF]", "show/hide exec count heat map"),
                 ("Type [ON/OFF]", "show/hide instruction type badge"),
@@ -513,7 +522,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         ]],
         Tab::Cache => vec![vec![
             ("[Tab]", "cycle subtabs: Stats → View → Config"),
-            ("[r]", "reset statistics"),
+            ("[r]", "restart simulation"),
             ("[p]", "pause / resume execution"),
             ("[v]", "cycle sidebar view: RAM → REGS → Dyn"),
             ("[k]", "cycle RAM region: DATA → STACK → R/W → HEAP"),
@@ -523,17 +532,34 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[i]", "scope → I-Cache (Stats/View)"),
             ("[d]", "scope → D-Cache (Stats/View)"),
             ("[b]", "scope → Both (Stats/View)"),
-            ("[+/-]", "add / remove cache level"),
+            ("[+/-]", "add / remove extra cache level"),
             ("", ""),
-            ("[m] View", "cycle data format: HEX → DEC-U → DEC-S → FLOAT"),
+            ("[m] View", "cycle cell data format: HEX → DEC-U → DEC-S → FLOAT"),
             ("[g] View", "cycle byte grouping: 1B → 2B → 4B"),
             ("[t] View", "toggle address / tag display (0x… ↔ t:…)"),
-            ("[↑/↓]", "scroll (Stats / View subtabs)"),
+            (
+                "[↑/↓] View",
+                "scroll the active cache panel; in Both mode this follows the focused panel",
+            ),
+            (
+                "[←/→] View",
+                "horizontal scroll for the active cache panel",
+            ),
+            (
+                "Stats total",
+                "Program total uses the same global clock as Pipeline when pipeline is enabled",
+            ),
+            (
+                "I/D/L2/L3 svc",
+                "service cycles are level-local cache work, not slices of program total",
+            ),
+            (
+                "Hit rate History",
+                "updates on each sequential step or pipeline commit",
+            ),
             ("[Ctrl+E]", "export cache config (.fcache)"),
             ("[Ctrl+L]", "import cache config (.fcache)"),
             ("[Ctrl+R]", "export simulation results (.fstats / .csv)"),
-            ("[Ctrl+M]", "load baseline snapshot for comparison"),
-            ("[c] Stats", "clear loaded baseline"),
         ]],
         Tab::Docs => vec![vec![
             ("[↑/↓]", "scroll documentation"),
@@ -544,17 +570,30 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         ]],
         Tab::Pipeline => vec![vec![
             ("[s]", "step one cycle"),
-            ("[Space/p]", "run / pause"),
+            ("[Space/p] Main", "run / pause"),
             ("[Tab]", "switch subtab: Main ↔ Config"),
-            ("Core [n/m]", "select which core/hart pipeline to inspect"),
+            ("Core [[]/]]", "select which core/hart pipeline to inspect"),
             ("[e]", "toggle pipeline enabled"),
             ("[f]", "cycle speed"),
             ("[b]", "cycle branch resolve stage: ID → EX → MEM"),
             ("[↑/↓] Config", "navigate config fields"),
+            ("[Enter] Config", "toggle the selected config row"),
             (
-                "Hazard Map",
-                "shows RAW / load-use / flush / forwarding traces",
+                "Config",
+                "edit bypasses, mode, branch resolve stage and predictor",
             ),
+            (
+                "Branch Predict",
+                "cycles Not-Taken → Always-Taken → BTFNT → 2-bit Dynamic",
+            ),
+            (
+                "BTFNT",
+                "backward branches taken, forward branches not taken",
+            ),
+            ("[Ctrl+E]", "export pipeline config (.pcfg)"),
+            ("[Ctrl+L]", "import pipeline config (.pcfg)"),
+            ("[Ctrl+R]", "export pipeline results (.pstats / .csv)"),
+            ("Hazard Map", "shows RAW / load-use / flush / bypass traces"),
             ("History", "last cycles and per-instruction stage timeline"),
         ]],
         Tab::Config => vec![vec![

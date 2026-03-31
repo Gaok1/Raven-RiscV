@@ -39,7 +39,11 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let bg = Color::Rgb(20, 22, 40);
     let q = &app.run.imem_search_query;
 
-    let match_count = if q.is_empty() { 0 } else { app.run.imem_search_match_count };
+    let match_count = if q.is_empty() {
+        0
+    } else {
+        app.run.imem_search_match_count
+    };
 
     let result_span = if q.is_empty() {
         Span::styled("", Style::default().bg(bg))
@@ -59,6 +63,7 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" Label: ", Style::default().fg(theme::ACCENT).bg(bg).bold()),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         result_span,
+        Span::styled("  Ctrl+V=paste", Style::default().fg(theme::IDLE).bg(bg)),
         Span::styled("  Esc=close", Style::default().fg(theme::IDLE).bg(bg)),
     ]);
 

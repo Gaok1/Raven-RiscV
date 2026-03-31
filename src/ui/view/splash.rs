@@ -52,10 +52,7 @@ fn format_mem(bytes: usize) -> String {
 
 pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64, mem_size: usize) {
     let area = f.area();
-    f.render_widget(
-        Block::default().style(Style::default().bg(theme::BG)),
-        area,
-    );
+    f.render_widget(Block::default().style(Style::default().bg(theme::BG)), area);
 
     let elapsed = started.elapsed().as_secs_f64();
     let progress = (elapsed / duration_secs).clamp(0.0, 1.0);
@@ -97,7 +94,9 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64, mem_si
         f.render_widget(
             Paragraph::new(Span::styled(
                 subtitle.clone(),
-                Style::default().fg(theme::ACTIVE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::ACTIVE)
+                    .add_modifier(Modifier::BOLD),
             )),
             Rect::new(sub_x, sub_y, subtitle.len() as u16, 1),
         );
@@ -195,7 +194,9 @@ fn colorize_line(line: &str, row_idx: usize, anim: &AnimState) -> Vec<Span<'stat
 fn style_inside(c: char, row: usize, inner_col: usize, anim: &AnimState) -> Style {
     let mut style = Style::default().fg(match c {
         '╔' | '╗' | '╚' | '╝' | '═' | '║' => theme::ACCENT,
-        '┌' | '┐' | '└' | '┘' | '─' | '│' | '┬' | '┴' | '┤' | '├' => theme::BORDER_HOV,
+        '┌' | '┐' | '└' | '┘' | '─' | '│' | '┬' | '┴' | '┤' | '├' => {
+            theme::BORDER_HOV
+        }
         '·' => theme::IDLE,
         '0'..='9' => theme::PAUSED,
         ' ' => theme::BG,
@@ -241,8 +242,8 @@ fn style_inside(c: char, row: usize, inner_col: usize, anim: &AnimState) -> Styl
             'W' => 4,
             _ => 0,
         };
-        let active = stage_idx <= anim.stage_gate
-            && (stage_idx == anim.stage_pulse || anim.progress > 0.9);
+        let active =
+            stage_idx <= anim.stage_gate && (stage_idx == anim.stage_pulse || anim.progress > 0.9);
         style = if active {
             Style::default()
                 .fg(theme::RUNNING)
@@ -280,7 +281,10 @@ fn style_inside(c: char, row: usize, inner_col: usize, anim: &AnimState) -> Styl
         return style;
     }
 
-    if matches!(c, 'L' | 'C' | 'A' | 'H' | 'E' | '1' | 'B' | 'N' | 'K' | 'S') && row == 17 && anim.progress > 0.55 {
+    if matches!(c, 'L' | 'C' | 'A' | 'H' | 'E' | '1' | 'B' | 'N' | 'K' | 'S')
+        && row == 17
+        && anim.progress > 0.55
+    {
         style = style.fg(theme::CACHE_L2).add_modifier(Modifier::BOLD);
         return style;
     }
@@ -301,7 +305,21 @@ fn style_inside(c: char, row: usize, inner_col: usize, anim: &AnimState) -> Styl
 
     if matches!(
         c,
-        '┌' | '┐' | '└' | '┘' | '─' | '│' | '┬' | '┴' | '┤' | '├' | '╔' | '╗' | '╚' | '╝' | '═' | '║'
+        '┌' | '┐'
+            | '└'
+            | '┘'
+            | '─'
+            | '│'
+            | '┬'
+            | '┴'
+            | '┤'
+            | '├'
+            | '╔'
+            | '╗'
+            | '╚'
+            | '╝'
+            | '═'
+            | '║'
     ) && anim.progress > 0.1
     {
         let pulse_col = ((anim.elapsed * 12.0) as usize + row) % 31;
@@ -340,7 +358,8 @@ fn style_outside(
     let left_match = col < lb && col.abs_diff(left_pulse) <= 1;
     let right_col = width.saturating_sub(1).saturating_sub(col);
     let right_span = width.saturating_sub(1).saturating_sub(rb);
-    let right_match = col > rb && right_col.abs_diff((right_pulse % (right_span + 8)).min(right_span)) <= 1;
+    let right_match =
+        col > rb && right_col.abs_diff((right_pulse % (right_span + 8)).min(right_span)) <= 1;
 
     let clk_rail = row == 2 && c == '─';
 
@@ -362,8 +381,27 @@ fn style_outside(
         };
     }
 
-    if matches!(c, 'V' | 'C' | 'K' | 'R' | 'S' | 'D' | 'A' | 'L' | 'U' | 'M' | 'P' | 'T' | 'I' | 'O' | 'B' | 'G' | 'N' | 'X' | 'H')
-        && anim.progress > 0.05
+    if matches!(
+        c,
+        'V' | 'C'
+            | 'K'
+            | 'R'
+            | 'S'
+            | 'D'
+            | 'A'
+            | 'L'
+            | 'U'
+            | 'M'
+            | 'P'
+            | 'T'
+            | 'I'
+            | 'O'
+            | 'B'
+            | 'G'
+            | 'N'
+            | 'X'
+            | 'H'
+    ) && anim.progress > 0.05
         && ((row + col + (anim.elapsed * 10.0) as usize) % 9 == 0)
     {
         style = style.fg(theme::ACTIVE);

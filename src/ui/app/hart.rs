@@ -1,6 +1,6 @@
+use super::{CpiConfig, classify_cpi_cycles};
 use crate::falcon::{self, CacheController, Cpu};
 use crate::ui::console::Console;
-use super::{CpiConfig, classify_cpi_cycles};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HartLifecycle {
@@ -91,25 +91,21 @@ pub(crate) fn step_hart_bg_inner(
 
     // ── Pipeline mode ─────────────────────────────────────────────────────────
     if pipeline_enabled {
-        let Some(pipe) = hart.pipeline.as_mut() else { return false; };
+        let Some(pipe) = hart.pipeline.as_mut() else {
+            return false;
+        };
         if pipe.halted || pipe.faulted {
             if pipe.faulted {
                 hart.faulted = true;
             }
             return hart.faulted;
         }
-        let commit = crate::ui::pipeline::sim::pipeline_tick(
-            pipe, &mut hart.cpu, mem, cpi, console,
-        );
+        let commit =
+            crate::ui::pipeline::sim::pipeline_tick(pipe, &mut hart.cpu, mem, cpi, console);
         if let Some(info) = commit {
             *hart.exec_counts.entry(info.pc).or_insert(0) += 1;
-            let cpi_word = mem.peek32(info.pc).unwrap_or(0);
-            let cpi_cycles = classify_cpi_cycles(cpi_word, &hart.cpu, cpi);
-            mem.add_instruction_cycles(cpi_cycles);
             mem.instruction_count = mem.instruction_count.saturating_add(1);
-            if mem.instruction_count % 32 == 0 {
-                mem.snapshot_stats();
-            }
+            mem.snapshot_stats();
         }
         if pipe.faulted {
             hart.faulted = true;
@@ -157,16 +153,12 @@ pub(crate) fn step_hart_bg_inner(
     mem.add_instruction_cycles(cpi_cycles);
     // instruction_count was already incremented by fetch32 inside exec::step;
     // do not add 1 again here — pipeline mode increments on commit instead.
-    if mem.instruction_count % 32 == 0 {
-        mem.snapshot_stats();
-    }
+    mem.snapshot_stats();
 
     *hart.exec_counts.entry(step_pc).or_insert(0) += 1;
 
     if !alive && !console.reading {
-        hart.faulted = hart.cpu.exit_code.is_none()
-            && !hart.cpu.ebreak_hit
-            && !hart.cpu.local_exit;
+        hart.faulted = hart.cpu.exit_code.is_none() && !hart.cpu.ebreak_hit && !hart.cpu.local_exit;
     }
 
     hart.faulted

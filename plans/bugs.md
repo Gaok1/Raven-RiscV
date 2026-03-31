@@ -1,0 +1,2 @@
+- Na aba Run, a view `Dyn` não faz nada.
+- Na aba Run, a região `[R/W]` da view `RAM` também não faz nada.

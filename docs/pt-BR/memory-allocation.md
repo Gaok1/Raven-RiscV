@@ -288,4 +288,4 @@ Syscall  Nome      a0        a1     a2    a3      a4   a5    ret
   222    mmap      0(hint)   tam    prot  0x22    -1   0     ptr / -errno
 ```
 
-Veja também: [syscalls.pt-BR.md](syscalls.pt-BR.md) para a referência completa de syscalls.
+Veja também: [syscalls.md](syscalls.md) para a referência completa de syscalls.

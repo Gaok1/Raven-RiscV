@@ -575,8 +575,10 @@ Useful for measuring performance of algorithms directly inside a program.
 
 ### `1031` — get cycle count
 
-Alias for `1030`. Returns the same instruction count (cycle-accurate simulation
-may differentiate these in a future version).
+Returns the total elapsed cycle count for the current execution mode.
+
+- Sequential mode: returns the sequential/cache model total.
+- Pipeline mode: returns the pipeline wall-clock.
 
 | Register | Value |
 |----------|-------|

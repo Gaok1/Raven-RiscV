@@ -1,5 +1,10 @@
-use crate::falcon::cache::{Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets};
-use crate::ui::app::{App, CacheResultsSnapshot, LevelSnapshot, PathInput, PathInputAction, RunScope, CpiConfig};
+use crate::falcon::cache::{
+    Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets,
+};
+use crate::ui::app::{
+    App, CacheResultsSnapshot, CpiConfig, LevelSnapshot, PathInput, PathInputAction,
+    PipelineResultsSnapshot, RunScope,
+};
 use rfd::FileDialog as OSFileDialog;
 use std::collections::HashMap;
 
@@ -16,6 +21,7 @@ pub(super) fn serialize_one_config(s: &mut String, prefix: &str, cfg: &CacheConf
     s.push_str(&format!("{prefix}.miss_penalty={}\n", cfg.miss_penalty));
     s.push_str(&format!("{prefix}.assoc_penalty={}\n", cfg.assoc_penalty));
     s.push_str(&format!("{prefix}.transfer_width={}\n", cfg.transfer_width));
+    s.push_str(&format!("{prefix}.inclusion={:?}\n", cfg.inclusion));
 }
 
 pub(super) fn serialize_cache_configs(
@@ -146,7 +152,9 @@ pub(super) fn level_prefix(i: usize) -> String {
     format!("l{}", i + 2)
 }
 
-pub(super) fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>), String> {
+pub(super) fn parse_cache_configs(
+    text: &str,
+) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -175,7 +183,10 @@ pub(super) fn parse_cache_configs(text: &str) -> Result<(CacheConfig, CacheConfi
     Ok((icfg, dcfg, extra))
 }
 
-pub(super) fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -> Result<CacheConfig, String> {
+pub(super) fn parse_single_config(
+    map: &HashMap<String, String>,
+    prefix: &str,
+) -> Result<CacheConfig, String> {
     let get = |key: &str| -> Result<&str, String> {
         map.get(&format!("{prefix}.{key}"))
             .map(|s| s.as_str())
@@ -250,7 +261,12 @@ pub(super) fn parse_single_config(map: &HashMap<String, String>, prefix: &str) -
 
 // ── Simulation results export/import ─────────────────────────────────────────
 
-pub(super) fn make_level_snapshot(name: &str, cache: &Cache, _instructions: u64, amat: f64) -> LevelSnapshot {
+pub(super) fn make_level_snapshot(
+    name: &str,
+    cache: &Cache,
+    _instructions: u64,
+    amat: f64,
+) -> LevelSnapshot {
     let cfg = &cache.config;
     LevelSnapshot {
         name: name.to_string(),
@@ -275,6 +291,7 @@ pub(super) fn make_level_snapshot(name: &str, cache: &Cache, _instructions: u64,
 
 pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
     let mem = &app.run.mem;
+    let pipeline = capture_pipeline_snapshot(app);
     let i_amat = mem.icache_amat();
     let d_amat = mem.dcache_amat();
     let icache_snap = make_level_snapshot("I-Cache L1", &mem.icache, mem.instruction_count, i_amat);
@@ -309,7 +326,9 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
     hotspots.truncate(10);
 
     let instr_start = app.cache.window_start_instr;
-    let instr_end = mem.instruction_count;
+    let instr_end = pipeline
+        .as_ref()
+        .map_or(mem.instruction_count, |p| p.committed);
     let start_f = instr_start as f64;
 
     let history_i: Vec<(f64, f64)> = mem
@@ -329,15 +348,32 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         .cloned()
         .collect();
 
+    let (instruction_count, total_cycles, base_cycles, cpi, ipc) = if let Some(p) = &pipeline {
+        let ipc = if p.cycles > 0 {
+            p.committed as f64 / p.cycles as f64
+        } else {
+            0.0
+        };
+        (p.committed, p.cycles, 0, p.cpi, ipc)
+    } else {
+        (
+            mem.instruction_count,
+            mem.total_program_cycles(),
+            mem.extra_cycles,
+            mem.overall_cpi(),
+            mem.ipc(),
+        )
+    };
+
     CacheResultsSnapshot {
         label: format!("[{}\u{2013}{}]", instr_start, instr_end),
         instr_start,
         instr_end,
-        instruction_count: mem.instruction_count,
-        total_cycles: mem.total_program_cycles(),
-        base_cycles: mem.extra_cycles,
-        cpi: mem.overall_cpi(),
-        ipc: mem.ipc(),
+        instruction_count,
+        total_cycles,
+        base_cycles,
+        cpi,
+        ipc,
         icache: icache_snap,
         dcache: dcache_snap,
         extra_levels: extra_snaps,
@@ -345,7 +381,32 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         miss_hotspots: hotspots,
         hit_rate_history_i: history_i,
         hit_rate_history_d: history_d,
+        pipeline,
     }
+}
+
+fn capture_pipeline_snapshot(app: &App) -> Option<PipelineResultsSnapshot> {
+    app.aggregate_pipeline_snapshot()
+}
+
+fn capture_selected_pipeline_export_snapshot(app: &App) -> CacheResultsSnapshot {
+    let mut snap = capture_snapshot(app);
+    if let Some(p) = app.selected_pipeline_snapshot() {
+        let ipc = if p.cycles > 0 {
+            p.committed as f64 / p.cycles as f64
+        } else {
+            0.0
+        };
+        snap.instruction_count = p.committed;
+        snap.total_cycles = p.cycles;
+        snap.base_cycles = 0;
+        snap.cpi = p.cpi;
+        snap.ipc = ipc;
+        snap.instr_end = p.committed;
+        snap.label = format!("[{}–{}]", snap.instr_start, snap.instr_end);
+        snap.pipeline = Some(p);
+    }
+    snap
 }
 
 pub(crate) fn do_export_cfg(app: &mut App) {
@@ -396,7 +457,6 @@ pub(crate) fn do_import_cfg(app: &mut App) {
                             .extra_levels
                             .push(crate::falcon::cache::Cache::new(cfg.clone()));
                     }
-                    app.cache.hover_level = vec![false; n_extra + 1];
                     if app.cache.selected_level > n_extra {
                         app.cache.selected_level = n_extra;
                     }
@@ -489,24 +549,25 @@ pub(super) fn do_import_rcfg(app: &mut App) {
     }
 }
 
-pub(super) fn do_export_pcfg(app: &mut App) {
+pub(crate) fn do_export_pcfg(app: &mut App) {
     let text = serialize_pcfg(&app.pipeline);
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Pipeline Config", &["pcfg"])
         .set_file_name("pipeline.pcfg")
         .save_file()
     {
+        let path = ensure_extension(path, "pcfg");
         match std::fs::write(&path, &text) {
             Ok(()) => {
-                app.cache.config_error = None;
-                app.cache.config_status = Some(format!(
+                app.pipeline.status_error = None;
+                app.pipeline.status_msg = Some(format!(
                     "Pipeline config exported to {}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }
             Err(e) => {
-                app.cache.config_status = None;
-                app.cache.config_error = Some(format!("Export failed: {e}"));
+                app.pipeline.status_msg = None;
+                app.pipeline.status_error = Some(format!("Export failed: {e}"));
             }
         }
     } else {
@@ -514,7 +575,7 @@ pub(super) fn do_export_pcfg(app: &mut App) {
     }
 }
 
-pub(super) fn do_import_pcfg(app: &mut App) {
+pub(crate) fn do_import_pcfg(app: &mut App) {
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Pipeline Config", &["pcfg"])
         .pick_file()
@@ -523,20 +584,20 @@ pub(super) fn do_import_pcfg(app: &mut App) {
             Ok(text) => match parse_pcfg(&text) {
                 Ok(cfg) => {
                     cfg.apply_to_state(&mut app.pipeline);
-                    app.cache.config_error = None;
-                    app.cache.config_status = Some(format!(
+                    app.pipeline.status_error = None;
+                    app.pipeline.status_msg = Some(format!(
                         "Pipeline config imported from {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
                 }
                 Err(msg) => {
-                    app.cache.config_status = None;
-                    app.cache.config_error = Some(format!("Import failed: {msg}"));
+                    app.pipeline.status_msg = None;
+                    app.pipeline.status_error = Some(format!("Import failed: {msg}"));
                 }
             },
             Err(e) => {
-                app.cache.config_status = None;
-                app.cache.config_error = Some(format!("Import failed: {e}"));
+                app.pipeline.status_msg = None;
+                app.pipeline.status_error = Some(format!("Import failed: {e}"));
             }
         }
     } else {
@@ -552,6 +613,7 @@ pub(crate) fn do_export_results(app: &mut App) {
         .set_file_name("results.fstats")
         .save_file()
     {
+        let path = ensure_extension(path, "fstats");
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -585,6 +647,47 @@ pub(crate) fn do_export_results(app: &mut App) {
     }
 }
 
+pub(crate) fn do_export_pipeline_results(app: &mut App) {
+    let mut snap = capture_selected_pipeline_export_snapshot(app);
+    if let Some(path) = OSFileDialog::new()
+        .add_filter("Pipeline Stats", &["pstats"])
+        .add_filter("CSV Spreadsheet", &["csv"])
+        .set_file_name("pipeline.pstats")
+        .save_file()
+    {
+        let path = ensure_extension(path, "pstats");
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("pstats");
+        snap.label = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let text = if ext == "csv" {
+            serialize_pipeline_results_csv(&snap)
+        } else {
+            serialize_pipeline_results_pstats(&snap)
+        };
+        match std::fs::write(&path, &text) {
+            Ok(()) => {
+                app.pipeline.status_msg = Some(format!(
+                    "Pipeline results exported to {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+                app.pipeline.status_error = None;
+            }
+            Err(e) => {
+                app.pipeline.status_error = Some(format!("Export failed: {e}"));
+                app.pipeline.status_msg = None;
+            }
+        }
+    } else {
+        open_path_input(app, PathInputAction::SavePipelineResults);
+    }
+}
+
 pub(super) fn write_level_snap(s: &mut String, prefix: &str, l: &LevelSnapshot) {
     s.push_str(&format!("{prefix}.name={}\n", l.name));
     s.push_str(&format!("{prefix}.size={}\n", l.size));
@@ -609,19 +712,49 @@ pub(super) fn serialize_results_fstats(
     snap: &CacheResultsSnapshot,
     windows: &[CacheResultsSnapshot],
 ) -> String {
-    let mut s = String::from("# FALCON-ASM Simulation Results v1\n");
+    let pipeline_mode = snap.pipeline.is_some();
+    let mut s = if pipeline_mode {
+        String::from("# FALCON-ASM Simulation Results v2\n")
+    } else {
+        String::from("# FALCON-ASM Simulation Results v1\n")
+    };
     s.push_str(&format!("label={}\n", snap.label));
+    s.push_str(&format!(
+        "prog.clock_model={}\n",
+        if pipeline_mode { "pipeline" } else { "serial" }
+    ));
     s.push_str(&format!("prog.instructions={}\n", snap.instruction_count));
     s.push_str(&format!("prog.instr_start={}\n", snap.instr_start));
     s.push_str(&format!("prog.instr_end={}\n", snap.instr_end));
     s.push_str(&format!("prog.total_cycles={}\n", snap.total_cycles));
-    s.push_str(&format!("prog.base_cycles={}\n", snap.base_cycles));
-    s.push_str(&format!(
-        "prog.cache_cycles={}\n",
-        snap.total_cycles.saturating_sub(snap.base_cycles)
-    ));
+    if !pipeline_mode {
+        s.push_str(&format!("prog.base_cycles={}\n", snap.base_cycles));
+        s.push_str(&format!(
+            "prog.cache_cycles={}\n",
+            snap.total_cycles.saturating_sub(snap.base_cycles)
+        ));
+    }
     s.push_str(&format!("prog.cpi={:.4}\n", snap.cpi));
     s.push_str(&format!("prog.ipc={:.4}\n", snap.ipc));
+    if let Some(p) = &snap.pipeline {
+        s.push_str("pipeline.enabled=true\n");
+        s.push_str(&format!("pipeline.scope={}\n", p.scope));
+        s.push_str(&format!("pipeline.committed={}\n", p.committed));
+        s.push_str(&format!("pipeline.cycles={}\n", p.cycles));
+        s.push_str(&format!("pipeline.stalls={}\n", p.stalls));
+        s.push_str(&format!("pipeline.flushes={}\n", p.flushes));
+        s.push_str(&format!("pipeline.cpi={:.4}\n", p.cpi));
+        s.push_str(&format!("pipeline.branches={}\n", p.branches));
+        s.push_str(&format!("pipeline.raw_stalls={}\n", p.raw_stalls));
+        s.push_str(&format!("pipeline.load_use_stalls={}\n", p.load_use_stalls));
+        s.push_str(&format!("pipeline.branch_stalls={}\n", p.branch_stalls));
+        s.push_str(&format!("pipeline.fu_stalls={}\n", p.fu_stalls));
+        s.push_str(&format!("pipeline.mem_stalls={}\n", p.mem_stalls));
+        s.push_str(&format!("pipeline.bypass={}\n", p.bypass));
+        s.push_str(&format!("pipeline.mode={}\n", p.mode));
+        s.push_str(&format!("pipeline.branch_resolve={}\n", p.branch_resolve));
+        s.push_str(&format!("pipeline.branch_predict={}\n", p.branch_predict));
+    }
     s.push_str(&format!("extra_levels={}\n", snap.extra_levels.len()));
     write_level_snap(&mut s, "icache", &snap.icache);
     write_level_snap(&mut s, "dcache", &snap.dcache);
@@ -737,20 +870,54 @@ pub(super) fn csv_level_row(s: &mut String, label: &str, l: &LevelSnapshot, inst
     ));
 }
 
-pub(super) fn serialize_results_csv(snap: &CacheResultsSnapshot, windows: &[CacheResultsSnapshot]) -> String {
+pub(super) fn serialize_results_csv(
+    snap: &CacheResultsSnapshot,
+    windows: &[CacheResultsSnapshot],
+) -> String {
     let mut s = String::new();
+    let pipeline_mode = snap.pipeline.is_some();
     s.push_str("PROGRAM SUMMARY\n");
-    s.push_str("Instructions,Total Cycles,Base Cycles,Cache Cycles,CPI,IPC\n");
-    s.push_str(&format!(
-        "{},{},{},{},{:.4},{:.4}\n",
-        snap.instruction_count,
-        snap.total_cycles,
-        snap.base_cycles,
-        snap.total_cycles.saturating_sub(snap.base_cycles),
-        snap.cpi,
-        snap.ipc
-    ));
+    if pipeline_mode {
+        s.push_str("Clock Model,Instructions,Total Cycles,CPI,IPC\n");
+        s.push_str(&format!(
+            "pipeline,{},{},{:.4},{:.4}\n",
+            snap.instruction_count, snap.total_cycles, snap.cpi, snap.ipc
+        ));
+    } else {
+        s.push_str("Clock Model,Instructions,Total Cycles,Base Cycles,Cache Cycles,CPI,IPC\n");
+        s.push_str(&format!(
+            "serial,{},{},{},{},{:.4},{:.4}\n",
+            snap.instruction_count,
+            snap.total_cycles,
+            snap.base_cycles,
+            snap.total_cycles.saturating_sub(snap.base_cycles),
+            snap.cpi,
+            snap.ipc
+        ));
+    }
     s.push('\n');
+    if let Some(p) = &snap.pipeline {
+        s.push_str("PIPELINE SUMMARY\n");
+        s.push_str("Committed,Cycles,Stalls,Flushes,CPI,Branches,RAW Stalls,Load-Use Stalls,Branch Stalls,FU Stalls,Mem Stalls,Bypass,Mode,Branch Resolve,Branch Predict\n");
+        s.push_str(&format!(
+            "{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{}\n\n",
+            p.committed,
+            p.cycles,
+            p.stalls,
+            p.flushes,
+            p.cpi,
+            p.branches,
+            p.raw_stalls,
+            p.load_use_stalls,
+            p.branch_stalls,
+            p.fu_stalls,
+            p.mem_stalls,
+            p.bypass,
+            p.mode,
+            p.branch_resolve,
+            p.branch_predict
+        ));
+    }
     s.push_str("CACHE LEVELS\n");
     s.push_str("Level,Hits,Misses,Total Accesses,Hit Rate (%),Miss Rate (%),MPKI,AMAT (cycles),Evictions,Writebacks,RAM Reads (B),RAM Writes (B),Total Cycles\n");
     csv_level_row(&mut s, "I-Cache L1", &snap.icache, snap.instruction_count);
@@ -802,6 +969,76 @@ pub(super) fn serialize_results_csv(snap: &CacheResultsSnapshot, windows: &[Cach
     s
 }
 
+pub(super) fn serialize_pipeline_results_pstats(snap: &CacheResultsSnapshot) -> String {
+    let mut s = String::from("# Raven Pipeline Results v2\n");
+    s.push_str(&format!("label={}\n", snap.label));
+    s.push_str("prog.clock_model=pipeline\n");
+    s.push_str(&format!("prog.instructions={}\n", snap.instruction_count));
+    s.push_str(&format!("prog.total_cycles={}\n", snap.total_cycles));
+    s.push_str(&format!("prog.cpi={:.4}\n", snap.cpi));
+    s.push_str(&format!("prog.ipc={:.4}\n", snap.ipc));
+
+    if let Some(p) = &snap.pipeline {
+        s.push_str("pipeline.enabled=true\n");
+        s.push_str(&format!("pipeline.scope={}\n", p.scope));
+        s.push_str(&format!("pipeline.committed={}\n", p.committed));
+        s.push_str(&format!("pipeline.cycles={}\n", p.cycles));
+        s.push_str(&format!("pipeline.stalls={}\n", p.stalls));
+        s.push_str(&format!("pipeline.flushes={}\n", p.flushes));
+        s.push_str(&format!("pipeline.cpi={:.4}\n", p.cpi));
+        s.push_str(&format!("pipeline.branches={}\n", p.branches));
+        s.push_str(&format!("pipeline.raw_stalls={}\n", p.raw_stalls));
+        s.push_str(&format!("pipeline.load_use_stalls={}\n", p.load_use_stalls));
+        s.push_str(&format!("pipeline.branch_stalls={}\n", p.branch_stalls));
+        s.push_str(&format!("pipeline.fu_stalls={}\n", p.fu_stalls));
+        s.push_str(&format!("pipeline.mem_stalls={}\n", p.mem_stalls));
+        s.push_str(&format!("pipeline.bypass={}\n", p.bypass));
+        s.push_str(&format!("pipeline.mode={}\n", p.mode));
+        s.push_str(&format!("pipeline.branch_resolve={}\n", p.branch_resolve));
+        s.push_str(&format!("pipeline.branch_predict={}\n", p.branch_predict));
+    } else {
+        s.push_str("pipeline.enabled=false\n");
+    }
+
+    s
+}
+
+pub(super) fn serialize_pipeline_results_csv(snap: &CacheResultsSnapshot) -> String {
+    let mut s = String::new();
+    s.push_str("PROGRAM SUMMARY\n");
+    s.push_str("Instructions,Total Cycles,CPI,IPC\n");
+    s.push_str(&format!(
+        "{},{},{:.4},{:.4}\n\n",
+        snap.instruction_count, snap.total_cycles, snap.cpi, snap.ipc
+    ));
+
+    s.push_str("PIPELINE SUMMARY\n");
+    s.push_str("Scope,Committed,Cycles,Stalls,Flushes,CPI,Control Ops,RAW Stalls,Load-Use Stalls,Branch Stalls,FU Stalls,Mem Stalls,Bypass,Mode,Branch Resolve,Branch Predict\n");
+    if let Some(p) = &snap.pipeline {
+        s.push_str(&format!(
+            "{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{}\n",
+            p.scope,
+            p.committed,
+            p.cycles,
+            p.stalls,
+            p.flushes,
+            p.cpi,
+            p.branches,
+            p.raw_stalls,
+            p.load_use_stalls,
+            p.branch_stalls,
+            p.fu_stalls,
+            p.mem_stalls,
+            p.bypass,
+            p.mode,
+            p.branch_resolve,
+            p.branch_predict
+        ));
+    }
+
+    s
+}
+
 pub(super) fn apply_imem_search(app: &mut App) {
     let q = app.run.imem_search_query.trim().to_lowercase();
     if q.is_empty() {
@@ -832,8 +1069,7 @@ pub(super) fn apply_imem_search(app: &mut App) {
             .labels_lower
             .iter()
             .filter(|(addr, labels_lc)| {
-                vrow_cache.contains_key(*addr)
-                    && labels_lc.iter().any(|l| l.contains(&q))
+                vrow_cache.contains_key(*addr) && labels_lc.iter().any(|l| l.contains(&q))
             })
             .map(|(&addr, _)| addr)
             .collect();
@@ -906,7 +1142,6 @@ pub(super) fn fuzzy_score(name: &str, prefix: &str) -> Option<i32> {
     }
     None
 }
-
 
 pub(super) fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -997,6 +1232,17 @@ pub(crate) fn open_path_input(app: &mut App, action: PathInputAction) {
     refresh_path_completions(&mut app.path_input);
 }
 
+fn ensure_extension(path: std::path::PathBuf, ext: &str) -> std::path::PathBuf {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(existing) if !existing.is_empty() => path,
+        _ => {
+            let mut path = path;
+            path.set_extension(ext);
+            path
+        }
+    }
+}
+
 /// Auto-detect whether `path` is a binary (ELF / FALC / non-UTF-8) or assembly
 /// source and load it accordingly. Used by Ctrl+O and the path-input overlay.
 pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path) {
@@ -1036,7 +1282,11 @@ pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path) {
     }
 }
 
-pub(super) fn dispatch_path_input(app: &mut App, action: PathInputAction, path: std::path::PathBuf) {
+pub(super) fn dispatch_path_input(
+    app: &mut App,
+    action: PathInputAction,
+    path: std::path::PathBuf,
+) {
     match action {
         PathInputAction::OpenFas => {
             open_file_autodetect(app, &path);
@@ -1112,7 +1362,6 @@ pub(super) fn dispatch_path_input(app: &mut App, action: PathInputAction, path: 
                             .extra_levels
                             .push(crate::falcon::cache::Cache::new(cfg.clone()));
                     }
-                    app.cache.hover_level = vec![false; n_extra + 1];
                     if app.cache.selected_level > n_extra {
                         app.cache.selected_level = n_extra;
                     }
@@ -1182,11 +1431,11 @@ pub(super) fn dispatch_path_input(app: &mut App, action: PathInputAction, path: 
         },
         PathInputAction::SaveRcfg => {
             let text = serialize_rcfg(
-        &app.run.cpi_config,
-        app.run.cache_enabled,
-        app.run_scope,
-        app.run.mem_size / 1024,
-    );
+                &app.run.cpi_config,
+                app.run.cache_enabled,
+                app.run_scope,
+                app.run.mem_size / 1024,
+            );
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_error = None;
@@ -1222,6 +1471,7 @@ pub(super) fn dispatch_path_input(app: &mut App, action: PathInputAction, path: 
             }
         },
         PathInputAction::SavePcfg => {
+            let path = ensure_extension(path, "pcfg");
             let text = serialize_pcfg(&app.pipeline);
             match std::fs::write(&path, &text) {
                 Ok(()) => {
@@ -1238,6 +1488,7 @@ pub(super) fn dispatch_path_input(app: &mut App, action: PathInputAction, path: 
             }
         }
         PathInputAction::SaveResults => {
+            let path = ensure_extension(path, "fstats");
             let mut snap = capture_snapshot(app);
             let ext = path
                 .extension()
@@ -1265,6 +1516,37 @@ pub(super) fn dispatch_path_input(app: &mut App, action: PathInputAction, path: 
                 Err(e) => {
                     app.cache.config_error = Some(format!("Export failed: {e}"));
                     app.cache.config_status = None;
+                }
+            }
+        }
+        PathInputAction::SavePipelineResults => {
+            let path = ensure_extension(path, "pstats");
+            let mut snap = capture_selected_pipeline_export_snapshot(app);
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("pstats");
+            snap.label = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let text = if ext == "csv" {
+                serialize_pipeline_results_csv(&snap)
+            } else {
+                serialize_pipeline_results_pstats(&snap)
+            };
+            match std::fs::write(&path, &text) {
+                Ok(()) => {
+                    app.pipeline.status_msg = Some(format!(
+                        "Pipeline results exported to {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ));
+                    app.pipeline.status_error = None;
+                }
+                Err(e) => {
+                    app.pipeline.status_error = Some(format!("Export failed: {e}"));
+                    app.pipeline.status_msg = None;
                 }
             }
         }

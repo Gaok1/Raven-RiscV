@@ -1,3 +1,5 @@
+pub mod forwarding;
+pub mod predictor;
 pub mod sim;
 
 use crate::falcon::instruction::Instruction;
@@ -304,13 +306,85 @@ impl PipelineMode {
 pub enum BranchPredict {
     NotTaken,
     Taken,
+    Btfnt,
+    TwoBit,
 }
 impl BranchPredict {
     pub fn label(self) -> &'static str {
         match self {
             Self::NotTaken => "Not-taken",
-            Self::Taken => "Taken",
+            Self::Taken => "Always-taken",
+            Self::Btfnt => "BTFNT",
+            Self::TwoBit => "2-bit Dynamic",
         }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PipelineBypassConfig {
+    pub ex_to_ex: bool,
+    pub mem_to_ex: bool,
+    pub wb_to_id: bool,
+    pub store_to_load: bool,
+}
+
+impl PipelineBypassConfig {
+    pub const CONFIG_ROWS: usize = 7;
+
+    pub const fn new(ex_to_ex: bool, mem_to_ex: bool, wb_to_id: bool, store_to_load: bool) -> Self {
+        Self {
+            ex_to_ex,
+            mem_to_ex,
+            wb_to_id,
+            store_to_load,
+        }
+    }
+
+    pub const fn legacy_enabled() -> Self {
+        Self::new(true, true, true, false)
+    }
+
+    pub const fn disabled() -> Self {
+        Self::new(false, false, false, false)
+    }
+
+    pub fn set_legacy_forwarding(&mut self, enabled: bool) {
+        *self = if enabled {
+            Self::legacy_enabled()
+        } else {
+            Self::disabled()
+        };
+    }
+
+    pub fn legacy_forwarding_enabled(self) -> bool {
+        self.ex_to_ex && self.mem_to_ex && self.wb_to_id
+    }
+
+    pub fn summary(self) -> String {
+        let mut enabled = Vec::new();
+        if self.ex_to_ex {
+            enabled.push("EX->EX");
+        }
+        if self.mem_to_ex {
+            enabled.push("MEM->EX");
+        }
+        if self.wb_to_id {
+            enabled.push("WB->ID");
+        }
+        if self.store_to_load {
+            enabled.push("Store->Load");
+        }
+        if enabled.is_empty() {
+            "none".to_string()
+        } else {
+            enabled.join(" | ")
+        }
+    }
+}
+
+impl Default for PipelineBypassConfig {
+    fn default() -> Self {
+        Self::legacy_enabled()
     }
 }
 
@@ -453,6 +527,7 @@ impl Stage {
 
 #[derive(Clone)]
 pub struct PipeSlot {
+    pub gantt_id: u64,
     pub pc: u32,
     pub word: u32,
     pub disasm: String,
@@ -491,6 +566,7 @@ pub struct PipeSlot {
 impl PipeSlot {
     pub fn bubble() -> Self {
         Self {
+            gantt_id: 0,
             pc: 0,
             word: 0,
             disasm: String::new(),
@@ -522,6 +598,7 @@ impl PipeSlot {
         let (rd, rs1, rs2) = InstrClass::operands(word);
         let disasm = disasm_word(word);
         Self {
+            gantt_id: 0,
             pc,
             word,
             disasm,
@@ -551,21 +628,22 @@ impl PipeSlot {
 
 // ── Gantt diagram ─────────────────────────────────────────────────────────────
 
-pub const MAX_GANTT_ROWS: usize = 12;
-pub const MAX_GANTT_COLS: usize = 20;
+pub const MAX_GANTT_ROWS: usize = 256;
+pub const MAX_GANTT_COLS: usize = 200;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GanttCell {
-    Empty,               // instruction not in pipeline yet / already done
-    InStage(Stage),      // instruction is in this stage
-    Speculative(Stage),  // instruction is in this stage but was fetched speculatively
-    Stall,               // stalled in current stage
-    Bubble,              // NOP bubble occupies this slot
-    Flush,               // instruction was flushed (branch misprediction)
+    Empty,              // instruction not in pipeline yet / already done
+    InStage(Stage),     // instruction is in this stage
+    Speculative(Stage), // instruction is in this stage but was fetched speculatively
+    Stall,              // stalled in current stage
+    Bubble,             // NOP bubble occupies this slot
+    Flush,              // instruction was flushed (branch misprediction)
 }
 
 #[derive(Clone)]
 pub struct GanttRow {
+    pub gantt_id: u64,
     pub pc: u32,
     pub disasm: String,
     pub class: InstrClass,
@@ -577,6 +655,58 @@ pub struct GanttRow {
     pub done: bool,
     /// The last stage emitted — used to detect stalls (same stage two cycles in a row).
     pub last_stage: Option<Stage>,
+}
+
+pub(crate) fn gantt_window_bounds(rows: &[&GanttRow], history_cols: usize) -> (u64, u64) {
+    let history_cols = history_cols.max(1) as u64;
+    let mut min_start: Option<u64> = None;
+    let mut max_end: Option<u64> = None;
+
+    for row in rows {
+        if row.cells.is_empty() {
+            continue;
+        }
+        min_start = Some(min_start.map_or(row.first_cycle, |cur| cur.min(row.first_cycle)));
+        let row_end = row.first_cycle + row.cells.len() as u64;
+        max_end = Some(max_end.map_or(row_end, |cur| cur.max(row_end)));
+    }
+
+    let min_start = min_start.unwrap_or(0);
+    let max_end = max_end.unwrap_or(min_start);
+    let end = max_end.max(min_start + 1);
+    let start = end.saturating_sub(history_cols).max(min_start);
+    (start, end)
+}
+
+pub(crate) fn gantt_visible_rows(gantt_area_height: u16) -> usize {
+    let inner_h = gantt_area_height.saturating_sub(2) as usize;
+    inner_h.saturating_sub(2).max(1)
+}
+
+pub(crate) fn gantt_max_scroll_for_len(len: usize, visible_rows: usize) -> usize {
+    len.saturating_sub(visible_rows.max(1))
+}
+
+pub(crate) fn gantt_max_scroll(state: &PipelineSimState, gantt_area_height: u16) -> usize {
+    gantt_max_scroll_for_len(state.gantt.len(), gantt_visible_rows(gantt_area_height))
+}
+
+pub(crate) fn maybe_follow_gantt_tail(
+    current_scroll: usize,
+    visible_rows: usize,
+    prev_len: usize,
+) -> usize {
+    if visible_rows == 0 {
+        return current_scroll;
+    }
+
+    let prev_max_scroll = gantt_max_scroll_for_len(prev_len, visible_rows);
+    let was_showing_newest = current_scroll >= prev_max_scroll;
+    if was_showing_newest {
+        gantt_max_scroll_for_len(prev_len.saturating_add(1), visible_rows)
+    } else {
+        current_scroll
+    }
 }
 
 // ── Subtabs ───────────────────────────────────────────────────────────────────
@@ -627,7 +757,7 @@ impl PipelineSpeed {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PipelineConfig {
     pub enabled: bool,
-    pub forwarding: bool,
+    pub bypass: PipelineBypassConfig,
     pub branch_resolve: BranchResolve,
     pub mode: PipelineMode,
     pub predict: BranchPredict,
@@ -638,7 +768,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            forwarding: true,
+            bypass: PipelineBypassConfig::default(),
             branch_resolve: BranchResolve::Ex,
             mode: PipelineMode::SingleCycle,
             predict: BranchPredict::NotTaken,
@@ -651,7 +781,7 @@ impl PipelineConfig {
     pub fn from_state(state: &PipelineSimState) -> Self {
         Self {
             enabled: state.enabled,
-            forwarding: state.forwarding,
+            bypass: state.bypass,
             branch_resolve: state.branch_resolve,
             mode: state.mode,
             predict: state.predict,
@@ -661,10 +791,10 @@ impl PipelineConfig {
 
     pub fn apply_to_state(self, state: &mut PipelineSimState) {
         state.enabled = self.enabled;
-        state.forwarding = self.forwarding;
+        state.bypass = self.bypass;
         state.branch_resolve = self.branch_resolve;
         state.mode = self.mode;
-        state.predict = self.predict;
+        state.set_predict(self.predict);
         state.speed = self.speed;
     }
 }
@@ -672,7 +802,13 @@ impl PipelineConfig {
 pub fn serialize_pipeline_config(cfg: &PipelineConfig) -> String {
     let mut s = String::from("# Raven Pipeline Config v1\n");
     s.push_str(&format!("enabled={}\n", cfg.enabled));
-    s.push_str(&format!("forwarding={}\n", cfg.forwarding));
+    s.push_str(&format!("bypass.ex_to_ex={}\n", cfg.bypass.ex_to_ex));
+    s.push_str(&format!("bypass.mem_to_ex={}\n", cfg.bypass.mem_to_ex));
+    s.push_str(&format!("bypass.wb_to_id={}\n", cfg.bypass.wb_to_id));
+    s.push_str(&format!(
+        "bypass.store_to_load={}\n",
+        cfg.bypass.store_to_load
+    ));
     s.push_str(&format!("mode={:?}\n", cfg.mode));
     s.push_str(&format!("branch_resolve={:?}\n", cfg.branch_resolve));
     s.push_str(&format!("predict={:?}\n", cfg.predict));
@@ -720,6 +856,8 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
     let predict = match map.get("predict").map(String::as_str).unwrap_or("nottaken") {
         "nottaken" | "not-taken" | "not_taken" => BranchPredict::NotTaken,
         "taken" => BranchPredict::Taken,
+        "btfnt" => BranchPredict::Btfnt,
+        "twobit" | "two-bit" | "two_bit" | "2bit" | "2-bit" => BranchPredict::TwoBit,
         other => return Err(format!("Unknown predict mode: {other}")),
     };
 
@@ -731,9 +869,24 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
         other => return Err(format!("Unknown pipeline speed: {other}")),
     };
 
+    let bypass = if map.contains_key("forwarding") {
+        if get_bool("forwarding", true) {
+            PipelineBypassConfig::legacy_enabled()
+        } else {
+            PipelineBypassConfig::disabled()
+        }
+    } else {
+        PipelineBypassConfig {
+            ex_to_ex: get_bool("bypass.ex_to_ex", true),
+            mem_to_ex: get_bool("bypass.mem_to_ex", true),
+            wb_to_id: get_bool("bypass.wb_to_id", true),
+            store_to_load: get_bool("bypass.store_to_load", false),
+        }
+    };
+
     Ok(PipelineConfig {
         enabled: get_bool("enabled", true),
-        forwarding: get_bool("forwarding", true),
+        bypass,
         branch_resolve,
         mode,
         predict,
@@ -746,10 +899,11 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
 pub struct PipelineSimState {
     // ── Config ──
     pub enabled: bool,
-    pub forwarding: bool,
+    pub bypass: PipelineBypassConfig,
     pub branch_resolve: BranchResolve,
     pub mode: PipelineMode,
     pub predict: BranchPredict,
+    pub predictor: predictor::PredictorState,
 
     // ── Pipeline own state (shares cpu/mem with RunState) ──
     pub fetch_pc: u32,
@@ -758,6 +912,7 @@ pub struct PipelineSimState {
 
     // ── Stages [IF=0, ID=1, EX=2, MEM=3, WB=4] ──
     pub stages: [Option<PipeSlot>; 5],
+    pub fu_busy: [u8; 7],
 
     // ── Stats ──
     pub cycle_count: u64,
@@ -782,10 +937,14 @@ pub struct PipelineSimState {
     pub subtab: PipelineSubtab,
     pub config_cursor: usize,
     pub gantt_scroll: usize,
+    pub gantt_visible_rows_cache: Cell<usize>,
+    pub gantt_max_scroll_cache: Cell<usize>,
+    pub next_gantt_id: u64,
 
     // ── Active hazard message (set each tick) ──
     pub hazard_msgs: Vec<(HazardType, String)>,
     pub hazard_traces: Vec<HazardTrace>,
+    pub last_cycle_cache_only: bool,
 
     // ── Hover state para botões da UI ──
     pub hover_subtab_main: bool,
@@ -794,11 +953,16 @@ pub struct PipelineSimState {
     pub hover_reset: bool,
     pub hover_speed: bool,
     pub hover_state: bool,
+    pub hover_export_results: bool,
+    pub hover_import_cfg: bool,
+    pub hover_export_cfg: bool,
+    pub status_msg: Option<String>,
+    pub status_error: Option<String>,
 
     // ── Config subtab mouse ──
     pub hover_config_row: Option<usize>,
     /// (y, x_start, x_end) for each config row — set by render, read by mouse
-    pub config_row_rects: Cell<[(u16, u16, u16); 4]>,
+    pub config_row_rects: Cell<[(u16, u16, u16); PipelineBypassConfig::CONFIG_ROWS]>,
 
     // ── Geometrias dos botões (y, x_start, x_end) para mouse hit-test ──
     pub btn_subtab_main_rect: Cell<(u16, u16, u16)>,
@@ -807,20 +971,25 @@ pub struct PipelineSimState {
     pub btn_reset_rect: Cell<(u16, u16, u16)>,
     pub btn_speed_rect: Cell<(u16, u16, u16)>,
     pub btn_state_rect: Cell<(u16, u16, u16)>,
+    pub btn_export_results_rect: Cell<(u16, u16, u16)>,
+    pub btn_import_cfg_rect: Cell<(u16, u16, u16)>,
+    pub btn_export_cfg_rect: Cell<(u16, u16, u16)>,
 }
 
 impl PipelineSimState {
     pub fn new() -> Self {
         Self {
             enabled: true,
-            forwarding: true,
+            bypass: PipelineBypassConfig::default(),
             branch_resolve: BranchResolve::Ex,
             mode: PipelineMode::SingleCycle,
             predict: BranchPredict::NotTaken,
+            predictor: predictor::PredictorState::default(),
             fetch_pc: 0,
             halted: false,
             faulted: false,
             stages: Default::default(),
+            fu_busy: [0; 7],
             cycle_count: 0,
             instr_committed: 0,
             stall_count: 0,
@@ -834,22 +1003,34 @@ impl PipelineSimState {
             subtab: PipelineSubtab::Main,
             config_cursor: 0,
             gantt_scroll: 0,
+            gantt_visible_rows_cache: Cell::new(0),
+            gantt_max_scroll_cache: Cell::new(0),
+            next_gantt_id: 1,
             hazard_msgs: Vec::new(),
             hazard_traces: Vec::new(),
+            last_cycle_cache_only: false,
             hover_config_row: None,
-            config_row_rects: Cell::new([(0, 0, 0); 4]),
+            config_row_rects: Cell::new([(0, 0, 0); PipelineBypassConfig::CONFIG_ROWS]),
             hover_subtab_main: false,
             hover_subtab_config: false,
             hover_core: false,
             hover_reset: false,
             hover_speed: false,
             hover_state: false,
+            hover_export_results: false,
+            hover_import_cfg: false,
+            hover_export_cfg: false,
+            status_msg: None,
+            status_error: None,
             btn_subtab_main_rect: Cell::new((0, 0, 0)),
             btn_subtab_config_rect: Cell::new((0, 0, 0)),
             btn_core_rect: Cell::new((0, 0, 0)),
             btn_reset_rect: Cell::new((0, 0, 0)),
             btn_speed_rect: Cell::new((0, 0, 0)),
             btn_state_rect: Cell::new((0, 0, 0)),
+            btn_export_results_rect: Cell::new((0, 0, 0)),
+            btn_import_cfg_rect: Cell::new((0, 0, 0)),
+            btn_export_cfg_rect: Cell::new((0, 0, 0)),
         }
     }
 
@@ -858,28 +1039,49 @@ impl PipelineSimState {
     /// Used when the user manually moves the PC (e.g. clicking an instruction).
     pub fn redirect_pc(&mut self, new_pc: u32) {
         self.stages = Default::default();
+        self.fu_busy = [0; 7];
         self.fetch_pc = new_pc;
         self.halted = false;
         self.faulted = false;
         self.hazard_msgs.clear();
         self.hazard_traces.clear();
+        self.last_cycle_cache_only = false;
+        self.predictor.clear();
+        self.status_msg = None;
+        self.status_error = None;
+    }
+
+    /// Reset all stats counters atomically.  Add new stat fields here so they
+    /// are never forgotten in `reset_stages`.
+    pub fn reset_stats(&mut self) {
+        self.cycle_count = 0;
+        self.instr_committed = 0;
+        self.stall_count = 0;
+        self.stall_by_type = [0; HazardType::STALL_TYPE_COUNT];
+        self.branches_executed = 0;
+        self.flush_count = 0;
+        self.class_counts = [0; InstrClass::COUNT];
     }
 
     pub fn reset_stages(&mut self, base_pc: u32) {
         self.fetch_pc = base_pc;
         self.stages = Default::default();
-        self.cycle_count = 0;
-        self.instr_committed = 0;
-        self.stall_count = 0;
-        self.flush_count = 0;
-        self.class_counts = [0; InstrClass::COUNT];
+        self.fu_busy = [0; 7];
+        self.reset_stats();
         self.gantt.clear();
         self.gantt_scroll = 0;
+        self.gantt_visible_rows_cache.set(0);
+        self.gantt_max_scroll_cache.set(0);
+        self.next_gantt_id = 1;
         self.hazard_msgs.clear();
         self.hazard_traces.clear();
+        self.last_cycle_cache_only = false;
+        self.predictor.clear();
         self.halted = false;
         self.faulted = false;
         self.last_tick = Instant::now();
+        self.status_msg = None;
+        self.status_error = None;
     }
 
     /// CPI = cycles / instructions (safe, returns 0.0 if no instrs)
@@ -889,6 +1091,17 @@ impl PipelineSimState {
         } else {
             self.cycle_count as f64 / self.instr_committed as f64
         }
+    }
+
+    pub fn set_predict(&mut self, predict: BranchPredict) {
+        if self.predict != predict {
+            self.predict = predict;
+            self.predictor.clear();
+        }
+    }
+
+    pub fn set_legacy_forwarding(&mut self, enabled: bool) {
+        self.bypass.set_legacy_forwarding(enabled);
     }
 }
 

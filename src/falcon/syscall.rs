@@ -68,6 +68,16 @@ pub fn handle_syscall<B: Bus>(
     mem: &mut B,
     console: &mut Console,
 ) -> Result<bool, FalconError> {
+    handle_syscall_with_cycle_override(code, cpu, mem, console, None)
+}
+
+pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
+    code: u32,
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+    cycle_override: Option<u64>,
+) -> Result<bool, FalconError> {
     match code {
         // --- Linux ABI subset ---
         SYS_READ => linux_read(cpu, mem, console),
@@ -189,7 +199,7 @@ pub fn handle_syscall<B: Bus>(
             Ok(true)
         }
         FALCON_GET_CYCLE_COUNT => {
-            let cycles = mem.total_cycles();
+            let cycles = cycle_override.unwrap_or_else(|| mem.total_cycles());
             cpu.write(10, cycles as u32);
             cpu.write(11, (cycles >> 32) as u32);
             Ok(true)

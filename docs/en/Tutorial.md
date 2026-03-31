@@ -236,7 +236,7 @@ Then open RAVEN, go to the **Editor** tab, press `Ctrl+O` (or click `[BIN]`) and
 
 ### Example
 
-A complete, ready-to-run example is available at [`RustCompatibleABI.rs`](RustCompatibleABI.rs). It demonstrates:
+A complete, ready-to-run example is available at [`rust-to-raven/src/main.rs`](../../rust-to-raven/src/main.rs). It demonstrates:
 
 - Minimal `#![no_std]` program structure
 - `_start` entry point

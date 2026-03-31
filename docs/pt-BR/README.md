@@ -4,7 +4,7 @@
 
 Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, inspecione registradores e memória, perfile sua hierarquia de cache e leia a documentação — sem sair do terminal.
 
-![RAVEN em ação](assets/raven-example.gif)
+![RAVEN em ação](../assets/raven-example.gif)
 
 ---
 
@@ -49,6 +49,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Registradores float: nomes ABI (`ft0`–`ft11`, `fa0`–`fa7`, `fs0`–`fs11`), alternar com `Tab`
 - Sidebar cicla com `v`: **RAM → Registradores → Dyn**
   - **RAM**: `k` cicla a região: Data / Stack / R/W / **Heap** (ponteiro sbrk, marcador `▶HB`)
+  - **R/W**: continua sendo a view de RAM, mas segue automaticamente o endereço do último acesso de memória por `LOAD` e `STORE`
   - **Dyn**: modo auto-narrado para passo a passo — STORE → mostra RAM no endereço escrito; LOAD/ALU/branch → mostra registradores
 
 ### Aba Cache (Aba 3)
@@ -94,17 +95,17 @@ cargo build --target riscv32im-unknown-none-elf
 
 O ELF é carregado nos endereços virtuais definidos pelo linker, o PC é apontado para o entry point, e o disassembler exibe o segmento de texto decodificado. Palavras não reconhecidas (dados, padding) aparecem como `.word 0x...`.
 
-Um projeto pronto para uso com `_start`, panic handler, alocador e wrappers para `write`, `read` e `exit` está disponível em [`rust-to-raven/`](../rust-to-raven/).
+Um projeto pronto para uso com `_start`, panic handler, alocador e wrappers para `write`, `read` e `exit` está disponível em [`rust-to-raven/`](../../rust-to-raven/).
 
 ---
 
 ## Início Rápido
 
-Baixe o binário mais recente em [Releases](https://github.com/Gaok1/Raven/releases), ou compile da fonte:
+Baixe o binário mais recente em [Releases](https://github.com/Gaok1/Raven-RiscV/releases), ou compile da fonte:
 
 ```bash
-git clone https://github.com/Gaok1/Raven.git
-cd RAVEN
+git clone https://github.com/Gaok1/Raven-RiscV.git
+cd Raven-RiscV
 cargo run
 ```
 
@@ -153,18 +154,18 @@ raven export-config  --out default.fcache           # exportar config de cache p
 raven export-settings --out default.rcfg            # exportar configurações padrão
 ```
 
-Veja a **[Referência da CLI](cli.pt-BR.md)** para todos os subcomandos e flags.
+Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 
 ---
 
 ## Documentação
 
 - **Tutorial interativo** — pressione `[?]` em qualquer aba no Raven (alterne idioma com `[L]`)
-- [Referência da CLI (PT-BR)](cli.pt-BR.md) — subcomandos, flags e formatos de arquivo
-- [CLI Reference (EN)](cli.md)
-- [Formatos de instrução (PT-BR)](format.pt-BR.md) — layouts de bits, encoding, pseudoinstruções
-- [Guia do simulador de cache (PT-BR)](cache.pt-BR.md) — configuração, métricas, exportação
-- [Formats (EN)](format.md) | [Cache (EN)](cache.md)
+- [Referência da CLI (PT-BR)](cli.md) — subcomandos, flags e formatos de arquivo
+- [CLI Reference (EN)](../en/cli.md)
+- [Formatos de instrução (PT-BR)](format.md) — layouts de bits, encoding, pseudoinstruções
+- [Guia do simulador de cache (PT-BR)](cache.md) — configuração, métricas, exportação
+- [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md)
 - `threads-plan.md` — plano de design para execução multi-core futura, usando o termo `hart` ("hardware thread") para manter a modelagem em nível de hardware, não de SO
 - `Program Examples/hart_spawn_visual_demo.fas` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
 

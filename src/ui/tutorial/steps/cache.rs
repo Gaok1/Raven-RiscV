@@ -163,9 +163,11 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Level Selector",
         title_pt: "Seletor de nível",
         body_en: "This bar selects the cache level to configure: L1 (always present), L2, L3 and so on.\
-\n\nUse the [+ Add] and [- Remove] buttons to add or remove hierarchical cache levels. The [+/-] shortcuts also work.",
+\n\nUse the [+ Add] and [- Remove] buttons to add or remove hierarchical cache levels. The [+/-] shortcuts also work.\
+\n\nMouse hover and click follow the rendered labels directly, so you can click exactly on l1 / l2 / add / remove.",
         body_pt: "Esta barra seleciona o nível de cache a configurar: L1 (sempre presente), L2, L3 e assim por diante.\
-\n\nUse os botões [+ Add] e [- Remove] para adicionar ou remover níveis de cache hierárquicos. Os atalhos [+/-] também funcionam.",
+\n\nUse os botões [+ Add] e [- Remove] para adicionar ou remover níveis de cache hierárquicos. Os atalhos [+/-] também funcionam.\
+\n\nO hover e o clique do mouse seguem diretamente os rótulos renderizados, então você pode clicar exatamente em l1 / l2 / add / remove.",
         target: target_level_sel,
         setup: None,
     },
@@ -173,9 +175,11 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Execution Controls",
         title_pt: "Controles de execução",
         body_en: "Cache simulation controls: [Reset] resets the statistics, Speed sets the rate, State pauses/resumes.\
-\n\nThe panel shows total cycles, CPI (Cycles Per Instruction) and the number of executed instructions.",
+\n\nThe panel shows total cycles, CPI (Cycles Per Instruction) and the number of executed instructions.\
+\n\nWhen pipeline is enabled, this total uses the same global pipeline clock seen in the Pipeline tab.",
         body_pt: "Controles de simulação do cache: [Reset] reinicia as estatísticas, Speed define a velocidade, State pausa/retoma.\
-\n\nO painel mostra o total de ciclos, CPI (Ciclos Por Instrução) e o número de instruções executadas.",
+\n\nO painel mostra o total de ciclos, CPI (Ciclos Por Instrução) e o número de instruções executadas.\
+\n\nQuando o pipeline está habilitado, esse total usa o mesmo clock global do pipeline exibido na aba Pipeline.",
         target: target_exec_ctrl,
         setup: None,
     },
@@ -194,10 +198,12 @@ pub static STEPS: &[TutorialStep] = &[
         title_pt: "Stats — métricas",
         body_en: "For each cache level: hits, misses, hit rate (%), writebacks and the calculated AMAT are displayed.\
 \n\nMetrics are separated by scope: I-Cache (instructions), D-Cache (data) and combined totals.\
-\n\nUse [i], [d], [b] to filter the displayed scope.",
+\n\nUse [i], [d], [b] to filter the displayed scope.\
+\n\nThe per-level svc cycles are local service cost for that cache level. They help show where work happened, but they are not additive slices of the program total.",
         body_pt: "Para cada nível de cache são exibidos: hits, misses, taxa de hit (%), writebacks e o AMAT calculado.\
 \n\nAs métricas são separadas por escopo: I-Cache (instruções), D-Cache (dados) e totais combinados.\
-\n\nUse [i], [d], [b] para filtrar o escopo exibido.",
+\n\nUse [i], [d], [b] para filtrar o escopo exibido.\
+\n\nOs svc cycles por nível são custo local de serviço daquele nível de cache. Eles mostram onde o trabalho aconteceu, mas não são parcelas aditivas do total do programa.",
         target: target_content,
         setup: Some(setup_stats),
     },
@@ -205,11 +211,13 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Stats — session history",
         title_pt: "Stats — histórico de sessões",
         body_en: "The history panel records snapshots of previous simulation sessions for comparison.\
-\n\nPress [s] to capture the current state as a baseline. Use [Ctrl+M] to load a baseline saved to file.\
-\n\nDifferences between sessions are highlighted for easy analysis.",
+\n\nPress [s] to capture the current state as a baseline.\
+\n\nThe Hit rate History chart updates continuously during execution: once per sequential step or once per committed instruction in pipeline mode.\
+\n\nDifferences between captured sessions are highlighted for easy analysis.",
         body_pt: "O painel de histórico registra snapshots de sessões anteriores de simulação para comparação.\
-\n\nPressione [s] para capturar o estado atual como baseline. Use [Ctrl+M] para carregar um baseline salvo em arquivo.\
-\n\nAs diferenças entre sessões ficam destacadas para facilitar a análise.",
+\n\nPressione [s] para capturar o estado atual como baseline.\
+\n\nO gráfico Hit rate History é atualizado continuamente durante a execução: uma vez por passo sequencial ou uma vez por instrução comprometida no modo pipeline.\
+\n\nAs diferenças entre sessões capturadas ficam destacadas para facilitar a análise.",
         target: target_content,
         setup: Some(setup_stats),
     },
@@ -218,10 +226,12 @@ pub static STEPS: &[TutorialStep] = &[
         title_pt: "Subtab View — visualização",
         body_en: "The View subtab shows the physical contents of cache lines in real time during execution.\
 \n\nEach line displays the address (tag), stored data, validity bit and dirty bit (for write-back).\
-\n\nScroll with ↑/↓ to navigate through lines. Use ← → to scroll horizontally.",
+\n\nScroll with ↑/↓ to navigate through lines. Use ← → to scroll horizontally.\
+\n\nIn split L1 view with scope = Both, mouse wheel and keyboard scrolling affect only the panel you are interacting with or focusing.",
         body_pt: "A subtab View mostra o conteúdo físico das linhas de cache em tempo real durante a execução.\
 \n\nCada linha exibe o endereço (tag), dados armazenados, bit de validade e bit dirty (para write-back).\
-\n\nRole com ↑/↓ para navegar pelas linhas. Use ← → para rolar horizontalmente.",
+\n\nRole com ↑/↓ para navegar pelas linhas. Use ← → para rolar horizontalmente.\
+\n\nNa visão L1 dividida com scope = Both, a roda do mouse e o scroll por teclado afetam apenas o painel com o qual você está interagindo ou que está focado.",
         target: target_subtab_and_content,
         setup: Some(setup_view),
     },
@@ -261,9 +271,11 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Config — Presets & Apply",
         title_pt: "Config — Presets e Apply",
         body_en: "The lower rows provide quick presets and the apply actions.\
-\n\nUse presets to jump to small, medium or large cache profiles, then choose whether applying the config should reset statistics or keep history.",
+\n\nUse presets to jump to small, medium or large cache profiles, then choose whether applying the config should reset statistics or keep history.\
+\n\nPreset and apply buttons can be clicked directly on their rendered labels.",
         body_pt: "As linhas inferiores oferecem presets rápidos e as ações de apply.\
-\n\nUse os presets para saltar para perfis small, medium ou large, depois escolha se aplicar a config deve resetar as estatísticas ou preservar o histórico.",
+\n\nUse os presets para saltar para perfis small, medium ou large, depois escolha se aplicar a config deve resetar as estatísticas ou preservar o histórico.\
+\n\nOs botões de preset e apply podem ser clicados diretamente sobre seus rótulos renderizados.",
         target: target_config_bottom,
         setup: Some(setup_config),
     },

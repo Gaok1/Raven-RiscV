@@ -66,13 +66,14 @@ pub struct HartTask {
 }
 
 impl HartTask {
+    #[unsafe(no_mangle)]
     pub fn new<F>(f: F) -> Self
     where
         F: FnOnce() + Send + 'static,
     {
         Self::with_stack_size(f, DEFAULT_HART_STACK_SIZE)
     }
-
+    #[unsafe(no_mangle)]
     pub fn with_stack_size<F>(f: F, stack_size: usize) -> Self
     where
         F: FnOnce() + Send + 'static,
@@ -80,6 +81,7 @@ impl HartTask {
         Self::with_stack(f, alloc_hart_stack(stack_size))
     }
 
+    #[unsafe(no_mangle)]
     pub fn with_stack<F>(f: F, stack: &'static mut [u8]) -> Self
     where
         F: FnOnce() + Send + 'static,
@@ -90,7 +92,8 @@ impl HartTask {
             done: Box::new(AtomicBool::new(false)),
         }
     }
-
+    
+    #[unsafe(no_mangle)]
     pub fn start(self) -> HartHandle {
         let HartTask { f, stack, done } = self;
         let done_ptr = Box::into_raw(done);
@@ -98,7 +101,7 @@ impl HartTask {
         let ptr = Box::into_raw(payload) as u32;
         let sp = stack.as_ptr_range().end as u32;
         let code = unsafe { hart_start(hart_trampoline as *const () as u32, sp, ptr) };
-        assert_eq!(code, 0, "failed to start hart: syscall returned {code}");
+        assert!(code >= 0, "failed to start hart: syscall returned {code}");
 
         HartHandle { done: done_ptr }
     }
@@ -114,12 +117,14 @@ pub struct HartHandle {
 }
 
 impl HartHandle {
+    #[unsafe(no_mangle)]
     pub fn is_finished(&self) -> bool {
         // SAFETY: `done` is allocated in `HartTask::start` and stays valid until
         // `join(self)` consumes the handle and frees it.
         unsafe { (*self.done).load(Ordering::Acquire) }
     }
 
+    #[unsafe(no_mangle)]
     pub fn join(self) {
         while !self.is_finished() {
             spin_loop();
@@ -167,6 +172,7 @@ pub fn spawn_hart_fn(entry: fn(u32) -> !, stack: &'static mut [u8], arg: u32) ->
     let sp = stack.as_ptr_range().end as u32;
     unsafe { hart_start(entry as u32, sp, arg) }
 }
+
 
 /// Spawn a hart from a **closure** — boxes the closure on the heap.
 ///

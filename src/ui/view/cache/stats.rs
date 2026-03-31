@@ -65,9 +65,9 @@ fn render_unified_stats(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
 }
 
 fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
-    let (total, cpi, ipc, instr) = if app.pipeline.enabled {
-        let cycles = app.pipeline.cycle_count;
-        let committed = app.pipeline.instr_committed;
+    let (total, cpi, ipc, instr) = if let Some(pipeline) = app.aggregate_pipeline_snapshot() {
+        let cycles = pipeline.cycles;
+        let committed = pipeline.committed;
         let cpi = if committed > 0 {
             cycles as f64 / committed as f64
         } else {
@@ -116,12 +116,12 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::raw("  "),
         Span::styled(
-            format!("I-Cache: {i_cyc}"),
+            format!("I-Cache svc: {i_cyc}"),
             Style::default().fg(theme::CACHE_I),
         ),
         Span::raw(" + "),
         Span::styled(
-            format!("D-Cache: {d_cyc}"),
+            format!("D-Cache svc: {d_cyc}"),
             Style::default().fg(theme::CACHE_D),
         ),
     ];
@@ -130,7 +130,7 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         let name = crate::falcon::cache::CacheController::extra_level_name(i);
         spans.push(Span::raw(" + "));
         spans.push(Span::styled(
-            format!("{name}: {}", lvl.stats.total_cycles),
+            format!("{name} svc: {}", lvl.stats.total_cycles),
             Style::default().fg(theme::CACHE_L2),
         ));
     }
@@ -295,8 +295,9 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     } else {
         cycles as f64 / instructions as f64
     };
-    let line6 =
-        format!("Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}");
+    let line6 = format!(
+        "Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}"
+    );
     f.render_widget(
         Paragraph::new(Span::styled(line6, Style::default().fg(theme::METRIC_CPI))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
@@ -392,7 +393,7 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         let is_selected = i == scroll;
 
         let text = format!(
-            "  {:<14}  I-Cache: {:.1}%  D-Cache: {:.1}%  Miss/1K: {:.1}  Access Time: {:.2}  Cycles: {}",
+            "  {:<14}  I-Cache: {:.1}%  D-Cache: {:.1}%  Miss/1K: {:.1}  Access Time: {:.2}  Total: {}",
             snap.label, i_hit, d_hit, mpki, amat_i, cyc
         );
 
@@ -623,7 +624,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!(
-                "Cycles: {cycles}  Average: {avg:.2} cyc/access  Cycles/Instr: {cpi_contrib:.2}"
+                "Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}"
             ),
             Style::default().fg(theme::METRIC_CPI),
         )),
@@ -840,7 +841,7 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
                 Span::raw("          "),
                 Span::styled(
                     format!(
-                        "Cycles: {}   Evictions: {}   RAM: {} read / {} written",
+                        "Svc Cycles: {}   Evictions: {}   RAM: {} read / {} written",
                         lvl.total_cycles,
                         lvl.evictions,
                         fmt_bytes(lvl.bytes_loaded),

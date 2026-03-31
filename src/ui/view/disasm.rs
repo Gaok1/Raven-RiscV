@@ -410,7 +410,9 @@ pub fn elf_to_asm_source(
         }
     }
     for &addr in &need_label {
-        label_at.entry(addr).or_insert_with(|| format!("_L_{addr:08x}"));
+        label_at
+            .entry(addr)
+            .or_insert_with(|| format!("_L_{addr:08x}"));
     }
 
     // ── Pass 2: emit assembly text ───────────────────────────────────────
@@ -515,12 +517,7 @@ fn disasm_with_labels(word: u32, pc: u32, labels: &HashMap<u32, String>) -> Stri
 
 /// Emit data section bytes as `.word` / `.byte` directives, inserting symbol
 /// labels at the appropriate addresses.
-fn emit_data_words(
-    out: &mut String,
-    bytes: &[u8],
-    base: u32,
-    symbols: &HashMap<u32, Vec<String>>,
-) {
+fn emit_data_words(out: &mut String, bytes: &[u8], base: u32, symbols: &HashMap<u32, Vec<String>>) {
     let mut i = 0usize;
     while i < bytes.len() {
         let addr = base.wrapping_add(i as u32);

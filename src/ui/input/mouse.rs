@@ -1,14 +1,19 @@
-use crate::falcon::CacheController;
-use crate::ui::input::keyboard::{do_export_cfg, do_export_results, do_import_cfg};
+use crate::ui::input::keyboard::{
+    do_export_cfg, do_export_pipeline_results, do_export_results, do_import_cfg,
+};
+use crate::ui::view::run::{
+    RUN_COLLAPSED_RAIL_W, RUN_DETAILS_MIN_W, RUN_IMEM_MIN_W, RUN_SIDEBAR_MIN_W,
+    run_panel_constraints,
+};
 use crate::ui::view::{
     ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W,
 };
 use crate::ui::{
     app::{
-        App, CacheScope, CacheSubtab, ConfigField, DocsPage, EditorMode, FormatMode, MemRegion,
-        PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START,
-        SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-        SETTINGS_ROW_RUN_SCOPE, Tab,
+        App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
+        EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED,
+        SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
+        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, Tab,
     },
     editor::Editor,
 };
@@ -109,7 +114,14 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     app.cache.history_scroll = app.cache.history_scroll.saturating_sub(1);
                 }
                 CacheSubtab::View => {
-                    app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
+                    let (_, _, _, content_area, _) = cache_content_area(area);
+                    if cache_view_mouse_is_dcache(app, me, content_area) {
+                        app.cache.view_focus = CacheViewFocus::DCache;
+                        app.cache.view_scroll_d = app.cache.view_scroll_d.saturating_sub(1);
+                    } else {
+                        app.cache.view_focus = CacheViewFocus::ICache;
+                        app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
+                    }
                 }
                 _ => {}
             },
@@ -133,12 +145,29 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     }
                 }
                 CacheSubtab::View => {
-                    app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
+                    let (_, _, _, content_area, _) = cache_content_area(area);
+                    if cache_view_mouse_is_dcache(app, me, content_area) {
+                        app.cache.view_focus = CacheViewFocus::DCache;
+                        if app.cache.view_num_sets_d.get() == 0 {
+                            app.cache.view_scroll_d = app.cache.view_scroll_d.saturating_add(1);
+                        } else {
+                            app.cache.view_scroll_d = (app.cache.view_scroll_d + 1)
+                                .min(app.cache.view_scroll_max_d.get());
+                        }
+                    } else {
+                        app.cache.view_focus = CacheViewFocus::ICache;
+                        if app.cache.view_num_sets.get() == 0 {
+                            app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
+                        } else {
+                            app.cache.view_scroll =
+                                (app.cache.view_scroll + 1).min(app.cache.view_scroll_max.get());
+                        }
+                    }
                 }
                 _ => {}
             },
             Tab::Pipeline => {
-                let max = app.pipeline.gantt.len().saturating_sub(1);
+                let max = app.pipeline.gantt_max_scroll_cache.get();
                 app.pipeline.gantt_scroll = (app.pipeline.gantt_scroll + 1).min(max);
             }
             Tab::Docs => {
@@ -155,8 +184,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     && me.column >= tracks[1].0
                     && me.column < tracks[1].0 + tracks[1].1;
                 if use_d {
+                    app.cache.view_focus = CacheViewFocus::DCache;
                     app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_sub(3);
                 } else {
+                    app.cache.view_focus = CacheViewFocus::ICache;
                     app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
                 }
             }
@@ -168,8 +199,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     && me.column >= tracks[1].0
                     && me.column < tracks[1].0 + tracks[1].1;
                 if use_d {
+                    app.cache.view_focus = CacheViewFocus::DCache;
                     app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_add(3);
                 } else {
+                    app.cache.view_focus = CacheViewFocus::ICache;
                     app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
                 }
             }
@@ -184,14 +217,17 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_cache_run_status_click(app, me, area);
             // H-scrollbar: start drag or jump to click position
-            if matches!(app.cache.subtab, CacheSubtab::View) && app.cache.hover_hscrollbar {
-                let track_x = app.cache.hscroll_hover_track_x;
-                let track_w = app.cache.hscroll_hover_track_w;
-                let max_scroll = app.cache.hscroll_max.get();
+            if let Some(CacheHoverTarget::Hscrollbar { track_x, track_w }) = app.cache.hover {
                 // Determine which panel (slot 0 = I-cache, slot 1 = D-cache)
                 let tracks = app.cache.hscroll_tracks.get();
                 let is_dcache = tracks[1].1 > 0 && track_x == tracks[1].0;
+                let max_scroll = app.cache.hscroll_max_by_panel.get()[usize::from(is_dcache)];
                 app.cache.hscroll_drag_is_dcache = is_dcache;
+                app.cache.view_focus = if is_dcache {
+                    CacheViewFocus::DCache
+                } else {
+                    CacheViewFocus::ICache
+                };
                 let cur_scroll = if is_dcache {
                     app.cache.view_h_scroll_d
                 } else {
@@ -200,7 +236,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 // Jump to click ratio immediately
                 if track_w > 0 {
                     let rel = me.column.saturating_sub(track_x).min(track_w - 1) as f64;
-                    let new_scroll = (rel / (track_w as f64) * max_scroll as f64) as usize;
+                    let track_span = track_w.saturating_sub(1).max(1) as f64;
+                    let new_scroll = ((rel / track_span) * max_scroll as f64).round() as usize;
                     if is_dcache {
                         app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
                     } else {
@@ -223,14 +260,16 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.hscroll_drag {
             let track_w = app.cache.hscroll_drag_track_w;
             let max_scroll = app.cache.hscroll_drag_max;
-            if track_w > 0 && max_scroll > 0 {
-                let delta = me.column as i32 - app.cache.hscroll_drag_start_x as i32;
-                let scale = max_scroll as f64 / track_w as f64;
-                let new_scroll = (app.cache.hscroll_start as i64 + (delta as f64 * scale) as i64)
-                    .max(0) as usize;
-                if app.cache.hscroll_drag_is_dcache {
-                    app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
-                } else {
+                if track_w > 0 && max_scroll > 0 {
+                    let delta = me.column as i32 - app.cache.hscroll_drag_start_x as i32;
+                    let track_span = track_w.saturating_sub(1).max(1) as f64;
+                    let scale = max_scroll as f64 / track_span;
+                    let new_scroll =
+                        (app.cache.hscroll_start as f64 + (delta as f64 * scale)).round().max(0.0)
+                            as usize;
+                    if app.cache.hscroll_drag_is_dcache {
+                        app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
+                    } else {
                     app.cache.view_h_scroll = new_scroll.min(max_scroll);
                 }
             }
@@ -404,6 +443,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             } else {
                 app.run.show_registers = true;
             }
+            app.sync_mem_focus_for_active_sidebar_mode();
         }
         RunButton::Format => {
             app.run.fmt_mode = match app.run.fmt_mode {
@@ -451,6 +491,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             }
             app.run.show_registers = false;
             app.run.show_dyn = false;
+            app.sync_mem_focus_for_active_sidebar_mode();
         }
         RunButton::Speed => {
             app.run.speed = app.run.speed.cycle();
@@ -518,40 +559,6 @@ fn handle_cache_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
     if let Some(btn) = cache_exec_hit(app, status, me.column) {
         apply_run_button(app, btn);
-    }
-}
-
-/// Hit-test for the cache exec-controls widget (Reset + Speed + State buttons).
-fn cache_exec_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
-    let speed_text = app.run.speed.label();
-    let state_text = if app.run.is_running { "RUN" } else { "PAUSE" };
-
-    let mut pos = status.x + 1; // inner x (after block border)
-    let skip = |p: &mut u16, s: &str| {
-        *p += s.len() as u16;
-    };
-    let range = |p: &mut u16, label: &str| -> (u16, u16) {
-        let s = *p;
-        *p += 1 + label.len() as u16 + 1; // [label]
-        (s, *p)
-    };
-
-    // " [Reset]  Speed [X1]  State [PAUSE]  ..."
-    skip(&mut pos, " ");
-    let (reset_s, reset_e) = range(&mut pos, "Reset");
-    skip(&mut pos, "  Speed ");
-    let (speed_s, speed_e) = range(&mut pos, speed_text);
-    skip(&mut pos, "  State ");
-    let (state_s, state_e) = range(&mut pos, state_text);
-
-    if col >= reset_s && col < reset_e {
-        Some(RunButton::Reset)
-    } else if col >= speed_s && col < speed_e {
-        Some(RunButton::Speed)
-    } else if col >= state_s && col < state_e {
-        Some(RunButton::State)
-    } else {
-        None
     }
 }
 
@@ -719,24 +726,9 @@ fn run_main_area(app: &App, area: Rect) -> Rect {
 
 fn run_cols(app: &App, area: Rect) -> Vec<Rect> {
     let main = run_main_area(app, area);
-    let sidebar_w = if app.run.sidebar_collapsed {
-        3
-    } else {
-        app.run.sidebar_width
-    };
-    let imem_w = if app.run.imem_collapsed {
-        3
-    } else {
-        app.run.imem_width
-    };
-    let details_min = if app.run.details_collapsed { 3 } else { 40 };
     Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(sidebar_w),
-            Constraint::Length(imem_w),
-            Constraint::Min(details_min),
-        ])
+        .constraints(run_panel_constraints(app))
         .split(main)
         .to_vec()
 }
@@ -862,9 +854,22 @@ fn start_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
 
 fn handle_panel_title_click(app: &mut App, me: MouseEvent, area: Rect) {
     let cols = run_cols(app, area);
-    // Click on top border row of a panel toggles collapse
     for (i, col) in cols.iter().enumerate() {
-        if me.row == col.y && me.column >= col.x && me.column < col.x + col.width {
+        let collapsed = match i {
+            0 => app.run.sidebar_collapsed,
+            1 => app.run.imem_collapsed,
+            2 => app.run.details_collapsed,
+            _ => false,
+        };
+        let hit = if collapsed {
+            me.column >= col.x
+                && me.column < col.x + col.width
+                && me.row >= col.y
+                && me.row < col.y + col.height
+        } else {
+            me.row == col.y && me.column >= col.x && me.column < col.x + col.width
+        };
+        if hit {
             match i {
                 0 => app.run.sidebar_collapsed = !app.run.sidebar_collapsed,
                 1 => app.run.imem_collapsed = !app.run.imem_collapsed,
@@ -1180,13 +1185,18 @@ fn handle_imem_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let delta = me.column as i32 - app.run.imem_drag_start_x as i32;
     let main = run_main_area(app, area);
     let sidebar_w = if app.run.sidebar_collapsed {
-        3
+        RUN_COLLAPSED_RAIL_W
     } else {
         app.run.sidebar_width
     };
-    let available = main.width.saturating_sub(sidebar_w + 40);
-    let max = (available as i32).max(20);
-    let new_width = (app.run.imem_width_start as i32 + delta).clamp(20, max);
+    let details_w = if app.run.details_collapsed {
+        RUN_COLLAPSED_RAIL_W
+    } else {
+        RUN_DETAILS_MIN_W
+    };
+    let available = main.width.saturating_sub(sidebar_w + details_w);
+    let max = (available as i32).max(RUN_IMEM_MIN_W as i32);
+    let new_width = (app.run.imem_width_start as i32 + delta).clamp(RUN_IMEM_MIN_W as i32, max);
     app.run.imem_width = new_width as u16;
 }
 
@@ -1194,13 +1204,19 @@ fn handle_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let delta = me.column as i32 - app.run.sidebar_drag_start_x as i32;
     let main = run_main_area(app, area);
     let imem_w = if app.run.imem_collapsed {
-        3
+        RUN_COLLAPSED_RAIL_W
     } else {
         app.run.imem_width
     };
-    let available = main.width.saturating_sub(imem_w + 40);
-    let max = (available as i32).max(20);
-    let new_width = (app.run.sidebar_width_start as i32 + delta).clamp(20, max);
+    let details_w = if app.run.details_collapsed {
+        RUN_COLLAPSED_RAIL_W
+    } else {
+        RUN_DETAILS_MIN_W
+    };
+    let available = main.width.saturating_sub(imem_w + details_w);
+    let max = (available as i32).max(RUN_SIDEBAR_MIN_W as i32);
+    let new_width =
+        (app.run.sidebar_width_start as i32 + delta).clamp(RUN_SIDEBAR_MIN_W as i32, max);
     app.run.sidebar_width = new_width as u16;
 }
 
@@ -1687,55 +1703,148 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
 
 /// Returns (level_selector, subtab_header, exec_controls, content, controls_bar).
 fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
-    let root = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // level selector bar
-            Constraint::Length(3), // subtab header
+            Constraint::Length(4), // subtab header
             Constraint::Length(4), // exec controls (Speed / State / Cycles)
             Constraint::Min(0),    // content
             Constraint::Length(3), // shared controls bar
         ])
-        .split(root[1]);
+        .split(area);
     (parts[0], parts[1], parts[2], parts[3], parts[4])
 }
 
-fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
-    let (level_area, header_area, _, content_area, controls_area) = cache_content_area(area);
+fn point_in_btn(me: MouseEvent, btn: (u16, u16, u16)) -> bool {
+    let (y, x0, x1) = btn;
+    x1 > x0 && me.row == y && me.column >= x0 && me.column < x1
+}
 
-    // Reset all hover flags
-    app.cache.hover_subtab_stats = false;
-    app.cache.hover_subtab_config = false;
-    app.cache.hover_subtab_view = false;
-    app.cache.hover_export_results = false;
-    app.cache.hover_export_cfg = false;
-    app.cache.hover_import_cfg = false;
-    app.cache.hover_scope_i = false;
-    app.cache.hover_scope_d = false;
-    app.cache.hover_scope_both = false;
-    app.cache.hover_apply = false;
-    app.cache.hover_apply_keep = false;
-    app.cache.hover_preset_i = None;
-    app.cache.hover_preset_d = None;
-    app.cache.hover_config_field = None;
-    app.cache.hover_cpi_field = None;
-    app.cache.hover_hscrollbar = false;
-    app.cache.hover_view_fmt = false;
-    app.cache.hover_view_group = false;
-    app.cache.hover_view_tag = false;
-    for h in app.cache.hover_level.iter_mut() {
-        *h = false;
+fn point_in_any_btn(me: MouseEvent, btns: &[(u16, u16, u16)]) -> Option<usize> {
+    btns.iter().position(|&btn| point_in_btn(me, btn))
+}
+
+/// Hit-test for the cache exec-controls widget using render-recorded geometry.
+fn cache_exec_hit(app: &App, _status: Rect, col: u16) -> Option<RunButton> {
+    let y = app.cache.exec_speed_btn.get().0;
+    let probe = MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: col,
+        row: y,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    if point_in_btn(probe, app.cache.exec_reset_btn.get()) {
+        Some(RunButton::Reset)
+    } else if point_in_btn(probe, app.cache.exec_speed_btn.get()) {
+        Some(RunButton::Speed)
+    } else if point_in_btn(probe, app.cache.exec_state_btn.get()) {
+        Some(RunButton::State)
+    } else {
+        None
     }
-    app.cache.hover_add_level = false;
-    app.cache.hover_remove_level = false;
+}
+
+fn cache_view_mouse_is_dcache(app: &App, me: MouseEvent, content_area: Rect) -> bool {
+    if app.cache.selected_level != 0 {
+        return false;
+    }
+    match app.cache.scope {
+        CacheScope::DCache => true,
+        CacheScope::ICache => false,
+        CacheScope::Both => {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(content_area);
+            me.column >= cols[1].x
+        }
+    }
+}
+
+fn cache_view_focus_is_dcache(app: &App) -> bool {
+    app.cache.selected_level == 0
+        && match app.cache.scope {
+            CacheScope::DCache => true,
+            CacheScope::ICache => false,
+            CacheScope::Both => matches!(app.cache.view_focus, CacheViewFocus::DCache),
+        }
+}
+
+fn config_field_from_hitboxes(
+    me: MouseEvent,
+    hitboxes: &[(u16, u16, u16); 11],
+) -> Option<ConfigField> {
+    for &field in ConfigField::all_editable() {
+        let (y, x0, x1) = hitboxes[field.hitbox_index()];
+        if x1 > x0 && me.row == y && me.column >= x0 && me.column < x1 {
+            return Some(field);
+        }
+    }
+    None
+}
+
+fn config_field_from_area(me: MouseEvent, area: Rect) -> Option<ConfigField> {
+    if me.row < area.y
+        || me.row >= area.y + area.height
+        || me.column < area.x
+        || me.column >= area.x + area.width
+    {
+        return None;
+    }
+    let row_idx = (me.row - area.y) as usize;
+    ConfigField::from_list_row(row_idx)
+}
+
+fn config_field_hit(me: MouseEvent, area: Rect, hitboxes: &[(u16, u16, u16); 11]) -> Option<ConfigField> {
+    config_field_from_hitboxes(me, hitboxes).or_else(|| config_field_from_area(me, area))
+}
+
+fn l1_config_panel_areas(content_area: Rect, icache: bool) -> (Rect, Rect, Rect, Rect, Rect) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(content_area);
+    let panel = if icache { cols[0] } else { cols[1] };
+    let inner = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .inner(panel);
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(inner);
+    (panel, inner, parts[0], parts[1], parts[2])
+}
+
+fn unified_config_areas(content_area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
+    let outer_inner = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .inner(content_area);
+    let col_w = outer_inner.width.min(60);
+    let col_x = outer_inner.x + (outer_inner.width.saturating_sub(col_w)) / 2;
+    let col_area = Rect::new(col_x, outer_inner.y, col_w, outer_inner.height);
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(col_area);
+    (content_area, outer_inner, parts[0], parts[1], parts[2])
+}
+
+fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
+    let (level_area, _header_area, _, content_area, _controls_area) = cache_content_area(area);
+
+    // Reset hover: one field, impossible to forget a target
+    app.cache.hover = None;
 
     // Level selector bar
     if me.row == level_area.y {
@@ -1743,51 +1852,26 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Header row (subtab buttons)
-    let inner_header = Rect::new(
-        header_area.x + 1,
-        header_area.y + 1,
-        header_area.width.saturating_sub(2),
-        1,
-    );
-    if me.row == inner_header.y && me.column >= inner_header.x {
-        let x = me.column - inner_header.x;
-        // "stats" (x 0..5) | "view" (x 8..12) | "config" (x 15..21)
-        if x < 5 {
-            app.cache.hover_subtab_stats = true;
-        } else if x >= 8 && x < 12 {
-            app.cache.hover_subtab_view = true;
-        } else if x >= 15 && x < 21 {
-            app.cache.hover_subtab_config = true;
-        }
+    if point_in_btn(me, app.cache.subtab_stats_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::SubtabStats);
+    } else if point_in_btn(me, app.cache.subtab_view_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::SubtabView);
+    } else if point_in_btn(me, app.cache.subtab_config_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::SubtabConfig);
     }
 
-    let ctrl_y = controls_area.y + 1;
-    if me.row == ctrl_y {
-        let x = me.column.saturating_sub(controls_area.x + 1);
-        let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
-        if x < 7 {
-            app.cache.hover_export_results = true;
-        } else if show_cfg_btns {
-            if x >= 10 && x < 20 {
-                app.cache.hover_import_cfg = true;
-            } else if x >= 23 && x < 33 {
-                app.cache.hover_export_cfg = true;
-            } else if x >= 41 && x < 48 {
-                app.cache.hover_scope_i = true;
-            } else if x >= 49 && x < 56 {
-                app.cache.hover_scope_d = true;
-            } else if x >= 57 && x < 61 {
-                app.cache.hover_scope_both = true;
-            }
-        } else {
-            if x >= 15 && x < 22 {
-                app.cache.hover_scope_i = true;
-            } else if x >= 23 && x < 30 {
-                app.cache.hover_scope_d = true;
-            } else if x >= 31 && x < 35 {
-                app.cache.hover_scope_both = true;
-            }
-        }
+    if point_in_btn(me, app.cache.ctrl_results_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::ExportResults);
+    } else if point_in_btn(me, app.cache.ctrl_import_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::ImportCfg);
+    } else if point_in_btn(me, app.cache.ctrl_export_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::ExportCfg);
+    } else if point_in_btn(me, app.cache.ctrl_scope_i_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::ScopeI);
+    } else if point_in_btn(me, app.cache.ctrl_scope_d_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::ScopeD);
+    } else if point_in_btn(me, app.cache.ctrl_scope_both_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::ScopeBoth);
     }
 
     // Config panel controls
@@ -1795,91 +1879,58 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         let selected = app.cache.selected_level;
 
         if selected == 0 {
-            // L1 two-column layout: I-Cache(50%) | D-Cache(50%)
-            let i_w = content_area.width / 2;
-            let d_w = content_area.width / 2;
-
-            let fields_y0 = content_area.y + 1;
-            let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
-            if me.row >= fields_y0 && me.row < fields_y1 {
-                let row_idx = (me.row - fields_y0) as usize;
-                if let Some(field) = ConfigField::from_list_row(row_idx) {
-                    let is_icache = me.column < content_area.x + i_w;
-                    app.cache.hover_config_field = Some((is_icache, field));
-                }
-            }
-
-            let apply_y = content_area.y + content_area.height.saturating_sub(3);
-            if me.row == apply_y {
-                let x = me.column.saturating_sub(content_area.x + 1);
-                if x < 19 {
-                    app.cache.hover_apply = true;
-                } else if x >= 22 && x < 40 {
-                    app.cache.hover_apply_keep = true;
-                }
-            }
-
-            let preset_y = content_area.y + content_area.height.saturating_sub(6);
-            if me.row == preset_y {
-                let col_x = me.column;
-                let check_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
-                    if col_x < panel_x || col_x >= panel_x + panel_w {
-                        return None;
-                    }
-                    let x = col_x - panel_x;
-                    if x >= 9 && x < 14 {
-                        Some(0)
-                    } else if x >= 15 && x < 21 {
-                        Some(1)
-                    } else if x >= 22 && x < 27 {
-                        Some(2)
-                    } else {
-                        None
-                    }
+            for &is_icache in &[true, false] {
+                let (_panel, _inner, fields_area, _presets_area, _apply_area) =
+                    l1_config_panel_areas(content_area, is_icache);
+                let hitboxes = if is_icache {
+                    app.cache.config_hitboxes_i.get()
+                } else {
+                    app.cache.config_hitboxes_d.get()
                 };
-                app.cache.hover_preset_i = check_preset(content_area.x, i_w);
-                app.cache.hover_preset_d = check_preset(content_area.x + i_w, d_w);
+                if let Some(field) = config_field_hit(me, fields_area, &hitboxes) {
+                    app.cache.hover = Some(CacheHoverTarget::ConfigField(is_icache, field));
+                }
+
+                let preset_btns = if is_icache {
+                    app.cache.config_preset_btns_i.get()
+                } else {
+                    app.cache.config_preset_btns_d.get()
+                };
+                if let Some(i) = point_in_any_btn(me, &preset_btns) {
+                    app.cache.hover = Some(if is_icache {
+                        CacheHoverTarget::PresetI(i)
+                    } else {
+                        CacheHoverTarget::PresetD(i)
+                    });
+                }
+
+                if is_icache {
+                    let apply_btns = app.cache.config_apply_btns.get();
+                    if point_in_btn(me, apply_btns[0]) {
+                        app.cache.hover = Some(CacheHoverTarget::Apply);
+                    } else if point_in_btn(me, apply_btns[1]) {
+                        app.cache.hover = Some(CacheHoverTarget::ApplyKeep);
+                    }
+                }
             }
         } else {
-            // L2+ single-column unified layout (centered, max 60 wide)
-            let col_w = content_area.width.min(60);
-            let col_x = content_area.x + (content_area.width.saturating_sub(col_w)) / 2;
-            let col_area = Rect::new(col_x, content_area.y, col_w, content_area.height);
+            let (_panel, _outer_inner, fields_area, _presets_area, _apply_area) =
+                unified_config_areas(content_area);
 
-            let fields_y0 = col_area.y + 1;
-            let fields_y1 = col_area.y + col_area.height.saturating_sub(7);
-            if me.row >= fields_y0 && me.row < fields_y1 {
-                let row_idx = (me.row - fields_y0) as usize;
-                if let Some(field) = ConfigField::from_list_row(row_idx) {
-                    if me.column >= col_area.x && me.column < col_area.x + col_area.width {
-                        app.cache.hover_config_field = Some((false, field));
-                    }
-                }
+            let hitboxes = app.cache.config_hitboxes_u.get();
+            if let Some(field) = config_field_hit(me, fields_area, &hitboxes) {
+                app.cache.hover = Some(CacheHoverTarget::ConfigField(false, field));
             }
 
-            let apply_y = col_area.y + col_area.height.saturating_sub(3);
-            if me.row == apply_y {
-                let x = me.column.saturating_sub(col_area.x + 1);
-                if x < 19 {
-                    app.cache.hover_apply = true;
-                } else if x >= 22 && x < 40 {
-                    app.cache.hover_apply_keep = true;
-                }
+            let apply_btns = app.cache.config_apply_btns.get();
+            if point_in_btn(me, apply_btns[0]) {
+                app.cache.hover = Some(CacheHoverTarget::Apply);
+            } else if point_in_btn(me, apply_btns[1]) {
+                app.cache.hover = Some(CacheHoverTarget::ApplyKeep);
             }
 
-            let preset_y = col_area.y + col_area.height.saturating_sub(6);
-            if me.row == preset_y
-                && me.column >= col_area.x
-                && me.column < col_area.x + col_area.width
-            {
-                let x = me.column - col_area.x;
-                if x >= 9 && x < 18 {
-                    app.cache.hover_preset_d = Some(0);
-                } else if x >= 19 && x < 27 {
-                    app.cache.hover_preset_d = Some(1);
-                } else if x >= 28 && x < 38 {
-                    app.cache.hover_preset_d = Some(2);
-                }
+            if let Some(i) = point_in_any_btn(me, &app.cache.config_preset_btns_u.get()) {
+                app.cache.hover = Some(CacheHoverTarget::PresetD(i));
             }
         }
     }
@@ -1889,11 +1940,9 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         let sb_row = app.cache.hscroll_row.get();
         let tracks = app.cache.hscroll_tracks.get();
         if sb_row > 0 && me.row == sb_row {
-            for (track_x, track_w) in &tracks {
-                if *track_w > 0 && me.column >= *track_x && me.column < track_x + track_w {
-                    app.cache.hover_hscrollbar = true;
-                    app.cache.hscroll_hover_track_x = *track_x;
-                    app.cache.hscroll_hover_track_w = *track_w;
+            for &(track_x, track_w) in &tracks {
+                if track_w > 0 && me.column >= track_x && me.column < track_x + track_w {
+                    app.cache.hover = Some(CacheHoverTarget::Hscrollbar { track_x, track_w });
                     break;
                 }
             }
@@ -1904,51 +1953,38 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         let (grp_y, grp_x0, grp_x1) = app.cache.view_group_btn.get();
         let (tag_y, tag_x0, tag_x1) = app.cache.view_tag_btn.get();
         if fmt_x1 > fmt_x0 && me.row == fmt_y && me.column >= fmt_x0 && me.column < fmt_x1 {
-            app.cache.hover_view_fmt = true;
+            app.cache.hover = Some(CacheHoverTarget::ViewFmt);
         }
         if grp_x1 > grp_x0 && me.row == grp_y && me.column >= grp_x0 && me.column < grp_x1 {
-            app.cache.hover_view_group = true;
+            app.cache.hover = Some(CacheHoverTarget::ViewGroup);
         }
         if tag_x1 > tag_x0 && me.row == tag_y && me.column >= tag_x0 && me.column < tag_x1 {
-            app.cache.hover_view_tag = true;
+            app.cache.hover = Some(CacheHoverTarget::ViewTag);
         }
     }
 }
 
 /// Update hover state for the level selector bar (row = level_area.y).
 fn update_level_selector_hover(app: &mut App, me: MouseEvent, level_area: Rect) {
-    let mut x = me.column.saturating_sub(level_area.x + 1); // relative x
-    // "level l1   l2   add   remove"
-    x = x.saturating_sub(6); // "level "
-    let num_levels = 1 + app.cache.extra_pending.len(); // L1 + extras
-    for i in 0..num_levels {
-        let btn_w: u16 = if i == 0 {
-            2
-        } else {
-            CacheController::extra_level_name(i - 1).len() as u16
-        };
-        if x < btn_w {
-            if i < app.cache.hover_level.len() {
-                app.cache.hover_level[i] = true;
-            }
-            return;
-        }
-        x = x.saturating_sub(btn_w + 3); // skip button + "   "
-    }
-    let add_w: u16 = 3; // "add"
-    if x < add_w {
-        app.cache.hover_add_level = true;
+    if let Some(i) = point_in_any_btn(me, &app.cache.level_btns.borrow()) {
+        app.cache.hover = Some(CacheHoverTarget::Level(i));
         return;
     }
-    x = x.saturating_sub(add_w + 3);
-    let rem_w: u16 = 6; // "remove"
-    if x < rem_w && !app.cache.extra_pending.is_empty() {
-        app.cache.hover_remove_level = true;
+    if point_in_btn(me, app.cache.add_level_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::AddLevel);
+        return;
+    }
+    if point_in_btn(me, app.cache.remove_level_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::RemoveLevel);
+        return;
+    }
+    if me.row == level_area.y {
+        let _ = level_area;
     }
 }
 
 fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
-    let (level_area, header_area, _, content_area, controls_area) = cache_content_area(area);
+    let (level_area, _header_area, _, content_area, _controls_area) = cache_content_area(area);
 
     // Level selector bar clicks
     if me.row == level_area.y {
@@ -1957,74 +1993,45 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     // Subtab header clicks — Stats | View | Config
-    let inner_header = Rect::new(
-        header_area.x + 1,
-        header_area.y + 1,
-        header_area.width.saturating_sub(2),
-        1,
-    );
-    if me.row == inner_header.y && me.column >= inner_header.x {
-        let x = me.column - inner_header.x;
-        if x < 5 {
-            app.cache.subtab = CacheSubtab::Stats;
-            return;
-        }
-        if x >= 8 && x < 12 {
-            app.cache.subtab = CacheSubtab::View;
-            return;
-        }
-        if x >= 15 && x < 21 {
-            app.cache.subtab = CacheSubtab::Config;
-            return;
-        }
+    if point_in_btn(me, app.cache.subtab_stats_btn.get()) {
+        app.cache.subtab = CacheSubtab::Stats;
+        return;
+    }
+    if point_in_btn(me, app.cache.subtab_view_btn.get()) {
+        app.cache.subtab = CacheSubtab::View;
+        return;
+    }
+    if point_in_btn(me, app.cache.subtab_config_btn.get()) {
+        app.cache.subtab = CacheSubtab::Config;
+        return;
     }
 
     // Shared controls bar — available in all subtabs
-    let ctrl_y = controls_area.y + 1;
-    if me.row == ctrl_y {
-        let x = me.column.saturating_sub(controls_area.x + 1);
-        let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
-        if x < 7 {
-            do_export_results(app);
-            return;
-        }
-        if show_cfg_btns {
-            if x >= 10 && x < 20 {
-                do_import_cfg(app);
-                return;
-            }
-            if x >= 23 && x < 33 {
-                do_export_cfg(app);
-                return;
-            }
-            if app.cache.selected_level == 0 {
-                if x >= 41 && x < 48 {
-                    app.cache.scope = CacheScope::ICache;
-                    return;
-                }
-                if x >= 49 && x < 56 {
-                    app.cache.scope = CacheScope::DCache;
-                    return;
-                }
-                if x >= 57 && x < 61 {
-                    app.cache.scope = CacheScope::Both;
-                    return;
-                }
-            }
-        } else if app.cache.selected_level == 0 {
-            if x >= 15 && x < 22 {
-                app.cache.scope = CacheScope::ICache;
-                return;
-            }
-            if x >= 23 && x < 30 {
-                app.cache.scope = CacheScope::DCache;
-                return;
-            }
-            if x >= 31 && x < 35 {
-                app.cache.scope = CacheScope::Both;
-                return;
-            }
-        }
+    if point_in_btn(me, app.cache.ctrl_results_btn.get()) {
+        do_export_results(app);
+        return;
+    }
+    if point_in_btn(me, app.cache.ctrl_import_btn.get()) {
+        do_import_cfg(app);
+        return;
+    }
+    if point_in_btn(me, app.cache.ctrl_export_btn.get()) {
+        do_export_cfg(app);
+        return;
+    }
+    if point_in_btn(me, app.cache.ctrl_scope_i_btn.get()) {
+        app.cache.scope = CacheScope::ICache;
+        app.cache.view_focus = CacheViewFocus::ICache;
+        return;
+    }
+    if point_in_btn(me, app.cache.ctrl_scope_d_btn.get()) {
+        app.cache.scope = CacheScope::DCache;
+        app.cache.view_focus = CacheViewFocus::DCache;
+        return;
+    }
+    if point_in_btn(me, app.cache.ctrl_scope_both_btn.get()) {
+        app.cache.scope = CacheScope::Both;
+        return;
     }
 
     // View legend bar button clicks: [FMT], [GROUP], and [TAG]
@@ -2062,104 +2069,80 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn handle_level_selector_click(app: &mut App, me: MouseEvent, level_area: Rect) {
-    let mut x = me.column.saturating_sub(level_area.x + 1);
-    x = x.saturating_sub(6); // "level "
-    let num_levels = 1 + app.cache.extra_pending.len();
-    for i in 0..num_levels {
-        let btn_w: u16 = if i == 0 {
-            2
-        } else {
-            CacheController::extra_level_name(i - 1).len() as u16
-        };
-        if x < btn_w {
-            app.cache.selected_level = i;
-            return;
+    if let Some(i) = point_in_any_btn(me, &app.cache.level_btns.borrow()) {
+        app.cache.selected_level = i;
+        if i != 0 {
+            app.cache.view_focus = CacheViewFocus::ICache;
         }
-        x = x.saturating_sub(btn_w + 3);
+        return;
     }
-    let add_w: u16 = 3;
-    if x < add_w {
+    if point_in_btn(me, app.cache.add_level_btn.get()) {
         app.add_cache_level();
         return;
     }
-    x = x.saturating_sub(add_w + 3);
-    let rem_w: u16 = 6;
-    if x < rem_w && !app.cache.extra_pending.is_empty() {
+    if point_in_btn(me, app.cache.remove_level_btn.get()) {
         app.remove_last_cache_level();
+        return;
+    }
+    if me.row == level_area.y {
+        let _ = level_area;
     }
 }
 
 fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
-    let i_w = content_area.width / 2;
-    let d_w = content_area.width / 2;
+    for &is_icache in &[true, false] {
+        let (_panel, _inner, fields_area, _presets_area, _apply_area) =
+            l1_config_panel_areas(content_area, is_icache);
 
-    let fields_y0 = content_area.y + 1;
-    let fields_y1 = content_area.y + content_area.height.saturating_sub(7);
-    if me.row >= fields_y0 && me.row < fields_y1 {
-        let row_idx = (me.row - fields_y0) as usize;
-        if let Some(field) = ConfigField::from_list_row(row_idx) {
-            let is_icache = me.column < content_area.x + i_w;
+        let hitboxes = if is_icache {
+            app.cache.config_hitboxes_i.get()
+        } else {
+            app.cache.config_hitboxes_d.get()
+        };
+        if let Some(field) = config_field_hit(me, fields_area, &hitboxes) {
             if field.is_numeric() {
                 let initial = app.cache_field_value_str(is_icache, field);
                 app.cache.edit_field = Some((is_icache, field));
                 app.cache.edit_buf = initial;
-                app.cache.config_error = None;
-                app.cache.config_status = None;
             } else {
                 app.cycle_cache_field(is_icache, field, true);
                 app.cache.edit_field = Some((is_icache, field));
                 app.cache.edit_buf.clear();
             }
+            app.cache.config_error = None;
+            app.cache.config_status = None;
+            return;
+        }
+
+        let preset_btns = if is_icache {
+            app.cache.config_preset_btns_i.get()
+        } else {
+            app.cache.config_preset_btns_d.get()
+        };
+        use crate::falcon::cache::cache_presets;
+        if let Some(idx) = point_in_any_btn(me, &preset_btns) {
+            if is_icache {
+                app.cache.pending_icache = cache_presets(true)[idx].clone();
+            } else {
+                app.cache.pending_dcache = cache_presets(false)[idx].clone();
+            }
+            app.cache.config_error = None;
+            app.cache.config_status = None;
+            return;
+        }
+
+        if is_icache && point_in_btn(me, app.cache.config_apply_btns.get()[0]) {
+            apply_l1_config(app, false);
+            return;
+        }
+        if is_icache && point_in_btn(me, app.cache.config_apply_btns.get()[1]) {
+            apply_l1_config(app, true);
             return;
         }
     }
 
     app.cache.edit_field = None;
     app.cache.edit_buf.clear();
-
-    let apply_y = content_area.y + content_area.height.saturating_sub(3);
-    if me.row == apply_y {
-        let x = me.column.saturating_sub(content_area.x + 1);
-        if x < 19 {
-            apply_l1_config(app, false);
-            return;
-        }
-        if x >= 22 && x < 40 {
-            apply_l1_config(app, true);
-            return;
-        }
-    }
-
-    let preset_y = content_area.y + content_area.height.saturating_sub(6);
-    if me.row == preset_y {
-        let col_x = me.column;
-        let apply_preset = |panel_x: u16, panel_w: u16| -> Option<usize> {
-            if col_x < panel_x || col_x >= panel_x + panel_w {
-                return None;
-            }
-            let x = col_x - panel_x;
-            if x >= 9 && x < 14 {
-                Some(0)
-            } else if x >= 15 && x < 21 {
-                Some(1)
-            } else if x >= 22 && x < 27 {
-                Some(2)
-            } else {
-                None
-            }
-        };
-        use crate::falcon::cache::cache_presets;
-        if let Some(idx) = apply_preset(content_area.x, i_w) {
-            app.cache.pending_icache = cache_presets(true)[idx].clone();
-            app.cache.config_error = None;
-            app.cache.config_status = None;
-        }
-        if let Some(idx) = apply_preset(content_area.x + i_w, d_w) {
-            app.cache.pending_dcache = cache_presets(false)[idx].clone();
-            app.cache.config_error = None;
-            app.cache.config_status = None;
-        }
-    }
 }
 
 fn apply_l1_config(app: &mut App, keep_history: bool) {
@@ -2188,6 +2171,7 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
     }
     app.run.mem.bypass = !app.run.cache_enabled;
     app.cache.view_scroll = 0;
+    app.cache.view_scroll_d = 0;
     app.cache.stats_scroll = 0;
 }
 
@@ -2197,72 +2181,44 @@ fn handle_unified_config_click(
     content_area: Rect,
     extra_idx: usize,
 ) {
-    let col_w = content_area.width.min(60);
-    let col_x = content_area.x + (content_area.width.saturating_sub(col_w)) / 2;
-    let col_area = Rect::new(col_x, content_area.y, col_w, content_area.height);
+    let (_panel, _outer_inner, fields_area, _presets_area, _apply_area) =
+        unified_config_areas(content_area);
 
-    let fields_y0 = col_area.y + 1;
-    let fields_y1 = col_area.y + col_area.height.saturating_sub(7);
-    if me.row >= fields_y0
-        && me.row < fields_y1
-        && me.column >= col_area.x
-        && me.column < col_area.x + col_area.width
-    {
-        let row_idx = (me.row - fields_y0) as usize;
-        if let Some(field) = ConfigField::from_list_row(row_idx) {
-            if field.is_numeric() {
-                let initial = app.cache_field_value_str(false, field);
-                app.cache.edit_field = Some((false, field));
-                app.cache.edit_buf = initial;
-                app.cache.config_error = None;
-                app.cache.config_status = None;
-            } else {
-                app.cycle_cache_field(false, field, true);
-                app.cache.edit_field = Some((false, field));
-                app.cache.edit_buf.clear();
-            }
-            return;
+    if let Some(field) = config_field_hit(me, fields_area, &app.cache.config_hitboxes_u.get()) {
+        if field.is_numeric() {
+            let initial = app.cache_field_value_str(false, field);
+            app.cache.edit_field = Some((false, field));
+            app.cache.edit_buf = initial;
+        } else {
+            app.cycle_cache_field(false, field, true);
+            app.cache.edit_field = Some((false, field));
+            app.cache.edit_buf.clear();
         }
+        app.cache.config_error = None;
+        app.cache.config_status = None;
+        return;
     }
 
     app.cache.edit_field = None;
     app.cache.edit_buf.clear();
 
     // Apply buttons
-    let apply_y = col_area.y + col_area.height.saturating_sub(3);
-    if me.row == apply_y {
-        let x = me.column.saturating_sub(col_area.x + 1);
-        if x < 19 {
-            apply_extra_config(app, extra_idx, false);
-            return;
-        }
-        if x >= 22 && x < 40 {
-            apply_extra_config(app, extra_idx, true);
-            return;
-        }
+    if point_in_btn(me, app.cache.config_apply_btns.get()[0]) {
+        apply_extra_config(app, extra_idx, false);
+        return;
+    }
+    if point_in_btn(me, app.cache.config_apply_btns.get()[1]) {
+        apply_extra_config(app, extra_idx, true);
+        return;
     }
 
-    // Presets
-    let preset_y = col_area.y + col_area.height.saturating_sub(6);
-    if me.row == preset_y && me.column >= col_area.x && me.column < col_area.x + col_area.width {
-        let x = me.column - col_area.x;
-        use crate::falcon::cache::extra_level_presets;
-        let presets = extra_level_presets();
-        let idx = if x >= 9 && x < 18 {
-            Some(0)
-        } else if x >= 19 && x < 27 {
-            Some(1)
-        } else if x >= 28 && x < 38 {
-            Some(2)
-        } else {
-            None
-        };
-        if let Some(i) = idx {
-            if extra_idx < app.cache.extra_pending.len() {
-                app.cache.extra_pending[extra_idx] = presets[i].clone();
-                app.cache.config_error = None;
-                app.cache.config_status = None;
-            }
+    use crate::falcon::cache::extra_level_presets;
+    let presets = extra_level_presets();
+    if let Some(i) = point_in_any_btn(me, &app.cache.config_preset_btns_u.get()) {
+        if extra_idx < app.cache.extra_pending.len() {
+            app.cache.extra_pending[extra_idx] = presets[i].clone();
+            app.cache.config_error = None;
+            app.cache.config_status = None;
         }
     }
 }
@@ -2299,6 +2255,7 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
         }
     }
     app.cache.view_scroll = 0;
+    app.cache.view_scroll_d = 0;
     app.cache.stats_scroll = 0;
 }
 
@@ -2431,6 +2388,9 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
     p.hover_reset = false;
     p.hover_speed = false;
     p.hover_state = false;
+    p.hover_export_results = false;
+    p.hover_import_cfg = false;
+    p.hover_export_cfg = false;
     p.hover_config_row = None;
 
     let (main_y, main_x0, main_x1) = p.btn_subtab_main_rect.get();
@@ -2463,10 +2423,25 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
         p.hover_state = true;
         return;
     }
+    let (res_y, res_x0, res_x1) = p.btn_export_results_rect.get();
+    if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
+        p.hover_export_results = true;
+        return;
+    }
+    let (in_y, in_x0, in_x1) = p.btn_import_cfg_rect.get();
+    if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
+        p.hover_import_cfg = true;
+        return;
+    }
+    let (out_y, out_x0, out_x1) = p.btn_export_cfg_rect.get();
+    if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
+        p.hover_export_cfg = true;
+        return;
+    }
 
     // Config row hover
     let rects = p.config_row_rects.get();
-    for i in 0..4 {
+    for i in 0..crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS {
         let (ry, rx0, rx1) = rects[i];
         if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
             p.hover_config_row = Some(i);
@@ -2476,7 +2451,9 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
 }
 
 fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
-    use crate::ui::pipeline::{BranchPredict, BranchResolve, PipelineMode, PipelineSubtab};
+    use crate::ui::pipeline::{
+        BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineSubtab,
+    };
 
     let (main_y, main_x0, main_x1) = app.pipeline.btn_subtab_main_rect.get();
     if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
@@ -2518,35 +2495,57 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         }
         return;
     }
+    let (res_y, res_x0, res_x1) = app.pipeline.btn_export_results_rect.get();
+    if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
+        do_export_pipeline_results(app);
+        return;
+    }
+    let (in_y, in_x0, in_x1) = app.pipeline.btn_import_cfg_rect.get();
+    if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
+        crate::ui::input::keyboard::do_import_pcfg(app);
+        return;
+    }
+    let (out_y, out_x0, out_x1) = app.pipeline.btn_export_cfg_rect.get();
+    if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
+        crate::ui::input::keyboard::do_export_pcfg(app);
+        return;
+    }
 
     // Config row clicks — toggle on click like Cache tab
     let rects = app.pipeline.config_row_rects.get();
-    for i in 0..4 {
+    for i in 0..PipelineBypassConfig::CONFIG_ROWS {
         let (ry, rx0, rx1) = rects[i];
         if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
             match i {
-                0 => app.pipeline.forwarding = !app.pipeline.forwarding,
-                1 => {
+                0 => app.pipeline.bypass.ex_to_ex = !app.pipeline.bypass.ex_to_ex,
+                1 => app.pipeline.bypass.mem_to_ex = !app.pipeline.bypass.mem_to_ex,
+                2 => app.pipeline.bypass.wb_to_id = !app.pipeline.bypass.wb_to_id,
+                3 => app.pipeline.bypass.store_to_load = !app.pipeline.bypass.store_to_load,
+                4 => {
                     app.pipeline.mode = match app.pipeline.mode {
                         PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
                         PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
                     }
                 }
-                2 => {
+                5 => {
                     app.pipeline.branch_resolve = match app.pipeline.branch_resolve {
                         BranchResolve::Id => BranchResolve::Ex,
                         BranchResolve::Ex => BranchResolve::Mem,
                         BranchResolve::Mem => BranchResolve::Id,
                     }
                 }
-                3 => {
-                    app.pipeline.predict = match app.pipeline.predict {
+                6 => {
+                    let next = match app.pipeline.predict {
                         BranchPredict::NotTaken => BranchPredict::Taken,
-                        BranchPredict::Taken => BranchPredict::NotTaken,
-                    }
+                        BranchPredict::Taken => BranchPredict::Btfnt,
+                        BranchPredict::Btfnt => BranchPredict::TwoBit,
+                        BranchPredict::TwoBit => BranchPredict::NotTaken,
+                    };
+                    app.pipeline.set_predict(next);
                 }
                 _ => {}
             }
+            app.reconfigure_pipeline_model();
             app.pipeline.config_cursor = i;
             return;
         }

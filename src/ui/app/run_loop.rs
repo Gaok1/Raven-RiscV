@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::input::keyboard::KeyOutcome;
 
 #[cfg(unix)]
 pub fn run(
@@ -31,9 +32,7 @@ fn run_inner(
             break;
         }
 
-        let poll_timeout = if app.run.is_running
-            && matches!(app.run.speed, RunSpeed::Instant)
-        {
+        let poll_timeout = if app.run.is_running && matches!(app.run.speed, RunSpeed::Instant) {
             Duration::ZERO
         } else {
             Duration::from_millis(10)
@@ -41,7 +40,7 @@ fn run_inner(
         match event::poll(poll_timeout) {
             Ok(true) => match event::read() {
                 Ok(Event::Key(key)) => {
-                    if handle_key(app, key)? {
+                    if matches!(handle_key(app, key)?, KeyOutcome::Quit) {
                         break;
                     }
                 }
@@ -54,7 +53,10 @@ fn run_inner(
                     }
                 }
                 Ok(Event::Paste(text)) => {
-                    if matches!(app.tab, Tab::Editor) {
+                    if matches!(app.tab, Tab::Editor)
+                        || (matches!(app.tab, Tab::Run)
+                            && (app.run.imem_search_open || app.run.mem_search_open))
+                    {
                         use crate::ui::input::keyboard::paste_from_terminal;
                         app.last_bracketed_paste = Some(Instant::now());
                         paste_from_terminal(app, &text);

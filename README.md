@@ -1,6 +1,6 @@
 # RAVEN — RISC-V Simulator & IDE
 
-> [Leia em Português](docs/README.pt-BR.md)
+> [Leia em Português](docs/pt-BR/README.md)
 
 **RAVEN** is a free, open-source RISC-V simulator and terminal IDE for students and anyone learning assembly. It covers **RV32IMAF** — the full base integer set, multiply/divide, atomics, and single-precision float — and makes every part of the machine visible while your program runs.
 
@@ -12,10 +12,10 @@ Write assembly in the built-in editor, assemble with `Ctrl+R`, and step through 
 
 ## Quick Start
 
-Download the latest binary from [Releases](https://github.com/Gaok1/Raven/releases), or build from source:
+Download the latest binary from [Releases](https://github.com/Gaok1/Raven-RiscV/releases), or build from source:
 
 ```bash
-git clone https://github.com/Gaok1/Raven
+git clone https://github.com/Gaok1/Raven-RiscV.git
 cd Raven
 cargo run
 ```
@@ -40,6 +40,7 @@ Requires Rust 1.75+. No other dependencies.
 - Float registers (`f0–f31` / ABI names), toggled with `Tab` in REGS mode
 - Sidebar cycles with `v`: **RAM → Registers → Dyn**
   - **RAM**: scrollable memory view; `k` cycles region: Data / Stack / R/W / **Heap** (sbrk pointer, `▶HB` marker)
+  - **R/W**: still RAM view, but auto-follows the last memory access address from `LOAD` and `STORE`
   - **Registers**: integer or float register bank with per-register age highlighting; pin with `P`
   - **Dyn**: self-narrating mode for single-stepping — STORE → RAM centered on the written address (`▶`); LOAD / ALU / branch → register bank so you see the result
 - Instruction memory panel: type badge `[R][I][S][B][U][J]`, execution heat `×N`, branch outcome
@@ -167,24 +168,24 @@ raven build program.fas                             # assemble
 raven run   program.fas --nout                      # run, suppress stats
 raven run   program.fas --out results.json          # run, save stats
 raven run   program.fas --cache-config l2.fcache \
-                        --settings my.rcfg \
+                        --sim-settings my.rcfg \
                         --format csv --out stats.csv
 raven export-config  --out default.fcache           # dump default cache config
 raven export-settings --out default.rcfg            # dump default sim settings
 ```
 
-See the **[CLI Reference](docs/cli.md)** for all subcommands and flags.
+See the **[CLI Reference](docs/en/cli.md)** for all subcommands and flags.
 
 ---
 
 ## Docs
 
 - **Interactive tutorial** — press `[?]` on any tab inside Raven (EN / PT-BR toggle with `[L]`)
-- [CLI Reference (EN)](docs/cli.md) — all subcommands, flags, config file formats
-- [Referência da CLI (PT-BR)](docs/cli.pt-BR.md)
-- [Instruction formats (EN)](docs/format.md) — bit layouts, encoding, pseudo-instructions
-- [Formatos (PT-BR)](docs/format.pt-BR.md)
-- [Cache config file reference](docs/cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
+- [CLI Reference (EN)](docs/en/cli.md) — all subcommands, flags, config file formats
+- [Referência da CLI (PT-BR)](docs/pt-BR/cli.md)
+- [Instruction formats (EN)](docs/en/format.md) — bit layouts, encoding, pseudo-instructions
+- [Formatos (PT-BR)](docs/pt-BR/format.md)
+- [Cache config file reference](docs/en/cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
 
 ---
 

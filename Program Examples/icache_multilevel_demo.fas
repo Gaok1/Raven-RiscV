@@ -1,0 +1,26 @@
+# icache_multilevel_demo.fas
+#
+# Short front-end workload for manual validation of multi-level I-cache stalls.
+# Best used with a tiny L1/L2/L3 so each aligned block fetches from a new line.
+# Expected final value: s0 = 7
+
+.text
+.globl _start
+_start:
+    li   s0, 0
+    jal  zero, block1
+
+.align 4
+block1:
+    addi s0, s0, 1
+    jal  zero, block2
+
+.align 4
+block2:
+    addi s0, s0, 2
+    jal  zero, block3
+
+.align 4
+block3:
+    addi s0, s0, 4
+    halt
