@@ -1,6 +1,20 @@
 use super::*;
 
 impl App {
+    fn copy_pipeline_config_to_hart(
+        src: &crate::ui::pipeline::PipelineSimState,
+        dst: &mut crate::ui::pipeline::PipelineSimState,
+    ) {
+        dst.enabled = src.enabled;
+        dst.bypass = src.bypass;
+        dst.branch_resolve = src.branch_resolve;
+        dst.mode = src.mode;
+        dst.set_predict(src.predict);
+        dst.speed = src.speed;
+        dst.program_range = src.program_range;
+        dst.fu_capacity = src.fu_capacity;
+    }
+
     pub(crate) fn aggregate_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
         if !self.pipeline.enabled {
             return None;
@@ -158,6 +172,11 @@ impl App {
         self.ensure_visible_tab();
     }
 
+    pub(in crate::ui) fn set_trace_syscalls(&mut self, enabled: bool) {
+        self.run.trace_syscalls = enabled;
+        self.console.trace_syscalls = enabled;
+    }
+
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
         self.run.is_running = false;
         self.pipeline.reset_stages(self.run.cpu.pc);
@@ -167,12 +186,7 @@ impl App {
                 continue;
             }
             if let Some(p) = hart.pipeline.as_mut() {
-                p.enabled = self.pipeline.enabled;
-                p.bypass = self.pipeline.bypass;
-                p.branch_resolve = self.pipeline.branch_resolve;
-                p.mode = self.pipeline.mode;
-                p.set_predict(self.pipeline.predict);
-                p.speed = self.pipeline.speed;
+                Self::copy_pipeline_config_to_hart(&self.pipeline, p);
                 p.reset_stages(hart.cpu.pc);
             }
         }
@@ -214,6 +228,7 @@ impl App {
                 runtime.hart_id = Some(0);
                 runtime.lifecycle = HartLifecycle::Running;
                 runtime.cpu = self.run.cpu.clone();
+                runtime.cpu.hart_id = 0;
                 runtime.prev_x = self.run.prev_x;
                 runtime.prev_f = self.run.prev_f;
                 runtime.prev_pc = self.run.prev_pc;
@@ -228,6 +243,7 @@ impl App {
                 runtime.mem_access_log = self.run.mem_access_log.clone();
                 runtime.pipeline = None;
             } else if let Some(p) = runtime.pipeline.as_mut() {
+                Self::copy_pipeline_config_to_hart(&self.pipeline, p);
                 p.reset_stages(runtime.cpu.pc);
             }
             self.harts.push(runtime);
@@ -283,6 +299,7 @@ impl App {
                 .pipeline
                 .take()
                 .unwrap_or_else(crate::ui::pipeline::PipelineSimState::new);
+            Self::copy_pipeline_config_to_hart(&self.pipeline, &mut pipeline);
             if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
                 pipeline.reset_stages(self.run.cpu.pc);
             }
@@ -399,6 +416,7 @@ impl App {
 
         let mut child = HartCoreRuntime::free(self.run.base_pc, self.run.mem_size);
         child.hart_id = Some(hart_id);
+        child.cpu.hart_id = hart_id;
         child.lifecycle = HartLifecycle::Running;
         child.cpu.pc = request.entry_pc;
         child.cpu.write(2, request.stack_ptr);
@@ -406,12 +424,7 @@ impl App {
         child.cpu.heap_break = self.run.cpu.heap_break;
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            p.enabled = self.pipeline.enabled;
-            p.bypass = self.pipeline.bypass;
-            p.branch_resolve = self.pipeline.branch_resolve;
-            p.mode = self.pipeline.mode;
-            p.set_predict(self.pipeline.predict);
-            p.speed = self.pipeline.speed;
+            Self::copy_pipeline_config_to_hart(&self.pipeline, p);
             p.reset_stages(child.cpu.pc);
         }
 
@@ -494,6 +507,7 @@ impl App {
 
         let mut child = HartCoreRuntime::free(self.run.base_pc, self.run.mem_size);
         child.hart_id = Some(hart_id);
+        child.cpu.hart_id = hart_id;
         child.lifecycle = HartLifecycle::Running;
         child.cpu.pc = request.entry_pc;
         child.cpu.write(2, request.stack_ptr);
@@ -501,12 +515,7 @@ impl App {
         child.cpu.heap_break = self.harts[core_idx].cpu.heap_break;
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            p.enabled = self.pipeline.enabled;
-            p.bypass = self.pipeline.bypass;
-            p.branch_resolve = self.pipeline.branch_resolve;
-            p.mode = self.pipeline.mode;
-            p.set_predict(self.pipeline.predict);
-            p.speed = self.pipeline.speed;
+            Self::copy_pipeline_config_to_hart(&self.pipeline, p);
             p.reset_stages(child.cpu.pc);
         }
 

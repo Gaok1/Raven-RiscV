@@ -11,15 +11,14 @@
 //   spawn_hart_fn(entry, stack, arg)   — function pointer, no extra allocation
 //   spawn_hart(closure, stack)         — FnOnce closure, boxes the task
 //                                        (cannot be #[no_mangle] — generic)
-
-extern crate alloc;
+extern  crate  alloc;
 
 use alloc::boxed::Box;
-use core::alloc::Layout;
+use core::{alloc::Layout};
 use core::hint::spin_loop;
-use portable_atomic::{AtomicBool, Ordering};
 
-use super::syscall::hart_start;
+use crate::raven_api::atomic::{AtomicBool, Ordering};
+use crate::raven_api::syscall::hart_start;
 
 const DEFAULT_HART_STACK_SIZE: usize = 8192;
 
@@ -56,6 +55,10 @@ pub fn alloc_hart_stack(size: usize) -> &'static mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(ptr, size) }
 }
 
+
+
+
+
 // ── Closure trampoline ───────────────────────────────────────────────────────
 
 // Type-erased task builder. The closure is stored here until `start()` is called.
@@ -65,6 +68,14 @@ pub struct HartTask {
     done: Box<AtomicBool>,
 }
 
+#[derive(Debug,Clone,Copy)]
+pub enum HartError {
+    NoHardwareCoresAvaliable = -1,
+    PCOutOfBounds = -2,
+    InvalidStackPointer = -3,
+}
+
+
 impl HartTask {
     #[unsafe(no_mangle)]
     pub fn new<F>(f: F) -> Self
@@ -73,6 +84,7 @@ impl HartTask {
     {
         Self::with_stack_size(f, DEFAULT_HART_STACK_SIZE)
     }
+
     #[unsafe(no_mangle)]
     pub fn with_stack_size<F>(f: F, stack_size: usize) -> Self
     where
@@ -94,16 +106,22 @@ impl HartTask {
     }
     
     #[unsafe(no_mangle)]
-    pub fn start(self) -> HartHandle {
+    pub fn start(self) -> Result<HartHandle,HartError> {
         let HartTask { f, stack, done } = self;
         let done_ptr = Box::into_raw(done);
         let payload = Box::new(HartTaskPayload { f, done: done_ptr });
         let ptr = Box::into_raw(payload) as u32;
         let sp = stack.as_ptr_range().end as u32;
         let code = unsafe { hart_start(hart_trampoline as *const () as u32, sp, ptr) };
-        assert!(code >= 0, "failed to start hart: syscall returned {code}");
+        match code {
+            0.. => Ok(HartHandle { done: done_ptr, id: code as usize}),
+            -1 => Err(HartError::NoHardwareCoresAvaliable),
+            -2 =>  Err(HartError::PCOutOfBounds),
+            -3 => Err(HartError::InvalidStackPointer),
+            _ => {unreachable!()}
+        }
 
-        HartHandle { done: done_ptr }
+        
     }
 }
 
@@ -114,6 +132,7 @@ struct HartTaskPayload {
 
 pub struct HartHandle {
     done: *mut AtomicBool,
+    id : usize
 }
 
 impl HartHandle {
@@ -142,7 +161,7 @@ extern "C" fn hart_trampoline(ptr: u32) -> ! {
     let task = unsafe { Box::from_raw(ptr as *mut HartTaskPayload) };
     (task.f)();
     unsafe { (*task.done).store(true, Ordering::Release) };
-    unsafe { super::syscall::hart_exit() }
+    unsafe { crate::raven_api::syscall::hart_exit() }
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -191,7 +210,7 @@ pub fn spawn_hart_fn(entry: fn(u32) -> !, stack: &'static mut [u8], arg: u32) ->
 ///     hart_exit();
 /// }, alloc_hart_stack(8192));
 /// ```
-pub fn spawn_hart<F>(f: F, stack: &'static mut [u8]) -> HartHandle
+pub fn spawn_hart<F>(f: F, stack: &'static mut [u8]) -> Result<HartHandle, HartError>
 where
     F: FnOnce() + Send + 'static,
 {

@@ -265,7 +265,8 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
         Ecall => 0x0000_0073,  // SYSTEM/ECALL
         Ebreak => 0x0010_0073, // SYSTEM/EBREAK — resumable breakpoint
         Halt => 0x0020_0073,   // Raven HALT  — permanent single-hart stop
-        Fence => 0x0000_100F,  // MISC-MEM/FENCE (iorw, iorw)
+        Fence => 0x0FF0_000F,  // MISC-MEM/FENCE with pred=iorw, succ=iorw
+        FenceI => 0x0000_100F,
 
         // RV32F — LOAD-FP / STORE-FP
         Flw { rd, rs1, imm } => i(imm, rs1 as u32, 0x2, rd as u32, OPC_FLW as u32),
@@ -327,83 +328,149 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
             OPC_FNMADD as u32,
         ),
 
-        // RV32A — encode with aq=0, rl=0
-        // f7 = funct5<<2 | aq<<1 | rl  (aq=rl=0 here)
-        LrW { rd, rs1 } => r(0x02 << 2, 0, rs1 as u32, 0x2, rd as u32, OPC_AMO as u32),
-        ScW { rd, rs1, rs2 } => r(
-            0x03 << 2,
+        // RV32A
+        LrW { rd, rs1, aq, rl } => r(
+            (0x02 << 2) | ((aq as u32) << 1) | (rl as u32),
+            0,
+            rs1 as u32,
+            0x2,
+            rd as u32,
+            OPC_AMO as u32,
+        ),
+        ScW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x03 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmoswapW { rd, rs1, rs2 } => r(
-            0x01 << 2,
+        AmoswapW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x01 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmoaddW { rd, rs1, rs2 } => r(
-            0x00 << 2,
+        AmoaddW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x00 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmoxorW { rd, rs1, rs2 } => r(
-            0x04 << 2,
+        AmoxorW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x04 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmoandW { rd, rs1, rs2 } => r(
-            0x0C << 2,
+        AmoandW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x0C << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmoorW { rd, rs1, rs2 } => r(
-            0x08 << 2,
+        AmoorW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x08 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmomaxW { rd, rs1, rs2 } => r(
-            0x14 << 2,
+        AmomaxW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x14 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmominW { rd, rs1, rs2 } => r(
-            0x10 << 2,
+        AmominW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x10 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmomaxuW { rd, rs1, rs2 } => r(
-            0x1C << 2,
+        AmomaxuW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x1C << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,
             rd as u32,
             OPC_AMO as u32,
         ),
-        AmominuW { rd, rs1, rs2 } => r(
-            0x18 << 2,
+        AmominuW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => r(
+            (0x18 << 2) | ((aq as u32) << 1) | (rl as u32),
             rs2 as u32,
             rs1 as u32,
             0x2,

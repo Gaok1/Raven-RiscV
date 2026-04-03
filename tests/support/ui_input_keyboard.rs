@@ -1,7 +1,7 @@
 use super::{
     KeyOutcome, apply_imem_search, capture_snapshot, handle_key, paste_from_terminal,
-    paste_imem_search, paste_mem_search, serialize_pipeline_results_pstats,
-    serialize_results_csv, serialize_results_fstats,
+    paste_imem_search, paste_mem_search, serialize_pipeline_results_pstats, serialize_results_csv,
+    serialize_results_fstats,
 };
 use crate::ui::app::{App, EditorMode, HartLifecycle, Tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -184,7 +184,6 @@ fn run_view_dyn_focuses_last_store_after_mode_switch() {
     assert_eq!(app.run.mem_view_addr, store_addr & !3);
 }
 
-#[test]
 fn run_region_rw_focuses_last_memory_access_immediately() {
     let mut app = App::new(None);
     app.tab = Tab::Run;
@@ -201,8 +200,67 @@ fn run_region_rw_focuses_last_memory_access_immediately() {
     .expect("k handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(matches!(app.run.mem_region, crate::ui::app::MemRegion::Access));
+    assert!(matches!(
+        app.run.mem_region,
+        crate::ui::app::MemRegion::Access
+    ));
     assert_eq!(app.run.mem_view_addr, load_addr & !3);
+}
+
+#[test]
+fn run_dyn_register_view_uses_register_scroll_keys() {
+    let mut app = App::new(None);
+    app.tab = Tab::Run;
+    app.mode = EditorMode::Command;
+    app.run.show_dyn = true;
+    app.run.show_registers = false;
+    app.run.dyn_mem_access = Some((0x120, 4, false));
+    app.run.mem_view_addr = 0x80;
+    app.run.regs_scroll = 2;
+    app.run.reg_cursor = 2;
+
+    let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .expect("down handled");
+
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.run.mem_view_addr, 0x80);
+    assert_eq!(app.run.regs_scroll, 3);
+    assert_eq!(app.run.reg_cursor, 3);
+}
+
+#[test]
+fn terminal_paste_ignores_hidden_mem_search_in_dyn_register_view() {
+    let mut app = App::new(None);
+    app.tab = Tab::Run;
+    app.run.show_dyn = true;
+    app.run.show_registers = false;
+    app.run.dyn_mem_access = Some((0x120, 4, false));
+    app.run.mem_search_open = true;
+    app.run.mem_search_query = "aa".into();
+
+    paste_from_terminal(&mut app, "0x40");
+
+    assert_eq!(app.run.mem_search_query, "aa");
+}
+
+#[test]
+fn run_float_register_view_p_key_does_not_toggle_integer_pins() {
+    let mut app = App::new(None);
+    app.tab = Tab::Run;
+    app.mode = EditorMode::Command;
+    app.run.show_registers = true;
+    app.run.show_float_regs = true;
+    app.run.reg_cursor = 2;
+    app.run.pinned_regs.push(7);
+
+    let outcome = handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT),
+    )
+    .expect("P processed");
+
+    assert_eq!(outcome, KeyOutcome::Ignored);
+    assert_eq!(app.run.pinned_regs, vec![7]);
 }
 
 #[test]
@@ -233,6 +291,76 @@ fn cache_pause_key_resumes_paused_core_even_if_fault_flag_is_set() {
 
     assert!(app.run.is_running);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Running);
+}
+
+#[test]
+fn pipeline_history_keyboard_scrolls_main_gantt_view() {
+    let mut app = App::new(None);
+    app.tab = Tab::Pipeline;
+    app.mode = EditorMode::Command;
+    app.pipeline.gantt_scroll = 2;
+    app.pipeline.gantt_visible_rows_cache.set(4);
+    app.pipeline.gantt_max_scroll_cache.set(9);
+
+    let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .expect("pipeline down handled");
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.pipeline.gantt_scroll, 3);
+
+    let outcome = handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+    )
+    .expect("pipeline page down handled");
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.pipeline.gantt_scroll, 7);
+
+    let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        .expect("pipeline page up handled");
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.pipeline.gantt_scroll, 3);
+
+    let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+        .expect("pipeline up handled");
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.pipeline.gantt_scroll, 2);
+}
+
+#[test]
+fn run_r_key_restarts_after_exit() {
+    let mut app = App::new(None);
+    app.pipeline.enabled = false;
+    app.tab = Tab::Run;
+    app.mode = EditorMode::Command;
+    load_program(
+        &mut app,
+        &[
+            ".text",
+            ".globl _start",
+            "_start:",
+            "li a0, 7",
+            "li a7, 93",
+            "ecall",
+        ],
+    );
+
+    for _ in 0..12 {
+        if app.core_status(app.selected_core) == HartLifecycle::Exited {
+            break;
+        }
+        app.single_step();
+    }
+
+    let outcome = handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+    )
+    .expect("r handled");
+
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert!(app.run.is_running);
+    assert_eq!(app.run.cpu.exit_code, None);
+    assert_eq!(app.run.cpu.pc, app.run.base_pc);
 }
 
 #[test]
@@ -329,11 +457,69 @@ fn cache_scope_keys_update_view_focus_for_single_scope() {
     .expect("d handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(matches!(app.cache.scope, crate::ui::app::CacheScope::DCache));
+    assert!(matches!(
+        app.cache.scope,
+        crate::ui::app::CacheScope::DCache
+    ));
     assert!(matches!(
         app.cache.view_focus,
         crate::ui::app::CacheViewFocus::DCache
     ));
+}
+
+#[test]
+fn pipeline_up_down_do_not_move_hidden_config_cursor_on_main_subtab() {
+    let mut app = App::new(None);
+    app.tab = Tab::Pipeline;
+    app.mode = EditorMode::Command;
+    app.pipeline.subtab = crate::ui::pipeline::PipelineSubtab::Main;
+    app.pipeline.config_cursor = 3;
+
+    let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .expect("pipeline down handled");
+
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.pipeline.config_cursor, 3);
+}
+
+#[test]
+fn pipeline_tab_switch_clears_stale_config_row_hover() {
+    let mut app = App::new(None);
+    app.tab = Tab::Pipeline;
+    app.mode = EditorMode::Command;
+    app.pipeline.subtab = crate::ui::pipeline::PipelineSubtab::Config;
+    app.pipeline.hover_config_row = Some(4);
+
+    let outcome =
+        handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).expect("tab handled");
+
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert!(matches!(
+        app.pipeline.subtab,
+        crate::ui::pipeline::PipelineSubtab::Main
+    ));
+    assert_eq!(app.pipeline.hover_config_row, None);
+}
+
+#[test]
+fn pipeline_keyboard_actions_clear_stale_button_hover_flags() {
+    let mut app = App::new(None);
+    app.tab = Tab::Pipeline;
+    app.mode = EditorMode::Command;
+    app.pipeline.hover_speed = true;
+    app.pipeline.hover_state = true;
+    app.pipeline.hover_subtab_config = true;
+
+    let outcome = handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+    )
+    .expect("f handled");
+
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert!(!app.pipeline.hover_speed);
+    assert!(!app.pipeline.hover_state);
+    assert!(!app.pipeline.hover_subtab_config);
 }
 
 #[test]

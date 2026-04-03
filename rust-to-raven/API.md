@@ -22,7 +22,7 @@ use raven_api::{exit, pause_sim};
 use raven_api::{spawn_hart, spawn_hart_fn};
 ```
 
-The crate is `no_std` and requires the `riscv32im` target.
+The crate is `no_std` and targets Raven's RV32IM baseline with `A` and `F` enabled explicitly at build time.
 Build with:
 
 ```bash

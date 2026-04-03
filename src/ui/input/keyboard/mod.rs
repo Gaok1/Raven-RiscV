@@ -16,8 +16,8 @@ pub(crate) use self::paste::paste_from_terminal;
 use self::paste::{paste_imem_search, paste_mem_search};
 #[cfg(test)]
 use self::serialization::{
-    apply_imem_search, capture_snapshot, serialize_pipeline_results_pstats,
-    serialize_results_csv, serialize_results_fstats,
+    apply_imem_search, capture_snapshot, serialize_pipeline_results_pstats, serialize_results_csv,
+    serialize_results_fstats,
 };
 pub(crate) use self::serialization::{
     do_export_cfg, do_export_pcfg, do_export_pipeline_results, do_export_results, do_import_cfg,

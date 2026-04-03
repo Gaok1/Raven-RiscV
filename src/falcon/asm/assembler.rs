@@ -1043,6 +1043,15 @@ fn parse_instr(
         }
         Err(format!("invalid immediate: {t}"))
     };
+    let (mnemonic, atomic_aq, atomic_rl) = if let Some(base) = mnemonic.strip_suffix(".aqrl") {
+        (base.to_string(), true, true)
+    } else if let Some(base) = mnemonic.strip_suffix(".aq") {
+        (base.to_string(), true, false)
+    } else if let Some(base) = mnemonic.strip_suffix(".rl") {
+        (base.to_string(), false, true)
+    } else {
+        (mnemonic, false, false)
+    };
 
     match mnemonic.as_str() {
         // ---------- Pseudo-instructions ----------
@@ -1414,6 +1423,7 @@ fn parse_instr(
 
         // ---------- Memory ordering ----------
         "fence" => Ok(Fence), // nop in single-core simulator (RV32I base)
+        "fence.i" => Ok(FenceI),
 
         // system
         "ecall" => {
@@ -1749,6 +1759,170 @@ fn parse_instr(
                 rd,
                 rs1: rs,
                 rs2: rs,
+            })
+        }
+        // Atomic extension
+        "lr.w" => {
+            if ops.len() != 2 {
+                return Err("lw.w: expected 'rd, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[1].replace("(", "").replace(")", ""))?;
+            Ok(LrW {
+                rd,
+                rs1,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "sc.w" => {
+            if ops.len() != 3 {
+                return Err("sc.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(ScW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amoswap.w" => {
+            if ops.len() != 3 {
+                return Err("amoswap.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmoswapW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amoadd.w" => {
+            if ops.len() != 3 {
+                return Err("amoadd.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmoaddW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amoxor.w" => {
+            if ops.len() != 3 {
+                return Err("amoxor.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmoxorW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amoand.w" => {
+            if ops.len() != 3 {
+                return Err("amoswap.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmoandW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amoor.w" => {
+            if ops.len() != 3 {
+                return Err("amoor.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmoorW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amomin.w" => {
+            if ops.len() != 3 {
+                return Err("amomin.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmominW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amomax.w" => {
+            if ops.len() != 3 {
+                return Err("amomax.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmomaxW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amominu.w" => {
+            if ops.len() != 3 {
+                return Err("amominu.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmominuW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
+            })
+        }
+        "amomaxu.w" => {
+            if ops.len() != 3 {
+                return Err("amomaxu.w: expected 'rd, rs2, (rs1)'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let rs1 = get_reg(&ops[2])?;
+            let rs2 = get_reg(&ops[1])?;
+            Ok(AmomaxuW {
+                rd,
+                rs1,
+                rs2,
+                aq: atomic_aq,
+                rl: atomic_rl,
             })
         }
 

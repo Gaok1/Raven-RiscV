@@ -21,15 +21,17 @@ pub(crate) use self::cache_state::{
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
 };
-pub(crate) use self::hart::{HartCoreRuntime, HartLifecycle, step_hart_bg_inner};
+pub(crate) use self::hart::{
+    HartCoreRuntime, HartLifecycle, is_transparent_single_step_word, step_hart_bg_inner,
+};
 pub(crate) use self::run_state::{
     BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunSpeed, RunState,
 };
-pub(crate) use self::settings_state::{
-    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
-    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROWS,
-    SettingsState, nearest_pow2_clamp,
-};
+    pub(crate) use self::settings_state::{
+        RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
+        SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
+        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState, nearest_pow2_clamp,
+    };
 
 use super::{
     console::Console,
@@ -407,6 +409,7 @@ impl App {
                 show_instr_type: true,
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
+                trace_syscalls: false,
             },
             docs: DocsState {
                 page: DocsPage::InstrRef,
@@ -514,6 +517,7 @@ impl App {
             next_hart_id: 1,
             harts: Vec::new(),
         };
+        app.console.trace_syscalls = app.run.trace_syscalls;
         app.assemble_and_load();
         app.rebuild_harts();
         app
@@ -592,6 +596,7 @@ impl App {
                 });
                 self.run.imem_scroll = 0;
                 self.run.hover_imem_addr = None;
+                self.sync_pipeline_program_range();
 
                 // Reset pipeline stages (shares cpu/mem with RunState)
                 self.pipeline.reset_stages(self.run.cpu.pc);
@@ -665,6 +670,26 @@ impl App {
             }
         }
         self.editor.dirty = false;
+    }
+
+    fn sync_pipeline_program_range(&mut self) {
+        let Some(text) = self.editor.last_ok_text.as_ref() else {
+            self.pipeline.program_range = None;
+            for hart in &mut self.harts {
+                if let Some(p) = hart.pipeline.as_mut() {
+                    p.program_range = None;
+                }
+            }
+            return;
+        };
+        self.pipeline
+            .set_program_range(self.run.base_pc, text.len());
+        let range = self.pipeline.program_range;
+        for hart in &mut self.harts {
+            if let Some(p) = hart.pipeline.as_mut() {
+                p.program_range = range;
+            }
+        }
     }
 
     fn load_last_ok_program(&mut self) {
@@ -749,6 +774,7 @@ impl App {
             self.rebuild_imem_vrow_cache();
             self.run.imem_scroll = 0;
             self.run.hover_imem_addr = None;
+            self.sync_pipeline_program_range();
             // Reset pipeline stages so it picks up the reloaded program
             self.pipeline.reset_stages(self.run.cpu.pc);
             self.rebuild_harts();
@@ -965,6 +991,7 @@ impl App {
         self.editor.diag_line_text = None;
         self.run.imem_scroll = 0;
         self.run.hover_imem_addr = None;
+        self.sync_pipeline_program_range();
         // Lock the editor when a binary is loaded; close any stale prompt.
         self.mode = EditorMode::Command;
         self.editor.elf_prompt_open = false;
@@ -1643,8 +1670,8 @@ impl App {
 
         let committed = if let Some(info) = commit {
             *self.run.exec_counts.entry(info.pc).or_insert(0) += 1;
+            let word = self.run.mem.peek32(info.pc).unwrap_or(0);
             let disasm = {
-                let word = self.run.mem.peek32(info.pc).unwrap_or(0);
                 match falcon::decoder::decode(word) {
                     Ok(instr) => format!("{instr:?}"),
                     Err(_) => format!("0x{word:08x}"),
@@ -1677,7 +1704,7 @@ impl App {
 
             self.run.mem.instruction_count = self.run.mem.instruction_count.saturating_add(1);
             self.run.mem.snapshot_stats();
-            true
+            !is_transparent_single_step_word(word)
         } else {
             false
         };
@@ -1920,149 +1947,141 @@ impl App {
 
     fn single_step_selected_sequential(&mut self) {
         let go_mode = matches!(self.run.speed, RunSpeed::Instant);
-        // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.
-        if !go_mode {
-            self.run.prev_x = self.run.cpu.x;
-            self.run.prev_f = self.run.cpu.f;
-        }
-        self.run.prev_pc = self.run.cpu.pc;
-        let step_pc = self.run.cpu.pc;
-
-        // Halt gracefully when PC leaves the loaded text segment.
-        if !self.imem_in_range(step_pc) {
-            self.console.push_error(format!(
-                "Execution reached 0x{step_pc:08X}, outside the loaded program. \
-                 Add `li a7, 93; ecall` to terminate cleanly."
-            ));
-            self.run.faulted = true;
-            return;
-        }
-
-        // Fetch word once — reused for CPI, mem-access tracking, and disasm below.
-        let word = self.run.mem.peek32(step_pc).unwrap_or(0);
-        let cpi_cycles = classify_cpi_cycles(word, &self.run.cpu, &self.run.cpi_config);
-        // In GO mode mem-access tracking is skipped (not visible while running).
-        let mem_access = if go_mode {
-            None
-        } else {
-            classify_mem_access(word, &self.run.cpu)
-        };
-
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
-        }));
-        let alive = match res {
-            Ok(Ok(v)) => v,
-            Ok(Err(e)) => {
-                use crate::falcon::errors::FalconError;
-                let msg = if matches!(&e, FalconError::Bus(_)) {
-                    let ram_kb = self.run.mem_size / 1024;
-                    let suggest = if ram_kb < 1024 {
-                        "16mb"
-                    } else if ram_kb < 65536 {
-                        "128mb"
-                    } else {
-                        "512mb"
-                    };
-                    format!("{e} (RAM is {ram_kb} KB — run with --mem {suggest} to increase)")
-                } else {
-                    e.to_string()
-                };
-                self.console.push_error(msg);
-                self.run.faulted = true;
-                false
+        for _ in 0..16 {
+            // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.
+            if !go_mode {
+                self.run.prev_x = self.run.cpu.x;
+                self.run.prev_f = self.run.cpu.f;
             }
-            Err(_) => {
+            self.run.prev_pc = self.run.cpu.pc;
+            let step_pc = self.run.cpu.pc;
+
+            if !self.imem_in_range(step_pc) {
+                self.console.push_error(format!(
+                    "Execution reached 0x{step_pc:08X}, outside the loaded program. \
+                     Add `li a7, 93; ecall` to terminate cleanly."
+                ));
                 self.run.faulted = true;
-                false
+                return;
             }
-        };
-        self.run.mem.add_instruction_cycles(cpi_cycles);
-        self.run.mem.snapshot_stats();
 
-        // Track execution counts (heatmap) — always kept.
-        *self.run.exec_counts.entry(step_pc).or_insert(0) += 1;
-
-        // In GO mode skip all display-only instrumentation: exec_trace formatting,
-        // mem_access_log, and reg/float age tracking. None of these are visible
-        // while the simulation is running at full speed.
-        if !go_mode {
-            let disasm = match falcon::decoder::decode(word) {
-                Ok(instr) => format!("{instr:?}"),
-                Err(_) => format!("0x{word:08x}"),
+            let word = self.run.mem.peek32(step_pc).unwrap_or(0);
+            let cpi_cycles = classify_cpi_cycles(word, &self.run.cpu, &self.run.cpi_config);
+            let mem_access = if go_mode {
+                None
+            } else {
+                classify_mem_access(word, &self.run.cpu)
             };
-            self.run.exec_trace.push_back((step_pc, disasm));
-            if self.run.exec_trace.len() > 200 {
-                self.run.exec_trace.pop_front();
-            }
 
-            // Update memory access log (age existing entries, insert new if load/store)
-            for entry in &mut self.run.mem_access_log {
-                entry.2 = entry.2.saturating_add(1);
-            }
-            self.run.mem_access_log.retain(|e| e.2 < 3);
-            if let Some((addr, size, _)) = mem_access {
-                self.run.mem_access_log.push((addr, size, 0));
-            }
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
+            }));
+            let alive = match res {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => {
+                    use crate::falcon::errors::FalconError;
+                    let msg = if matches!(&e, FalconError::Bus(_)) {
+                        let ram_kb = self.run.mem_size / 1024;
+                        let suggest = if ram_kb < 1024 {
+                            "16mb"
+                        } else if ram_kb < 65536 {
+                            "128mb"
+                        } else {
+                            "512mb"
+                        };
+                        format!("{e} (RAM is {ram_kb} KB — run with --mem {suggest} to increase)")
+                    } else {
+                        e.to_string()
+                    };
+                    self.console.push_error(msg);
+                    self.run.faulted = true;
+                    false
+                }
+                Err(_) => {
+                    self.run.faulted = true;
+                    false
+                }
+            };
+            self.run.mem.add_instruction_cycles(cpi_cycles);
+            self.run.mem.snapshot_stats();
 
-            // Update register age (fading highlight) and track last write PC
-            for i in 0..32usize {
-                if self.run.cpu.x[i] != self.run.prev_x[i] {
-                    self.run.reg_age[i] = 0;
-                    self.run.reg_last_write_pc[i] = Some(step_pc);
-                } else {
-                    self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
+            *self.run.exec_counts.entry(step_pc).or_insert(0) += 1;
+
+            if !go_mode {
+                let disasm = match falcon::decoder::decode(word) {
+                    Ok(instr) => format!("{instr:?}"),
+                    Err(_) => format!("0x{word:08x}"),
+                };
+                self.run.exec_trace.push_back((step_pc, disasm));
+                if self.run.exec_trace.len() > 200 {
+                    self.run.exec_trace.pop_front();
+                }
+
+                for entry in &mut self.run.mem_access_log {
+                    entry.2 = entry.2.saturating_add(1);
+                }
+                self.run.mem_access_log.retain(|e| e.2 < 3);
+                if let Some((addr, size, _)) = mem_access {
+                    self.run.mem_access_log.push((addr, size, 0));
+                }
+
+                for i in 0..32usize {
+                    if self.run.cpu.x[i] != self.run.prev_x[i] {
+                        self.run.reg_age[i] = 0;
+                        self.run.reg_last_write_pc[i] = Some(step_pc);
+                    } else {
+                        self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
+                    }
+                }
+                for i in 0..32usize {
+                    if self.run.cpu.f[i] != self.run.prev_f[i] {
+                        self.run.f_age[i] = 0;
+                        self.run.f_last_write_pc[i] = Some(step_pc);
+                    } else {
+                        self.run.f_age[i] = self.run.f_age[i].saturating_add(1).min(8);
+                    }
                 }
             }
-            // Update float register age
-            for i in 0..32usize {
-                if self.run.cpu.f[i] != self.run.prev_f[i] {
-                    self.run.f_age[i] = 0;
-                    self.run.f_last_write_pc[i] = Some(step_pc);
-                } else {
-                    self.run.f_age[i] = self.run.f_age[i].saturating_add(1).min(8);
-                }
-            }
-        }
-        // Auto-follow last memory R/W when Access region is active.
-        // Stack and Heap follow is handled in tick() so it covers all execution paths.
-        if self.run.mem_region == crate::ui::app::MemRegion::Access {
-            if let Some((addr, _, _)) = mem_access {
-                self.run.mem_view_addr = addr & !(self.run.mem_view_bytes - 1);
-            }
-        }
-        // Dyn view: remember last access; update mem_view_addr for memory sub-view
-        self.run.dyn_mem_access = mem_access;
-        if self.run.show_dyn {
-            if let Some((addr, _, is_store)) = mem_access {
-                if is_store {
+
+            if self.run.mem_region == crate::ui::app::MemRegion::Access {
+                if let Some((addr, _, _)) = mem_access {
                     self.run.mem_view_addr = addr & !(self.run.mem_view_bytes - 1);
                 }
             }
-        }
+            self.run.dyn_mem_access = mem_access;
+            if self.run.show_dyn {
+                if let Some((addr, _, is_store)) = mem_access {
+                    if is_store {
+                        self.run.mem_view_addr = addr & !(self.run.mem_view_bytes - 1);
+                    }
+                }
+            }
 
-        // Check breakpoints: stop if the new PC is a breakpoint
-        if alive && self.run.breakpoints.contains(&self.run.cpu.pc) {
-            self.run.is_running = false;
-        }
-        if !alive {
-            // Don't stop is_running here — finalize_selected_core_after_step decides
-            // whether to stop based on other running harts (multi-hart aware).
-            if !self.console.reading {
-                self.run.faulted = self.run.cpu.exit_code.is_none()
-                    && !self.run.cpu.ebreak_hit
-                    && !self.run.cpu.local_exit;
-            } else {
-                // Hart is blocking on keyboard input — pause the run loop.
-                // The keyboard handler resumes is_running when Enter is pressed.
+            if alive && self.run.breakpoints.contains(&self.run.cpu.pc) {
                 self.run.is_running = false;
             }
+            if !alive {
+                if !self.console.reading {
+                    self.run.faulted = self.run.cpu.exit_code.is_none()
+                        && !self.run.cpu.ebreak_hit
+                        && !self.run.cpu.local_exit;
+                } else {
+                    self.run.is_running = false;
+                }
+            }
+            if !self.run.is_running {
+                self.ensure_pc_visible_in_imem();
+            }
+            self.finalize_selected_core_after_step();
+
+            if self.run.faulted
+                || !alive
+                || !matches!(self.core_status(self.selected_core), HartLifecycle::Running)
+                || !is_transparent_single_step_word(word)
+            {
+                break;
+            }
         }
-        // Keep PC visible (single-step case — running case handled in tick())
-        if !self.run.is_running {
-            self.ensure_pc_visible_in_imem();
-        }
-        self.finalize_selected_core_after_step();
     }
 
     pub(crate) fn align_mem_view_addr_to_last_access(&mut self) {
@@ -2071,6 +2090,19 @@ impl App {
         };
         let align = self.run.mem_view_bytes.max(1);
         self.run.mem_view_addr = addr & !(align - 1);
+    }
+
+    pub(crate) fn run_sidebar_shows_memory(&self) -> bool {
+        !self.run.show_registers
+            && (!self.run.show_dyn
+                || self
+                    .run
+                    .dyn_mem_access
+                    .is_some_and(|(_, _, is_store)| is_store))
+    }
+
+    pub(crate) fn run_sidebar_shows_registers(&self) -> bool {
+        !self.run_sidebar_shows_memory()
     }
 
     pub(crate) fn sync_mem_focus_for_active_sidebar_mode(&mut self) {

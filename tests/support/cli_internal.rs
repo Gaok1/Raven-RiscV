@@ -1,7 +1,7 @@
 use super::{
-    HeadlessHart, PipelineReport, format_csv, format_fstats, format_json,
-    parse_expect_mem_spec, parse_expect_reg_spec, run_headless_multihart_sequential,
-    run_headless_sequential, service_pending_hart_start, validate_expectations,
+    HeadlessHart, PipelineReport, format_csv, format_fstats, format_json, parse_expect_mem_spec,
+    parse_expect_reg_spec, run_headless_multihart_sequential, run_headless_sequential,
+    service_pending_hart_start, validate_expectations,
 };
 use crate::falcon::asm::assemble;
 use crate::falcon::cache::{CacheConfig, CacheController};

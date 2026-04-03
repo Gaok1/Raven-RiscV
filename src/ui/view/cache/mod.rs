@@ -186,10 +186,7 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
         app.cache.hover,
         Some(crate::ui::app::CacheHoverTarget::Level(0))
     );
-    app.cache
-        .level_btns
-        .borrow_mut()
-        .push((area.y, x, x + 2));
+    app.cache.level_btns.borrow_mut().push((area.y, x, x + 2));
     spans.push(Span::styled("l1", level_btn_style(l1_active, l1_hover)));
     x += 2;
 

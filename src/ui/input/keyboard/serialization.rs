@@ -43,11 +43,13 @@ pub(super) fn serialize_cache_configs(
 pub(super) fn serialize_rcfg(
     cpi: &CpiConfig,
     cache_enabled: bool,
+    trace_syscalls: bool,
     run_scope: RunScope,
     mem_kb: usize,
 ) -> String {
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!("cache_enabled={}\n", cache_enabled));
+    s.push_str(&format!("trace_syscalls={}\n", trace_syscalls));
     s.push_str(&format!("mem_kb={}\n", mem_kb));
     s.push_str(&format!(
         "run_scope={}\n",
@@ -80,7 +82,9 @@ pub(super) fn parse_pcfg(text: &str) -> Result<crate::ui::pipeline::PipelineConf
     crate::ui::pipeline::parse_pipeline_config(text)
 }
 
-pub(super) fn parse_rcfg(text: &str) -> Result<(CpiConfig, bool, RunScope, Option<usize>), String> {
+pub(super) fn parse_rcfg(
+    text: &str,
+) -> Result<(CpiConfig, bool, bool, RunScope, Option<usize>), String> {
     let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -128,6 +132,10 @@ pub(super) fn parse_rcfg(text: &str) -> Result<(CpiConfig, bool, RunScope, Optio
         .get("cache_enabled")
         .map(|v| v != "false")
         .unwrap_or(true);
+    let trace_syscalls = map
+        .get("trace_syscalls")
+        .map(|v| v != "false")
+        .unwrap_or(false);
     let run_scope = match map.get("run_scope").map(String::as_str).unwrap_or("all") {
         "all" => RunScope::AllHarts,
         "focus" | "focused" => RunScope::FocusedHart,
@@ -144,7 +152,7 @@ pub(super) fn parse_rcfg(text: &str) -> Result<(CpiConfig, bool, RunScope, Optio
     } else {
         None
     };
-    Ok((cpi, cache_enabled, run_scope, mem_bytes))
+    Ok((cpi, cache_enabled, trace_syscalls, run_scope, mem_bytes))
 }
 
 /// Returns prefix like "l2", "l3", etc. for extra_level index i (0-based → L2, L3, …)
@@ -485,6 +493,7 @@ pub(super) fn do_export_rcfg(app: &mut App) {
     let text = serialize_rcfg(
         &app.run.cpi_config,
         app.run.cache_enabled,
+        app.run.trace_syscalls,
         app.run_scope,
         app.run.mem_size / 1024,
     );
@@ -518,9 +527,10 @@ pub(super) fn do_import_rcfg(app: &mut App) {
     {
         match std::fs::read_to_string(&path) {
             Ok(text) => match parse_rcfg(&text) {
-                Ok((cpi, cache_enabled, run_scope, mem_bytes)) => {
+                Ok((cpi, cache_enabled, trace_syscalls, run_scope, mem_bytes)) => {
                     app.run.cpi_config = cpi;
                     app.set_cache_enabled(cache_enabled);
+                    app.set_trace_syscalls(trace_syscalls);
                     app.run_scope = run_scope;
                     if let Some(bytes) = mem_bytes {
                         if bytes != app.run.mem_size {
@@ -1403,9 +1413,10 @@ pub(super) fn dispatch_path_input(
         }
         PathInputAction::OpenRcfg => match std::fs::read_to_string(&path) {
             Ok(text) => match parse_rcfg(&text) {
-                Ok((cpi, cache_enabled, run_scope, mem_bytes)) => {
+                Ok((cpi, cache_enabled, trace_syscalls, run_scope, mem_bytes)) => {
                     app.run.cpi_config = cpi;
                     app.set_cache_enabled(cache_enabled);
+                    app.set_trace_syscalls(trace_syscalls);
                     app.run_scope = run_scope;
                     if let Some(bytes) = mem_bytes {
                         if bytes != app.run.mem_size {
@@ -1433,6 +1444,7 @@ pub(super) fn dispatch_path_input(
             let text = serialize_rcfg(
                 &app.run.cpi_config,
                 app.run.cache_enabled,
+                app.run.trace_syscalls,
                 app.run_scope,
                 app.run.mem_size / 1024,
             );
@@ -1550,5 +1562,33 @@ pub(super) fn dispatch_path_input(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_rcfg, serialize_rcfg};
+    use crate::ui::app::{CpiConfig, RunScope};
+
+    #[test]
+    fn rcfg_round_trip_preserves_trace_syscalls() {
+        let text = serialize_rcfg(&CpiConfig::default(), true, true, RunScope::FocusedHart, 4096);
+
+        let (_, cache_enabled, trace_syscalls, run_scope, mem_bytes) =
+            parse_rcfg(&text).expect("parse rcfg");
+
+        assert!(cache_enabled);
+        assert!(trace_syscalls);
+        assert_eq!(run_scope, RunScope::FocusedHart);
+        assert_eq!(mem_bytes, Some(4096 * 1024));
+    }
+
+    #[test]
+    fn rcfg_defaults_trace_syscalls_to_false() {
+        let text = "# Raven Sim Config v2\ncache_enabled=true\nrun_scope=all\nmem_kb=1024\n";
+
+        let (_, _, trace_syscalls, _, _) = parse_rcfg(text).expect("parse rcfg");
+
+        assert!(!trace_syscalls);
     }
 }

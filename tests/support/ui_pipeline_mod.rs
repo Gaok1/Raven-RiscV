@@ -1,7 +1,7 @@
 use super::{
     BranchPredict, BranchResolve, GanttCell, GanttRow, InstrClass, PipelineBypassConfig,
     PipelineConfig, PipelineMode, PipelineSimState, PipelineSpeed, Stage, gantt_max_scroll,
-    gantt_window_bounds, maybe_follow_gantt_tail, parse_pipeline_config,
+    gantt_view_rows, gantt_window_bounds, maybe_follow_gantt_tail, parse_pipeline_config,
     serialize_pipeline_config,
 };
 use std::collections::VecDeque;
@@ -13,6 +13,7 @@ fn pipeline_config_roundtrip() {
         bypass: PipelineBypassConfig::new(false, true, false, true),
         branch_resolve: BranchResolve::Mem,
         mode: PipelineMode::FunctionalUnits,
+        fu_capacity: [2, 1, 1, 1, 1, 1],
         predict: BranchPredict::TwoBit,
         speed: PipelineSpeed::Fast,
     };
@@ -41,6 +42,13 @@ fn pipeline_config_parses_legacy_forwarding_and_new_predictors() {
         PipelineBypassConfig::new(true, false, true, true)
     );
     assert_eq!(parsed.predict, BranchPredict::TwoBit);
+
+    let parsed = parse_pipeline_config(
+        "mode=parallelufs\nfu.alu=2\nfu.mul=3\nfu.div=4\nfu.fpu=2\nfu.lsu=1\nfu.sys=2\n",
+    )
+    .expect("parse fu capacities");
+    assert_eq!(parsed.mode, PipelineMode::FunctionalUnits);
+    assert_eq!(parsed.fu_capacity, [2, 3, 4, 2, 1, 2]);
 }
 
 #[test]
@@ -101,6 +109,28 @@ fn gantt_window_caps_to_requested_history_width_from_the_newest_cycles() {
     let (start, end) = gantt_window_bounds(&refs, 12);
     assert_eq!(start, 68);
     assert_eq!(end, 80);
+}
+
+#[test]
+fn gantt_window_follows_the_scrolled_viewport_not_the_global_tail() {
+    let rows: VecDeque<_> = (0..6)
+        .map(|i| GanttRow {
+            gantt_id: i + 1,
+            pc: (i * 4) as u32,
+            disasm: format!("addi x{i}, x{i}, 1"),
+            class: InstrClass::Alu,
+            cells: VecDeque::from(vec![GanttCell::InStage(Stage::IF); 4]),
+            first_cycle: (i * 10) as u64,
+            done: i < 5,
+            last_stage: None,
+        })
+        .collect();
+
+    let refs = gantt_view_rows(&rows, 1, 3);
+    let (start, end) = gantt_window_bounds(&refs, 12);
+
+    assert_eq!(start, 22);
+    assert_eq!(end, 34);
 }
 
 #[test]

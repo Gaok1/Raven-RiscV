@@ -596,12 +596,17 @@ fn run_headless_multihart_sequential(
     let mut harts = Vec::with_capacity(max_cores);
     harts.push(HeadlessHart {
         hart_id: 0,
-        cpu: cpu.clone(),
+        cpu: {
+            let mut root = cpu.clone();
+            root.hart_id = 0;
+            root
+        },
         active: true,
         paused: false,
     });
     for i in 1..max_cores {
         let mut free = Cpu::default();
+        free.hart_id = i as u32;
         free.write(2, cpu.read(2));
         harts.push(HeadlessHart {
             hart_id: i as u32,
@@ -743,6 +748,7 @@ fn service_pending_hart_start(
         .max()
         .unwrap_or(0)
         .saturating_add(1);
+    child.hart_id = next_hart_id;
     harts[free_idx] = HeadlessHart {
         hart_id: next_hart_id,
         cpu: child,

@@ -206,7 +206,7 @@ pub(super) fn handle_post_find_intercepts(app: &mut App, key: KeyEvent) -> Optio
         return Some(false);
     }
 
-    if matches!(app.tab, Tab::Run) && !app.run.show_registers && app.run.mem_search_open {
+    if matches!(app.tab, Tab::Run) && app.run_sidebar_shows_memory() && app.run.mem_search_open {
         match key.code {
             KeyCode::Esc => {
                 app.run.mem_search_open = false;

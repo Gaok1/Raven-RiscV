@@ -13,7 +13,7 @@ use crate::ui::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
         EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED,
         SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
-        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, Tab,
+        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, Tab,
     },
     editor::Editor,
 };
@@ -24,6 +24,11 @@ use rfd::FileDialog as OSFileDialog;
 use super::max_regs_scroll;
 use crate::ui::view::docs::{docs_body_line_count, free_page_line_count};
 use crate::ui::view::{help_button_area, help_popup_rect};
+
+fn point_in_rect(x: u16, y: u16, rect: (u16, u16, u16, u16)) -> bool {
+    let (rx, ry, rw, rh) = rect;
+    rw > 0 && rh > 0 && x >= rx && x < rx + rw && y >= ry && y < ry + rh
+}
 
 pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     app.mouse_x = me.column;
@@ -126,7 +131,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
-                app.pipeline.gantt_scroll = app.pipeline.gantt_scroll.saturating_sub(1);
+                if point_in_rect(me.column, me.row, app.pipeline.gantt_area_rect.get()) {
+                    app.pipeline.gantt_scroll = app.pipeline.gantt_scroll.saturating_sub(1);
+                }
             }
             Tab::Docs => {
                 app.docs.scroll = app.docs.scroll.saturating_sub(1);
@@ -167,8 +174,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
-                let max = app.pipeline.gantt_max_scroll_cache.get();
-                app.pipeline.gantt_scroll = (app.pipeline.gantt_scroll + 1).min(max);
+                if point_in_rect(me.column, me.row, app.pipeline.gantt_area_rect.get()) {
+                    let max = app.pipeline.gantt_max_scroll_cache.get();
+                    app.pipeline.gantt_scroll = (app.pipeline.gantt_scroll + 1).min(max);
+                }
             }
             Tab::Docs => {
                 app.docs.scroll = app.docs.scroll.saturating_add(1);
@@ -260,16 +269,16 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.hscroll_drag {
             let track_w = app.cache.hscroll_drag_track_w;
             let max_scroll = app.cache.hscroll_drag_max;
-                if track_w > 0 && max_scroll > 0 {
-                    let delta = me.column as i32 - app.cache.hscroll_drag_start_x as i32;
-                    let track_span = track_w.saturating_sub(1).max(1) as f64;
-                    let scale = max_scroll as f64 / track_span;
-                    let new_scroll =
-                        (app.cache.hscroll_start as f64 + (delta as f64 * scale)).round().max(0.0)
-                            as usize;
-                    if app.cache.hscroll_drag_is_dcache {
-                        app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
-                    } else {
+            if track_w > 0 && max_scroll > 0 {
+                let delta = me.column as i32 - app.cache.hscroll_drag_start_x as i32;
+                let track_span = track_w.saturating_sub(1).max(1) as f64;
+                let scale = max_scroll as f64 / track_span;
+                let new_scroll = (app.cache.hscroll_start as f64 + (delta as f64 * scale))
+                    .round()
+                    .max(0.0) as usize;
+                if app.cache.hscroll_drag_is_dcache {
+                    app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
+                } else {
                     app.cache.view_h_scroll = new_scroll.min(max_scroll);
                 }
             }
@@ -444,6 +453,10 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                 app.run.show_registers = true;
             }
             app.sync_mem_focus_for_active_sidebar_mode();
+            if !app.run_sidebar_shows_memory() {
+                app.run.mem_search_open = false;
+                app.run.mem_search_query.clear();
+            }
         }
         RunButton::Format => {
             app.run.fmt_mode = match app.run.fmt_mode {
@@ -505,6 +518,14 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::State => {
             if app.run.is_running {
                 app.run.is_running = false;
+            } else if matches!(
+                app.core_status(app.selected_core),
+                crate::ui::app::HartLifecycle::Exited
+            ) {
+                app.restart_simulation();
+                if app.can_start_run() {
+                    app.run.is_running = true;
+                }
             } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
                 || !app.run.faulted
             {
@@ -608,7 +629,7 @@ pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunBut
         MemRegion::Access => "r/w",
         MemRegion::Heap => "heap",
     };
-    let run_text = if app.run.is_running { "run" } else { "pause" };
+    let state_text = crate::ui::view::run::state_text(app);
 
     let mut pos = status.x + 1;
     let range = |start: &mut u16, label: &str| {
@@ -616,31 +637,35 @@ pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunBut
         *start += label.len() as u16;
         (s, *start)
     };
+    let pair_range = |start: &mut u16, label: &str, value: &str| {
+        let s = *start;
+        *start += (label.len() + 1 + value.len()) as u16;
+        (s, *start)
+    };
     let skip = |start: &mut u16, s: &str| {
         *start += s.len() as u16;
     };
 
-    skip(&mut pos, "core ");
-    let (core_start, core_end) = range(&mut pos, &core_text);
-    skip(&mut pos, "   view ");
-    let (view_start, view_end) = range(&mut pos, view_text);
+    let (core_start, core_end) = pair_range(&mut pos, "core", &core_text);
+    skip(&mut pos, "   ");
+    let (view_start, view_end) = pair_range(&mut pos, "view", view_text);
 
-    let (region_start, region_end) = if !app.run.show_registers && !app.run.show_dyn {
-        skip(&mut pos, "   region ");
-        range(&mut pos, region_text)
+    let (region_start, region_end) = if app.run_sidebar_shows_memory() {
+        skip(&mut pos, "   ");
+        pair_range(&mut pos, "region", region_text)
     } else {
         (0, 0)
     };
 
-    skip(&mut pos, "   fmt ");
-    let (fmt_start, fmt_end) = range(&mut pos, fmt_text);
+    skip(&mut pos, "   ");
+    let (fmt_start, fmt_end) = pair_range(&mut pos, "fmt", fmt_text);
 
-    skip(&mut pos, "   sign ");
-    let (sign_start, sign_end) = range(&mut pos, sign_text);
+    skip(&mut pos, "   ");
+    let (sign_start, sign_end) = pair_range(&mut pos, "sign", sign_text);
 
-    let (bytes_start, bytes_end) = if !app.run.show_registers && !app.run.show_dyn {
-        skip(&mut pos, "   bytes ");
-        range(&mut pos, bytes_text)
+    let (bytes_start, bytes_end) = if app.run_sidebar_shows_memory() {
+        skip(&mut pos, "   ");
+        pair_range(&mut pos, "bytes", bytes_text)
     } else {
         (0, 0)
     };
@@ -650,32 +675,28 @@ pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunBut
     } else {
         app.run.speed.label()
     };
-    skip(&mut pos, "   speed ");
-    let (speed_start, speed_end) = range(&mut pos, speed_text);
+    skip(&mut pos, "   ");
+    let (speed_start, speed_end) = pair_range(&mut pos, "speed", speed_text);
 
-    skip(&mut pos, "   state ");
-    let (state_start, state_end) = range(&mut pos, run_text);
+    skip(&mut pos, "   ");
+    let (state_start, state_end) = pair_range(&mut pos, "state", &state_text);
 
     let count_text = if app.run.show_exec_count { "on" } else { "off" };
-    skip(&mut pos, "   count ");
-    let (count_start, count_end) = range(&mut pos, count_text);
+    skip(&mut pos, "   ");
+    let (count_start, count_end) = pair_range(&mut pos, "count", count_text);
 
     let type_text = if app.run.show_instr_type { "on" } else { "off" };
-    skip(&mut pos, "   type ");
-    let (type_start, type_end) = range(&mut pos, type_text);
+    skip(&mut pos, "   ");
+    let (type_start, type_end) = pair_range(&mut pos, "type", type_text);
 
     skip(&mut pos, "   ");
     let (reset_start, reset_end) = range(&mut pos, "reset");
 
-    if col >= core_start && col < core_end {
+    if app.max_cores > 1 && col >= core_start && col < core_end {
         Some(RunButton::Core)
     } else if col >= view_start && col < view_end {
         Some(RunButton::View)
-    } else if !app.run.show_registers
-        && !app.run.show_dyn
-        && col >= region_start
-        && col < region_end
-    {
+    } else if app.run_sidebar_shows_memory() && col >= region_start && col < region_end {
         Some(RunButton::Region)
     } else if col >= fmt_start && col < fmt_end {
         Some(RunButton::Format)
@@ -685,8 +706,7 @@ pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunBut
         } else {
             None
         }
-    } else if !app.run.show_registers && !app.run.show_dyn && col >= bytes_start && col < bytes_end
-    {
+    } else if app.run_sidebar_shows_memory() && col >= bytes_start && col < bytes_end {
         Some(RunButton::Bytes)
     } else if col >= speed_start && col < speed_end {
         Some(RunButton::Speed)
@@ -1389,7 +1409,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         && me.row >= side.y
         && me.row < side.y + side.height
     {
-        if app.run.show_registers {
+        if app.run_sidebar_shows_registers() {
             let max_scroll = max_regs_scroll(app);
             if app.run.regs_scroll > max_scroll {
                 app.run.regs_scroll = max_scroll;
@@ -1496,7 +1516,7 @@ fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {
 
 /// Track which visual row in the register sidebar the mouse is hovering over.
 fn update_sidebar_hover(app: &mut App, me: MouseEvent, area: Rect) {
-    if app.run.sidebar_collapsed || !app.run.show_registers {
+    if app.run.sidebar_collapsed || !app.run_sidebar_shows_registers() {
         app.run.hover_reg_row = None;
         return;
     }
@@ -1520,7 +1540,7 @@ fn update_sidebar_hover(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
-    if !app.run.show_registers {
+    if !app.run_sidebar_shows_registers() || app.run.show_float_regs {
         return;
     }
     let cols = run_cols(app, area);
@@ -1703,6 +1723,15 @@ fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
 
 /// Returns (level_selector, subtab_header, exec_controls, content, controls_bar).
 fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
+    let root_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ])
+        .split(area);
+    let cache_area = root_chunks[1];
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1712,7 +1741,7 @@ fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
             Constraint::Min(0),    // content
             Constraint::Length(3), // shared controls bar
         ])
-        .split(area);
+        .split(cache_area);
     (parts[0], parts[1], parts[2], parts[3], parts[4])
 }
 
@@ -1796,7 +1825,11 @@ fn config_field_from_area(me: MouseEvent, area: Rect) -> Option<ConfigField> {
     ConfigField::from_list_row(row_idx)
 }
 
-fn config_field_hit(me: MouseEvent, area: Rect, hitboxes: &[(u16, u16, u16); 11]) -> Option<ConfigField> {
+fn config_field_hit(
+    me: MouseEvent,
+    area: Rect,
+    hitboxes: &[(u16, u16, u16); 11],
+) -> Option<ConfigField> {
     config_field_from_hitboxes(me, hitboxes).or_else(|| config_field_from_area(me, area))
 }
 
@@ -2264,6 +2297,7 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
 fn update_settings_hover(app: &mut App, me: MouseEvent) {
     app.settings.hover_cache_enabled = false;
     app.settings.hover_pipeline_enabled = false;
+    app.settings.hover_trace_syscalls = false;
     app.settings.hover_run_scope = false;
     app.settings.hover_cpi_field = None;
     app.settings.hover_row = None;
@@ -2288,6 +2322,8 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
         app.settings.hover_row = Some(SETTINGS_ROW_RUN_SCOPE);
     } else if me.row == btn_y.saturating_add(4) {
         app.settings.hover_row = Some(SETTINGS_ROW_PIPELINE_ENABLED);
+    } else if me.row == btn_y.saturating_add(5) {
+        app.settings.hover_row = Some(SETTINGS_ROW_TRACE_SYSCALLS);
     }
     if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
         app.settings.hover_cache_enabled = true;
@@ -2301,6 +2337,10 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     let (pipe_y, pipe_x0, pipe_x1) = app.settings.bool_btn_pipeline_rect.get();
     if me.row == pipe_y && me.column >= pipe_x0 && me.column < pipe_x1 {
         app.settings.hover_pipeline_enabled = true;
+    }
+    let (trace_y, trace_x0, trace_x1) = app.settings.bool_btn_trace_syscalls_rect.get();
+    if me.row == trace_y && me.column >= trace_x0 && me.column < trace_x1 {
+        app.settings.hover_trace_syscalls = true;
     }
 
     if me.row == btn_y.saturating_add(1) {
@@ -2353,6 +2393,13 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
         return;
     }
 
+    let (trace_y, _, _) = app.settings.bool_btn_trace_syscalls_rect.get();
+    if me.row == trace_y {
+        app.set_trace_syscalls(!app.run.trace_syscalls);
+        app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
+        return;
+    }
+
     if me.row == btn_y.saturating_add(1) {
         app.settings.selected = SETTINGS_ROW_MAX_CORES;
         app.settings.cpi_editing = true;
@@ -2382,6 +2429,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 
 fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
     let p = &mut app.pipeline;
+    let state_clickable = !p.faulted;
     p.hover_subtab_main = false;
     p.hover_subtab_config = false;
     p.hover_core = false;
@@ -2419,7 +2467,7 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
         return;
     }
     let (st_y, st_x0, st_x1) = p.btn_state_rect.get();
-    if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
+    if state_clickable && me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
         p.hover_state = true;
         return;
     }
@@ -2440,12 +2488,14 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
     }
 
     // Config row hover
-    let rects = p.config_row_rects.get();
-    for i in 0..crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS {
-        let (ry, rx0, rx1) = rects[i];
-        if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
-            p.hover_config_row = Some(i);
-            return;
+    if matches!(p.subtab, crate::ui::pipeline::PipelineSubtab::Config) {
+        let rects = p.config_row_rects.get();
+        for i in 0..crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS {
+            let (ry, rx0, rx1) = rects[i];
+            if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
+                p.hover_config_row = Some(i);
+                return;
+            }
         }
     }
 }
@@ -2484,7 +2534,12 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
     let (st_y, st_x0, st_x1) = app.pipeline.btn_state_rect.get();
     if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
         if app.pipeline.enabled && !app.pipeline.faulted {
-            if app.run.is_running {
+            if app.pipeline.halted {
+                app.restart_simulation();
+                if app.can_start_run() {
+                    app.run.is_running = true;
+                }
+            } else if app.run.is_running {
                 app.run.is_running = false;
             } else {
                 app.resume_selected_hart();
@@ -2512,42 +2567,92 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
     }
 
     // Config row clicks — toggle on click like Cache tab
-    let rects = app.pipeline.config_row_rects.get();
-    for i in 0..PipelineBypassConfig::CONFIG_ROWS {
-        let (ry, rx0, rx1) = rects[i];
-        if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
-            match i {
-                0 => app.pipeline.bypass.ex_to_ex = !app.pipeline.bypass.ex_to_ex,
-                1 => app.pipeline.bypass.mem_to_ex = !app.pipeline.bypass.mem_to_ex,
-                2 => app.pipeline.bypass.wb_to_id = !app.pipeline.bypass.wb_to_id,
-                3 => app.pipeline.bypass.store_to_load = !app.pipeline.bypass.store_to_load,
-                4 => {
-                    app.pipeline.mode = match app.pipeline.mode {
-                        PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
-                        PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
+    if matches!(app.pipeline.subtab, PipelineSubtab::Config) {
+        let rects = app.pipeline.config_row_rects.get();
+        for i in 0..PipelineBypassConfig::CONFIG_ROWS {
+            let (ry, rx0, rx1) = rects[i];
+            if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
+                match i {
+                    0 => app.pipeline.bypass.ex_to_ex = !app.pipeline.bypass.ex_to_ex,
+                    1 => app.pipeline.bypass.mem_to_ex = !app.pipeline.bypass.mem_to_ex,
+                    2 => app.pipeline.bypass.wb_to_id = !app.pipeline.bypass.wb_to_id,
+                    3 => app.pipeline.bypass.store_to_load = !app.pipeline.bypass.store_to_load,
+                    4 => {
+                        app.pipeline.mode = match app.pipeline.mode {
+                            PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
+                            PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
+                        }
                     }
-                }
-                5 => {
-                    app.pipeline.branch_resolve = match app.pipeline.branch_resolve {
-                        BranchResolve::Id => BranchResolve::Ex,
-                        BranchResolve::Ex => BranchResolve::Mem,
-                        BranchResolve::Mem => BranchResolve::Id,
+                    5 => {
+                        app.pipeline.branch_resolve = match app.pipeline.branch_resolve {
+                            BranchResolve::Id => BranchResolve::Ex,
+                            BranchResolve::Ex => BranchResolve::Mem,
+                            BranchResolve::Mem => BranchResolve::Id,
+                        }
                     }
+                    6 => {
+                        let next = match app.pipeline.predict {
+                            BranchPredict::NotTaken => BranchPredict::Taken,
+                            BranchPredict::Taken => BranchPredict::Btfnt,
+                            BranchPredict::Btfnt => BranchPredict::TwoBit,
+                            BranchPredict::TwoBit => BranchPredict::NotTaken,
+                        };
+                        app.pipeline.set_predict(next);
+                    }
+                    7 => {
+                        let idx = crate::ui::pipeline::FuKind::Alu.index();
+                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            app.pipeline.fu_capacity[idx] + 1
+                        };
+                    }
+                    8 => {
+                        let idx = crate::ui::pipeline::FuKind::Mul.index();
+                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            app.pipeline.fu_capacity[idx] + 1
+                        };
+                    }
+                    9 => {
+                        let idx = crate::ui::pipeline::FuKind::Div.index();
+                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            app.pipeline.fu_capacity[idx] + 1
+                        };
+                    }
+                    10 => {
+                        let idx = crate::ui::pipeline::FuKind::Fpu.index();
+                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            app.pipeline.fu_capacity[idx] + 1
+                        };
+                    }
+                    11 => {
+                        let idx = crate::ui::pipeline::FuKind::Lsu.index();
+                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            app.pipeline.fu_capacity[idx] + 1
+                        };
+                    }
+                    12 => {
+                        let idx = crate::ui::pipeline::FuKind::Sys.index();
+                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            app.pipeline.fu_capacity[idx] + 1
+                        };
+                    }
+                    _ => {}
                 }
-                6 => {
-                    let next = match app.pipeline.predict {
-                        BranchPredict::NotTaken => BranchPredict::Taken,
-                        BranchPredict::Taken => BranchPredict::Btfnt,
-                        BranchPredict::Btfnt => BranchPredict::TwoBit,
-                        BranchPredict::TwoBit => BranchPredict::NotTaken,
-                    };
-                    app.pipeline.set_predict(next);
-                }
-                _ => {}
+                app.reconfigure_pipeline_model();
+                app.pipeline.config_cursor = i;
+                return;
             }
-            app.reconfigure_pipeline_model();
-            app.pipeline.config_cursor = i;
-            return;
         }
     }
 }

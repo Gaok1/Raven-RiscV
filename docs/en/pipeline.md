@@ -44,7 +44,7 @@ Each visible pipeline step corresponds to exactly one CPU clock cycle. Cache lat
 - Computes effective addresses for loads/stores/atomics
 - Applies forwarding again for EX-stage consumers
 - Holds instructions for the configured `CPIConfig` latency in both pipeline modes
-- Uses the functional-unit panel only as an expanded visualization when that mode is enabled
+- Always renders the functional-unit panel in the TUI so execution opportunities stay visible
 
 ### MEM
 
@@ -161,9 +161,16 @@ Visual markers:
 
 ---
 
-## Functional-unit mode
+## Execution model
 
-In functional-unit mode, `EX` can remain busy for multiple cycles depending on class:
+The pipeline config currently exposes two execution models:
+
+- `Serialized`
+- `Parallel UFs`
+
+Both use the same functional-unit panel in the UI. The difference is semantic, not cosmetic.
+
+In the current implementation, execution still behaves like a single in-order EX path, and `EX` can remain busy for multiple cycles depending on class:
 
 - `ALU`
 - `MUL`
@@ -175,7 +182,7 @@ In functional-unit mode, `EX` can remain busy for multiple cycles depending on c
 - `SYSTEM`
 - `FP`
 
-While a long-latency instruction holds `EX`, the front of the pipe remains blocked and Raven keeps that state visible without letting unrelated IF latency progress incorrectly. In `FunctionalUnits`, the same latency is also broken down by FU in the expanded EX panel.
+While a long-latency instruction holds `EX`, the front of the pipe remains blocked and Raven keeps that state visible without letting unrelated IF latency progress incorrectly. The functional-unit panel breaks that latency down by FU so the user can see which resource is active and where parallelism could exist once the execution model allows it.
 
 ---
 

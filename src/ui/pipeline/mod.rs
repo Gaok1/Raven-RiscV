@@ -113,7 +113,7 @@ impl InstrClass {
                 Self::Branch
             }
             Ok(Jal { .. } | Jalr { .. }) => Self::Jump,
-            Ok(Ecall | Ebreak | Halt) => Self::System,
+            Ok(Ecall | Ebreak | Halt | Fence | FenceI) => Self::System,
             Ok(
                 Flw { .. }
                 | Fsw { .. }
@@ -201,16 +201,16 @@ impl InstrClass {
                 | Fsw { rs1, rs2, .. },
             ) => (None, Some(rs1), Some(rs2)),
             Ok(
-                ScW { rd, rs1, rs2 }
-                | AmoswapW { rd, rs1, rs2 }
-                | AmoaddW { rd, rs1, rs2 }
-                | AmoxorW { rd, rs1, rs2 }
-                | AmoandW { rd, rs1, rs2 }
-                | AmoorW { rd, rs1, rs2 }
-                | AmomaxW { rd, rs1, rs2 }
-                | AmominW { rd, rs1, rs2 }
-                | AmomaxuW { rd, rs1, rs2 }
-                | AmominuW { rd, rs1, rs2 },
+                ScW { rd, rs1, rs2, .. }
+                | AmoswapW { rd, rs1, rs2, .. }
+                | AmoaddW { rd, rs1, rs2, .. }
+                | AmoxorW { rd, rs1, rs2, .. }
+                | AmoandW { rd, rs1, rs2, .. }
+                | AmoorW { rd, rs1, rs2, .. }
+                | AmomaxW { rd, rs1, rs2, .. }
+                | AmominW { rd, rs1, rs2, .. }
+                | AmomaxuW { rd, rs1, rs2, .. }
+                | AmominuW { rd, rs1, rs2, .. },
             ) => (Some(rd), Some(rs1), Some(rs2)),
             // B-type (no rd, has rs1+rs2)
             Ok(
@@ -296,8 +296,8 @@ pub enum PipelineMode {
 impl PipelineMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::SingleCycle => "Single-cycle",
-            Self::FunctionalUnits => "Functional Units",
+            Self::SingleCycle => "Serialized",
+            Self::FunctionalUnits => "Parallel UFs",
         }
     }
 }
@@ -329,7 +329,7 @@ pub struct PipelineBypassConfig {
 }
 
 impl PipelineBypassConfig {
-    pub const CONFIG_ROWS: usize = 7;
+    pub const CONFIG_ROWS: usize = 13;
 
     pub const fn new(ex_to_ex: bool, mem_to_ex: bool, wb_to_id: bool, store_to_load: bool) -> Self {
         Self {
@@ -523,10 +523,74 @@ impl Stage {
     }
 }
 
+// ── Functional-unit names ─────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FuKind {
+    Alu,
+    Mul,
+    Div,
+    Fpu,
+    Lsu,
+    Sys,
+}
+
+impl FuKind {
+    pub const COUNT: usize = 6;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Alu => "ALU",
+            Self::Mul => "MUL",
+            Self::Div => "DIV",
+            Self::Fpu => "FPU",
+            Self::Lsu => "LSU",
+            Self::Sys => "SYS",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    pub fn all() -> [FuKind; Self::COUNT] {
+        [
+            Self::Alu,
+            Self::Mul,
+            Self::Div,
+            Self::Fpu,
+            Self::Lsu,
+            Self::Sys,
+        ]
+    }
+
+    pub fn from_class(class: InstrClass) -> Option<Self> {
+        match class {
+            InstrClass::Alu | InstrClass::Branch | InstrClass::Jump => Some(Self::Alu),
+            InstrClass::Mul => Some(Self::Mul),
+            InstrClass::Div => Some(Self::Div),
+            InstrClass::Fp => Some(Self::Fpu),
+            InstrClass::Load | InstrClass::Store => Some(Self::Lsu),
+            InstrClass::System => Some(Self::Sys),
+            InstrClass::Unknown => None,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct FuState {
+    pub kind: Option<FuKind>,
+    pub slot: Option<PipeSlot>,
+    pub busy_cycles_left: u8,
+}
+
+pub type FuBank = [Vec<FuState>; FuKind::COUNT];
+
 // ── Pipeline slot ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct PipeSlot {
+    pub seq: u64,
     pub gantt_id: u64,
     pub pc: u32,
     pub word: u32,
@@ -566,6 +630,7 @@ pub struct PipeSlot {
 impl PipeSlot {
     pub fn bubble() -> Self {
         Self {
+            seq: 0,
             gantt_id: 0,
             pc: 0,
             word: 0,
@@ -598,6 +663,7 @@ impl PipeSlot {
         let (rd, rs1, rs2) = InstrClass::operands(word);
         let disasm = disasm_word(word);
         Self {
+            seq: 0,
             gantt_id: 0,
             pc,
             word,
@@ -633,12 +699,20 @@ pub const MAX_GANTT_COLS: usize = 200;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GanttCell {
-    Empty,              // instruction not in pipeline yet / already done
-    InStage(Stage),     // instruction is in this stage
-    Speculative(Stage), // instruction is in this stage but was fetched speculatively
-    Stall,              // stalled in current stage
-    Bubble,             // NOP bubble occupies this slot
-    Flush,              // instruction was flushed (branch misprediction)
+    Empty,                 // instruction not in pipeline yet / already done
+    InStage(Stage),        // instruction is in this stage
+    InFu(FuKind),          // instruction is executing in a specific functional unit
+    Speculative(Stage),    // instruction is in this stage but was fetched speculatively
+    SpeculativeFu(FuKind), // instruction is executing speculatively in a FU
+    Stall,                 // stalled in current stage
+    Bubble,                // NOP bubble occupies this slot
+    Flush,                 // instruction was flushed (branch misprediction)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GanttTrack {
+    Stage(Stage),
+    Fu(FuKind),
 }
 
 #[derive(Clone)]
@@ -653,8 +727,8 @@ pub struct GanttRow {
     pub first_cycle: u64,
     /// True if this row has reached WB (commit) or been flushed.
     pub done: bool,
-    /// The last stage emitted — used to detect stalls (same stage two cycles in a row).
-    pub last_stage: Option<Stage>,
+    /// The last execution location emitted — used to detect stalls.
+    pub last_stage: Option<GanttTrack>,
 }
 
 pub(crate) fn gantt_window_bounds(rows: &[&GanttRow], history_cols: usize) -> (u64, u64) {
@@ -676,6 +750,14 @@ pub(crate) fn gantt_window_bounds(rows: &[&GanttRow], history_cols: usize) -> (u
     let end = max_end.max(min_start + 1);
     let start = end.saturating_sub(history_cols).max(min_start);
     (start, end)
+}
+
+pub(crate) fn gantt_view_rows<'a>(
+    rows: &'a VecDeque<GanttRow>,
+    scroll: usize,
+    visible_rows: usize,
+) -> Vec<&'a GanttRow> {
+    rows.iter().skip(scroll).take(visible_rows.max(1)).collect()
 }
 
 pub(crate) fn gantt_visible_rows(gantt_area_height: u16) -> usize {
@@ -760,6 +842,7 @@ pub struct PipelineConfig {
     pub bypass: PipelineBypassConfig,
     pub branch_resolve: BranchResolve,
     pub mode: PipelineMode,
+    pub fu_capacity: [u8; FuKind::COUNT],
     pub predict: BranchPredict,
     pub speed: PipelineSpeed,
 }
@@ -771,6 +854,7 @@ impl Default for PipelineConfig {
             bypass: PipelineBypassConfig::default(),
             branch_resolve: BranchResolve::Ex,
             mode: PipelineMode::SingleCycle,
+            fu_capacity: [1; FuKind::COUNT],
             predict: BranchPredict::NotTaken,
             speed: PipelineSpeed::Normal,
         }
@@ -784,6 +868,7 @@ impl PipelineConfig {
             bypass: state.bypass,
             branch_resolve: state.branch_resolve,
             mode: state.mode,
+            fu_capacity: state.fu_capacity,
             predict: state.predict,
             speed: state.speed,
         }
@@ -794,6 +879,7 @@ impl PipelineConfig {
         state.bypass = self.bypass;
         state.branch_resolve = self.branch_resolve;
         state.mode = self.mode;
+        state.fu_capacity = self.fu_capacity;
         state.set_predict(self.predict);
         state.speed = self.speed;
     }
@@ -809,7 +895,35 @@ pub fn serialize_pipeline_config(cfg: &PipelineConfig) -> String {
         "bypass.store_to_load={}\n",
         cfg.bypass.store_to_load
     ));
-    s.push_str(&format!("mode={:?}\n", cfg.mode));
+    let mode = match cfg.mode {
+        PipelineMode::SingleCycle => "Serialized",
+        PipelineMode::FunctionalUnits => "ParallelUFs",
+    };
+    s.push_str(&format!("mode={mode}\n"));
+    s.push_str(&format!(
+        "fu.alu={}\n",
+        cfg.fu_capacity[FuKind::Alu.index()]
+    ));
+    s.push_str(&format!(
+        "fu.mul={}\n",
+        cfg.fu_capacity[FuKind::Mul.index()]
+    ));
+    s.push_str(&format!(
+        "fu.div={}\n",
+        cfg.fu_capacity[FuKind::Div.index()]
+    ));
+    s.push_str(&format!(
+        "fu.fpu={}\n",
+        cfg.fu_capacity[FuKind::Fpu.index()]
+    ));
+    s.push_str(&format!(
+        "fu.lsu={}\n",
+        cfg.fu_capacity[FuKind::Lsu.index()]
+    ));
+    s.push_str(&format!(
+        "fu.sys={}\n",
+        cfg.fu_capacity[FuKind::Sys.index()]
+    ));
     s.push_str(&format!("branch_resolve={:?}\n", cfg.branch_resolve));
     s.push_str(&format!("predict={:?}\n", cfg.predict));
     s.push_str(&format!("speed={:?}\n", cfg.speed));
@@ -833,12 +947,17 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
             .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
             .unwrap_or(default)
     };
+    let get_u8 = |key: &str, default: u8| -> u8 {
+        map.get(key)
+            .and_then(|v| v.parse::<u8>().ok())
+            .filter(|v| *v >= 1)
+            .unwrap_or(default)
+    };
 
-    let mode = match map.get("mode").map(String::as_str).unwrap_or("singlecycle") {
-        "singlecycle" | "single-cycle" => PipelineMode::SingleCycle,
-        "functionalunits" | "functional-units" | "functional_units" => {
-            PipelineMode::FunctionalUnits
-        }
+    let mode = match map.get("mode").map(String::as_str).unwrap_or("serialized") {
+        "singlecycle" | "single-cycle" | "serialized" => PipelineMode::SingleCycle,
+        "functionalunits" | "functional-units" | "functional_units" | "parallelufs"
+        | "parallel-ufs" | "parallel_ufs" => PipelineMode::FunctionalUnits,
         other => return Err(format!("Unknown pipeline mode: {other}")),
     };
 
@@ -884,11 +1003,21 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
         }
     };
 
+    let fu_capacity = [
+        get_u8("fu.alu", 1),
+        get_u8("fu.mul", 1),
+        get_u8("fu.div", 1),
+        get_u8("fu.fpu", 1),
+        get_u8("fu.lsu", 1),
+        get_u8("fu.sys", 1),
+    ];
+
     Ok(PipelineConfig {
         enabled: get_bool("enabled", true),
         bypass,
         branch_resolve,
         mode,
+        fu_capacity,
         predict,
         speed,
     })
@@ -904,6 +1033,7 @@ pub struct PipelineSimState {
     pub mode: PipelineMode,
     pub predict: BranchPredict,
     pub predictor: predictor::PredictorState,
+    pub program_range: Option<(u32, u32)>,
 
     // ── Pipeline own state (shares cpu/mem with RunState) ──
     pub fetch_pc: u32,
@@ -912,6 +1042,8 @@ pub struct PipelineSimState {
 
     // ── Stages [IF=0, ID=1, EX=2, MEM=3, WB=4] ──
     pub stages: [Option<PipeSlot>; 5],
+    pub fu_bank: FuBank,
+    pub fu_capacity: [u8; FuKind::COUNT],
     pub fu_busy: [u8; 7],
 
     // ── Stats ──
@@ -940,6 +1072,7 @@ pub struct PipelineSimState {
     pub gantt_visible_rows_cache: Cell<usize>,
     pub gantt_max_scroll_cache: Cell<usize>,
     pub next_gantt_id: u64,
+    pub next_seq: u64,
 
     // ── Active hazard message (set each tick) ──
     pub hazard_msgs: Vec<(HazardType, String)>,
@@ -974,9 +1107,23 @@ pub struct PipelineSimState {
     pub btn_export_results_rect: Cell<(u16, u16, u16)>,
     pub btn_import_cfg_rect: Cell<(u16, u16, u16)>,
     pub btn_export_cfg_rect: Cell<(u16, u16, u16)>,
+    pub gantt_area_rect: Cell<(u16, u16, u16, u16)>,
 }
 
 impl PipelineSimState {
+    pub fn clear_hover_state(&mut self) {
+        self.hover_subtab_main = false;
+        self.hover_subtab_config = false;
+        self.hover_core = false;
+        self.hover_reset = false;
+        self.hover_speed = false;
+        self.hover_state = false;
+        self.hover_export_results = false;
+        self.hover_import_cfg = false;
+        self.hover_export_cfg = false;
+        self.hover_config_row = None;
+    }
+
     pub fn new() -> Self {
         Self {
             enabled: true,
@@ -985,10 +1132,13 @@ impl PipelineSimState {
             mode: PipelineMode::SingleCycle,
             predict: BranchPredict::NotTaken,
             predictor: predictor::PredictorState::default(),
+            program_range: None,
             fetch_pc: 0,
             halted: false,
             faulted: false,
             stages: Default::default(),
+            fu_bank: std::array::from_fn(|_| Vec::new()),
+            fu_capacity: [1; FuKind::COUNT],
             fu_busy: [0; 7],
             cycle_count: 0,
             instr_committed: 0,
@@ -1006,6 +1156,7 @@ impl PipelineSimState {
             gantt_visible_rows_cache: Cell::new(0),
             gantt_max_scroll_cache: Cell::new(0),
             next_gantt_id: 1,
+            next_seq: 1,
             hazard_msgs: Vec::new(),
             hazard_traces: Vec::new(),
             last_cycle_cache_only: false,
@@ -1031,7 +1182,13 @@ impl PipelineSimState {
             btn_export_results_rect: Cell::new((0, 0, 0)),
             btn_import_cfg_rect: Cell::new((0, 0, 0)),
             btn_export_cfg_rect: Cell::new((0, 0, 0)),
+            gantt_area_rect: Cell::new((0, 0, 0, 0)),
         }
+    }
+
+    pub fn set_program_range(&mut self, base_pc: u32, text_words: usize) {
+        let bytes = (text_words as u32).saturating_mul(4);
+        self.program_range = Some((base_pc, base_pc.saturating_add(bytes)));
     }
 
     /// Reset pipeline stages and stats (shares cpu/mem with RunState).
@@ -1039,6 +1196,7 @@ impl PipelineSimState {
     /// Used when the user manually moves the PC (e.g. clicking an instruction).
     pub fn redirect_pc(&mut self, new_pc: u32) {
         self.stages = Default::default();
+        self.fu_bank = std::array::from_fn(|_| Vec::new());
         self.fu_busy = [0; 7];
         self.fetch_pc = new_pc;
         self.halted = false;
@@ -1066,6 +1224,7 @@ impl PipelineSimState {
     pub fn reset_stages(&mut self, base_pc: u32) {
         self.fetch_pc = base_pc;
         self.stages = Default::default();
+        self.fu_bank = std::array::from_fn(|_| Vec::new());
         self.fu_busy = [0; 7];
         self.reset_stats();
         self.gantt.clear();
@@ -1073,6 +1232,7 @@ impl PipelineSimState {
         self.gantt_visible_rows_cache.set(0);
         self.gantt_max_scroll_cache.set(0);
         self.next_gantt_id = 1;
+        self.next_seq = 1;
         self.hazard_msgs.clear();
         self.hazard_traces.clear();
         self.last_cycle_cache_only = false;

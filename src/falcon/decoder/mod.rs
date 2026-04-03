@@ -33,7 +33,14 @@ pub fn decode(word: u32) -> Result<Instruction, FalconError> {
         OPC_AUIPC => itype::decode_auipc(word),
         OPC_SYSTEM => itype::decode_system(word),
         OPC_AMO => atype::decode(word),
-        0x0F => Ok(Instruction::Fence), // MISC-MEM: fence/fence.i → nop
+        0x0F => {
+            let funct3 = bits(word, 14, 12) as u8;
+            match funct3 {
+                0x0 => Ok(Instruction::Fence),
+                0x1 => Ok(Instruction::FenceI),
+                _ => Err(FalconError::Decode("unknown MISC-MEM instruction")),
+            }
+        }
         // RV32F
         OPC_FLW => fptype::decode_flw(word),
         OPC_FSW => fptype::decode_fsw(word),

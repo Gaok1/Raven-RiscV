@@ -147,11 +147,13 @@ printf "42\n" | raven run calculator.fas --nout
 
 When `--pipeline` is enabled, Raven still writes the normal cache statistics, but also includes a pipeline summary:
 
+- scope (`selected` for pipeline-only export, `aggregate` in cache/program summaries)
 - committed instructions
 - pipeline cycles
 - stall count
 - flush count
 - pipeline CPI
+- stall-tag breakdown (`RAW`, `load-use`, `branch`, `FU`, `mem`)
 
 ### Assertions
 
@@ -401,8 +403,17 @@ Controls pipeline-specific behavior used by the TUI pipeline tab and by `raven r
 ```ini
 # Raven Pipeline Config v1
 enabled=true
-forwarding=true
+bypass.ex_to_ex=true
+bypass.mem_to_ex=true
+bypass.wb_to_id=true
+bypass.store_to_load=false
 mode=SingleCycle
+fu.alu=1
+fu.mul=1
+fu.div=1
+fu.fpu=1
+fu.lsu=1
+fu.sys=1
 branch_resolve=Ex
 predict=NotTaken
 speed=Normal
@@ -411,10 +422,14 @@ speed=Normal
 Fields:
 
 - `enabled` — pipeline enabled in the TUI
-- `forwarding` — enable bypass/forwarding paths
-- `mode` — `SingleCycle` or `FunctionalUnits`
+- `bypass.ex_to_ex` — enable EX->EX bypass
+- `bypass.mem_to_ex` — enable MEM->EX bypass
+- `bypass.wb_to_id` — enable WB->ID bypass
+- `bypass.store_to_load` — enable store-to-load forwarding
+- `mode` — legacy field currently mapped in the UI as `Serialized` or `Parallel UFs`
+- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — number of functional units of each type used by `Parallel UFs` mode
 - `branch_resolve` — `Id`, `Ex`, or `Mem`
-- `predict` — `NotTaken` or `Taken`
+- `predict` — `NotTaken`, `Taken`, `Btfnt`, or `TwoBit`
 - `speed` — TUI playback speed (`Slow`, `Normal`, `Fast`, `Instant`)
 
 Export / import from the TUI: **Pipeline tab → `Ctrl+E` / `Ctrl+L`**

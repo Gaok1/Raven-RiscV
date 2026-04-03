@@ -194,16 +194,21 @@ fn branch_outcome(word: u32, addr: u32, cpu: &crate::falcon::Cpu) -> Option<(boo
     }
 }
 
+use crate::falcon::arch::*;
 /// Feature 2: instruction type badge color
 fn type_badge(word: u32) -> (&'static str, Color) {
-    match word & 0x7f {
-        0x33 => ("[R]", Color::LightRed),
-        0x13 | 0x03 | 0x67 | 0x73 => ("[I]", Color::LightBlue),
-        0x23 => ("[S]", Color::LightYellow),
-        0x63 => ("[B]", Color::LightGreen),
-        0x37 | 0x17 => ("[U]", Color::LightMagenta),
-        0x6f => ("[J]", Color::LightCyan),
-        _ => ("[ ]", Color::DarkGray),
+    match (word & 0x7f) as u8 {
+        OPC_RTYPE => ("[R]", Color::LightRed),
+        OPC_OPIMM | OPC_LOAD | OPC_JALR | OPC_SYSTEM | 0x0F => ("[I]", Color::LightBlue),
+        OPC_STORE => ("[S]", Color::LightYellow),
+        OPC_BRANCH => ("[B]", Color::LightGreen),
+        OPC_LUI | OPC_AUIPC => ("[U]", Color::LightMagenta),
+        OPC_JAL => ("[J]", Color::LightCyan),
+        OPC_FLW | OPC_FSW | OPC_FMADD | OPC_FMSUB | OPC_FNMSUB | OPC_FNMADD | OPC_FP => {
+            ("[F]", Color::LightBlue)
+        }
+        OPC_AMO => ("[A]", Color::LightRed),
+        _ => ("[UNDECODE]", Color::DarkGray),
     }
 }
 

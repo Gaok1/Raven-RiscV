@@ -5,4 +5,4 @@ target = "riscv32im-unknown-none-elf"
 build-std = ["core", "alloc"]
 
 [target.riscv32im-unknown-none-elf]
-rustflags = ["-C", "link-arg=-e", "-C", "link-arg=_start", "-C", "link-arg=--gc-sections"]
+rustflags = ["-C", "target-feature=+a,+f", "-C", "link-arg=-e", "-C", "link-arg=_start", "-C", "link-arg=--gc-sections"]
