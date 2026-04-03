@@ -201,7 +201,13 @@ fn sequential_single_step_updates_cache_history_each_instruction() {
     app.set_cache_enabled(true);
     load_program(
         &mut app,
-        &[".text", ".globl _start", "_start:", "addi a0, zero, 1", "halt"],
+        &[
+            ".text",
+            ".globl _start",
+            "_start:",
+            "addi a0, zero, 1",
+            "halt",
+        ],
     );
 
     app.single_step();
@@ -218,7 +224,13 @@ fn pipeline_single_step_updates_cache_history_on_commit() {
     app.pipeline.enabled = true;
     load_program(
         &mut app,
-        &[".text", ".globl _start", "_start:", "addi a0, zero, 1", "halt"],
+        &[
+            ".text",
+            ".globl _start",
+            "_start:",
+            "addi a0, zero, 1",
+            "halt",
+        ],
     );
 
     app.single_step();
@@ -403,7 +415,6 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_multilevel_mem_stal
     assert!(mem_slot.disasm.starts_with("lw"));
     assert!(mem_slot.mem_stall_cycles > 0);
 }
-
 
 #[test]
 fn pipeline_tab_single_step_keeps_single_cycle_alu_latency_visible_in_ex() {
@@ -604,6 +615,45 @@ fn multi_core_global_step_preserves_exited_core_state() {
 }
 
 #[test]
+fn sequential_linux_exit_is_terminal_not_resumable() {
+    let mut app = App::new(None);
+    app.pipeline.enabled = false;
+    app.tab = Tab::Run;
+    load_program(
+        &mut app,
+        &[
+            ".text",
+            ".globl _start",
+            "_start:",
+            "li a0, 7",
+            "li a7, 93",
+            "ecall",
+            "addi a0, zero, 9",
+        ],
+    );
+
+    for _ in 0..12 {
+        app.single_step();
+        if app.core_status(app.selected_core) == HartLifecycle::Exited {
+            break;
+        }
+    }
+
+    let exit_pc = app.run.cpu.pc;
+    assert_eq!(app.run.cpu.exit_code, Some(7));
+    assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
+
+    app.resume_selected_hart();
+    assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
+
+    app.single_step();
+    assert_eq!(app.run.cpu.pc, exit_pc);
+    assert_eq!(app.run.cpu.x[10], 7);
+    assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
+    assert!(!app.run.faulted, "{}", console_tail(&app));
+}
+
+#[test]
 fn pipeline_halt_is_terminal_not_resumable() {
     let mut app = App::new(None);
     app.pipeline.enabled = true;
@@ -635,6 +685,46 @@ fn pipeline_halt_is_terminal_not_resumable() {
     app.single_step();
     assert_eq!(app.run.cpu.x[10], 0);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
+}
+
+#[test]
+fn pipeline_linux_exit_in_run_tab_is_terminal_not_resumable() {
+    let mut app = App::new(None);
+    app.pipeline.enabled = true;
+    app.tab = Tab::Run;
+    load_program(
+        &mut app,
+        &[
+            ".text",
+            ".globl _start",
+            "_start:",
+            "li a0, 7",
+            "li a7, 93",
+            "ecall",
+            "addi a0, zero, 9",
+        ],
+    );
+
+    for _ in 0..32 {
+        app.single_step();
+        if app.core_status(app.selected_core) == HartLifecycle::Exited {
+            break;
+        }
+    }
+
+    let exit_pc = app.run.cpu.pc;
+    assert_eq!(app.run.cpu.exit_code, Some(7), "{}", console_tail(&app));
+    assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
+
+    app.resume_selected_hart();
+    assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
+
+    app.single_step();
+    assert_eq!(app.run.cpu.pc, exit_pc);
+    assert_eq!(app.run.cpu.x[10], 7);
+    assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
+    assert!(!app.pipeline.faulted, "{}", console_tail(&app));
+    assert!(!app.run.faulted, "{}", console_tail(&app));
 }
 
 #[test]
@@ -1184,7 +1274,6 @@ fn rust_to_raven_debug_elf_runs_multihart_in_pipeline_without_fault() {
     );
 }
 
-#[test]
 fn rust_to_raven_debug_elf_single_core_pipeline_does_not_panic() {
     let mut app = App::new(None);
     app.max_cores = 1;
@@ -1218,6 +1307,44 @@ fn rust_to_raven_debug_elf_single_core_pipeline_does_not_panic() {
         console_tail(&app),
         trace_tail(&app)
     );
+}
+
+#[test]
+fn rebuild_harts_copies_parallel_fu_config_to_background_cores() {
+    let mut app = App::new(None);
+    app.max_cores = 3;
+    app.pipeline.enabled = true;
+    app.pipeline.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    app.pipeline.fu_capacity[crate::ui::pipeline::FuKind::Alu.index()] = 3;
+    app.pipeline.fu_capacity[crate::ui::pipeline::FuKind::Lsu.index()] = 2;
+    app.rebuild_harts_for_debug();
+
+    let bg = app.harts[1].pipeline.as_ref().expect("background pipeline");
+    assert_eq!(bg.mode, app.pipeline.mode);
+    assert_eq!(bg.fu_capacity, app.pipeline.fu_capacity);
+    assert_eq!(bg.program_range, app.pipeline.program_range);
+}
+
+#[test]
+fn hart_start_child_inherits_parallel_fu_config() {
+    let mut app = App::new(None);
+    app.max_cores = 2;
+    app.pipeline.enabled = true;
+    app.pipeline.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    app.pipeline.fu_capacity[crate::ui::pipeline::FuKind::Div.index()] = 4;
+    app.pipeline.fu_capacity[crate::ui::pipeline::FuKind::Lsu.index()] = 2;
+    app.run.cpu.pending_hart_start = Some(crate::falcon::registers::HartStartRequest {
+        entry_pc: app.run.base_pc,
+        stack_ptr: 0x0010_0000,
+        arg: 0x1234_5678,
+    });
+
+    app.process_pending_hart_start_for_selected();
+
+    let child = app.harts[1].pipeline.as_ref().expect("child pipeline");
+    assert_eq!(child.mode, app.pipeline.mode);
+    assert_eq!(child.fu_capacity, app.pipeline.fu_capacity);
+    assert_eq!(app.harts[1].cpu.read(10), 0x1234_5678);
 }
 
 #[test]

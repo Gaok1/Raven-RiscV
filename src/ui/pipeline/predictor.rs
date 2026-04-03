@@ -220,6 +220,9 @@ pub(super) fn resolve_branch(state: &mut PipelineSimState, resolve_stage: usize)
     }
 
     state.flush_count += 1;
+    state.stall_by_type[HazardType::BranchFlush.as_stall_index().unwrap()] = state.stall_by_type
+        [HazardType::BranchFlush.as_stall_index().unwrap()]
+    .saturating_add(state.branch_resolve.flush_depth() as u64);
     for i in 0..resolve_stage {
         let should_flush = state.stages[i]
             .as_ref()
@@ -240,6 +243,31 @@ pub(super) fn resolve_branch(state: &mut PipelineSimState, resolve_stage: usize)
                 s.hazard = Some(HazardType::BranchFlush);
             }
         }
+    }
+    let mut flushed_fu_slots = 0usize;
+    for group in &mut state.fu_bank {
+        for fu in group.iter_mut() {
+            let should_flush = fu
+                .slot
+                .as_ref()
+                .map(|s| !s.is_bubble && s.is_speculative)
+                .unwrap_or(false);
+            if should_flush {
+                fu.slot = None;
+                fu.busy_cycles_left = 0;
+                flushed_fu_slots += 1;
+            }
+        }
+        group.retain(|fu| fu.slot.is_some());
+    }
+    for _ in 0..flushed_fu_slots {
+        super::sim::push_trace(
+            state,
+            TraceKind::Hazard(HazardType::BranchFlush),
+            resolve_stage,
+            Stage::EX as usize,
+            detail.clone(),
+        );
     }
     state.fetch_pc = actual_target;
 }

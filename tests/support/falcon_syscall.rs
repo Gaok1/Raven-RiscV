@@ -1,8 +1,8 @@
 use super::{FALCON_HART_START, handle_syscall};
-use crate::falcon::syscall::handle_syscall_with_cycle_override;
 use crate::falcon::memory::Ram;
 use crate::falcon::registers::Cpu;
-use crate::ui::Console;
+use crate::falcon::syscall::handle_syscall_with_cycle_override;
+use crate::ui::{Console, console::ConsoleColor};
 
 #[test]
 fn hart_start_syscall_emits_pending_request() {
@@ -49,4 +49,37 @@ fn get_cycle_count_uses_override_when_provided() {
     assert!(cont);
     assert_eq!(cpu.read(10), 7);
     assert_eq!(cpu.read(11), 0);
+}
+
+#[test]
+fn syscall_trace_logs_non_io_calls_in_warning_color() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+    console.trace_syscalls = true;
+
+    let cont = handle_syscall_with_cycle_override(1031, &mut cpu, &mut mem, &mut console, Some(7))
+        .expect("syscall");
+
+    assert!(cont);
+    let line = console.lines.last().expect("trace line");
+    assert_eq!(line.color, ConsoleColor::Warning);
+    assert!(line.text.contains("syscall 1031 (get_cycle_count)"));
+}
+
+#[test]
+fn syscall_trace_skips_io_calls() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+    console.trace_syscalls = true;
+
+    cpu.write(10, 1);
+    cpu.write(11, 0);
+    cpu.write(12, 0);
+
+    let cont = handle_syscall(64, &mut cpu, &mut mem, &mut console).expect("syscall");
+
+    assert!(cont);
+    assert!(console.lines.is_empty());
 }

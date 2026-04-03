@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum ConsoleColor {
     #[default]
     Normal,
@@ -44,6 +44,8 @@ pub struct Console {
     pub reading: bool,
     /// Current line being typed by the user
     pub current: String,
+    /// When true, non-I/O syscalls emit yellow debug lines in the console.
+    pub trace_syscalls: bool,
 }
 
 impl Console {

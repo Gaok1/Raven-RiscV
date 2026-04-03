@@ -145,13 +145,15 @@ printf "42\n" | raven run calculadora.fas --nout
 | `fstats` | Tabela legível por humanos (`.fstats`) |
 | `csv` | CSV compatível com planilhas |
 
-Quando `--pipeline` está ativo, o Raven inclui também um resumo do pipeline:
+Quando `--pipeline` está ativo, o Raven ainda exporta as estatísticas normais de cache, mas inclui também um resumo do pipeline:
 
+- escopo (`selected` na exportação específica do pipeline, `aggregate` nos resumos de cache/programa)
 - instruções committed
 - ciclos do pipeline
-- stalls
-- flushes
+- contagem de stalls
+- contagem de flushes
 - CPI do pipeline
+- breakdown por tags de stall (`RAW`, `load-use`, `branch`, `FU`, `mem`)
 
 ### Asserções
 
@@ -396,8 +398,17 @@ Controla o comportamento do pipeline usado pela aba de pipeline da TUI e pelo `r
 ```ini
 # Raven Pipeline Config v1
 enabled=true
-forwarding=true
+bypass.ex_to_ex=true
+bypass.mem_to_ex=true
+bypass.wb_to_id=true
+bypass.store_to_load=false
 mode=SingleCycle
+fu.alu=1
+fu.mul=1
+fu.div=1
+fu.fpu=1
+fu.lsu=1
+fu.sys=1
 branch_resolve=Ex
 predict=NotTaken
 speed=Normal
@@ -406,10 +417,14 @@ speed=Normal
 Campos:
 
 - `enabled` — pipeline habilitado na TUI
-- `forwarding` — habilitar caminhos de bypass/forwarding
-- `mode` — `SingleCycle` ou `FunctionalUnits`
+- `bypass.ex_to_ex` — habilitar bypass EX->EX
+- `bypass.mem_to_ex` — habilitar bypass MEM->EX
+- `bypass.wb_to_id` — habilitar bypass WB->ID
+- `bypass.store_to_load` — habilitar forwarding store-to-load
+- `mode` — campo legado hoje mapeado na UI como `Serialized` ou `Parallel UFs`
+- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — quantidade de unidades funcionais de cada tipo usada no modo `Parallel UFs`
 - `branch_resolve` — `Id`, `Ex` ou `Mem`
-- `predict` — `NotTaken` ou `Taken`
+- `predict` — `NotTaken`, `Taken`, `Btfnt` ou `TwoBit`
 - `speed` — velocidade de reprodução na TUI (`Slow`, `Normal`, `Fast`, `Instant`)
 
 Exportar / importar pela TUI: **aba Pipeline → `Ctrl+E` / `Ctrl+L`**

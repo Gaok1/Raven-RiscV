@@ -3,6 +3,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::ui::input::max_regs_scroll;
 
+fn close_mem_search(app: &mut App) {
+    app.run.mem_search_open = false;
+    app.run.mem_search_query.clear();
+}
+
 pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
     if !matches!(app.tab, crate::ui::app::Tab::Run) {
         return false;
@@ -18,6 +23,14 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Char('r') => {
             if app.run.is_running {
                 app.run.is_running = false;
+            } else if matches!(
+                app.core_status(app.selected_core),
+                crate::ui::app::HartLifecycle::Exited
+            ) {
+                app.restart_simulation();
+                if app.can_start_run() {
+                    app.run.is_running = true;
+                }
             } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
                 || !app.run.faulted
             {
@@ -50,9 +63,12 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
                 app.run.show_registers = true;
             }
             app.sync_mem_focus_for_active_sidebar_mode();
+            if !app.run_sidebar_shows_memory() {
+                close_mem_search(app);
+            }
             true
         }
-        KeyCode::Tab if app.run.show_registers && !app.run.show_dyn => {
+        KeyCode::Tab if app.run_sidebar_shows_registers() => {
             app.run.show_float_regs = !app.run.show_float_regs;
             true
         }
@@ -72,7 +88,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             cycle_memory_region(app);
             true
         }
-        KeyCode::Char('P') if app.run.show_registers => {
+        KeyCode::Char('P') if app.run_sidebar_shows_registers() && !app.run.show_float_regs => {
             let idx = app.run.reg_cursor;
             if idx >= 1 {
                 let reg = (idx - 1) as u8;
@@ -106,7 +122,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             app.console.scroll = app.console.scroll.saturating_sub(1);
             true
         }
-        KeyCode::Up if app.run.show_registers => {
+        KeyCode::Up if app.run_sidebar_shows_registers() => {
             let max_scroll = max_regs_scroll(app);
             app.run.regs_scroll = app.run.regs_scroll.saturating_sub(1);
             if app.run.regs_scroll > max_scroll {
@@ -115,7 +131,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             app.run.reg_cursor = app.run.reg_cursor.saturating_sub(1);
             true
         }
-        KeyCode::Down if app.run.show_registers => {
+        KeyCode::Down if app.run_sidebar_shows_registers() => {
             let max_scroll = max_regs_scroll(app);
             if app.run.regs_scroll > max_scroll {
                 app.run.regs_scroll = max_scroll;
@@ -124,7 +140,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             app.run.reg_cursor = (app.run.reg_cursor + 1).min(32);
             true
         }
-        KeyCode::PageUp if app.run.show_registers => {
+        KeyCode::PageUp if app.run_sidebar_shows_registers() => {
             let max_scroll = max_regs_scroll(app);
             app.run.regs_scroll = app.run.regs_scroll.saturating_sub(10);
             if app.run.regs_scroll > max_scroll {
@@ -133,7 +149,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             app.run.reg_cursor = app.run.reg_cursor.saturating_sub(10);
             true
         }
-        KeyCode::PageDown if app.run.show_registers => {
+        KeyCode::PageDown if app.run_sidebar_shows_registers() => {
             let max_scroll = max_regs_scroll(app);
             if app.run.regs_scroll > max_scroll {
                 app.run.regs_scroll = max_scroll;
@@ -142,12 +158,12 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             app.run.reg_cursor = (app.run.reg_cursor + 10).min(32);
             true
         }
-        KeyCode::Up if !app.run.show_registers => {
+        KeyCode::Up if app.run_sidebar_shows_memory() => {
             app.run.mem_view_addr = app.run.mem_view_addr.saturating_sub(app.run.mem_view_bytes);
             app.run.mem_region = MemRegion::Custom;
             true
         }
-        KeyCode::Down if !app.run.show_registers => {
+        KeyCode::Down if app.run_sidebar_shows_memory() => {
             let max = app
                 .run
                 .mem_size
@@ -162,13 +178,13 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             app.run.mem_region = MemRegion::Custom;
             true
         }
-        KeyCode::PageUp if !app.run.show_registers => {
+        KeyCode::PageUp if app.run_sidebar_shows_memory() => {
             let delta = app.run.mem_view_bytes * 16;
             app.run.mem_view_addr = app.run.mem_view_addr.saturating_sub(delta);
             app.run.mem_region = MemRegion::Custom;
             true
         }
-        KeyCode::PageDown if !app.run.show_registers => {
+        KeyCode::PageDown if app.run_sidebar_shows_memory() => {
             let delta = app.run.mem_view_bytes * 16;
             let max = app
                 .run

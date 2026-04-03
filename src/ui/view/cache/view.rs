@@ -295,8 +295,7 @@ fn update_vertical_scroll_stats(
 }
 
 fn vertical_scroll_hint(app: &App) -> String {
-    let use_d = app.cache.selected_level == 0
-        && matches!(app.cache.scope, CacheScope::DCache)
+    let use_d = app.cache.selected_level == 0 && matches!(app.cache.scope, CacheScope::DCache)
         || (app.cache.selected_level == 0
             && matches!(app.cache.scope, CacheScope::Both)
             && matches!(app.cache.view_focus, crate::ui::app::CacheViewFocus::DCache));
@@ -315,7 +314,9 @@ fn vertical_scroll_hint(app: &App) -> String {
     }
     .max(1);
     let scroll = if use_d {
-        app.cache.view_scroll_d.min(app.cache.view_scroll_max_d.get())
+        app.cache
+            .view_scroll_d
+            .min(app.cache.view_scroll_max_d.get())
     } else {
         app.cache.view_scroll.min(app.cache.view_scroll_max.get())
     };

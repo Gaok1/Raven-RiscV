@@ -6,6 +6,7 @@ pub enum BypassPath {
     ExToEx,
     MemToEx,
     WbToId,
+    FuToId,
     StoreToLoad,
 }
 
@@ -15,6 +16,7 @@ impl BypassPath {
             Self::ExToEx => "EX->EX",
             Self::MemToEx => "MEM->EX",
             Self::WbToId => "WB->ID",
+            Self::FuToId => "FU->ID",
             Self::StoreToLoad => "Store->Load",
         }
     }
@@ -69,7 +71,9 @@ pub(super) fn operand_reg_file(instr: Instruction, operand: u8) -> Option<RegFil
 
 pub(super) fn slot_result(slot: &PipeSlot) -> Option<(RegFile, u8, u32)> {
     use Instruction::*;
-    let instr = slot.instr?;
+    let instr = slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())?;
     match instr {
         Add { rd, .. }
         | Sub { rd, .. }
@@ -157,7 +161,9 @@ pub(super) fn slot_result(slot: &PipeSlot) -> Option<(RegFile, u8, u32)> {
 
 pub(super) fn slot_destination(slot: &PipeSlot) -> Option<(RegFile, u8)> {
     use Instruction::*;
-    let instr = slot.instr?;
+    let instr = slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())?;
     match instr {
         Add { rd, .. }
         | Sub { rd, .. }
@@ -238,31 +244,50 @@ pub(super) fn slot_destination(slot: &PipeSlot) -> Option<(RegFile, u8)> {
 fn forward_value(
     reg: Option<u8>,
     reg_file: Option<RegFile>,
-    producers: &[Option<PipeSlot>],
+    producers: &[PipeSlot],
 ) -> Option<u32> {
     let reg = reg?;
     let reg_file = reg_file?;
     if reg == 0 {
         return None;
     }
-    for producer in producers.iter().flatten() {
-        if producer.is_bubble {
-            continue;
-        }
-        if let Some((prod_file, prod_rd, value)) = slot_result(producer) {
+    producers
+        .iter()
+        .filter(|producer| !producer.is_bubble)
+        .filter_map(|producer| {
+            let (prod_file, prod_rd, value) = slot_result(producer)?;
             if prod_rd == reg && prod_file == reg_file {
-                return Some(value);
+                Some((producer.seq, value))
+            } else {
+                None
             }
-        }
+        })
+        .max_by_key(|(seq, _)| *seq)
+        .map(|(_, value)| value)
+}
+
+pub(super) fn ready_fu_producers(state: &PipelineSimState) -> Vec<PipeSlot> {
+    if !matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+        return Vec::new();
     }
-    None
+    state
+        .fu_bank
+        .iter()
+        .flat_map(|group| group.iter())
+        .filter_map(|fu| fu.slot.as_ref())
+        .filter(|slot| !slot.is_bubble && slot.fu_cycles_left <= 1 && slot_result(slot).is_some())
+        .cloned()
+        .collect()
 }
 
 pub(super) fn slot_reads_register(slot: &PipeSlot, reg_file: RegFile, reg: u8) -> bool {
     if slot.is_bubble || reg == 0 {
         return false;
     }
-    let instr = match slot.instr {
+    let instr = match slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())
+    {
         Some(instr) => instr,
         None => return false,
     };
@@ -288,13 +313,31 @@ pub(super) fn slot_reads_store_data_register(slot: &PipeSlot, reg_file: RegFile,
     if slot.is_bubble || reg == 0 {
         return false;
     }
-    let instr = match slot.instr {
+    let instr = match slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())
+    {
         Some(instr) => instr,
         None => return false,
     };
 
-    matches!(instr, Instruction::Sw { .. } | Instruction::Fsw { .. })
-        && slot.rs2 == Some(reg)
+    matches!(
+        instr,
+        Instruction::Sb { .. }
+            | Instruction::Sh { .. }
+            | Instruction::Sw { .. }
+            | Instruction::Fsw { .. }
+            | Instruction::ScW { .. }
+            | Instruction::AmoswapW { .. }
+            | Instruction::AmoaddW { .. }
+            | Instruction::AmoxorW { .. }
+            | Instruction::AmoandW { .. }
+            | Instruction::AmoorW { .. }
+            | Instruction::AmomaxW { .. }
+            | Instruction::AmominW { .. }
+            | Instruction::AmomaxuW { .. }
+            | Instruction::AmominuW { .. }
+    ) && slot.rs2 == Some(reg)
         && operand_reg_file(instr, 2) == Some(reg_file)
 }
 
@@ -332,10 +375,14 @@ pub(super) fn apply_forwarding_to_ex(
     };
     let mut producers = Vec::new();
     if bypass.ex_to_ex {
-        producers.push(ex_ready_prod.clone());
+        if let Some(prod) = ex_ready_prod.clone() {
+            producers.push(prod);
+        }
     }
     if bypass.mem_to_ex {
-        producers.push(mem_ready_prod.clone());
+        if let Some(prod) = mem_ready_prod.clone() {
+            producers.push(prod);
+        }
     }
     if producers.is_empty() {
         return;
@@ -370,6 +417,7 @@ pub(super) fn apply_forwarding_to_id(
     slot: &mut PipeSlot,
     bypass: PipelineBypassConfig,
     wb_prod: &Option<PipeSlot>,
+    fu_producers: &[PipeSlot],
 ) {
     if !bypass.wb_to_id {
         return;
@@ -378,7 +426,11 @@ pub(super) fn apply_forwarding_to_id(
         Some(instr) => instr,
         None => return,
     };
-    let producers = [wb_prod.clone()];
+    let mut producers = Vec::new();
+    if let Some(prod) = wb_prod.clone() {
+        producers.push(prod);
+    }
+    producers.extend_from_slice(fu_producers);
     if let Some(v) = forward_value(slot.rs1, operand_reg_file(instr, 1), &producers) {
         slot.rs1_val = v;
     }
@@ -399,6 +451,7 @@ pub(super) fn apply_forwarding_to_id(
 }
 
 pub(super) fn report_forward_hazards(state: &mut PipelineSimState) {
+    let ready_fu_producers = ready_fu_producers(state);
     if state.bypass.wb_to_id {
         if let Some(id) = state.stages[Stage::ID as usize]
             .as_ref()
@@ -412,6 +465,16 @@ pub(super) fn report_forward_hazards(state: &mut PipelineSimState) {
                 Stage::WB as usize,
                 BypassPath::WbToId,
             );
+            for prod in &ready_fu_producers {
+                emit_forward_trace_for_slot(
+                    state,
+                    &id,
+                    Stage::ID as usize,
+                    prod,
+                    Stage::EX as usize,
+                    BypassPath::FuToId,
+                );
+            }
         }
     }
     if state.bypass.ex_to_ex {
@@ -446,6 +509,20 @@ pub(super) fn report_forward_hazards(state: &mut PipelineSimState) {
     }
 }
 
+fn traceable_id_forward(
+    consumer: &PipeSlot,
+    consumer_stage: usize,
+    prod_file: RegFile,
+    p_rd: u8,
+) -> bool {
+    if consumer_stage == Stage::ID as usize
+        && slot_reads_store_data_register(consumer, prod_file, p_rd)
+    {
+        return false;
+    }
+    true
+}
+
 fn emit_forward_trace(
     state: &mut PipelineSimState,
     consumer: &PipeSlot,
@@ -469,6 +546,59 @@ fn emit_forward_trace(
         return;
     };
     if !slot_reads_register(consumer, prod_file, p_rd) {
+        return;
+    }
+    if !traceable_id_forward(consumer, consumer_stage, prod_file, p_rd) {
+        return;
+    }
+    let prod_name = prod.disasm.split_whitespace().next().unwrap_or("?");
+    let consumer_name = consumer.disasm.split_whitespace().next().unwrap_or("?");
+    let detail = format!(
+        "{}:{} -> {}:{} ({}, {})",
+        Stage::all()[prod_idx].label(),
+        prod_name,
+        Stage::all()[consumer_stage].label(),
+        consumer_name,
+        super::sim::reg_name(p_rd),
+        path.label(),
+    );
+    super::sim::push_trace(state, TraceKind::Forward, prod_idx, consumer_stage, detail);
+    state.hazard_msgs.push((
+        HazardType::Raw,
+        format!(
+            "BYPASS: {} via {} into {}:{} [RAW covered]",
+            super::sim::reg_name(p_rd),
+            path.label(),
+            Stage::all()[consumer_stage].label(),
+            consumer_name,
+        ),
+    ));
+}
+
+fn emit_forward_trace_for_slot(
+    state: &mut PipelineSimState,
+    consumer: &PipeSlot,
+    consumer_stage: usize,
+    prod: &PipeSlot,
+    prod_idx: usize,
+    path: BypassPath,
+) {
+    if prod.is_bubble {
+        return;
+    }
+    let Some(p_rd) = prod.rd else {
+        return;
+    };
+    if p_rd == 0 {
+        return;
+    }
+    let Some((prod_file, _, _)) = slot_result(prod) else {
+        return;
+    };
+    if !slot_reads_register(consumer, prod_file, p_rd) {
+        return;
+    }
+    if !traceable_id_forward(consumer, consumer_stage, prod_file, p_rd) {
         return;
     }
     let prod_name = prod.disasm.split_whitespace().next().unwrap_or("?");

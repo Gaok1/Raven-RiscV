@@ -13,6 +13,13 @@ use ratatui::{
 };
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
+    app.pipeline.gantt_area_rect.set((0, 0, 0, 0));
+    if !matches!(app.pipeline.subtab, PipelineSubtab::Config) {
+        app.pipeline
+            .config_row_rects
+            .set([(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS]);
+    }
+
     // Layout: subtab_header (3) | exec_controls (4) | content (min) | controls (3)
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -69,12 +76,15 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.pipeline;
+    let single_core = app.max_cores <= 1;
 
     let main_style = subtab_style(p.subtab == PipelineSubtab::Main, p.hover_subtab_main);
     let config_style = subtab_style(p.subtab == PipelineSubtab::Config, p.hover_subtab_config);
     let core_text = format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1));
-    let core_style = if p.hover_core {
-        Style::default().fg(theme::TEXT).bold()
+    let core_style = if single_core {
+        Style::default().fg(theme::LABEL)
+    } else if p.hover_core {
+        Style::default().fg(theme::ACTIVE).bold()
     } else {
         Style::default().fg(theme::TEXT).bold()
     };
@@ -122,17 +132,22 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     app.pipeline
         .btn_subtab_config_rect
         .set((inner.y, inner.x + 8, inner.x + 14));
-    let core_x = inner.x + 22;
-    let core_w = core_text.len() as u16;
-    app.pipeline
-        .btn_core_rect
-        .set((inner.y, core_x, core_x + core_w));
+    if single_core {
+        app.pipeline.btn_core_rect.set((0, 0, 0));
+    } else {
+        let core_x = inner.x + 17;
+        let core_w = ("core ".len() + core_text.len()) as u16;
+        app.pipeline
+            .btn_core_rect
+            .set((inner.y, core_x, core_x + core_w));
+    }
 }
 
 // ── Exec controls ─────────────────────────────────────────────────────────────
 
 fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.pipeline;
+    let state_clickable = !p.faulted;
 
     let (state_label, state_color) = if p.faulted {
         ("fault", theme::DANGER)
@@ -157,8 +172,8 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         &mut spans,
         "state",
         state_label,
-        p.hover_state,
-        true,
+        p.hover_state && state_clickable,
+        state_clickable,
         state_color,
     );
     spans.push(Span::raw("   "));
@@ -185,7 +200,8 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
             p.cycle_count, p.instr_committed, p.stall_count, branch_str,
         );
         let [raw, lu, br, fu, mem] = p.stall_by_type;
-        let detail = format!(" Stalls — RAW:{raw}  Load-Use:{lu}  Branch:{br}  FU:{fu}  Mem:{mem}");
+        let detail =
+            format!(" Stall tags — RAW:{raw}  Load-Use:{lu}  Branch:{br}  FU:{fu}  Mem:{mem}");
         (main, detail)
     } else {
         (
@@ -209,17 +225,17 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     // Record button geometry for mouse
     // Layout: "speed <speed_label>   state <state_label>   reset"
     // Offsets: speed_label at +6, state_label at +15+speed_w, reset at +18+speed_w+state_w
-    let speed_x = inner.x + 6;
-    let speed_label_w = p.speed.label().len() as u16;
+    let speed_x = inner.x + 1;
+    let speed_label_w = ("speed ".len() + p.speed.label().len()) as u16;
     app.pipeline
         .btn_speed_rect
         .set((inner.y, speed_x, speed_x + speed_label_w));
-    let state_x = inner.x + 15 + speed_label_w;
-    let state_label_w = state_label.len() as u16;
+    let state_x = inner.x + 4 + speed_label_w;
+    let state_label_w = ("state ".len() + state_label.len()) as u16;
     app.pipeline
         .btn_state_rect
         .set((inner.y, state_x, state_x + state_label_w));
-    let reset_x = inner.x + 18 + speed_label_w + state_label_w;
+    let reset_x = state_x + state_label_w + 3;
     app.pipeline
         .btn_reset_rect
         .set((inner.y, reset_x, reset_x + 5));
@@ -266,12 +282,20 @@ fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
 
     let y = inner.y;
-    let x = inner.x;
-    app.pipeline.btn_export_results_rect.set((y, x + 1, x + 8));
+    let x = inner.x + 1;
+    app.pipeline
+        .btn_export_results_rect
+        .set((y, x, x + "results".len() as u16));
 
     if matches!(p.subtab, PipelineSubtab::Config) {
-        app.pipeline.btn_import_cfg_rect.set((y, x + 11, x + 21));
-        app.pipeline.btn_export_cfg_rect.set((y, x + 24, x + 34));
+        let import_x = x + "results".len() as u16 + 3;
+        let export_x = import_x + "import cfg".len() as u16 + 3;
+        app.pipeline
+            .btn_import_cfg_rect
+            .set((y, import_x, import_x + "import cfg".len() as u16));
+        app.pipeline
+            .btn_export_cfg_rect
+            .set((y, export_x, export_x + "export cfg".len() as u16));
     } else {
         app.pipeline.btn_import_cfg_rect.set((0, 0, 0));
         app.pipeline.btn_export_cfg_rect.set((0, 0, 0));

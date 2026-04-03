@@ -13,11 +13,12 @@ const TY_BRANCH: u16 = 1 << 5;
 const TY_U: u16 = 1 << 6;
 const TY_JUMP: u16 = 1 << 7;
 const TY_SYS: u16 = 1 << 8;
-const TY_PSEUDO: u16 = 1 << 9;
-const TY_F: u16 = 1 << 10;
-const TY_DIR: u16 = 1 << 11;
+const TY_ATOMIC: u16 = 1 << 9;
+const TY_PSEUDO: u16 = 1 << 10;
+const TY_F: u16 = 1 << 11;
+const TY_DIR: u16 = 1 << 12;
 
-pub(crate) const ALL_MASK: u16 = 0x0FFF;
+pub(crate) const ALL_MASK: u16 = 0x1FFF;
 
 pub(crate) const FILTER_ITEMS: &[(&str, u16, Color)] = &[
     ("All", 0, Color::White),
@@ -30,6 +31,7 @@ pub(crate) const FILTER_ITEMS: &[(&str, u16, Color)] = &[
     ("U", TY_U, Color::LightYellow),
     ("Jump", TY_JUMP, Color::LightCyan),
     ("SYS", TY_SYS, Color::Red),
+    ("Atomic", TY_ATOMIC, Color::LightRed),
     ("Pseudo", TY_PSEUDO, Color::LightMagenta),
     ("F", TY_F, Color::LightGreen),
     ("Dir", TY_DIR, Color::Gray),

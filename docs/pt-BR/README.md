@@ -34,7 +34,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 ### Aba Run (Aba 2)
 **Memória de Instruções**
 - Headers de label e separadores de bloco renderizados inline
-- Badge de tipo por instrução (`[R]` `[I]` `[S]` `[B]` `[U]` `[J]`)
+- Badge de tipo por instrução (`[R]` `[I]` `[S]` `[B]` `[U]` `[J]` `[A]` `[F]`)
 - Heat coloring — sufixo `×N` de contagem de execuções colorido por frequência
 - Resultado de branch no PC atual: `→ 0xADDR (taken)` / `↛ (not taken)`
 - Breakpoints (`b`), saltar para endereço (`g`), painel de trace de execução (`t`)

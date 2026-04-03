@@ -7,7 +7,8 @@ use ratatui::{
 
 use crate::ui::app::{
     App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
-    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROWS,
+    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
+    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
 };
 use crate::ui::theme;
 use crate::ui::view::components::dense_value;
@@ -182,7 +183,36 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     ]));
     items.push(pipe_item);
 
-    // Row 5: blank separator
+    // Row 5: Syscall debug log toggle
+    let is_sel_trace = sel == SETTINGS_ROW_TRACE_SYSCALLS;
+    let is_hov_trace = app.settings.hover_row == Some(SETTINGS_ROW_TRACE_SYSCALLS);
+    let label_style_trace = if is_sel_trace {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_trace {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let trace_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Syscall Debug Log"), label_style_trace),
+        Span::raw("  "),
+        bool_button(
+            app.run.trace_syscalls,
+            app.settings.hover_trace_syscalls,
+        ),
+        Span::raw("  "),
+        Span::styled(
+            "[?]",
+            if is_hov_trace {
+                Style::default().fg(theme::ACCENT).bold()
+            } else {
+                Style::default().fg(theme::BORDER)
+            },
+        ),
+    ]));
+    items.push(trace_item);
+
+    // Row 6: blank separator
     items.push(ListItem::new(Line::raw("")));
 
     // ── Section: CPI Config ──────────────────────────────────────────────
@@ -246,13 +276,18 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         bool_btn_x,
         bool_btn_x + bool_btn_label_w,
     ));
+    app.settings.bool_btn_trace_syscalls_rect.set((
+        area.y + 5,
+        bool_btn_x,
+        bool_btn_x + bool_btn_label_w,
+    ));
     app.settings.cpi_rows_y.set(rows_y);
 
     f.render_widget(List::new(items), area);
 }
 
 fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
-    let sel = app.settings.selected;
+    let sel = app.settings.hover_row.unwrap_or(app.settings.selected);
 
     let hint = if sel == SETTINGS_ROW_CACHE_ENABLED {
         vec![
@@ -304,6 +339,40 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme::TEXT),
             )),
             Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
+    } else if sel == SETTINGS_ROW_TRACE_SYSCALLS {
+        vec![
+            Line::from(Span::styled(
+                "Syscall Debug Log",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Logs each non-I/O syscall to the",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "debug console in yellow.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Read/write-style syscalls stay silent",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::from(Span::styled(
+                "to avoid console noise.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Hover", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" = show this help", Style::default().fg(theme::LABEL)),
+            ]),
             Line::from(vec![
                 Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
                 Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),

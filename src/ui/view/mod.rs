@@ -534,17 +534,17 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[b]", "scope → Both (Stats/View)"),
             ("[+/-]", "add / remove extra cache level"),
             ("", ""),
-            ("[m] View", "cycle cell data format: HEX → DEC-U → DEC-S → FLOAT"),
+            (
+                "[m] View",
+                "cycle cell data format: HEX → DEC-U → DEC-S → FLOAT",
+            ),
             ("[g] View", "cycle byte grouping: 1B → 2B → 4B"),
             ("[t] View", "toggle address / tag display (0x… ↔ t:…)"),
             (
                 "[↑/↓] View",
                 "scroll the active cache panel; in Both mode this follows the focused panel",
             ),
-            (
-                "[←/→] View",
-                "horizontal scroll for the active cache panel",
-            ),
+            ("[←/→] View", "horizontal scroll for the active cache panel"),
             (
                 "Stats total",
                 "Program total uses the same global clock as Pipeline when pipeline is enabled",

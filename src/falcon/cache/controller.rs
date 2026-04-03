@@ -3,8 +3,26 @@
 use super::{Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
 use crate::falcon::{
     errors::FalconError,
-    memory::{Bus, Ram},
+    memory::{AmoOp, Bus, Ram},
 };
+use std::collections::HashMap;
+
+#[derive(Clone, Copy)]
+struct Reservation {
+    addr: u32,
+}
+
+fn reservation_addr(addr: u32) -> u32 {
+    addr & !0x3
+}
+
+fn overlaps_reserved_word(addr: u32, size: usize, reserved_addr: u32) -> bool {
+    let start = addr as u64;
+    let end = start.saturating_add(size as u64);
+    let rstart = reserved_addr as u64;
+    let rend = rstart + 4;
+    start < rend && rstart < end
+}
 
 pub struct CacheController {
     pub(crate) ram: Ram,
@@ -18,6 +36,7 @@ pub struct CacheController {
     step_count: u64,
     /// When true, all cache lookups are skipped and RAM is accessed directly (no stats, no latency).
     pub(crate) bypass: bool,
+    reservations: HashMap<u32, Reservation>,
 }
 
 #[derive(Clone, Copy)]
@@ -42,7 +61,13 @@ impl CacheController {
             extra_cycles: 0,
             step_count: 0,
             bypass: false,
+            reservations: HashMap::new(),
         }
+    }
+
+    fn invalidate_reservations(&mut self, addr: u32, size: usize) {
+        self.reservations
+            .retain(|_, res| !overlaps_reserved_word(addr, size, res.addr));
     }
 
     /// Accumulate base instruction-execution cycles (not cache latency).
@@ -155,7 +180,9 @@ impl CacheController {
     fn record_ram_write_bytes(&mut self, source: WritebackSource, count: u64) {
         match source {
             WritebackSource::L1D => self.dcache.stats.ram_write_bytes += count,
-            WritebackSource::Extra(level) => self.extra_levels[level].stats.ram_write_bytes += count,
+            WritebackSource::Extra(level) => {
+                self.extra_levels[level].stats.ram_write_bytes += count
+            }
         }
     }
 
@@ -166,7 +193,12 @@ impl CacheController {
         line_data: &[u8],
     ) -> Result<(), FalconError> {
         self.record_writeback_event(source);
-        self.writeback_bytes_to_level(source, Self::source_next_level(source), line_base, line_data)
+        self.writeback_bytes_to_level(
+            source,
+            Self::source_next_level(source),
+            line_base,
+            line_data,
+        )
     }
 
     fn writeback_bytes_to_level(
@@ -243,7 +275,9 @@ impl CacheController {
         let evicted_dirty = self.extra_levels[level_idx].sets[idx].lines[way].dirty;
         let evicted_tag = self.extra_levels[level_idx].sets[idx].lines[way].tag;
         let evicted_data = if evicted_valid && evicted_dirty {
-            self.extra_levels[level_idx].sets[idx].lines[way].data.clone()
+            self.extra_levels[level_idx].sets[idx].lines[way]
+                .data
+                .clone()
         } else {
             Vec::new()
         };
@@ -263,9 +297,7 @@ impl CacheController {
 
         self.extra_levels[level_idx].stats.bytes_loaded += line_data.len() as u64;
         self.extra_levels[level_idx].stats.bytes_stored += bytes.len() as u64;
-        self.extra_levels[level_idx]
-            .sets[idx]
-            .install(way, tag, line_data, replacement);
+        self.extra_levels[level_idx].sets[idx].install(way, tag, line_data, replacement);
         self.extra_levels[level_idx].sets[idx].lines[way].dirty = true;
         Ok(())
     }
@@ -298,9 +330,7 @@ impl CacheController {
             self.icache.stats.evictions += 1;
         }
         self.icache.stats.bytes_loaded += line_size as u64;
-        self.icache
-            .sets[idx]
-            .install(way, tag, line_data.clone(), replacement);
+        self.icache.sets[idx].install(way, tag, line_data.clone(), replacement);
         Ok(line_data)
     }
 
@@ -340,6 +370,8 @@ impl CacheController {
     }
 
     fn dcache_store_bytes(&mut self, addr: u32, bytes: &[u8]) -> Result<(), FalconError> {
+        self.invalidate_reservations(addr, bytes.len());
+
         if self.bypass {
             for (i, &b) in bytes.iter().enumerate() {
                 self.ram.store8(addr.wrapping_add(i as u32), b)?;
@@ -401,6 +433,14 @@ impl CacheController {
                         }
                     }
                 }
+                // Write-through: RAM is now authoritative for `addr`.  Any copy
+                // in L2+ is stale and must be dropped so that a future D-cache
+                // miss fetches the updated value from RAM rather than L2.
+                // (Write-back does NOT need this: the D-cache dirty line is
+                // always checked before L2, and L2 is updated on eviction.)
+                for level in &mut self.extra_levels {
+                    level.invalidate_line(addr);
+                }
             }
             WritePolicy::WriteBack => {
                 self.dcache.stats.bytes_stored += bytes.len() as u64;
@@ -441,14 +481,14 @@ impl CacheController {
             }
         }
 
-        // After any L1 D-cache write, invalidate the matching line in lower
-        // unified levels so they don't serve stale data on a future L1 miss.
-        // We only do this when the cache is actually active (not bypassed/invalid).
-        if !self.bypass && self.dcache.config.is_valid_config() {
-            for level in &mut self.extra_levels {
-                level.invalidate_line(addr);
-            }
-        }
+        // Note: do NOT invalidate extra_levels (L2+) here.
+        // The D-cache is always checked before L2 for reads, so stale L2 data
+        // is never served while the D-cache holds a dirty copy.  When a dirty
+        // D-cache line is eventually evicted, writeback_bytes_to_level() writes
+        // the authoritative data into L2.  Invalidating L2 after every store
+        // can erase data that was just installed by a dirty eviction writeback
+        // — e.g., when the evicted line and the newly-written line share the
+        // same L2 cache line — causing silent data loss.
 
         Ok(())
     }
@@ -498,6 +538,29 @@ impl CacheController {
         self.measure_cache_latency(|mem| <Self as Bus>::store32(mem, addr, val))
     }
 
+    pub fn lr_w_timed(&mut self, hart_id: u32, addr: u32) -> (Result<u32, FalconError>, u64) {
+        self.measure_cache_latency(|mem| <Self as Bus>::lr_w(mem, hart_id, addr))
+    }
+
+    pub fn sc_w_timed(
+        &mut self,
+        hart_id: u32,
+        addr: u32,
+        val: u32,
+    ) -> (Result<bool, FalconError>, u64) {
+        self.measure_cache_latency(|mem| <Self as Bus>::sc_w(mem, hart_id, addr, val))
+    }
+
+    pub fn amo_w_timed(
+        &mut self,
+        hart_id: u32,
+        addr: u32,
+        op: AmoOp,
+        operand: u32,
+    ) -> (Result<u32, FalconError>, u64) {
+        self.measure_cache_latency(|mem| <Self as Bus>::amo_w(mem, hart_id, addr, op, operand))
+    }
+
     pub fn extra_level_name(n: usize) -> String {
         format!("L{}", n + 2)
     }
@@ -522,12 +585,17 @@ impl CacheController {
     /// Write-back all dirty lines to RAM without invalidating the cache.
     /// Use this on program exit to keep RAM consistent while preserving cache state.
     pub fn sync_to_ram(&mut self) {
-        self.dcache.writeback_dirty(&mut self.ram);
+        // Flush outer levels first (L3, L2, ...) then D-cache (L1).
+        // D-cache is always authoritative: any address dirty in D-cache is
+        // newer than whatever L2/L3 holds (L2 only receives data through
+        // D-cache evictions).  Writing L2 after D-cache would overwrite the
+        // correct D-cache data with stale L2 data in RAM.
         let ram_ptr = &mut self.ram as *mut Ram;
-        for level in &mut self.extra_levels {
+        for level in self.extra_levels.iter_mut().rev() {
             // SAFETY: `ram` and `extra_levels` are distinct fields, no aliasing.
             level.writeback_dirty(unsafe { &mut *ram_ptr });
         }
+        self.dcache.writeback_dirty(&mut self.ram);
     }
 
     /// Write-back all dirty D-cache lines to RAM, then invalidate all caches.
@@ -535,14 +603,15 @@ impl CacheController {
     pub fn flush_all(&mut self) {
         // I-cache is read-only — just invalidate
         self.icache.invalidate();
-        // D-cache and extra levels may have dirty data — write back first
-        self.dcache.flush_to_ram(&mut self.ram);
-        // Borrow checker: ram and extra_levels are disjoint fields, use raw ptr trick
+        // Flush outer levels first (L3, L2, ...) then D-cache (L1).
+        // D-cache is always authoritative: writing L2 after D-cache would
+        // overwrite the correct D-cache data with stale L2 data in RAM.
         let ram_ptr = &mut self.ram as *mut Ram;
-        for level in &mut self.extra_levels {
+        for level in self.extra_levels.iter_mut().rev() {
             // SAFETY: `ram` and `extra_levels` are distinct fields, no aliasing.
             level.flush_to_ram(unsafe { &mut *ram_ptr });
         }
+        self.dcache.flush_to_ram(&mut self.ram);
     }
 
     /// Fetch `needed_size` bytes starting at `addr` (aligned to `needed_size`)
@@ -916,7 +985,10 @@ impl Bus for CacheController {
         let offset = self.dcache.config.addr_offset(addr);
         let first_line = self.load_dcache_line(addr)?;
         if offset + 1 < line_size {
-            return Ok(u16::from_le_bytes([first_line[offset], first_line[offset + 1]]));
+            return Ok(u16::from_le_bytes([
+                first_line[offset],
+                first_line[offset + 1],
+            ]));
         }
 
         let second_line = self.load_dcache_line(addr.wrapping_add(1))?;
@@ -952,6 +1024,56 @@ impl Bus for CacheController {
 
     fn total_cycles(&self) -> u64 {
         self.total_program_cycles()
+    }
+
+    fn fence_i(&mut self) -> Result<(), FalconError> {
+        self.icache.invalidate();
+        Ok(())
+    }
+
+    fn lr_w(&mut self, hart_id: u32, addr: u32) -> Result<u32, FalconError> {
+        let aligned = reservation_addr(addr);
+        let val = self.dcache_read32(aligned)?;
+        self.reservations
+            .insert(hart_id, Reservation { addr: aligned });
+        Ok(val)
+    }
+
+    fn sc_w(&mut self, hart_id: u32, addr: u32, val: u32) -> Result<bool, FalconError> {
+        let aligned = reservation_addr(addr);
+        let success = self
+            .reservations
+            .get(&hart_id)
+            .is_some_and(|res| res.addr == aligned);
+        self.reservations.remove(&hart_id);
+        if success {
+            self.store32(aligned, val)?;
+        }
+        Ok(success)
+    }
+
+    fn amo_w(
+        &mut self,
+        _hart_id: u32,
+        addr: u32,
+        op: AmoOp,
+        operand: u32,
+    ) -> Result<u32, FalconError> {
+        let aligned = reservation_addr(addr);
+        let old = self.dcache_read32(aligned)?;
+        let new = match op {
+            AmoOp::Swap => operand,
+            AmoOp::Add => old.wrapping_add(operand),
+            AmoOp::Xor => old ^ operand,
+            AmoOp::And => old & operand,
+            AmoOp::Or => old | operand,
+            AmoOp::Max => (old as i32).max(operand as i32) as u32,
+            AmoOp::Min => (old as i32).min(operand as i32) as u32,
+            AmoOp::MaxU => old.max(operand),
+            AmoOp::MinU => old.min(operand),
+        };
+        self.store32(aligned, new)?;
+        Ok(old)
     }
 }
 

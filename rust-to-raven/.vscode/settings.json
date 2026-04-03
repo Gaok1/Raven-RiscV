@@ -7,10 +7,10 @@
     "cargo",
     "+nightly",
     "check",
-    "-Zbuild-std=core,compiler_builtins",
+    "-Zbuild-std=core,alloc,compiler_builtins",
     "-Zbuild-std-features=compiler-builtins-mem",
     "--target",
-    "riscv32im-unknown-none-elf",
+    "riscv32imafc-unknown-none-elf",
     "--message-format=json"
   ]
 }

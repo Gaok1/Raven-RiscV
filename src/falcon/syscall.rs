@@ -53,6 +53,80 @@ const LINUX_EIO: u32 = (-5i32) as u32;
 const LINUX_EINVAL: u32 = (-22i32) as u32;
 const LINUX_ENOMEM: u32 = (-12i32) as u32;
 
+fn syscall_name(code: u32) -> &'static str {
+    match code {
+        SYS_READ => "read",
+        SYS_WRITE => "write",
+        SYS_WRITEV => "writev",
+        SYS_EXIT => "exit",
+        SYS_EXIT_GROUP => "exit_group",
+        SYS_GETPID => "getpid",
+        SYS_GETUID => "getuid",
+        SYS_GETGID => "getgid",
+        SYS_BRK => "brk",
+        SYS_MUNMAP => "munmap",
+        SYS_MMAP => "mmap",
+        SYS_GETRANDOM => "getrandom",
+        SYS_CLOCK_GETTIME => "clock_gettime",
+        FALCON_PRINT_INT => "print_int",
+        FALCON_PRINT_ZSTR => "print_zstr",
+        FALCON_PRINT_ZSTR_LN => "print_zstr_ln",
+        FALCON_READ_LINE_Z => "read_line_z",
+        FALCON_PRINT_UINT => "print_uint",
+        FALCON_PRINT_HEX => "print_hex",
+        FALCON_PRINT_CHAR => "print_char",
+        FALCON_PRINT_NEWLINE => "print_newline",
+        FALCON_READ_U8 => "read_u8",
+        FALCON_READ_U16 => "read_u16",
+        FALCON_READ_U32 => "read_u32",
+        FALCON_READ_INT => "read_int",
+        FALCON_READ_FLOAT => "read_float",
+        FALCON_PRINT_FLOAT => "print_float",
+        FALCON_GET_INSTR_COUNT => "get_instr_count",
+        FALCON_GET_CYCLE_COUNT => "get_cycle_count",
+        FALCON_MEMSET => "memset",
+        FALCON_MEMCPY => "memcpy",
+        FALCON_STRLEN => "strlen",
+        FALCON_STRCMP => "strcmp",
+        FALCON_HART_START => "hart_start",
+        FALCON_HART_EXIT => "hart_exit",
+        _ => "unknown",
+    }
+}
+
+fn should_trace_syscall(code: u32) -> bool {
+    !matches!(
+        code,
+        SYS_READ
+            | SYS_WRITE
+            | SYS_WRITEV
+            | FALCON_PRINT_INT
+            | FALCON_PRINT_ZSTR
+            | FALCON_PRINT_ZSTR_LN
+            | FALCON_READ_LINE_Z
+            | FALCON_PRINT_UINT
+            | FALCON_PRINT_HEX
+            | FALCON_PRINT_CHAR
+            | FALCON_PRINT_NEWLINE
+            | FALCON_READ_U8
+            | FALCON_READ_U16
+            | FALCON_READ_U32
+            | FALCON_READ_INT
+            | FALCON_READ_FLOAT
+            | FALCON_PRINT_FLOAT
+    )
+}
+
+fn trace_syscall(console: &mut Console, cpu: &Cpu, code: u32) {
+    if !console.trace_syscalls || !should_trace_syscall(code) {
+        return;
+    }
+    console.push_colored(
+        format!("[H{}] syscall {} ({})", cpu.hart_id, code, syscall_name(code)),
+        ConsoleColor::Warning,
+    );
+}
+
 /// Handles syscalls invoked via `ecall`.
 ///
 /// - Linux-like subset: `read(63)`, `write(64)`, `exit(93)`, `exit_group(94)`
@@ -78,6 +152,7 @@ pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
     console: &mut Console,
     cycle_override: Option<u64>,
 ) -> Result<bool, FalconError> {
+    trace_syscall(console, cpu, code);
     match code {
         // --- Linux ABI subset ---
         SYS_READ => linux_read(cpu, mem, console),

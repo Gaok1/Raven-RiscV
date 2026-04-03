@@ -44,6 +44,11 @@ fn cycle_line(app: &App) -> Line<'static> {
             app.run.mem.instruction_count,
         )
     };
+    let scope_label = if app.pipeline.enabled {
+        "Scope:selected"
+    } else {
+        "Scope:program"
+    };
     Line::from(vec![
         Span::styled(
             format!(
@@ -68,6 +73,8 @@ fn cycle_line(app: &App) -> Line<'static> {
         ),
         Span::raw("  "),
         Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
+        Span::raw("  "),
+        Span::styled(scope_label, Style::default().fg(theme::LABEL)),
     ])
 }
 
@@ -78,9 +85,13 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         &mut spans,
         "core",
         &format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1)),
-        app.hover_run_button == Some(RunButton::Core),
-        true,
-        theme::TEXT,
+        app.max_cores > 1 && app.hover_run_button == Some(RunButton::Core),
+        app.max_cores > 1,
+        if app.max_cores > 1 {
+            theme::TEXT
+        } else {
+            theme::IDLE
+        },
     );
 
     push_dense_pair(
@@ -92,7 +103,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         theme::TEXT,
     );
 
-    if !app.run.show_registers && !app.run.show_dyn {
+    if app.run_sidebar_shows_memory() {
         push_dense_pair(
             &mut spans,
             "region",
@@ -125,7 +136,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
         },
     );
 
-    if !app.run.show_registers && !app.run.show_dyn {
+    if app.run_sidebar_shows_memory() {
         push_dense_pair(
             &mut spans,
             "bytes",
@@ -253,7 +264,7 @@ fn speed_text(app: &App) -> &'static str {
     }
 }
 
-fn state_text(app: &App) -> String {
+pub(crate) fn state_text(app: &App) -> String {
     match app.core_status(app.selected_core) {
         crate::ui::app::HartLifecycle::Free => "free".to_string(),
         crate::ui::app::HartLifecycle::Running => "run".to_string(),

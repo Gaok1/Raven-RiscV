@@ -1,5 +1,10 @@
 // falcon/exec.rs
-use crate::falcon::{errors::FalconError, instruction::Instruction, memory::Bus, registers::Cpu};
+use crate::falcon::{
+    errors::FalconError,
+    instruction::Instruction,
+    memory::{AmoOp, Bus},
+    registers::Cpu,
+};
 
 use crate::falcon::syscall::handle_syscall;
 use crate::ui::Console;
@@ -119,6 +124,12 @@ pub fn step<B: Bus>(
                 cpu.pc = old_pc;
                 return Ok(false);
             }
+            if !cont && cpu.exit_code.is_some() {
+                // Keep terminal program-exit syscalls parked on their own ecall so
+                // a later manual step in the Run tab cannot fall through into zeroed RAM.
+                cpu.pc = old_pc;
+                return Ok(false);
+            }
             if !cont && cpu.local_exit {
                 // Keep the hart parked on the terminating ecall so the UI does not
                 // appear to advance into unreachable code after hart_exit().
@@ -146,7 +157,12 @@ pub fn step<B: Bus>(
             );
             return Ok(false);
         }
-        Instruction::Fence => {} // nop in single-core simulator
+        Instruction::Fence => {
+            mem.fence()?;
+        }
+        Instruction::FenceI => {
+            mem.fence_i()?;
+        }
 
         // RV32A
         i @ (Instruction::LrW { .. }
@@ -579,81 +595,65 @@ fn exec_amo<B: Bus>(
     _console: &mut Console,
 ) -> Result<bool, FalconError> {
     match instr {
-        Instruction::LrW { rd, rs1 } => {
+        Instruction::LrW { rd, rs1, .. } => {
             let addr = cpu.read(rs1);
-            let val = mem.dcache_read32(addr)?;
+            let val = mem.lr_w(cpu.hart_id, addr)?;
             cpu.write(rd, val);
-            cpu.lr_reservation = Some(addr);
+            cpu.lr_reservation = Some(addr & !0x3);
         }
-        Instruction::ScW { rd, rs1, rs2 } => {
+        Instruction::ScW { rd, rs1, rs2, .. } => {
             let addr = cpu.read(rs1);
-            if cpu.lr_reservation == Some(addr) {
-                mem.store32(addr, cpu.read(rs2))?;
+            if mem.sc_w(cpu.hart_id, addr, cpu.read(rs2))? {
                 cpu.write(rd, 0); // success
             } else {
                 cpu.write(rd, 1); // failure
             }
             cpu.lr_reservation = None;
         }
-        Instruction::AmoswapW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            mem.store32(addr, cpu.read(rs2))?;
-            cpu.write(rd, old);
+        Instruction::AmoswapW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::Swap)?
         }
-        Instruction::AmoaddW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            mem.store32(addr, old.wrapping_add(cpu.read(rs2)))?;
-            cpu.write(rd, old);
+        Instruction::AmoaddW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::Add)?
         }
-        Instruction::AmoxorW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            mem.store32(addr, old ^ cpu.read(rs2))?;
-            cpu.write(rd, old);
+        Instruction::AmoxorW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::Xor)?
         }
-        Instruction::AmoandW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            mem.store32(addr, old & cpu.read(rs2))?;
-            cpu.write(rd, old);
+        Instruction::AmoandW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::And)?
         }
-        Instruction::AmoorW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            mem.store32(addr, old | cpu.read(rs2))?;
-            cpu.write(rd, old);
+        Instruction::AmoorW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::Or)?
         }
-        Instruction::AmomaxW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            let result = (old as i32).max(cpu.read(rs2) as i32) as u32;
-            mem.store32(addr, result)?;
-            cpu.write(rd, old);
+        Instruction::AmomaxW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::Max)?
         }
-        Instruction::AmominW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            let result = (old as i32).min(cpu.read(rs2) as i32) as u32;
-            mem.store32(addr, result)?;
-            cpu.write(rd, old);
+        Instruction::AmominW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::Min)?
         }
-        Instruction::AmomaxuW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            mem.store32(addr, old.max(cpu.read(rs2)))?;
-            cpu.write(rd, old);
+        Instruction::AmomaxuW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::MaxU)?
         }
-        Instruction::AmominuW { rd, rs1, rs2 } => {
-            let addr = cpu.read(rs1);
-            let old = mem.dcache_read32(addr)?;
-            mem.store32(addr, old.min(cpu.read(rs2)))?;
-            cpu.write(rd, old);
+        Instruction::AmominuW { rd, rs1, rs2, .. } => {
+            exec_amo_binop(cpu, mem, rd, rs1, rs2, AmoOp::MinU)?
         }
         _ => unreachable!(),
     }
     Ok(true)
+}
+
+fn exec_amo_binop<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    rd: u8,
+    rs1: u8,
+    rs2: u8,
+    op: AmoOp,
+) -> Result<(), FalconError> {
+    let addr = cpu.read(rs1);
+    let old = mem.amo_w(cpu.hart_id, addr, op, cpu.read(rs2))?;
+    cpu.write(rd, old);
+    Ok(())
 }
 
 // em src/falcon/exec.rs (logo abaixo de `step`)

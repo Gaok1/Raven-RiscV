@@ -10,7 +10,7 @@ pub fn paste_from_terminal(app: &mut App, text: &str) {
         paste_imem_search(app, text);
         return;
     }
-    if matches!(app.tab, Tab::Run) && app.run.mem_search_open {
+    if matches!(app.tab, Tab::Run) && app.run.mem_search_open && app.run_sidebar_shows_memory() {
         paste_mem_search(app, text);
         return;
     }

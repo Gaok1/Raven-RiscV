@@ -18,7 +18,10 @@ pub struct Cpu {
     pub stdout: Vec<u8>,
     /// Exit status when program terminates via Linux `exit`/`exit_group`.
     pub exit_code: Option<u32>,
+    /// Stable hart identifier used by the shared atomic/coherence backend.
+    pub hart_id: u32,
     /// LR/SC reservation address (None = no active reservation).
+    /// This is debug/local metadata only; shared validity lives in memory state.
     pub lr_reservation: Option<u32>,
     /// Set when execution paused at an `ebreak` instruction (not a fault).
     pub ebreak_hit: bool,

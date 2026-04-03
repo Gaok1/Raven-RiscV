@@ -74,6 +74,9 @@ pub(super) fn decode_system(word: u32) -> Result<Instruction, FalconError> {
         0x0000_0073 => Ok(Instruction::Ecall),
         0x0010_0073 => Ok(Instruction::Ebreak),
         0x0020_0073 => Ok(Instruction::Halt),
+        // Common `unimp` trap word seen in debug flows. Treat it as a
+        // side-effect-free barrier so execution can fall through.
+        0xC000_1073 => Ok(Instruction::Fence),
         _ => Err(FalconError::Decode("Unknown system instruction")),
     }
 }

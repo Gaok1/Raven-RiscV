@@ -809,78 +809,154 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         FnmsubS { rd, rs1, rs2, rs3 } => fmt4f("fnmsub.s", rd, rs1, rs2, rs3),
         FnmaddS { rd, rs1, rs2, rs3 } => fmt4f("fnmadd.s", rd, rs1, rs2, rs3),
 
+        FenceI => "fence.i".into(),
+
         // RV32A
-        LrW { rd, rs1 } => format!("{:<9} {}, ({})", "lr.w", reg_name(rd), reg_name(rs1)),
-        ScW { rd, rs1, rs2 } => format!(
+        LrW { rd, rs1, aq, rl } => format!(
+            "{:<9} {}, ({})",
+            atomic_mnemonic("lr.w", aq, rl),
+            reg_name(rd),
+            reg_name(rs1)
+        ),
+        ScW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "sc.w",
+            atomic_mnemonic("sc.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmoswapW { rd, rs1, rs2 } => format!(
+        AmoswapW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amoswap.w",
+            atomic_mnemonic("amoswap.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmoaddW { rd, rs1, rs2 } => format!(
+        AmoaddW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amoadd.w",
+            atomic_mnemonic("amoadd.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmoxorW { rd, rs1, rs2 } => format!(
+        AmoxorW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amoxor.w",
+            atomic_mnemonic("amoxor.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmoandW { rd, rs1, rs2 } => format!(
+        AmoandW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amoand.w",
+            atomic_mnemonic("amoand.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmoorW { rd, rs1, rs2 } => format!(
+        AmoorW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amoor.w",
+            atomic_mnemonic("amoor.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmomaxW { rd, rs1, rs2 } => format!(
+        AmomaxW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amomax.w",
+            atomic_mnemonic("amomax.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmominW { rd, rs1, rs2 } => format!(
+        AmominW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amomin.w",
+            atomic_mnemonic("amomin.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmomaxuW { rd, rs1, rs2 } => format!(
+        AmomaxuW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amomaxu.w",
+            atomic_mnemonic("amomaxu.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
-        AmominuW { rd, rs1, rs2 } => format!(
+        AmominuW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        } => format!(
             "{:<9} {}, {}, ({})",
-            "amominu.w",
+            atomic_mnemonic("amominu.w", aq, rl),
             reg_name(rd),
             reg_name(rs2),
             reg_name(rs1)
         ),
+    }
+}
+
+fn atomic_mnemonic(base: &str, aq: bool, rl: bool) -> String {
+    match (aq, rl) {
+        (true, true) => format!("{base}.aqrl"),
+        (true, false) => format!("{base}.aq"),
+        (false, true) => format!("{base}.rl"),
+        (false, false) => base.to_string(),
     }
 }
 

@@ -6,6 +6,8 @@ pub(super) fn decode(word: u32) -> Result<Instruction, FalconError> {
     let funct3 = bits(word, 14, 12) as u8;
     let rs1 = bits(word, 19, 15) as u8;
     let rs2 = bits(word, 24, 20) as u8;
+    let rl = bits(word, 25, 25) != 0;
+    let aq = bits(word, 26, 26) != 0;
     let funct5 = bits(word, 31, 27) as u8;
 
     if funct3 != 0x2 {
@@ -13,17 +15,77 @@ pub(super) fn decode(word: u32) -> Result<Instruction, FalconError> {
     }
 
     Ok(match funct5 {
-        0x02 => Instruction::LrW { rd, rs1 },
-        0x03 => Instruction::ScW { rd, rs1, rs2 },
-        0x01 => Instruction::AmoswapW { rd, rs1, rs2 },
-        0x00 => Instruction::AmoaddW { rd, rs1, rs2 },
-        0x04 => Instruction::AmoxorW { rd, rs1, rs2 },
-        0x0C => Instruction::AmoandW { rd, rs1, rs2 },
-        0x08 => Instruction::AmoorW { rd, rs1, rs2 },
-        0x14 => Instruction::AmomaxW { rd, rs1, rs2 },
-        0x10 => Instruction::AmominW { rd, rs1, rs2 },
-        0x1C => Instruction::AmomaxuW { rd, rs1, rs2 },
-        0x18 => Instruction::AmominuW { rd, rs1, rs2 },
+        0x02 => Instruction::LrW { rd, rs1, aq, rl },
+        0x03 => Instruction::ScW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x01 => Instruction::AmoswapW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x00 => Instruction::AmoaddW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x04 => Instruction::AmoxorW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x0C => Instruction::AmoandW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x08 => Instruction::AmoorW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x14 => Instruction::AmomaxW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x10 => Instruction::AmominW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x1C => Instruction::AmomaxuW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
+        0x18 => Instruction::AmominuW {
+            rd,
+            rs1,
+            rs2,
+            aq,
+            rl,
+        },
         _ => return Err(FalconError::Decode("AMO: unknown funct5")),
     })
 }

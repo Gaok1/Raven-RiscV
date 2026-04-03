@@ -7,56 +7,81 @@ use crate::falcon::{Ram, instruction::Instruction};
 #[test]
 fn amo_encode_decode_roundtrip() {
     let cases: &[Instruction] = &[
-        Instruction::LrW { rd: 1, rs1: 2 },
+        Instruction::LrW {
+            rd: 1,
+            rs1: 2,
+            aq: false,
+            rl: false,
+        },
         Instruction::ScW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmoswapW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmoaddW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmoxorW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmoandW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmoorW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmomaxW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmominW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmomaxuW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
         Instruction::AmominuW {
             rd: 1,
             rs1: 2,
             rs2: 3,
+            aq: false,
+            rl: false,
         },
     ];
     for &instr in cases {
@@ -81,11 +106,19 @@ fn lr_sc_success() {
     mem.store32(0x10, 0xABCD).unwrap();
     cpu.write(1, 0x10); // address in x1
 
-    let lr = encoder::encode(Instruction::LrW { rd: 2, rs1: 1 }).unwrap();
+    let lr = encoder::encode(Instruction::LrW {
+        rd: 2,
+        rs1: 1,
+        aq: false,
+        rl: false,
+    })
+    .unwrap();
     let sc = encoder::encode(Instruction::ScW {
         rd: 3,
         rs1: 1,
         rs2: 4,
+        aq: false,
+        rl: false,
     })
     .unwrap();
     let halt = encoder::encode(Instruction::Halt).unwrap();
@@ -105,6 +138,60 @@ fn lr_sc_success() {
     assert_eq!(cpu.lr_reservation, None);
 }
 
+#[test]
+fn lr_sc_fails_after_conflicting_store_from_other_hart() {
+    let mut cpu0 = Cpu::default();
+    let mut cpu1 = Cpu::default();
+    cpu0.hart_id = 0;
+    cpu1.hart_id = 1;
+    let mut mem = Ram::new(64);
+    let mut console = crate::ui::Console::default();
+
+    mem.store32(0x10, 0xABCD).unwrap();
+    cpu0.write(1, 0x10);
+    cpu0.write(4, 0x1234);
+    cpu1.write(1, 0x10);
+    cpu1.write(2, 0xDEAD_BEEF);
+
+    let lr = encoder::encode(Instruction::LrW {
+        rd: 3,
+        rs1: 1,
+        aq: false,
+        rl: false,
+    })
+    .unwrap();
+    let sw = encoder::encode(Instruction::Sw {
+        rs2: 2,
+        rs1: 1,
+        imm: 0,
+    })
+    .unwrap();
+    let sc = encoder::encode(Instruction::ScW {
+        rd: 5,
+        rs1: 1,
+        rs2: 4,
+        aq: false,
+        rl: false,
+    })
+    .unwrap();
+
+    mem.store32(0, lr).unwrap();
+    mem.store32(4, sw).unwrap();
+    mem.store32(8, sc).unwrap();
+
+    step(&mut cpu0, &mut mem, &mut console).unwrap();
+    assert_eq!(cpu0.lr_reservation, Some(0x10));
+
+    cpu1.pc = 4;
+    step(&mut cpu1, &mut mem, &mut console).unwrap();
+    assert_eq!(mem.load32(0x10).unwrap(), 0xDEAD_BEEF);
+
+    cpu0.pc = 8;
+    step(&mut cpu0, &mut mem, &mut console).unwrap();
+    assert_eq!(cpu0.read(5), 1, "SC must fail after conflicting store");
+    assert_eq!(mem.load32(0x10).unwrap(), 0xDEAD_BEEF);
+}
+
 // SC without prior LR → failure (rd=1), memory unchanged
 #[test]
 fn sc_without_lr_fails() {
@@ -120,6 +207,8 @@ fn sc_without_lr_fails() {
         rd: 3,
         rs1: 1,
         rs2: 4,
+        aq: false,
+        rl: false,
     })
     .unwrap();
     let halt = encoder::encode(Instruction::Halt).unwrap();
@@ -146,6 +235,8 @@ fn amoadd_w() {
         rd: 3,
         rs1: 1,
         rs2: 2,
+        aq: false,
+        rl: false,
     })
     .unwrap();
     let halt = encoder::encode(Instruction::Halt).unwrap();
@@ -473,4 +564,8 @@ fn linux_exit_sets_exit_code() {
 
     assert!(!step(&mut cpu, &mut mem, &mut console).unwrap());
     assert_eq!(cpu.exit_code, Some(7));
+    assert_eq!(
+        cpu.pc, 0,
+        "exit should keep PC parked on the terminal ecall"
+    );
 }

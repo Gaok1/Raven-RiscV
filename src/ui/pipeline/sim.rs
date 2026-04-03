@@ -1,12 +1,14 @@
 //! Pipeline simulator tick logic — per-stage execution.
 
 use super::{
-    GanttCell, GanttRow, HazardTrace, HazardType, InstrClass, MAX_GANTT_COLS, MAX_GANTT_ROWS,
-    PipeSlot, PipelineSimState, Stage, TraceKind, forwarding, fu_latency_for_class, predictor,
+    FuKind, GanttCell, GanttRow, GanttTrack, HazardTrace, HazardType, InstrClass, MAX_GANTT_COLS,
+    MAX_GANTT_ROWS, PipeSlot, PipelineSimState, Stage, TraceKind, forwarding, fu_latency_for_class,
+    predictor,
 };
 use crate::falcon::Cpu;
 use crate::falcon::cache::CacheController;
 use crate::falcon::instruction::Instruction;
+use crate::falcon::memory::AmoOp;
 use crate::ui::app::CpiConfig;
 use crate::ui::console::Console;
 use std::collections::VecDeque;
@@ -569,7 +571,9 @@ fn operand_reg_file(instr: Instruction, operand: u8) -> Option<RegFile> {
 
 fn slot_result(slot: &PipeSlot) -> Option<(RegFile, u8, u32)> {
     use Instruction::*;
-    let instr = slot.instr?;
+    let instr = slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())?;
     match instr {
         Add { rd, .. }
         | Sub { rd, .. }
@@ -659,7 +663,9 @@ fn slot_result(slot: &PipeSlot) -> Option<(RegFile, u8, u32)> {
 
 fn slot_destination(slot: &PipeSlot) -> Option<(RegFile, u8)> {
     use Instruction::*;
-    let instr = slot.instr?;
+    let instr = slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())?;
     match instr {
         Add { rd, .. }
         | Sub { rd, .. }
@@ -766,7 +772,10 @@ fn slot_reads_register(slot: &PipeSlot, reg_file: RegFile, reg: u8) -> bool {
     if slot.is_bubble || reg == 0 {
         return false;
     }
-    let instr = match slot.instr {
+    let instr = match slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())
+    {
         Some(instr) => instr,
         None => return false,
     };
@@ -792,22 +801,31 @@ fn slot_has_late_mem_result(slot: &PipeSlot) -> bool {
     if slot.is_bubble {
         return false;
     }
+    let Some(instr) = slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())
+    else {
+        return false;
+    };
     matches!(
-        slot.instr,
-        Some(
-            Instruction::Lb { .. }
-                | Instruction::Lh { .. }
-                | Instruction::Lw { .. }
-                | Instruction::Lbu { .. }
-                | Instruction::Lhu { .. }
-                | Instruction::Flw { .. }
-                | Instruction::LrW { .. }
-        )
+        instr,
+        Instruction::Lb { .. }
+            | Instruction::Lh { .. }
+            | Instruction::Lw { .. }
+            | Instruction::Lbu { .. }
+            | Instruction::Lhu { .. }
+            | Instruction::Flw { .. }
+            | Instruction::LrW { .. }
     )
 }
 
 fn slot_has_wb_only_syscall_result(slot: &PipeSlot) -> bool {
-    !slot.is_bubble && matches!(slot.instr, Some(Instruction::Ecall))
+    !slot.is_bubble
+        && matches!(
+            slot.instr
+                .or_else(|| crate::falcon::decoder::decode(slot.word).ok()),
+            Some(Instruction::Ecall)
+        )
 }
 
 fn apply_forwarding_to_ex(
@@ -1067,12 +1085,12 @@ fn stage_mem(
 
         // ── Atomics ─────────────────────────────────────────────────────
         Instruction::LrW { .. } => {
-            let (result, access_latency) = mem.dcache_read32_timed(addr);
+            let (result, access_latency) = mem.lr_w_timed(cpu.hart_id, addr);
             latency += access_latency;
             match result {
                 Ok(v) => {
                     slot.mem_result = Some(v);
-                    cpu.lr_reservation = Some(addr);
+                    cpu.lr_reservation = Some(addr & !0x3);
                 }
                 Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
@@ -1081,213 +1099,117 @@ fn stage_mem(
             }
         }
         Instruction::ScW { .. } => {
-            if cpu.lr_reservation == Some(addr) {
-                let (result, access_latency) = mem.store32_timed(addr, slot.rs2_val);
-                latency += access_latency;
-                if let Err(e) = result {
+            let (result, access_latency) = mem.sc_w_timed(cpu.hart_id, addr, slot.rs2_val);
+            latency += access_latency;
+            match result {
+                Ok(true) => slot.alu_result = 0,
+                Ok(false) => slot.alu_result = 1,
+                Err(e) => {
                     console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
                     faulted = true;
                 }
-                slot.alu_result = 0; // success
-            } else {
-                slot.alu_result = 1; // failure
             }
             cpu.lr_reservation = None;
         }
-        Instruction::AmoswapW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let (write_result, write_latency) = mem.store32_timed(addr, slot.rs2_val);
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmoaddW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let (write_result, write_latency) =
-                        mem.store32_timed(addr, old.wrapping_add(slot.rs2_val));
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmoxorW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let (write_result, write_latency) = mem.store32_timed(addr, old ^ slot.rs2_val);
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmoandW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let (write_result, write_latency) = mem.store32_timed(addr, old & slot.rs2_val);
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmoorW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let (write_result, write_latency) = mem.store32_timed(addr, old | slot.rs2_val);
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmomaxW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let new = (old as i32).max(slot.rs2_val as i32) as u32;
-                    let (write_result, write_latency) = mem.store32_timed(addr, new);
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmominW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let new = (old as i32).min(slot.rs2_val as i32) as u32;
-                    let (write_result, write_latency) = mem.store32_timed(addr, new);
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmomaxuW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let (write_result, write_latency) =
-                        mem.store32_timed(addr, old.max(slot.rs2_val));
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
-        Instruction::AmominuW { .. } => {
-            let (read_result, read_latency) = mem.dcache_read32_timed(addr);
-            latency += read_latency;
-            match read_result {
-                Ok(old) => {
-                    let (write_result, write_latency) =
-                        mem.store32_timed(addr, old.min(slot.rs2_val));
-                    latency += write_latency;
-                    match write_result {
-                        Ok(()) => slot.alu_result = old,
-                        Err(e) => {
-                            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                            faulted = true;
-                        }
-                    }
-                }
-                Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
-                }
-            }
-        }
+        Instruction::AmoswapW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::Swap,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmoaddW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::Add,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmoxorW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::Xor,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmoandW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::And,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmoorW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::Or,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmomaxW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::Max,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmominW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::Min,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmomaxuW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::MaxU,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
+        Instruction::AmominuW { .. } => stage_mem_amo(
+            mem,
+            cpu.hart_id,
+            addr,
+            AmoOp::MinU,
+            slot.rs2_val,
+            &mut latency,
+            &mut slot.alu_result,
+            console,
+            &mut faulted,
+        ),
 
         _ => {} // non-memory instructions
     }
@@ -1465,6 +1387,11 @@ fn stage_wb(
                         cpu.pc = slot.pc; // rewind for blocking stdin
                         return false;
                     }
+                    if !cont && cpu.exit_code.is_some() {
+                        // Keep terminal program-exit syscalls parked on their own ecall.
+                        cpu.pc = slot.pc;
+                        return false;
+                    }
                     if !cont && cpu.local_exit {
                         // Keep terminal hart-exit syscalls parked on their own ecall.
                         cpu.pc = slot.pc;
@@ -1500,11 +1427,33 @@ fn stage_wb(
             return false;
         }
 
-        Instruction::Fence => {} // nop
+        Instruction::Fence | Instruction::FenceI => {} // ordering handled by shared memory backend
     }
 
     cpu.instr_count += 1;
     true
+}
+
+fn stage_mem_amo(
+    mem: &mut CacheController,
+    hart_id: u32,
+    addr: u32,
+    op: AmoOp,
+    operand: u32,
+    latency: &mut u64,
+    alu_result: &mut u32,
+    console: &mut Console,
+    faulted: &mut bool,
+) {
+    let (result, access_latency) = mem.amo_w_timed(hart_id, addr, op, operand);
+    *latency += access_latency;
+    match result {
+        Ok(old) => *alu_result = old,
+        Err(e) => {
+            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+            *faulted = true;
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1523,11 +1472,6 @@ fn commit_wb(
     };
 
     if slot.is_bubble {
-        return None;
-    }
-
-    // Unknown/undecodable instructions: treat as NOP, don't execute
-    if slot.class == InstrClass::Unknown {
         return None;
     }
 
@@ -1552,17 +1496,77 @@ fn commit_wb(
         state.halted = true;
     }
 
+    fn committed_next_pc(slot: &PipeSlot) -> u32 {
+        let instr = slot
+            .instr
+            .or_else(|| crate::falcon::decoder::decode(slot.word).ok());
+        match instr {
+            Some(Instruction::Jal { imm, .. }) => slot.pc.wrapping_add(imm as u32),
+            Some(Instruction::Jalr { imm, .. }) => (slot.rs1_val.wrapping_add(imm as u32)) & !1,
+            Some(Instruction::Beq { imm, .. }) => {
+                if slot.rs1_val == slot.rs2_val {
+                    slot.pc.wrapping_add(imm as u32)
+                } else {
+                    slot.pc.wrapping_add(4)
+                }
+            }
+            Some(Instruction::Bne { imm, .. }) => {
+                if slot.rs1_val != slot.rs2_val {
+                    slot.pc.wrapping_add(imm as u32)
+                } else {
+                    slot.pc.wrapping_add(4)
+                }
+            }
+            Some(Instruction::Blt { imm, .. }) => {
+                if (slot.rs1_val as i32) < (slot.rs2_val as i32) {
+                    slot.pc.wrapping_add(imm as u32)
+                } else {
+                    slot.pc.wrapping_add(4)
+                }
+            }
+            Some(Instruction::Bge { imm, .. }) => {
+                if (slot.rs1_val as i32) >= (slot.rs2_val as i32) {
+                    slot.pc.wrapping_add(imm as u32)
+                } else {
+                    slot.pc.wrapping_add(4)
+                }
+            }
+            Some(Instruction::Bltu { imm, .. }) => {
+                if slot.rs1_val < slot.rs2_val {
+                    slot.pc.wrapping_add(imm as u32)
+                } else {
+                    slot.pc.wrapping_add(4)
+                }
+            }
+            Some(Instruction::Bgeu { imm, .. }) => {
+                if slot.rs1_val >= slot.rs2_val {
+                    slot.pc.wrapping_add(imm as u32)
+                } else {
+                    slot.pc.wrapping_add(4)
+                }
+            }
+            _ => {
+                if slot.branch_taken {
+                    slot.branch_target.unwrap_or(slot.pc.wrapping_add(4))
+                } else {
+                    slot.pc.wrapping_add(4)
+                }
+            }
+        }
+    }
+
     // Update cpu.pc: branch target or next sequential.
     // Terminal local hart exits (ecall-based) stay parked on their own ecall so
     // the Run view highlights the instruction that stopped the hart.
     // halt is a pseudo-instruction: advance PC like sequential mode so cpu.pc
     // is consistent with exec::step (which pre-increments before executing).
-    if !alive && cpu.local_exit && !matches!(slot.instr, Some(Instruction::Halt)) {
+    if !alive
+        && (cpu.local_exit || cpu.exit_code.is_some())
+        && !matches!(slot.instr, Some(Instruction::Halt))
+    {
         cpu.pc = slot.pc;
-    } else if slot.branch_taken {
-        cpu.pc = slot.branch_target.unwrap_or(slot.pc.wrapping_add(4));
     } else {
-        cpu.pc = slot.pc.wrapping_add(4);
+        cpu.pc = committed_next_pc(&slot);
     }
 
     state.instr_committed += 1;
@@ -1669,6 +1673,60 @@ fn detect_stall(
                             }
                         }
                     }
+                    // Also check fu_bank producers in FunctionalUnits mode
+                    if found.is_none()
+                        && matches!(state.mode, super::PipelineMode::FunctionalUnits)
+                    {
+                        'fu_abi: for fu_group in &state.fu_bank {
+                            for fu in fu_group {
+                                let Some(p) = fu.slot.as_ref() else { continue };
+                                if p.is_bubble { continue; }
+                                let fu_label = fu.kind.map_or("FU", |k| k.label());
+                                if forwarding::slot_has_wb_only_syscall_result(p) {
+                                    found = Some((
+                                        HazardType::Raw,
+                                        format!(
+                                            "RAW: ID reads {} — ecall still owns ABI arg/result regs in {fu_label}",
+                                            reg_name(arg_reg)
+                                        ),
+                                        Some((
+                                            Stage::EX as usize,
+                                            Stage::ID as usize,
+                                            format!(
+                                                "{} -> {}",
+                                                p.disasm.split_whitespace().next().unwrap_or("?"),
+                                                id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                            ),
+                                        )),
+                                    ));
+                                    break 'fu_abi;
+                                }
+                                if matches!(id_s.instr, Some(Instruction::Ecall)) {
+                                    if let Some((prod_file, prod_rd)) = forwarding::slot_destination(p) {
+                                        if prod_file == forwarding::RegFile::Int && prod_rd == arg_reg {
+                                            found = Some((
+                                                HazardType::Raw,
+                                                format!(
+                                                    "RAW: ecall reads {} — value still pending in {fu_label}",
+                                                    reg_name(arg_reg)
+                                                ),
+                                                Some((
+                                                    Stage::EX as usize,
+                                                    Stage::ID as usize,
+                                                    format!(
+                                                        "{} -> {}",
+                                                        p.disasm.split_whitespace().next().unwrap_or("?"),
+                                                        id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                                    ),
+                                                )),
+                                            ));
+                                            break 'fu_abi;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if found.is_some() {
                         break;
                     }
@@ -1736,6 +1794,37 @@ fn detect_stall(
                             }
                         }
                     }
+                    // Also check fu_bank in FunctionalUnits mode
+                    if found.is_none()
+                        && matches!(state.mode, super::PipelineMode::FunctionalUnits)
+                    {
+                        'fu_sr: for fu_group in &state.fu_bank {
+                            for fu in fu_group {
+                                let Some(p) = fu.slot.as_ref() else { continue };
+                                if p.is_bubble { continue; }
+                                if forwarding::slot_has_wb_only_syscall_result(p) {
+                                    let fu_label = fu.kind.map_or("FU", |k| k.label());
+                                    found = Some((
+                                        HazardType::Raw,
+                                        format!(
+                                            "RAW: ID reads {} — syscall result from ecall still pending in {fu_label}",
+                                            reg_name(arg_reg)
+                                        ),
+                                        Some((
+                                            Stage::EX as usize,
+                                            Stage::ID as usize,
+                                            format!(
+                                                "{} -> {}",
+                                                p.disasm.split_whitespace().next().unwrap_or("?"),
+                                                id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                            ),
+                                        )),
+                                    ));
+                                    break 'fu_sr;
+                                }
+                            }
+                        }
+                    }
                     if found.is_some() {
                         break;
                     }
@@ -1766,6 +1855,8 @@ fn detect_stall(
     let load_use_result: Option<(HazardType, String, Option<(usize, usize, String)>)> = {
         let id = state.stages[Stage::ID as usize].as_ref();
         let ex = state.stages[Stage::EX as usize].as_ref();
+        let mut result = None;
+        // Classic EX-stage load-use (serialized mode and any mode where load is in EX)
         if let (Some(id_s), Some(ex_s)) = (id, ex) {
             if state.bypass.mem_to_ex
                 && !id_s.is_bubble
@@ -1773,9 +1864,9 @@ fn detect_stall(
             {
                 if let Some((prod_file, ex_rd)) = forwarding::slot_destination(ex_s) {
                     if forwarding::slot_reads_register(id_s, prod_file, ex_rd) {
-                        Some((
+                        result = Some((
                             HazardType::LoadUse,
-                            format!("load-use: ID uses {} written by lw in EX", reg_name(ex_rd)),
+                            format!("load-use: ID uses {} written by load in EX", reg_name(ex_rd)),
                             Some((
                                 Stage::EX as usize,
                                 Stage::ID as usize,
@@ -1785,19 +1876,51 @@ fn detect_stall(
                                     id_s.disasm.split_whitespace().next().unwrap_or("?")
                                 ),
                             )),
-                        ))
-                    } else {
-                        None
+                        ));
                     }
-                } else {
-                    None
                 }
-            } else {
-                None
             }
-        } else {
-            None
         }
+        // In FunctionalUnits mode, loads live in the LSU fu_bank, not in EX.
+        // Detect load-use when a load in LSU (fu_cycles_left == 1, not yet at MEM)
+        // is the producer of a register read by the ID instruction.
+        if result.is_none() && matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+            if let Some(id_s) = id {
+                if !id_s.is_bubble {
+                    'lsu_lu: for fu in &state.fu_bank[FuKind::Lsu.index()] {
+                        let Some(lsu_slot) = fu.slot.as_ref() else { continue };
+                        if lsu_slot.is_bubble || !forwarding::slot_has_late_mem_result(lsu_slot) {
+                            continue;
+                        }
+                        // Load in LSU with exactly 1 cycle left: value only available after MEM
+                        if lsu_slot.fu_cycles_left <= 1 {
+                            if let Some((prod_file, lsu_rd)) = forwarding::slot_destination(lsu_slot) {
+                                if forwarding::slot_reads_register(id_s, prod_file, lsu_rd) {
+                                    result = Some((
+                                        HazardType::LoadUse,
+                                        format!(
+                                            "load-use: ID uses {} written by load in LSU (awaiting MEM)",
+                                            reg_name(lsu_rd)
+                                        ),
+                                        Some((
+                                            Stage::EX as usize,
+                                            Stage::ID as usize,
+                                            format!(
+                                                "{} -> {}",
+                                                lsu_slot.disasm.split_whitespace().next().unwrap_or("?"),
+                                                id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                            ),
+                                        )),
+                                    ));
+                                    break 'lsu_lu;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result
     };
     if let Some((hazard, msg, trace)) = load_use_result {
         state.hazard_msgs.push((hazard, msg));
@@ -1829,76 +1952,138 @@ fn detect_stall(
                     matches!(state.branch_resolve, super::BranchResolve::Id)
                         && matches!(id_s.class, InstrClass::Branch | InstrClass::Jump);
                 let architectural_id_consumer = requires_architectural_visibility_in_id(id_s);
+                let id_dispatches_to_parallel_fu =
+                    matches!(state.mode, super::PipelineMode::FunctionalUnits)
+                        && parallel_fu_kind_for_slot(id_s).is_some();
 
-                'outer: for (stage_idx, stage_name, producer) in [
-                    (Stage::EX as usize, "EX", ex),
-                    (Stage::MEM as usize, "MEM", mem_s),
-                    (Stage::WB as usize, "WB", wb),
-                ] {
-                    let Some(p) = producer else {
-                        continue;
-                    };
-                    if p.is_bubble {
-                        continue;
-                    }
-                    let Some((prod_file, p_rd)) = forwarding::slot_destination(p) else {
-                        continue;
-                    };
-                    if p_rd == 0 || !forwarding::slot_reads_register(id_s, prod_file, p_rd) {
-                        continue;
-                    }
-
-                    let store_data_consumer =
-                        forwarding::slot_reads_store_data_register(id_s, prod_file, p_rd);
-
-                    let blocked = if control_resolves_in_id
-                        || architectural_id_consumer
-                        || store_data_consumer
-                    {
-                        if stage_idx == Stage::WB as usize {
-                            !wb_commit_is_visible_this_cycle(p)
-                        } else {
-                            true
-                        }
-                    } else if stage_idx == Stage::EX as usize {
-                        forwarding::slot_has_late_mem_result(p) || !state.bypass.ex_to_ex
-                    } else if stage_idx == Stage::MEM as usize {
-                        !state.bypass.mem_to_ex
-                    } else {
-                        !state.bypass.wb_to_id
-                    };
-
-                    if blocked {
-                        let consumer_name =
-                            id_s.disasm.split_whitespace().next().unwrap_or("?");
-                        let producer_name =
-                            p.disasm.split_whitespace().next().unwrap_or("?");
-                        let detail_msg = if matches!(id_s.class, InstrClass::Branch | InstrClass::Jump)
-                        {
-                            format!(
-                                "RAW: {consumer_name} in ID needs {} before its control target/decision is trustworthy; {producer_name} is still producing it in {stage_name}",
-                                reg_name(p_rd),
-                            )
-                        } else {
-                            format!(
-                                "RAW: ID reads {} — {producer_name} result from {stage_name} is not reachable with current bypass config",
-                                reg_name(p_rd),
-                            )
-                        };
-                        found = Some((
-                            HazardType::Raw,
-                            detail_msg,
-                            Some((
-                                stage_idx,
-                                Stage::ID as usize,
+                if matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+                    for group in &state.fu_bank {
+                        for fu in group {
+                            let Some(p) = fu.slot.as_ref() else {
+                                continue;
+                            };
+                            if p.is_bubble {
+                                continue;
+                            }
+                            let Some((prod_file, p_rd)) = forwarding::slot_destination(p) else {
+                                continue;
+                            };
+                            if p_rd == 0 || !forwarding::slot_reads_register(id_s, prod_file, p_rd)
+                            {
+                                continue;
+                            }
+                            let store_data_consumer =
+                                forwarding::slot_reads_store_data_register(id_s, prod_file, p_rd);
+                            let producer_ready_for_id = p.fu_cycles_left <= 1
+                                && forwarding::slot_result(p).is_some()
+                                && state.bypass.wb_to_id
+                                && !control_resolves_in_id
+                                && !architectural_id_consumer
+                                && !store_data_consumer;
+                            if producer_ready_for_id {
+                                continue;
+                            }
+                            let consumer_name =
+                                id_s.disasm.split_whitespace().next().unwrap_or("?");
+                            let producer_name = p.disasm.split_whitespace().next().unwrap_or("?");
+                            found = Some((
+                                HazardType::Raw,
                                 format!(
-                                    "{} -> {}",
-                                    p.disasm.split_whitespace().next().unwrap_or("?"),
-                                    id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                    "RAW: ID reads {} — {producer_name} is still active in {}",
+                                    reg_name(p_rd),
+                                    fu.kind.unwrap_or(FuKind::Alu).label(),
                                 ),
-                            )),
-                        ));
-                        break 'outer;
+                                Some((
+                                    Stage::EX as usize,
+                                    Stage::ID as usize,
+                                    format!("{producer_name} -> {consumer_name}"),
+                                )),
+                            ));
+                            break;
+                        }
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                }
+                if found.is_none() {
+                    'outer: for (stage_idx, stage_name, producer) in [
+                        (Stage::EX as usize, "EX", ex),
+                        (Stage::MEM as usize, "MEM", mem_s),
+                        (Stage::WB as usize, "WB", wb),
+                    ] {
+                        let Some(p) = producer else {
+                            continue;
+                        };
+                        if p.is_bubble {
+                            continue;
+                        }
+                        let Some((prod_file, p_rd)) = forwarding::slot_destination(p) else {
+                            continue;
+                        };
+                        if p_rd == 0 || !forwarding::slot_reads_register(id_s, prod_file, p_rd) {
+                            continue;
+                        }
+
+                        let store_data_consumer =
+                            forwarding::slot_reads_store_data_register(id_s, prod_file, p_rd);
+
+                        let blocked = if control_resolves_in_id
+                            || architectural_id_consumer
+                            || store_data_consumer
+                        {
+                            if stage_idx == Stage::WB as usize {
+                                !wb_commit_is_visible_this_cycle(p)
+                            } else {
+                                true
+                            }
+                        } else if id_dispatches_to_parallel_fu {
+                            if stage_idx == Stage::WB as usize {
+                                !state.bypass.wb_to_id || !wb_commit_is_visible_this_cycle(p)
+                            } else {
+                                true
+                            }
+                        } else if stage_idx == Stage::EX as usize {
+                            forwarding::slot_has_late_mem_result(p) || !state.bypass.ex_to_ex
+                        } else if stage_idx == Stage::MEM as usize {
+                            !state.bypass.mem_to_ex
+                        } else {
+                            !state.bypass.wb_to_id
+                        };
+
+                        if blocked {
+                            let consumer_name =
+                                id_s.disasm.split_whitespace().next().unwrap_or("?");
+                            let producer_name = p.disasm.split_whitespace().next().unwrap_or("?");
+                            let detail_msg = if matches!(
+                                id_s.class,
+                                InstrClass::Branch | InstrClass::Jump
+                            ) {
+                                format!(
+                                    "RAW: {consumer_name} in ID needs {} before its control target/decision is trustworthy; {producer_name} is still producing it in {stage_name}",
+                                    reg_name(p_rd),
+                                )
+                            } else {
+                                format!(
+                                    "RAW: ID reads {} — {producer_name} result from {stage_name} is not reachable with current bypass config",
+                                    reg_name(p_rd),
+                                )
+                            };
+                            found = Some((
+                                HazardType::Raw,
+                                detail_msg,
+                                Some((
+                                    stage_idx,
+                                    Stage::ID as usize,
+                                    format!(
+                                        "{} -> {}",
+                                        p.disasm.split_whitespace().next().unwrap_or("?"),
+                                        id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                    ),
+                                )),
+                            ));
+                            break 'outer;
+                        }
                     }
                 }
             }
@@ -1974,8 +2159,10 @@ fn detect_stall(
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn detect_name_hazards(state: &mut PipelineSimState) {
-    // Collect writers: (stage_index, reg_file, rd, mnemonic)
-    let writers: Vec<(usize, RegFile, u8, String)> = state
+    // Collect writers: (stage_index, reg_file, rd, mnemonic, display_label)
+    // stage_index is used for ordering (higher = closer to WB = older);
+    // display_label is shown in messages and may differ (e.g., "MUL" instead of "EX").
+    let mut writers: Vec<(usize, RegFile, u8, String, String)> = state
         .stages
         .iter()
         .enumerate()
@@ -1994,12 +2181,37 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                 .next()
                 .unwrap_or("?")
                 .to_string();
-            Some((i, rf, rd, mnem))
+            let label = Stage::all()[i].label().to_string();
+            Some((i, rf, rd, mnem, label))
         })
         .collect();
+    writers.extend(
+        state
+            .fu_bank
+            .iter()
+            .flat_map(|group| group.iter())
+            .filter_map(|fu| {
+                let s = fu.slot.as_ref()?;
+                if s.is_bubble {
+                    return None;
+                }
+                let (rf, rd) = slot_destination(s)?;
+                if rd == 0 && rf == RegFile::Int {
+                    return None;
+                }
+                let mnem = s
+                    .disasm
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("?")
+                    .to_string();
+                let label = fu.kind.map_or("FU", |k| k.label()).to_string();
+                Some((Stage::EX as usize, rf, rd, mnem, label))
+            }),
+    );
 
-    // Collect readers: (stage_index, mnemonic, slot clone)
-    let readers: Vec<(usize, String, PipeSlot)> = state
+    // Collect readers: (stage_index, mnemonic, slot clone, display_label)
+    let mut readers: Vec<(usize, String, PipeSlot, String)> = state
         .stages
         .iter()
         .enumerate()
@@ -2014,9 +2226,30 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                 .next()
                 .unwrap_or("?")
                 .to_string();
-            Some((i, mnem, s.clone()))
+            let label = Stage::all()[i].label().to_string();
+            Some((i, mnem, s.clone(), label))
         })
         .collect();
+    readers.extend(
+        state
+            .fu_bank
+            .iter()
+            .flat_map(|group| group.iter())
+            .filter_map(|fu| {
+                let s = fu.slot.as_ref()?;
+                if s.is_bubble {
+                    return None;
+                }
+                let mnem = s
+                    .disasm
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("?")
+                    .to_string();
+                let label = fu.kind.map_or("FU", |k| k.label()).to_string();
+                Some((Stage::EX as usize, mnem, s.clone(), label))
+            }),
+    );
 
     // WAW: two in-flight instructions writing to the same (reg_file, rd) pair
     let mut waw_tags: Vec<usize> = Vec::new();
@@ -2031,9 +2264,9 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                 let msg = format!(
                     "WAW: {} in {} and {} in {} both write {}",
                     writers[j].3,
-                    Stage::all()[writers[j].0].label(),
+                    writers[j].4,
                     writers[i].3,
-                    Stage::all()[writers[i].0].label(),
+                    writers[i].4,
                     dest_name,
                 );
                 state.hazard_msgs.push((HazardType::Waw, msg));
@@ -2059,8 +2292,8 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
     // WAR: younger instruction (closer to IF) writes rd that an older
     // instruction (closer to WB) still reads as rs1/rs2.
     let mut war_tags: Vec<usize> = Vec::new();
-    for &(w_idx, w_rf, w_rd, ref w_name) in &writers {
-        for &(r_idx, ref r_name, ref reader_slot) in &readers {
+    for &(w_idx, w_rf, w_rd, ref w_name, ref w_label) in &writers {
+        for &(r_idx, ref r_name, ref reader_slot, ref r_label) in &readers {
             if r_idx <= w_idx {
                 continue;
             } // reader must be older (closer to WB)
@@ -2073,10 +2306,10 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                 let msg = format!(
                     "WAR: {} in {} writes {} read by {} in {}",
                     w_name,
-                    Stage::all()[w_idx].label(),
+                    w_label,
                     dest_name,
                     r_name,
-                    Stage::all()[r_idx].label(),
+                    r_label,
                 );
                 state.hazard_msgs.push((HazardType::War, msg));
                 push_trace(
@@ -2139,6 +2372,10 @@ fn advance_stages(
         state.stall_count += 1;
         state.stall_by_type[HazardType::MemLatency.as_stall_index().unwrap()] += 1;
         state.stages[4] = None; // WB stays empty; MEM does not advance
+        advance_parallel_fu_banks(state);
+        promote_ready_lsu_to_mem(state);
+        promote_ready_fu_result_to_wb(state);
+        refresh_fu_busy(state);
         state.last_cycle_cache_only = true;
         return;
     }
@@ -2150,9 +2387,15 @@ fn advance_stages(
         }
     }
 
+    let ready_fu_producers_before = forwarding::ready_fu_producers(state);
     if let Some(ref mut s) = state.stages[Stage::ID as usize] {
         stage_id(s, id_cpu);
-        forwarding::apply_forwarding_to_id(s, state.bypass, &wb_producer_before);
+        forwarding::apply_forwarding_to_id(
+            s,
+            state.bypass,
+            &wb_producer_before,
+            &ready_fu_producers_before,
+        );
     }
 
     // ── BranchResolve::Id — resolve before the branch leaves ID ──────────
@@ -2168,32 +2411,63 @@ fn advance_stages(
     let ex_fu_busy = state.stages[Stage::EX as usize]
         .as_ref()
         .is_some_and(|s| !s.is_bubble && s.fu_cycles_left > 1);
+    let mem_commit_blocked = !mem_slot_can_advance_to_wb(state);
 
-    if ex_fu_busy {
-        state.stages[4] = state.stages[3].take(); // MEM -> WB still progresses
-        state.stages[3] = None; // EX remains occupied; nothing new reaches MEM
-        if let Some(ref mut s) = state.stages[Stage::EX as usize] {
-            s.fu_cycles_left = s.fu_cycles_left.saturating_sub(1);
-            s.hazard = None;
-        }
-        if let Some(ref mut s) = state.stages[Stage::ID as usize] {
-            if !s.is_bubble {
-                s.hazard = Some(HazardType::FuBusy);
+    if mem_commit_blocked {
+        advance_parallel_fu_banks(state);
+        let lsu_promoted = promote_ready_lsu_to_mem(state);
+        if lsu_promoted {
+            if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
+                if !s.is_bubble {
+                    let (latency, fault) = stage_mem(s, cpu, mem, console);
+                    s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
+                    if fault {
+                        state.faulted = true;
+                    }
+                }
             }
         }
-        if let Some(ex_slot) = state.stages[Stage::EX as usize]
-            .as_ref()
-            .filter(|s| !s.is_bubble)
-        {
-            state.hazard_msgs.push((
-                HazardType::FuBusy,
-                format!(
-                    "FU busy: {} remains in EX for {} more cycle{}",
-                    ex_slot.disasm.split_whitespace().next().unwrap_or("?"),
-                    ex_slot.fu_cycles_left,
-                    if ex_slot.fu_cycles_left == 1 { "" } else { "s" },
-                ),
-            ));
+        promote_ready_fu_result_to_wb(state);
+        // This stall is due to commit-ordering (MEM slot is not the oldest in-flight),
+        // not a true FU-capacity stall. Count only in the total; no subtype increment.
+        state.stall_count += 1;
+        refresh_fu_busy(state);
+        return;
+    }
+
+    if ex_fu_busy {
+        advance_while_ex_busy(state);
+        advance_parallel_fu_banks(state);
+        let lsu_promoted = promote_ready_lsu_to_mem(state);
+        if lsu_promoted {
+            if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
+                if !s.is_bubble {
+                    let (latency, fault) = stage_mem(s, cpu, mem, console);
+                    s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
+                    if fault {
+                        state.faulted = true;
+                    }
+                }
+            }
+        }
+        promote_ready_fu_result_to_wb(state);
+        if matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+            // Recompute ready producers after fu_bank advanced — do NOT call stage_id
+            // again (it would overwrite forwarded operand values with stale cpu regs).
+            let ready_fu_producers = forwarding::ready_fu_producers(state);
+            let wb_producer = state.stages[Stage::WB as usize].clone();
+            if let Some(ref mut s) = state.stages[Stage::ID as usize] {
+                forwarding::apply_forwarding_to_id(
+                    s,
+                    state.bypass,
+                    &wb_producer,
+                    &ready_fu_producers,
+                );
+            }
+            let dispatched = dispatch_parallel_fu_from_id(state, cpi);
+            if dispatched {
+                refill_id_from_if(state, if_cache_stall);
+            }
         }
         if if_cache_stall {
             tick_if_cache_latency(state);
@@ -2208,33 +2482,11 @@ fn advance_stages(
     // ── Normal advance / IF cache hold ───────────────────────────────────
     state.stages[4] = state.stages[3].take(); // MEM → WB
     state.stages[3] = state.stages[2].take(); // EX  → MEM
-    state.stages[2] = state.stages[1].take(); // ID  → EX
-    // Apply configured EX-stage latency when an instruction enters EX.
-    if let Some(ref mut s) = state.stages[2] {
-        if !s.is_bubble {
-            let lat = fu_latency_for_class(s.class, cpi);
-            s.fu_cycles_left = lat;
-            if let Some(idx) = fu_type_idx(s.class) {
-                state.fu_busy[idx] = lat.saturating_sub(1);
-            }
-        }
-    }
-    if if_cache_stall {
-        state.stages[1] = Some(PipeSlot {
-            hazard: Some(HazardType::MemLatency),
-            ..PipeSlot::bubble()
-        });
-        if let Some(if_slot) = state.stages[Stage::IF as usize].as_ref() {
-            state.hazard_msgs.push((
-                HazardType::MemLatency,
-                format!(
-                    "IF cache latency: fetch at 0x{:04X} is still pending, so ID receives no new instruction and a front-end bubble is inserted",
-                    if_slot.pc
-                ),
-            ));
-        }
+    dispatch_id_to_execution(state, cpi);
+    if state.stages[Stage::ID as usize].is_none() {
+        refill_id_from_if(state, if_cache_stall);
     } else {
-        state.stages[1] = state.stages[0].take(); // IF → ID
+        mark_parallel_fu_capacity_hazard(state);
     }
     for s in state.stages.iter_mut().flatten() {
         if !s.is_bubble {
@@ -2249,54 +2501,44 @@ fn advance_stages(
         state.stall_by_type[HazardType::MemLatency.as_stall_index().unwrap()] += 1;
         state.last_cycle_cache_only = !had_non_if_slots_before;
     }
+    advance_parallel_fu_banks(state);
+    let _ = promote_ready_lsu_to_mem(state);
+    promote_ready_fu_result_to_wb(state);
     refresh_fu_busy(state);
 
     let mem_producer = state.stages[Stage::MEM as usize].clone();
     let wb_producer = state.stages[Stage::WB as usize].clone();
+    let wb_or_just_committed_producer = wb_producer
+        .clone()
+        .or_else(|| wb_before_commit.cloned().filter(|slot| !slot.is_bubble));
 
     // ── Execute per-stage work on newly placed slots ─────────────────────
+    let ready_fu_producers = forwarding::ready_fu_producers(state);
     if let Some(ref mut s) = state.stages[Stage::ID as usize] {
         stage_id(s, id_cpu);
-        forwarding::apply_forwarding_to_id(s, state.bypass, &wb_producer);
+        forwarding::apply_forwarding_to_id(s, state.bypass, &wb_producer, &ready_fu_producers);
     }
     predictor::apply_branch_prediction(state);
 
     if !state.halted && state.stages[Stage::IF as usize].is_none() {
-        let branch_in_flight = state.stages[Stage::ID as usize]
-            .as_ref()
-            .map_or(false, |s| {
-                !s.is_bubble && matches!(s.class, InstrClass::Branch | InstrClass::Jump)
-            })
-            || state.stages[Stage::EX as usize]
-                .as_ref()
-                .map_or(false, |s| {
-                    !s.is_bubble && matches!(s.class, InstrClass::Branch | InstrClass::Jump)
-                })
-            || state.stages[Stage::MEM as usize]
-                .as_ref()
-                .map_or(false, |s| {
-                    !s.is_bubble && matches!(s.class, InstrClass::Branch | InstrClass::Jump)
-                });
-
-        let (fetched, fetch_fault) = fetch_slot(state.fetch_pc, mem);
-        if fetch_fault {
-            state.faulted = true;
-        }
-        state.stages[0] = fetched;
-        if let Some(ref mut slot) = state.stages[0] {
-            if slot.gantt_id == 0 {
-                slot.gantt_id = state.next_gantt_id;
-                state.next_gantt_id += 1;
-            }
-            slot.is_speculative = branch_in_flight;
-            if slot.if_stall_cycles > 0 {
-                slot.hazard = Some(HazardType::MemLatency);
-            }
-            state.fetch_pc = state.fetch_pc.wrapping_add(4);
-        }
+        fetch_into_if(state, mem, console);
     }
     if let Some(ref mut s) = state.stages[Stage::EX as usize] {
-        forwarding::apply_forwarding_to_ex(s, state.bypass, &mem_producer, &wb_producer);
+        if let Some(committed) = wb_before_commit.as_ref().filter(|slot| !slot.is_bubble) {
+            apply_just_committed_visibility_to_ex(s, committed);
+        }
+        forwarding::apply_forwarding_to_id(
+            s,
+            state.bypass,
+            &wb_or_just_committed_producer,
+            &ready_fu_producers,
+        );
+        forwarding::apply_forwarding_to_ex(
+            s,
+            state.bypass,
+            &mem_producer,
+            &wb_or_just_committed_producer,
+        );
         stage_ex(s);
         // Handle fused multiply-add rs3 reading (was done at ID, stored in mem_addr)
         // This is already handled in stage_id via special code below
@@ -2304,8 +2546,10 @@ fn advance_stages(
     let mut mem_faulted = false;
     let mut store_load_trace: Option<(usize, String, String)> = None;
     if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
-        let store_to_load =
-            forwarding::try_store_to_load_forward(s, state.bypass, &wb_producer);
+        if let Some(committed) = wb_before_commit.as_ref().filter(|slot| !slot.is_bubble) {
+            apply_just_committed_visibility_to_mem(s, committed);
+        }
+        let store_to_load = forwarding::try_store_to_load_forward(s, state.bypass, &wb_producer);
         let (latency, fault) = stage_mem(s, cpu, mem, console);
         if let Some(forwarded) = store_to_load {
             s.mem_result = Some(forwarded);
@@ -2318,7 +2562,10 @@ fn advance_stages(
                 let consumer_name = s.disasm.split_whitespace().next().unwrap_or("?");
                 store_load_trace = Some((
                     Stage::WB as usize,
-                    format!("WB:{} -> MEM:{} ({})", prod_name, consumer_name, "Store->Load"),
+                    format!(
+                        "WB:{} -> MEM:{} ({})",
+                        prod_name, consumer_name, "Store->Load"
+                    ),
                     format!(
                         "BYPASS: memory value via {} into MEM:{} [RAW covered]",
                         forwarding::BypassPath::StoreToLoad.label(),
@@ -2357,10 +2604,501 @@ fn advance_stages(
     }
 }
 
+fn advance_while_ex_busy(state: &mut PipelineSimState) {
+    if mem_slot_can_advance_to_wb(state) {
+        state.stages[4] = state.stages[3].take(); // MEM -> WB still progresses
+    } else {
+        state.stages[4] = None;
+    }
+    state.stages[3] = None; // EX remains occupied; nothing new reaches MEM
+    if let Some(ref mut s) = state.stages[Stage::EX as usize] {
+        s.fu_cycles_left = s.fu_cycles_left.saturating_sub(1);
+        s.hazard = None;
+    }
+    if let Some(ref mut s) = state.stages[Stage::ID as usize] {
+        if !s.is_bubble {
+            s.hazard = Some(HazardType::FuBusy);
+        }
+    }
+    if let Some(ex_slot) = state.stages[Stage::EX as usize]
+        .as_ref()
+        .filter(|s| !s.is_bubble)
+    {
+        state.hazard_msgs.push((
+            HazardType::FuBusy,
+            format!(
+                "FU busy: {} remains in EX for {} more cycle{}",
+                ex_slot.disasm.split_whitespace().next().unwrap_or("?"),
+                ex_slot.fu_cycles_left,
+                if ex_slot.fu_cycles_left == 1 { "" } else { "s" },
+            ),
+        ));
+    }
+}
+
+fn dispatch_id_to_execution(state: &mut PipelineSimState, cpi: &CpiConfig) {
+    match state.mode {
+        super::PipelineMode::SingleCycle => dispatch_id_to_execution_serialized(state, cpi),
+        super::PipelineMode::FunctionalUnits => {
+            let id_parallel_eligible = state.stages[Stage::ID as usize]
+                .as_ref()
+                .is_some_and(|slot| !slot.is_bubble && parallel_fu_kind_for_slot(slot).is_some());
+            if !dispatch_parallel_fu_from_id(state, cpi) && !id_parallel_eligible {
+                dispatch_id_to_execution_serialized(state, cpi);
+            }
+        }
+    }
+}
+
+fn dispatch_id_to_execution_serialized(state: &mut PipelineSimState, cpi: &CpiConfig) {
+    state.stages[2] = state.stages[1].take(); // ID → EX
+    if let Some(ref mut s) = state.stages[Stage::EX as usize] {
+        if !s.is_bubble {
+            let lat = fu_latency_for_class(s.class, cpi);
+            s.fu_cycles_left = lat;
+            if let Some(idx) = fu_type_idx(s.class) {
+                state.fu_busy[idx] = lat.saturating_sub(1);
+            }
+        }
+    }
+}
+
+fn apply_just_committed_visibility_to_ex(slot: &mut PipeSlot, committed: &PipeSlot) {
+    let Some(instr) = slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())
+    else {
+        return;
+    };
+    let Some((prod_file, prod_rd, value)) = forwarding::slot_result(committed) else {
+        return;
+    };
+    if prod_rd == 0 && prod_file == forwarding::RegFile::Int {
+        return;
+    }
+    if slot.rs1 == Some(prod_rd) && forwarding::operand_reg_file(instr, 1) == Some(prod_file) {
+        slot.rs1_val = value;
+    }
+    if slot.rs2 == Some(prod_rd) && forwarding::operand_reg_file(instr, 2) == Some(prod_file) {
+        slot.rs2_val = value;
+    }
+    match instr {
+        Instruction::FmaddS { rs3, .. }
+        | Instruction::FmsubS { rs3, .. }
+        | Instruction::FnmsubS { rs3, .. }
+        | Instruction::FnmaddS { rs3, .. }
+            if prod_file == forwarding::RegFile::Float && rs3 == prod_rd =>
+        {
+            slot.mem_addr = Some(value);
+        }
+        _ => {}
+    }
+}
+
+fn apply_just_committed_visibility_to_mem(slot: &mut PipeSlot, committed: &PipeSlot) {
+    let Some(instr) = slot
+        .instr
+        .or_else(|| crate::falcon::decoder::decode(slot.word).ok())
+    else {
+        return;
+    };
+    let Some((prod_file, prod_rd, value)) = forwarding::slot_result(committed) else {
+        return;
+    };
+    if prod_rd == 0 && prod_file == forwarding::RegFile::Int {
+        return;
+    }
+    if slot.rs2 == Some(prod_rd) && forwarding::operand_reg_file(instr, 2) == Some(prod_file) {
+        slot.rs2_val = value;
+    }
+}
+
+fn parallel_fu_kind_for_slot(slot: &PipeSlot) -> Option<FuKind> {
+    match slot.class {
+        InstrClass::Alu | InstrClass::Mul | InstrClass::Div | InstrClass::Fp => {
+            FuKind::from_class(slot.class)
+        }
+        InstrClass::Load | InstrClass::Store => Some(FuKind::Lsu),
+        InstrClass::System => match slot
+            .instr
+            .or_else(|| crate::falcon::decoder::decode(slot.word).ok())
+        {
+            Some(Instruction::Fence | Instruction::FenceI) => Some(FuKind::Sys),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn parallel_fu_occupancy(state: &PipelineSimState, kind: FuKind) -> usize {
+    state.fu_bank[kind.index()]
+        .iter()
+        .filter(|fu| {
+            fu.slot
+                .as_ref()
+                .filter(|slot| !slot.is_bubble)
+                .and_then(parallel_fu_kind_for_slot)
+                == Some(kind)
+        })
+        .count()
+}
+
+fn is_memory_slot(slot: &PipeSlot) -> bool {
+    !slot.is_bubble && matches!(slot.class, InstrClass::Load | InstrClass::Store)
+}
+
+fn lsu_dispatch_blocked_by_older_memory(state: &PipelineSimState) -> bool {
+    state.fu_bank[FuKind::Lsu.index()]
+        .iter()
+        .any(|fu| fu.slot.as_ref().is_some_and(is_memory_slot))
+        || state.stages[Stage::EX as usize]
+            .as_ref()
+            .is_some_and(is_memory_slot)
+        || state.stages[Stage::MEM as usize]
+            .as_ref()
+            .is_some_and(is_memory_slot)
+}
+
+fn dispatch_parallel_fu_from_id(state: &mut PipelineSimState, cpi: &CpiConfig) -> bool {
+    let Some(id_slot) = state.stages[Stage::ID as usize].as_ref() else {
+        return false;
+    };
+    if id_slot.is_bubble {
+        return false;
+    }
+    let Some(kind) = parallel_fu_kind_for_slot(id_slot) else {
+        return false;
+    };
+    if kind == FuKind::Lsu && lsu_dispatch_blocked_by_older_memory(state) {
+        return false;
+    }
+    if parallel_fu_occupancy(state, kind) >= state.fu_capacity[kind.index()] as usize {
+        return false;
+    }
+
+    let mut slot = match state.stages[Stage::ID as usize].take() {
+        Some(slot) => slot,
+        None => return false,
+    };
+    let lat = fu_latency_for_class(slot.class, cpi);
+    slot.fu_cycles_left = lat;
+    stage_ex(&mut slot);
+    state.fu_bank[kind.index()].push(super::FuState {
+        kind: Some(kind),
+        slot: Some(slot),
+        busy_cycles_left: lat.saturating_sub(1),
+    });
+    true
+}
+
+fn mark_parallel_fu_capacity_hazard(state: &mut PipelineSimState) {
+    if !matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+        return;
+    }
+    let Some(id_s) = state.stages[Stage::ID as usize].as_ref() else {
+        return;
+    };
+    if id_s.is_bubble {
+        return;
+    }
+    let Some(kind) = parallel_fu_kind_for_slot(id_s) else {
+        return;
+    };
+    if kind == FuKind::Lsu && lsu_dispatch_blocked_by_older_memory(state) {
+        let producer_name = id_s.disasm.split_whitespace().next().unwrap_or("?");
+        state.hazard_msgs.push((
+            HazardType::FuBusy,
+            format!(
+                "FU busy: {producer_name} waits in ID because an older LSU operation is still in flight"
+            ),
+        ));
+        if let Some(ref mut s) = state.stages[Stage::ID as usize] {
+            s.hazard = Some(HazardType::FuBusy);
+        }
+        state.stall_count += 1;
+        state.stall_by_type[HazardType::FuBusy.as_stall_index().unwrap()] += 1;
+        return;
+    }
+    let occupancy = parallel_fu_occupancy(state, kind);
+    let capacity = state.fu_capacity[kind.index()] as usize;
+    if occupancy < capacity {
+        return;
+    }
+    let producer_name = id_s.disasm.split_whitespace().next().unwrap_or("?");
+    state.hazard_msgs.push((
+        HazardType::FuBusy,
+        format!(
+            "FU busy: {producer_name} waits in ID because {} is at capacity ({occupancy}/{capacity})",
+            kind.label(),
+        ),
+    ));
+    if let Some(ref mut s) = state.stages[Stage::ID as usize] {
+        s.hazard = Some(HazardType::FuBusy);
+    }
+    state.stall_count += 1;
+    state.stall_by_type[HazardType::FuBusy.as_stall_index().unwrap()] += 1;
+}
+
+fn advance_parallel_fu_banks(state: &mut PipelineSimState) {
+    if !matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+        return;
+    }
+    for fu_group in &mut state.fu_bank {
+        for fu in fu_group {
+            let Some(slot) = fu.slot.as_mut() else {
+                continue;
+            };
+            if slot.is_bubble {
+                continue;
+            }
+            if slot.fu_cycles_left > 1 {
+                slot.fu_cycles_left -= 1;
+            }
+            fu.busy_cycles_left = slot.fu_cycles_left.saturating_sub(1);
+        }
+    }
+}
+
+fn oldest_in_flight_seq(state: &PipelineSimState) -> Option<u64> {
+    let stage_min = state
+        .stages
+        .iter()
+        .flatten()
+        .filter(|s| !s.is_bubble && s.seq != 0)
+        .map(|s| s.seq)
+        .min();
+    let fu_min = state
+        .fu_bank
+        .iter()
+        .flat_map(|group| group.iter())
+        .filter_map(|fu| fu.slot.as_ref())
+        .filter(|s| !s.is_bubble && s.seq != 0)
+        .map(|s| s.seq)
+        .min();
+    match (stage_min, fu_min) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn mem_slot_can_advance_to_wb(state: &PipelineSimState) -> bool {
+    let Some(mem_slot) = state.stages[Stage::MEM as usize].as_ref() else {
+        return true;
+    };
+    if mem_slot.is_bubble {
+        return true;
+    }
+    if mem_slot.seq == 0 {
+        return true;
+    }
+    Some(mem_slot.seq) == oldest_in_flight_seq(state)
+}
+
+fn stage_slot_available_for_promotion(state: &PipelineSimState, stage: Stage) -> bool {
+    state.stages[stage as usize]
+        .as_ref()
+        .is_none_or(|slot| slot.is_bubble)
+}
+
+fn promote_ready_fu_result_to_wb(state: &mut PipelineSimState) {
+    if !matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+        return;
+    }
+    if !stage_slot_available_for_promotion(state, Stage::WB) {
+        return;
+    }
+    let oldest_seq = oldest_in_flight_seq(state);
+    let ready_idx = state
+        .fu_bank
+        .iter()
+        .enumerate()
+        .flat_map(|(kind_idx, group)| {
+            group.iter().enumerate().filter_map(move |(slot_idx, fu)| {
+                let slot = fu.slot.as_ref()?;
+                if slot.is_bubble || slot.fu_cycles_left > 1 || fu.kind == Some(FuKind::Lsu) {
+                    return None;
+                }
+                Some((kind_idx, slot_idx, slot.seq))
+            })
+        })
+        .min_by_key(|(_, _, seq)| *seq)
+        .filter(|(_, _, seq)| Some(*seq) == oldest_seq)
+        .map(|(kind_idx, slot_idx, _)| (kind_idx, slot_idx));
+
+    if let Some((kind_idx, slot_idx)) = ready_idx {
+        let slot = state.fu_bank[kind_idx][slot_idx].slot.take();
+        state.stages[Stage::WB as usize] = slot;
+        state.fu_bank[kind_idx].swap_remove(slot_idx);
+    }
+}
+
+fn promote_ready_lsu_to_mem(state: &mut PipelineSimState) -> bool {
+    if !matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+        return false;
+    }
+    if !stage_slot_available_for_promotion(state, Stage::MEM) {
+        return false;
+    }
+    let oldest_seq = oldest_in_flight_seq(state);
+    let ready_idx = state.fu_bank[FuKind::Lsu.index()]
+        .iter()
+        .enumerate()
+        .filter_map(|(slot_idx, fu)| {
+            let slot = fu.slot.as_ref()?;
+            if slot.is_bubble || slot.fu_cycles_left > 1 {
+                return None;
+            }
+            Some((slot_idx, slot.seq))
+        })
+        .min_by_key(|(_, seq)| *seq)
+        .filter(|(_, seq)| Some(*seq) == oldest_seq)
+        .map(|(slot_idx, _)| slot_idx);
+
+    if let Some(slot_idx) = ready_idx {
+        let lsu_idx = FuKind::Lsu.index();
+        let slot = state.fu_bank[lsu_idx][slot_idx].slot.take();
+        state.stages[Stage::MEM as usize] = slot;
+        state.fu_bank[lsu_idx].swap_remove(slot_idx);
+        return true;
+    }
+    false
+}
+
+fn refill_id_from_if(state: &mut PipelineSimState, if_cache_stall: bool) {
+    if if_cache_stall {
+        state.stages[1] = Some(PipeSlot {
+            hazard: Some(HazardType::MemLatency),
+            ..PipeSlot::bubble()
+        });
+        if let Some(if_slot) = state.stages[Stage::IF as usize].as_ref() {
+            state.hazard_msgs.push((
+                HazardType::MemLatency,
+                format!(
+                    "IF cache latency: fetch at 0x{:04X} is still pending, so ID receives no new instruction and a front-end bubble is inserted",
+                    if_slot.pc
+                ),
+            ));
+        }
+    } else {
+        state.stages[1] = state.stages[0].take(); // IF → ID
+    }
+}
+
+fn branch_in_flight(state: &PipelineSimState) -> bool {
+    state.stages[Stage::ID as usize]
+        .as_ref()
+        .map_or(false, |s| {
+            !s.is_bubble && matches!(s.class, InstrClass::Branch | InstrClass::Jump)
+        })
+        || state.stages[Stage::EX as usize]
+            .as_ref()
+            .map_or(false, |s| {
+                !s.is_bubble && matches!(s.class, InstrClass::Branch | InstrClass::Jump)
+            })
+        || state.stages[Stage::MEM as usize]
+            .as_ref()
+            .map_or(false, |s| {
+                !s.is_bubble && matches!(s.class, InstrClass::Branch | InstrClass::Jump)
+            })
+}
+
+fn frontend_stop_in_flight(state: &PipelineSimState) -> bool {
+    state.stages.iter().flatten().any(|slot| {
+        !slot.is_bubble
+            && matches!(
+                slot.instr,
+                Some(Instruction::Ecall | Instruction::Ebreak | Instruction::Halt)
+            )
+    }) || state
+        .fu_bank
+        .iter()
+        .flat_map(|group| group.iter())
+        .filter_map(|fu| fu.slot.as_ref())
+        .any(|slot| {
+            !slot.is_bubble
+                && matches!(
+                    slot.instr,
+                    Some(Instruction::Ecall | Instruction::Ebreak | Instruction::Halt)
+                )
+        })
+}
+
+fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, console: &mut Console) {
+    if frontend_stop_in_flight(state) {
+        return;
+    }
+    let branch_in_flight = branch_in_flight(state);
+
+    if pc_in_program_range(state, state.fetch_pc) {
+        let (fetched, fetch_error) = fetch_slot(state.fetch_pc, mem);
+        if let Some(msg) = fetch_error {
+            console.push_error(msg);
+            state.faulted = true;
+        }
+        state.stages[0] = fetched;
+        if let Some(ref mut slot) = state.stages[0] {
+            if slot.seq == 0 {
+                slot.seq = state.next_seq;
+                state.next_seq += 1;
+            }
+            if slot.gantt_id == 0 {
+                slot.gantt_id = state.next_gantt_id;
+                state.next_gantt_id += 1;
+            }
+            slot.is_speculative = branch_in_flight;
+            if slot.if_stall_cycles > 0 {
+                slot.hazard = Some(HazardType::MemLatency);
+            }
+            state.fetch_pc = state.fetch_pc.wrapping_add(4);
+        }
+    } else if !has_in_flight_work(state) {
+        console.push_error(format!(
+            "Execution reached 0x{:08X}, outside the loaded program. \
+             Add `li a7, 93; ecall` to terminate cleanly.",
+            state.fetch_pc
+        ));
+        state.faulted = true;
+    }
+}
+
 fn refresh_fu_busy(state: &mut PipelineSimState) {
     state.fu_busy = [0; 7];
+    if !matches!(state.mode, super::PipelineMode::FunctionalUnits) {
+        state.fu_bank = std::array::from_fn(|_| Vec::new());
+    } else {
+        for group in &state.fu_bank {
+            for fu in group {
+                if let Some(slot) = fu.slot.as_ref().filter(|s| !s.is_bubble) {
+                    if let Some(idx) = fu_type_idx(slot.class) {
+                        state.fu_busy[idx] =
+                            state.fu_busy[idx].max(slot.fu_cycles_left.saturating_sub(1));
+                    }
+                }
+            }
+        }
+    }
     if let Some(slot) = state.stages[Stage::EX as usize].as_ref() {
         if !slot.is_bubble {
+            if let Some(kind) = FuKind::from_class(slot.class) {
+                let idx = kind.index();
+                // In FunctionalUnits mode, never mirror the EX slot into fu_bank.
+                // Serialized instructions (branches, jumps, ecall) use the EX stage
+                // directly and commit via the normal EX→MEM→WB pipeline.  Adding a
+                // clone of them into fu_bank would cause promote_ready_fu_result_to_wb
+                // to commit them a second time.  RAW detection for EX-stage producers
+                // is already covered by the stage-based loop in detect_stall.
+                let should_mirror = !matches!(state.mode, super::PipelineMode::FunctionalUnits);
+                if should_mirror {
+                    state.fu_bank[idx].clear();
+                    state.fu_bank[idx].push(super::FuState {
+                        kind: Some(kind),
+                        slot: Some(slot.clone()),
+                        busy_cycles_left: slot.fu_cycles_left.saturating_sub(1),
+                    });
+                }
+            }
             if let Some(idx) = fu_type_idx(slot.class) {
                 state.fu_busy[idx] = slot.fu_cycles_left.saturating_sub(1);
             }
@@ -2414,11 +3152,27 @@ fn insert_stall(
     if mem_faulted2 {
         state.faulted = true;
     }
+    advance_parallel_fu_banks(state);
+    let lsu_promoted = promote_ready_lsu_to_mem(state);
+    if lsu_promoted {
+        if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
+            if !s.is_bubble {
+                let (latency, fault) = stage_mem(s, cpu, mem, console);
+                s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
+                if fault {
+                    state.faulted = true;
+                }
+            }
+        }
+    }
+    promote_ready_fu_result_to_wb(state);
+    refresh_fu_busy(state);
     if stall_point == Stage::ID as usize {
         let wb_producer = wb_before_commit.cloned();
+        let ready_fu_producers = forwarding::ready_fu_producers(state);
         if let Some(ref mut s) = state.stages[Stage::ID as usize] {
             stage_id(s, id_cpu);
-            forwarding::apply_forwarding_to_id(s, state.bypass, &wb_producer);
+            forwarding::apply_forwarding_to_id(s, state.bypass, &wb_producer, &ready_fu_producers);
         }
     }
     if tick_if_cache_latency(state) {
@@ -2432,16 +3186,40 @@ fn insert_stall(
 
 /// Returns `(slot, faulted)`.  A fetch bus error yields `(None, true)`;
 /// a normal empty cycle yields `(None, false)`.
-fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, bool) {
+fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, Option<String>) {
     let (result, latency) = mem.fetch32_timed_no_count(pc);
     match result {
         Ok(word) => {
+            if let Err(e) = crate::falcon::decoder::decode(word) {
+                return (
+                    None,
+                    Some(format!(
+                        "Invalid instruction 0x{word:08X} at 0x{pc:08X}: {e}"
+                    )),
+                );
+            }
             let mut slot = PipeSlot::from_word(pc, word);
+            slot.seq = 0;
             slot.if_stall_cycles = latency.saturating_sub(1).min(255) as u8;
-            (Some(slot), false)
+            (Some(slot), None)
         }
-        Err(_) => (None, true),
+        Err(e) => (None, Some(format!("IF fault at 0x{pc:08X}: {e}"))),
     }
+}
+
+fn pc_in_program_range(state: &PipelineSimState, pc: u32) -> bool {
+    state
+        .program_range
+        .map_or(true, |(start, end)| pc >= start && pc < end)
+}
+
+fn has_in_flight_work(state: &PipelineSimState) -> bool {
+    state.stages.iter().flatten().any(|slot| !slot.is_bubble)
+        || state
+            .fu_bank
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|fu| fu.slot.as_ref().is_some_and(|slot| !slot.is_bubble))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2451,23 +3229,53 @@ fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, bool) {
 fn update_gantt(state: &mut PipelineSimState) {
     let cycle = state.cycle_count;
 
+    fn stage_cell_for_slot(stage: Stage, slot: &PipeSlot) -> GanttCell {
+        let fu_cell = match slot.class {
+            InstrClass::Alu => Some(FuKind::Alu),
+            InstrClass::Mul => Some(FuKind::Mul),
+            InstrClass::Div => Some(FuKind::Div),
+            InstrClass::Fp => Some(FuKind::Fpu),
+            InstrClass::Load | InstrClass::Store => Some(FuKind::Lsu),
+            InstrClass::System => Some(FuKind::Sys),
+            InstrClass::Branch | InstrClass::Jump | InstrClass::Unknown => None,
+        };
+        if stage == Stage::EX {
+            if let Some(kind) = fu_cell {
+                return if slot.is_speculative {
+                    GanttCell::SpeculativeFu(kind)
+                } else {
+                    GanttCell::InFu(kind)
+                };
+            }
+        }
+        if slot.is_speculative {
+            GanttCell::Speculative(stage)
+        } else {
+            GanttCell::InStage(stage)
+        }
+    }
+
+    fn cell_track(cell: GanttCell) -> Option<GanttTrack> {
+        match cell {
+            GanttCell::InStage(stage) | GanttCell::Speculative(stage) => {
+                Some(GanttTrack::Stage(stage))
+            }
+            GanttCell::InFu(kind) | GanttCell::SpeculativeFu(kind) => Some(GanttTrack::Fu(kind)),
+            _ => None,
+        }
+    }
+
     for (stage_idx, maybe_slot) in state.stages.iter().enumerate() {
         let stage = Stage::all()[stage_idx];
         let cell = match maybe_slot {
             None => continue,
             Some(s) if s.is_bubble && s.hazard == Some(HazardType::BranchFlush) => GanttCell::Flush,
             Some(s) if s.is_bubble => GanttCell::Bubble,
-            Some(s) if s.is_speculative => GanttCell::Speculative(stage),
-            Some(_) => GanttCell::InStage(stage),
+            Some(s) => stage_cell_for_slot(stage, s),
         };
         if let Some(slot) = maybe_slot {
             let gantt_id = slot.gantt_id;
             let pc = slot.pc;
-            let cell = if let GanttCell::InStage(s) = cell {
-                GanttCell::InStage(s)
-            } else {
-                cell
-            };
             let row = state.gantt.iter_mut().find(|r| {
                 !r.done
                     && if gantt_id != 0 {
@@ -2479,16 +3287,28 @@ fn update_gantt(state: &mut PipelineSimState) {
             if let Some(row) = row {
                 let emit_cell = match cell {
                     GanttCell::InStage(s) => {
-                        if row.last_stage == Some(s) {
+                        if row.last_stage == Some(GanttTrack::Stage(s)) {
                             GanttCell::Stall
                         } else {
-                            row.last_stage = Some(s);
+                            row.last_stage = Some(GanttTrack::Stage(s));
                             GanttCell::InStage(s)
                         }
                     }
                     GanttCell::Speculative(s) => {
-                        row.last_stage = Some(s);
+                        row.last_stage = Some(GanttTrack::Stage(s));
                         GanttCell::Speculative(s)
+                    }
+                    GanttCell::InFu(kind) => {
+                        if row.last_stage == Some(GanttTrack::Fu(kind)) {
+                            GanttCell::Stall
+                        } else {
+                            row.last_stage = Some(GanttTrack::Fu(kind));
+                            GanttCell::InFu(kind)
+                        }
+                    }
+                    GanttCell::SpeculativeFu(kind) => {
+                        row.last_stage = Some(GanttTrack::Fu(kind));
+                        GanttCell::SpeculativeFu(kind)
                     }
                     _ => cell,
                 };
@@ -2506,10 +3326,7 @@ fn update_gantt(state: &mut PipelineSimState) {
                     row.first_cycle += 1;
                 }
             } else {
-                let initial_stage = match cell {
-                    GanttCell::InStage(s) | GanttCell::Speculative(s) => Some(s),
-                    _ => None,
-                };
+                let initial_stage = cell_track(cell);
                 let mut new_row = GanttRow {
                     gantt_id,
                     pc,
@@ -2536,12 +3353,99 @@ fn update_gantt(state: &mut PipelineSimState) {
         }
     }
 
+    for group in &state.fu_bank {
+        for fu in group {
+            let Some(slot) = fu.slot.as_ref() else {
+                continue;
+            };
+            let cell = if slot.is_bubble {
+                GanttCell::Bubble
+            } else if slot.is_speculative {
+                GanttCell::SpeculativeFu(fu.kind.unwrap_or(FuKind::Alu))
+            } else {
+                GanttCell::InFu(fu.kind.unwrap_or(FuKind::Alu))
+            };
+            let gantt_id = slot.gantt_id;
+            let pc = slot.pc;
+            let row = state.gantt.iter_mut().find(|r| {
+                !r.done
+                    && if gantt_id != 0 {
+                        r.gantt_id == gantt_id
+                    } else {
+                        r.pc == pc
+                    }
+            });
+            if let Some(row) = row {
+                let emit_cell = match cell {
+                    GanttCell::InFu(kind) => {
+                        if row.last_stage == Some(GanttTrack::Fu(kind)) {
+                            GanttCell::Stall
+                        } else {
+                            row.last_stage = Some(GanttTrack::Fu(kind));
+                            GanttCell::InFu(kind)
+                        }
+                    }
+                    GanttCell::SpeculativeFu(kind) => {
+                        row.last_stage = Some(GanttTrack::Fu(kind));
+                        GanttCell::SpeculativeFu(kind)
+                    }
+                    other => other,
+                };
+                let expected_len = (cycle - row.first_cycle) as usize;
+                while row.cells.len() < expected_len {
+                    row.cells.push_back(GanttCell::Empty);
+                }
+                if row.cells.len() == expected_len {
+                    row.cells.push_back(emit_cell);
+                } else if let Some(last) = row.cells.back_mut() {
+                    *last = emit_cell;
+                }
+                while row.cells.len() > MAX_GANTT_COLS {
+                    row.cells.pop_front();
+                    row.first_cycle += 1;
+                }
+            } else {
+                let mut new_row = GanttRow {
+                    gantt_id,
+                    pc,
+                    disasm: slot.disasm.clone(),
+                    class: slot.class,
+                    cells: VecDeque::new(),
+                    first_cycle: cycle,
+                    done: false,
+                    last_stage: cell_track(cell),
+                };
+                new_row.cells.push_back(cell);
+                let prev_len = state.gantt.len();
+                state.gantt.push_back(new_row);
+                state.gantt_scroll = super::maybe_follow_gantt_tail(
+                    state.gantt_scroll,
+                    state.gantt_visible_rows_cache.get(),
+                    prev_len,
+                );
+                while state.gantt.len() > MAX_GANTT_ROWS + 4 {
+                    state.gantt.pop_front();
+                    state.gantt_scroll = state.gantt_scroll.saturating_sub(1);
+                }
+            }
+        }
+    }
+
     let active_ids: Vec<(u64, u32)> = state
         .stages
         .iter()
         .flatten()
         .filter(|s| !s.is_bubble)
         .map(|s| (s.gantt_id, s.pc))
+        .chain(
+            state
+                .fu_bank
+                .iter()
+                .flat_map(|group| group.iter())
+                .filter_map(|fu| fu.slot.as_ref())
+                .filter(|s| !s.is_bubble)
+                .map(|s| (s.gantt_id, s.pc)),
+        )
         .collect();
 
     for row in state.gantt.iter_mut() {

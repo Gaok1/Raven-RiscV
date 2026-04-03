@@ -161,21 +161,18 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                     if app.cache.selected_level == 0 {
                         match app.cache.scope {
                             CacheScope::DCache => {
-                                app.cache.view_scroll_d =
-                                    app.cache.view_scroll_d.saturating_sub(1);
+                                app.cache.view_scroll_d = app.cache.view_scroll_d.saturating_sub(1);
                             }
                             CacheScope::Both => {
                                 if matches!(app.cache.view_focus, CacheViewFocus::DCache) {
                                     app.cache.view_scroll_d =
                                         app.cache.view_scroll_d.saturating_sub(1);
                                 } else {
-                                    app.cache.view_scroll =
-                                        app.cache.view_scroll.saturating_sub(1);
+                                    app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
                                 }
                             }
                             CacheScope::ICache => {
-                                app.cache.view_scroll =
-                                    app.cache.view_scroll.saturating_sub(1);
+                                app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
                             }
                         }
                     } else {
@@ -227,11 +224,10 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                             }
                             CacheScope::ICache => {
                                 if app.cache.view_num_sets.get() == 0 {
-                                    app.cache.view_scroll =
-                                        app.cache.view_scroll.saturating_add(1);
+                                    app.cache.view_scroll = app.cache.view_scroll.saturating_add(1);
                                 } else {
-                                    app.cache.view_scroll =
-                                        (app.cache.view_scroll + 1).min(app.cache.view_scroll_max.get());
+                                    app.cache.view_scroll = (app.cache.view_scroll + 1)
+                                        .min(app.cache.view_scroll_max.get());
                                 }
                             }
                         }
@@ -256,11 +252,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                     }
                     CacheScope::Both => {
                         if matches!(app.cache.view_focus, CacheViewFocus::DCache) {
-                            app.cache.view_h_scroll_d =
-                                app.cache.view_h_scroll_d.saturating_sub(3);
+                            app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_sub(3);
                         } else {
-                            app.cache.view_h_scroll =
-                                app.cache.view_h_scroll.saturating_sub(3);
+                            app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_sub(3);
                         }
                     }
                     CacheScope::ICache => {
@@ -280,11 +274,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                     }
                     CacheScope::Both => {
                         if matches!(app.cache.view_focus, CacheViewFocus::DCache) {
-                            app.cache.view_h_scroll_d =
-                                app.cache.view_h_scroll_d.saturating_add(3);
+                            app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_add(3);
                         } else {
-                            app.cache.view_h_scroll =
-                                app.cache.view_h_scroll.saturating_add(3);
+                            app.cache.view_h_scroll = app.cache.view_h_scroll.saturating_add(3);
                         }
                     }
                     CacheScope::ICache => {

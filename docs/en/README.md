@@ -40,7 +40,7 @@ Requires Rust 1.75+. No other dependencies.
   - **RAM**: `k` cycles region: Data / Stack / R/W / Heap (sbrk pointer with `▶HB` marker)
   - **R/W**: still RAM view, but auto-follows the last memory access address from `LOAD` and `STORE`
   - **Dyn**: STORE → RAM at written address; LOAD/ALU → register bank
-- Instruction memory panel: type badge `[R][I][S][B][U][J]`, execution heat `×N`, branch outcome
+- Instruction memory panel: type badge `[R][I][S][B][U][J][A][F]`, execution heat `×N`, branch outcome
 - Instruction decoder: full field breakdown (opcode, funct3/7, rs1/rs2/rd, immediate, sign-extended)
 
 ### Cache Simulator (Tab 3)
@@ -63,7 +63,7 @@ Requires Rust 1.75+. No other dependencies.
 
 | Extension | Instructions |
 |-----------|-------------|
-| RV32I | ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI, LB, LH, LW, LBU, LHU, SB, SH, SW, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR, LUI, AUIPC, ECALL, EBREAK |
+| RV32I | ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU, ADDI, ANDI, ORI, XORI, SLTI, SLTIU, SLLI, SRLI, SRAI, LB, LH, LW, LBU, LHU, SB, SH, SW, BEQ, BNE, BLT, BGE, BLTU, BGEU, JAL, JALR, LUI, AUIPC, FENCE, FENCE.I, ECALL, EBREAK |
 | RV32M | MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU |
 | RV32A | LR.W, SC.W, AMOSWAP.W, AMOADD.W, AMOXOR.W, AMOAND.W, AMOOR.W, AMOMAX.W, AMOMIN.W, AMOMAXU.W, AMOMINU.W |
 | RV32F | FADD.S, FSUB.S, FMUL.S, FDIV.S, FSQRT.S, FMIN.S, FMAX.S, FEQ.S, FLT.S, FLE.S, FLW, FSW, FMV.W.X, FMV.X.W, FCVT.W.S, FCVT.WU.S, FCVT.S.W, FCVT.S.WU, FCLASS.S, FMADD.S, FMSUB.S, FNMADD.S, FNMSUB.S, FNEG.S, FABS.S |

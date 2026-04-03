@@ -92,7 +92,11 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
 
     let mut spans = vec![
         Span::styled(
-            " Program total \u{2014} ",
+            if app.aggregate_pipeline_snapshot().is_some() {
+                " Program total (pipeline aggregate) \u{2014} "
+            } else {
+                " Program total \u{2014} "
+            },
             Style::default().fg(theme::LABEL),
         ),
         Span::styled(
@@ -295,9 +299,8 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     } else {
         cycles as f64 / instructions as f64
     };
-    let line6 = format!(
-        "Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}"
-    );
+    let line6 =
+        format!("Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}");
     f.render_widget(
         Paragraph::new(Span::styled(line6, Style::default().fg(theme::METRIC_CPI))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),

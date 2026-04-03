@@ -60,7 +60,7 @@ The map distinguishes a forwarding-covered RAW (no stall, shown as `FWD`) from a
 
 ### Branch prediction
 
-Static prediction is configurable: **not-taken** (default) or **taken**. The pipeline attaches a prediction badge when the branch reaches `ID`. If the prediction is wrong, younger speculative instructions are flushed and the fetch redirects.
+Prediction is configurable: **not-taken** (default), **always-taken**, **BTFNT**, or **2-bit Dynamic**. The pipeline attaches a prediction badge when the branch reaches `ID`. If the prediction is wrong, younger speculative instructions are flushed and the fetch redirects.
 
 You can also choose where branches resolve: `ID` (1 bubble), `EX` (2 bubbles, default), or `MEM` (3 bubbles).
 
@@ -74,13 +74,22 @@ The pipeline and cache share one clock model. An IF or MEM access pays the full 
 
 ### Configuration file
 
-Pipeline settings persist in a `.pcfg` file (`Ctrl+Shift+P` to save/load):
+Pipeline settings persist in a `.pcfg` file:
 
 ```
 # Raven Pipeline Config v1
 enabled=true
-forwarding=true
+bypass.ex_to_ex=true
+bypass.mem_to_ex=true
+bypass.wb_to_id=true
+bypass.store_to_load=false
 mode=SingleCycle
+fu.alu=1
+fu.mul=1
+fu.div=1
+fu.fpu=1
+fu.lsu=1
+fu.sys=1
 branch_resolve=Ex
 predict=NotTaken
 speed=Normal
@@ -181,7 +190,7 @@ The pipeline tab footer shows live metrics:
 Cycle  342   Instr  211   CPI  1.62   Stalls  89   Flushes  12
 ```
 
-Per-class instruction counts are visible in the Gantt color legend.
+The per-hazard breakdown is reported as **stall tags**. A single stalled cycle can contribute to more than one tag when multiple causes overlap.
 
 ---
 

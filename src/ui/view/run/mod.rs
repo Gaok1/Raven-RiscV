@@ -19,7 +19,7 @@ mod status;
 use instruction_details::render_instruction_details;
 use instruction_list::{render_exec_trace, render_instruction_memory};
 use sidebar::render_sidebar;
-pub(crate) use status::{render_run_status, run_controls_plain_text};
+pub(crate) use status::{render_run_status, run_controls_plain_text, state_text};
 
 pub(crate) const RUN_COLLAPSED_RAIL_W: u16 = 2;
 pub(crate) const RUN_SIDEBAR_MIN_W: u16 = 20;

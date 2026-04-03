@@ -248,7 +248,79 @@ const DOCS: &[DocRow] = &[
         "SYS",
         "fence",
         "",
-        "Memory barrier (no-op in single-core simulation)"
+        "Memory barrier across memory and device accesses"
+    ),
+    row!(
+        "SYS",
+        "fence.i",
+        "",
+        "Instruction-stream synchronization barrier"
+    ),
+    row!(
+        "Atomic",
+        "lr.w",
+        "rd, (rs1)",
+        "Load-reserved word from mem[rs1] into rd"
+    ),
+    row!(
+        "Atomic",
+        "sc.w",
+        "rd, rs2, (rs1)",
+        "Store-conditional rs2 to mem[rs1]; rd=0 success, 1 failure"
+    ),
+    row!(
+        "Atomic",
+        "amoswap.w",
+        "rd, rs2, (rs1)",
+        "Atomically swap mem[rs1] with rs2; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amoadd.w",
+        "rd, rs2, (rs1)",
+        "Atomically add rs2 to mem[rs1]; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amoxor.w",
+        "rd, rs2, (rs1)",
+        "Atomically XOR rs2 with mem[rs1]; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amoand.w",
+        "rd, rs2, (rs1)",
+        "Atomically AND rs2 with mem[rs1]; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amoor.w",
+        "rd, rs2, (rs1)",
+        "Atomically OR rs2 with mem[rs1]; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amomax.w",
+        "rd, rs2, (rs1)",
+        "Atomically signed-max mem[rs1] with rs2; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amomin.w",
+        "rd, rs2, (rs1)",
+        "Atomically signed-min mem[rs1] with rs2; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amomaxu.w",
+        "rd, rs2, (rs1)",
+        "Atomically unsigned-max mem[rs1] with rs2; rd gets old value"
+    ),
+    row!(
+        "Atomic",
+        "amominu.w",
+        "rd, rs2, (rs1)",
+        "Atomically unsigned-min mem[rs1] with rs2; rd gets old value"
     ),
     row!("Pseudo", "nop", "", "No operation", "addi x0, x0, 0"),
     row!("Pseudo", "mv", "rd, rs", "rd = rs", "addi rd, rs, 0"),
@@ -705,9 +777,10 @@ fn ty_bit(ty: &str) -> u16 {
         "U" => 1 << 6,
         "Jump" => 1 << 7,
         "SYS" => 1 << 8,
-        "Pseudo" => 1 << 9,
-        "F" => 1 << 10,
-        "Dir" => 1 << 11,
+        "Atomic" => 1 << 9,
+        "Pseudo" => 1 << 10,
+        "F" => 1 << 11,
+        "Dir" => 1 << 12,
         _ => 0,
     }
 }
@@ -723,6 +796,7 @@ fn ty_color(ty: &str) -> Color {
         "U" => Color::LightYellow,
         "Jump" => Color::LightCyan,
         "SYS" => Color::Red,
+        "Atomic" => Color::LightRed,
         "Pseudo" => Color::LightMagenta,
         "F" => Color::LightGreen,
         "Dir" => Color::Gray,

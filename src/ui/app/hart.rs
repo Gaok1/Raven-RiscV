@@ -1,5 +1,5 @@
 use super::{CpiConfig, classify_cpi_cycles};
-use crate::falcon::{self, CacheController, Cpu};
+use crate::falcon::{self, CacheController, Cpu, Instruction};
 use crate::ui::console::Console;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +68,13 @@ impl HartCoreRuntime {
     }
 }
 
+pub(crate) fn is_transparent_single_step_word(word: u32) -> bool {
+    matches!(
+        falcon::decoder::decode(word),
+        Ok(Instruction::Fence | Instruction::FenceI)
+    )
+}
+
 // ── Background-hart step (Phase-2 optimisation) ──────────────────────────────
 //
 // Steps one non-selected hart directly, without routing state through `self.run`.
@@ -87,78 +94,82 @@ pub(crate) fn step_hart_bg_inner(
     mem_size: usize,
     pipeline_enabled: bool,
 ) -> bool {
-    hart.prev_pc = hart.cpu.pc;
+    for _ in 0..16 {
+        hart.prev_pc = hart.cpu.pc;
 
-    // ── Pipeline mode ─────────────────────────────────────────────────────────
-    if pipeline_enabled {
-        let Some(pipe) = hart.pipeline.as_mut() else {
-            return false;
-        };
-        if pipe.halted || pipe.faulted {
+        // ── Pipeline mode ─────────────────────────────────────────────────────
+        if pipeline_enabled {
+            let Some(pipe) = hart.pipeline.as_mut() else {
+                return false;
+            };
+            if pipe.halted || pipe.faulted {
+                if pipe.faulted {
+                    hart.faulted = true;
+                }
+                return hart.faulted;
+            }
+            let commit =
+                crate::ui::pipeline::sim::pipeline_tick(pipe, &mut hart.cpu, mem, cpi, console);
+            if let Some(info) = commit {
+                *hart.exec_counts.entry(info.pc).or_insert(0) += 1;
+                mem.instruction_count = mem.instruction_count.saturating_add(1);
+                mem.snapshot_stats();
+            }
             if pipe.faulted {
                 hart.faulted = true;
             }
             return hart.faulted;
         }
-        let commit =
-            crate::ui::pipeline::sim::pipeline_tick(pipe, &mut hart.cpu, mem, cpi, console);
-        if let Some(info) = commit {
-            *hart.exec_counts.entry(info.pc).or_insert(0) += 1;
-            mem.instruction_count = mem.instruction_count.saturating_add(1);
-            mem.snapshot_stats();
-        }
-        if pipe.faulted {
-            hart.faulted = true;
-        }
-        return hart.faulted;
-    }
 
-    // ── Sequential mode ───────────────────────────────────────────────────────
-    let step_pc = hart.cpu.pc;
-    if step_pc < imem_start || step_pc >= imem_end {
-        console.push_error(format!(
-            "Hart reached 0x{step_pc:08X}, outside the loaded program. \
-             Add `li a7, 93; ecall` to terminate cleanly."
-        ));
-        hart.faulted = true;
-        return true;
-    }
-
-    let word = mem.peek32(step_pc).unwrap_or(0);
-    let cpi_cycles = classify_cpi_cycles(word, &hart.cpu, cpi);
-
-    let alive = match falcon::exec::step(&mut hart.cpu, mem, console) {
-        Ok(v) => v,
-        Err(e) => {
-            use crate::falcon::errors::FalconError;
-            let msg = if matches!(&e, FalconError::Bus(_)) {
-                let ram_kb = mem_size / 1024;
-                let suggest = if ram_kb < 1024 {
-                    "16mb"
-                } else if ram_kb < 65536 {
-                    "128mb"
-                } else {
-                    "512mb"
-                };
-                format!("{e} (RAM is {ram_kb} KB — run with --mem {suggest} to increase)")
-            } else {
-                e.to_string()
-            };
-            console.push_error(msg);
+        // ── Sequential mode ───────────────────────────────────────────────────
+        let step_pc = hart.cpu.pc;
+        if step_pc < imem_start || step_pc >= imem_end {
+            console.push_error(format!(
+                "Hart reached 0x{step_pc:08X}, outside the loaded program. \
+                 Add `li a7, 93; ecall` to terminate cleanly."
+            ));
             hart.faulted = true;
             return true;
         }
-    };
 
-    mem.add_instruction_cycles(cpi_cycles);
-    // instruction_count was already incremented by fetch32 inside exec::step;
-    // do not add 1 again here — pipeline mode increments on commit instead.
-    mem.snapshot_stats();
+        let word = mem.peek32(step_pc).unwrap_or(0);
+        let cpi_cycles = classify_cpi_cycles(word, &hart.cpu, cpi);
 
-    *hart.exec_counts.entry(step_pc).or_insert(0) += 1;
+        let alive = match falcon::exec::step(&mut hart.cpu, mem, console) {
+            Ok(v) => v,
+            Err(e) => {
+                use crate::falcon::errors::FalconError;
+                let msg = if matches!(&e, FalconError::Bus(_)) {
+                    let ram_kb = mem_size / 1024;
+                    let suggest = if ram_kb < 1024 {
+                        "16mb"
+                    } else if ram_kb < 65536 {
+                        "128mb"
+                    } else {
+                        "512mb"
+                    };
+                    format!("{e} (RAM is {ram_kb} KB — run with --mem {suggest} to increase)")
+                } else {
+                    e.to_string()
+                };
+                console.push_error(msg);
+                hart.faulted = true;
+                return true;
+            }
+        };
 
-    if !alive && !console.reading {
-        hart.faulted = hart.cpu.exit_code.is_none() && !hart.cpu.ebreak_hit && !hart.cpu.local_exit;
+        mem.add_instruction_cycles(cpi_cycles);
+        mem.snapshot_stats();
+        *hart.exec_counts.entry(step_pc).or_insert(0) += 1;
+
+        if !alive && !console.reading {
+            hart.faulted =
+                hart.cpu.exit_code.is_none() && !hart.cpu.ebreak_hit && !hart.cpu.local_exit;
+        }
+
+        if hart.faulted || !alive || !is_transparent_single_step_word(word) {
+            return hart.faulted;
+        }
     }
 
     hart.faulted
