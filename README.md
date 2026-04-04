@@ -43,7 +43,7 @@ Requires Rust 1.75+. No other dependencies.
   - **R/W**: still RAM view, but auto-follows the last memory access address from `LOAD` and `STORE`
   - **Registers**: integer or float register bank with per-register age highlighting; pin with `P`
   - **Dyn**: self-narrating mode for single-stepping — STORE → RAM centered on the written address (`▶`); LOAD / ALU / branch → register bank so you see the result
-- Instruction memory panel: type badge `[R][I][S][B][U][J][A][F]`, execution heat `×N`, branch outcome
+- Instruction memory panel: type badge `[R]` R-type · `[I]` I-type · `[S]` Store · `[B]` Branch · `[U]` Upper · `[J]` Jump · `[A]` Atomic · `[F]` Float; execution heat `×N`, branch outcome
 - Instruction decoder: full field breakdown (opcode, funct3/7, rs1/rs2/rd, immediate, sign-extended)
 
 ### Cache Simulator (Tab 3)

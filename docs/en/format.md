@@ -11,7 +11,7 @@ This is the companion reference for RAVEN, our teaching-friendly RISC-V emulator
 
 ## Architecture snapshot
 
-RAVEN focuses on a approachable RV32I+M subset so you can reason about each pipeline stage without being buried in extras.
+RAVEN focuses on an approachable RV32IMAF subset so you can reason about each pipeline stage without being buried in extras.
 
 - **Word size:** 32 bits.
 - **Endianness:** little-endian throughout (`{to,from}_le_bytes`).
@@ -19,7 +19,7 @@ RAVEN focuses on a approachable RV32I+M subset so you can reason about each pipe
 - **Registers:** hardware names `x0…x31` with the usual aliases `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Writes to `x0/zero` are ignored.
 
-Not yet implemented: CSR/FENCE instructions. RAVEN covers RV32IMF — base integer, multiply/divide, and single-precision float.
+Not yet implemented: CSR instructions. RAVEN covers RV32IMAF — base integer, multiply/divide, atomics (LR/SC + AMO), and single-precision float.
 
 ## Instruction set inside RAVEN
 
