@@ -77,7 +77,6 @@ pub enum HartError {
 
 
 impl HartTask {
-    #[unsafe(no_mangle)]
     pub fn new<F>(f: F) -> Self
     where
         F: FnOnce() + Send + 'static,
@@ -85,7 +84,6 @@ impl HartTask {
         Self::with_stack_size(f, DEFAULT_HART_STACK_SIZE)
     }
 
-    #[unsafe(no_mangle)]
     pub fn with_stack_size<F>(f: F, stack_size: usize) -> Self
     where
         F: FnOnce() + Send + 'static,
@@ -93,7 +91,6 @@ impl HartTask {
         Self::with_stack(f, alloc_hart_stack(stack_size))
     }
 
-    #[unsafe(no_mangle)]
     pub fn with_stack<F>(f: F, stack: &'static mut [u8]) -> Self
     where
         F: FnOnce() + Send + 'static,
