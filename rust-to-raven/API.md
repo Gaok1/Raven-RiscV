@@ -260,6 +260,128 @@ Closure-backed tasks automatically mark themselves finished when the closure ret
 
 ---
 
+## Atomic Types
+
+`raven_api::atomic` — backed by RV32A instructions (`lr.w`, `sc.w`, AMOs), so operations go through the simulator's actual multi-hart atomic semantics instead of a host-side shim.
+
+```rust
+use crate::raven_api::atomic::{AtomicBool, AtomicU32, AtomicI32, AtomicUsize, Arc, Ordering};
+```
+
+### `Ordering`
+
+| Variant | Meaning |
+|---------|---------|
+| `Relaxed` | No ordering guarantees beyond atomicity |
+| `Acquire` | Prevents later loads from being reordered before this operation |
+| `Release` | Prevents earlier stores from being reordered after this operation |
+| `AcqRel` | Acquire + Release combined (for read-modify-write operations) |
+| `SeqCst` | Full sequential consistency |
+
+---
+
+### `AtomicU32`
+
+```rust
+static COUNT: AtomicU32 = AtomicU32::new(0);
+
+COUNT.fetch_add(1, Ordering::AcqRel);
+let v = COUNT.load(Ordering::Acquire);
+COUNT.store(42, Ordering::Release);
+```
+
+| Method | Description |
+|--------|-------------|
+| `new(val) -> AtomicU32` | Create with initial value |
+| `load(ord) -> u32` | Read the current value |
+| `store(val, ord)` | Write a new value |
+| `swap(val, ord) -> u32` | Replace and return the old value |
+| `compare_exchange(cur, new, s_ord, f_ord) -> Result<u32, u32>` | CAS — strong |
+| `compare_exchange_weak(cur, new, s_ord, f_ord) -> Result<u32, u32>` | CAS — may spuriously fail |
+| `fetch_add(val, ord) -> u32` | Add and return the old value |
+| `fetch_sub(val, ord) -> u32` | Subtract and return the old value |
+| `fetch_and(val, ord) -> u32` | Bitwise AND and return the old value |
+| `fetch_or(val, ord) -> u32` | Bitwise OR and return the old value |
+| `fetch_xor(val, ord) -> u32` | Bitwise XOR and return the old value |
+| `fetch_update(ord, ord, f) -> Result<u32, u32>` | Apply a closure atomically |
+| `into_inner(self) -> u32` | Consume and return the value (no synchronization) |
+
+---
+
+### `AtomicBool`
+
+Same pattern as `AtomicU32` but stores a `bool`.
+
+| Method | Description |
+|--------|-------------|
+| `new(val) -> AtomicBool` | Create with initial value |
+| `load(ord) -> bool` | Read |
+| `store(val, ord)` | Write |
+| `swap(val, ord) -> bool` | Replace and return old |
+| `compare_exchange` / `compare_exchange_weak` | CAS |
+| `fetch_and(val, ord) -> bool` | AND |
+| `fetch_or(val, ord) -> bool` | OR |
+| `fetch_xor(val, ord) -> bool` | XOR |
+| `fetch_not(ord) -> bool` | Invert and return the old value |
+
+---
+
+### `AtomicI32` / `AtomicUsize`
+
+Mirror the `AtomicU32` API with `i32` / `usize` value types respectively. `AtomicUsize` is 32-bit on Raven (RV32).
+
+---
+
+### `Arc<T>`
+
+Reference-counted shared pointer backed by `AtomicU32` for the reference count.
+
+```rust
+use crate::raven_api::atomic::Arc;
+
+let shared = Arc::new(42u32);
+let clone  = Arc::clone(&shared);
+// both `shared` and `clone` point to the same allocation
+```
+
+| Method | Description |
+|--------|-------------|
+| `Arc::new(val) -> Arc<T>` | Allocate and wrap `val`; initial ref-count = 1 |
+| `Arc::clone(this) -> Arc<T>` | Increment ref-count and return a new handle |
+| `Arc::strong_count(this) -> u32` | Current number of live handles |
+| `Arc::get_mut(this) -> Option<&mut T>` | Returns `Some` only when ref-count == 1 |
+| `Deref` | `*arc` gives `&T` |
+
+> `Arc<T>` requires `T: Send + Sync`. Drop decrements the ref-count and frees when it reaches zero.
+
+---
+
+### Example — hart coordination with atomics
+
+```rust
+use crate::raven_api::atomic::{AtomicBool, AtomicU32, Ordering};
+use crate::raven_api::HartTask;
+
+static WORKER_READY: AtomicBool = AtomicBool::new(false);
+static COUNTER:      AtomicU32  = AtomicU32::new(0);
+
+#[no_mangle]
+pub extern "C" fn _start() -> ! {
+    let task = HartTask::new(|| {
+        COUNTER.fetch_add(1, Ordering::AcqRel);
+        WORKER_READY.store(true, Ordering::Release);
+    });
+
+    task.start().unwrap().join();
+
+    assert!(WORKER_READY.load(Ordering::Acquire));
+    println!("counter = {}", COUNTER.load(Ordering::Acquire));
+    exit(0)
+}
+```
+
+---
+
 ## Heap Allocator
 
 The crate ships with a `#[global_allocator]` backed by `linked_list_allocator` and the `brk` syscall.
