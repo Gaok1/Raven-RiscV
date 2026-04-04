@@ -11,7 +11,7 @@ Este é o guia de bolso do RAVEN, nosso emulador RISC-V pensado para ensino. Use
 
 ## Visão rápida da arquitetura
 
-O RAVEN foca no subconjunto RV32I+M para que você entenda cada etapa do ciclo buscar → decodificar → executar sem distrações.
+O RAVEN foca no subconjunto RV32IMAF para que você entenda cada etapa do ciclo buscar → decodificar → executar sem distrações.
 
 - **Tamanho da palavra:** 32 bits.
 - **Endianness:** sempre little-endian (`{to,from}_le_bytes`).
@@ -19,7 +19,7 @@ O RAVEN foca no subconjunto RV32I+M para que você entenda cada etapa do ciclo b
 - **Registradores:** nomes `x0…x31` com os apelidos tradicionais `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Escritas em `x0/zero` são descartadas.
 
-Ainda não implementados: instruções CSR/FENCE. O RAVEN cobre RV32IMF — inteiros base, multiplicação/divisão e ponto flutuante de precisão simples.
+Ainda não implementados: instruções CSR. O RAVEN cobre RV32IMAF — inteiros base, multiplicação/divisão, atômicos (LR/SC + AMO) e ponto flutuante de precisão simples.
 
 ## Conjunto de instruções presente no RAVEN
 
