@@ -209,7 +209,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     }
 
     // ── 2. Apply sim settings (.rcfg) ────────────────────────────────────────
-    let (cpi_config, cache_enabled, settings_max_cores, settings_mem_size) =
+    let (cpi_config, cache_enabled, _pipeline_enabled, _trace_syscalls, _run_scope, settings_max_cores, settings_mem_size) =
         if let Some(path) = &args.settings {
             let text = std::fs::read_to_string(path)
                 .map_err(|e| format!("Cannot read settings '{}': {e}", path))?;
@@ -218,6 +218,9 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
             (
                 default_cpi_config(),
                 true,
+                true,
+                false,
+                "focus".to_string(),
                 DEFAULT_MAX_CORES,
                 16 * 1024 * 1024,
             )
@@ -379,7 +382,7 @@ pub fn export_default_config(output: Option<&str>) -> Result<(), String> {
 /// Default `.rcfg` content (same defaults as the TUI).
 fn default_rcfg_text() -> String {
     let mut s = String::from(
-        "# Raven Sim Config v2\ncache_enabled=true\nmem_mb=16\nmax_cores=1\n\n# CPI (cycles per instruction)\n",
+        "# Raven Sim Config v2\ncache_enabled=true\npipeline_enabled=true\ntrace_syscalls=false\nmem_kb=16384\nmax_cores=1\nrun_scope=focus\n\n# CPI (cycles per instruction)\n",
     );
     s.push_str("cpi.alu=1\ncpi.mul=3\ncpi.div=20\ncpi.load=0\ncpi.store=0\n");
     s.push_str("cpi.branch_taken=3\ncpi.branch_not_taken=1\ncpi.jump=2\ncpi.system=10\ncpi.fp=5\n");
@@ -405,8 +408,16 @@ pub fn export_sim_settings(output: Option<&str>) -> Result<(), String> {
 pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
     // Reuse the same strict parser as `run --sim-settings`
-    let (cpi, cache_enabled, max_cores, mem_size) = parse_rcfg_cli_full(&text)?;
-    let mem_mb = mem_size / (1024 * 1024);
+    let (
+        cpi,
+        cache_enabled,
+        pipeline_enabled,
+        trace_syscalls,
+        run_scope,
+        max_cores,
+        mem_size,
+    ) = parse_rcfg_cli_full(&text)?;
+    let mem_kb = mem_size / 1024;
     let cpi_keys = [
         "alu",
         "mul",
@@ -433,7 +444,10 @@ pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), Strin
     ];
     eprintln!("{}: valid", file);
     eprintln!("  cache_enabled = {}", cache_enabled);
-    eprintln!("  mem_mb        = {}", mem_mb);
+    eprintln!("  pipeline_enabled = {}", pipeline_enabled);
+    eprintln!("  trace_syscalls = {}", trace_syscalls);
+    eprintln!("  run_scope     = {}", run_scope);
+    eprintln!("  mem_kb        = {}", mem_kb);
     eprintln!("  max_cores     = {}", max_cores);
     for (key, val) in cpi_keys.iter().zip(cpi_vals.iter()) {
         eprintln!("  cpi.{:<20} = {}", key, val);
@@ -441,8 +455,8 @@ pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), Strin
     if let Some(out) = output {
         let mut out_text = String::from("# Raven Sim Config v2\n");
         out_text.push_str(&format!(
-            "cache_enabled={}\nmem_mb={}\nmax_cores={}\n\n# CPI (cycles per instruction)\n",
-            cache_enabled, mem_mb, max_cores
+            "cache_enabled={}\npipeline_enabled={}\ntrace_syscalls={}\nmem_kb={}\nmax_cores={}\nrun_scope={}\n\n# CPI (cycles per instruction)\n",
+            cache_enabled, pipeline_enabled, trace_syscalls, mem_kb, max_cores, run_scope
         ));
         for (key, val) in cpi_keys.iter().zip(cpi_vals.iter()) {
             out_text.push_str(&format!("cpi.{}={}\n", key, val));
@@ -469,7 +483,7 @@ fn default_cpi_config() -> CpiConfig {
     }
 }
 
-fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, usize, usize), String> {
+fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, bool, bool, String, usize, usize), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -507,6 +521,19 @@ fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, usize, usize), St
         .get("cache_enabled")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
         .unwrap_or(true);
+    let pipeline_enabled = map
+        .get("pipeline_enabled")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+        .unwrap_or(true);
+    let trace_syscalls = map
+        .get("trace_syscalls")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+        .unwrap_or(false);
+    let run_scope = match map.get("run_scope").map(String::as_str).unwrap_or("focus") {
+        "all" => "all".to_string(),
+        "focus" | "focused" => "focus".to_string(),
+        other => return Err(format!("Invalid run_scope: {other} (use all|focus)")),
+    };
     let max_cores = match map.get("max_cores") {
         Some(v) => v
             .parse::<usize>()
@@ -516,8 +543,16 @@ fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, usize, usize), St
     if !(1..=32).contains(&max_cores) {
         return Err(format!("Invalid max_cores: {max_cores} (use 1..=32)"));
     }
-    let mem_size = match map.get("mem_mb") {
+    let mem_size = match map.get("mem_kb") {
         Some(v) => {
+            let kb = v
+                .parse::<usize>()
+                .map_err(|_| "Invalid mem_kb: expected integer".to_string())?;
+            let snapped = kb.max(4).next_power_of_two().min(4 * 1024 * 1024);
+            snapped * 1024
+        }
+        None => match map.get("mem_mb") {
+            Some(v) => {
             let mb = v
                 .parse::<usize>()
                 .map_err(|_| "Invalid mem_mb: expected integer".to_string())?;
@@ -526,9 +561,18 @@ fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, usize, usize), St
             }
             mb * 1024 * 1024
         }
-        None => 16 * 1024 * 1024,
+            None => 16 * 1024 * 1024,
+        },
     };
-    Ok((cpi, cache_enabled, max_cores, mem_size))
+    Ok((
+        cpi,
+        cache_enabled,
+        pipeline_enabled,
+        trace_syscalls,
+        run_scope,
+        max_cores,
+        mem_size,
+    ))
 }
 
 fn run_headless_sequential(

@@ -608,8 +608,8 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 "Run Scope [ALL/FOCUS]",
                 "ALL advances all harts; FOCUS advances only observed hart in Run",
             ),
-            ("[Ctrl+e]", "export .rcfg"),
-            ("[Ctrl+l]", "import .rcfg"),
+            ("[Ctrl+e]", "export full Config tab state (.rcfg)"),
+            ("[Ctrl+l]", "import full Config tab state (.rcfg)"),
         ]],
     }
 }
