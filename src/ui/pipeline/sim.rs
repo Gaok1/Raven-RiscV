@@ -2521,7 +2521,14 @@ fn advance_stages(
     predictor::apply_branch_prediction(state);
 
     if !state.halted && state.stages[Stage::IF as usize].is_none() {
-        fetch_into_if(state, mem, console);
+        // In sequential mode only fetch the next instruction once all
+        // in-flight stages are empty (i.e. the previous instruction has
+        // fully committed from WB).
+        let ok_to_fetch = !state.sequential_mode
+            || state.stages[1..].iter().all(|s| s.as_ref().map_or(true, |slot| slot.is_bubble));
+        if ok_to_fetch {
+            fetch_into_if(state, mem, console);
+        }
     }
     if let Some(ref mut s) = state.stages[Stage::EX as usize] {
         if let Some(committed) = wb_before_commit.as_ref().filter(|slot| !slot.is_bubble) {

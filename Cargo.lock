@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "raven"
-version = "1.25.1"
+version = "1.26.0"
 dependencies = [
  "arboard",
  "comfy-table",

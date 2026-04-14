@@ -1074,6 +1074,9 @@ pub struct PipelineSimState {
     pub next_gantt_id: u64,
     pub next_seq: u64,
 
+    // ── Sequential visualization mode (pipeline disabled, one instruction at a time) ──
+    pub sequential_mode: bool,
+
     // ── Active hazard message (set each tick) ──
     pub hazard_msgs: Vec<(HazardType, String)>,
     pub hazard_traces: Vec<HazardTrace>,
@@ -1160,6 +1163,7 @@ impl PipelineSimState {
             hazard_msgs: Vec::new(),
             hazard_traces: Vec::new(),
             last_cycle_cache_only: false,
+            sequential_mode: false,
             hover_config_row: None,
             config_row_rects: Cell::new([(0, 0, 0); PipelineBypassConfig::CONFIG_ROWS]),
             hover_subtab_main: false,

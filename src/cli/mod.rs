@@ -480,6 +480,7 @@ fn default_cpi_config() -> CpiConfig {
         jump: 2,
         system: 10,
         fp: 5,
+        stage_overhead: 3,
     }
 }
 
@@ -516,6 +517,7 @@ fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, bool, bool, Strin
         jump: parse_u64("cpi.jump", defaults.jump)?,
         system: parse_u64("cpi.system", defaults.system)?,
         fp: parse_u64("cpi.fp", defaults.fp)?,
+        stage_overhead: parse_u64("cpi.stage_overhead", defaults.stage_overhead)?,
     };
     let cache_enabled = map
         .get("cache_enabled")

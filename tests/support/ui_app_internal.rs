@@ -1243,7 +1243,7 @@ fn rust_to_raven_debug_elf_runs_multihart_in_pipeline_without_fault() {
     app.tab = Tab::Run;
     app.load_binary(&rust_to_raven_elf_bytes());
 
-    for _ in 0..20_000 {
+    for _ in 0..100_000 {
         if app.run.faulted || app.pipeline.faulted {
             break;
         }

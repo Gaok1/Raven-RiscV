@@ -6,6 +6,7 @@ impl App {
         dst: &mut crate::ui::pipeline::PipelineSimState,
     ) {
         dst.enabled = src.enabled;
+        dst.sequential_mode = src.sequential_mode;
         dst.bypass = src.bypass;
         dst.branch_resolve = src.branch_resolve;
         dst.mode = src.mode;
@@ -140,7 +141,7 @@ impl App {
     pub(in crate::ui) fn tab_visible(&self, tab: Tab) -> bool {
         match tab {
             Tab::Cache => self.run.cache_enabled,
-            Tab::Pipeline => self.pipeline.enabled,
+            Tab::Pipeline => true,
             _ => true,
         }
     }
@@ -168,6 +169,7 @@ impl App {
 
     pub(in crate::ui) fn set_pipeline_enabled(&mut self, enabled: bool) {
         self.pipeline.enabled = enabled;
+        self.pipeline.sequential_mode = !enabled;
         self.reconfigure_pipeline_model();
         self.ensure_visible_tab();
     }

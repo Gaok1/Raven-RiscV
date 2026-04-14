@@ -184,6 +184,27 @@ impl CacheDataGroup {
     }
 }
 
+#[derive(PartialEq, Eq, Copy, Clone, Default)]
+pub(crate) enum CacheAddrMode {
+    #[default]
+    Base,
+    Breakdown,
+}
+impl CacheAddrMode {
+    pub(crate) fn cycle(self) -> Self {
+        match self {
+            Self::Base => Self::Breakdown,
+            Self::Breakdown => Self::Base,
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Base => "BASE",
+            Self::Breakdown => "OFF|IDX|TAG",
+        }
+    }
+}
+
 /// Which UI element in the Cache tab the mouse is currently hovering over.
 /// At most one target is active at a time — enforced by resetting `CacheState::hover`
 /// to `None` at the start of every `update_cache_hover` call before any hit tests.
@@ -236,7 +257,7 @@ pub(crate) struct CacheState {
     pub(crate) view_h_scroll_d: usize, // D-cache horizontal scroll (separate from I-cache)
     pub(crate) data_fmt: CacheDataFmt,
     pub(crate) data_group: CacheDataGroup,
-    pub(crate) show_tag: bool,
+    pub(crate) addr_mode: CacheAddrMode,
     pub(crate) subtab_stats_btn: std::cell::Cell<(u16, u16, u16)>,
     pub(crate) subtab_view_btn: std::cell::Cell<(u16, u16, u16)>,
     pub(crate) subtab_config_btn: std::cell::Cell<(u16, u16, u16)>,

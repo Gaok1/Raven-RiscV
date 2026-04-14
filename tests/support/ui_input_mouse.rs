@@ -273,7 +273,7 @@ fn cache_config_hover_and_click_match_first_row_geometry() {
     app.cache.subtab = CacheSubtab::Config;
 
     let area = Rect::new(0, 0, 160, 40);
-    let row = 10;
+    let row = 13;
     let col = 10;
 
     handle_mouse(

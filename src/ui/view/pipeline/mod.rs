@@ -35,21 +35,8 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
     render_exec_controls(f, layout[1], app);
     render_controls_bar(f, layout[3], app);
 
-    if !app.pipeline.enabled {
-        let p = Paragraph::new(vec![
-            Line::raw(""),
-            Line::from(Span::styled(
-                "  Pipeline disabled.",
-                Style::default().fg(theme::PAUSED).bold(),
-            )),
-            Line::from(Span::styled(
-                "  Enable it in the Config tab (Config -> Pipeline Enabled).",
-                Style::default().fg(theme::LABEL),
-            )),
-        ]);
-        f.render_widget(p, layout[2]);
-        return;
-    }
+    // When pipeline is disabled the sequential visualization is available;
+    // fall through to the normal rendering path.
     if app.editor.last_ok_text.is_none() {
         let p = Paragraph::new(vec![
             Line::raw(""),
@@ -178,10 +165,17 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     );
     spans.push(Span::raw("   "));
     spans.push(dense_action("reset", theme::DANGER, p.hover_reset));
-    spans.push(Span::styled(
-        "   r=reset  f=speed  s=step  p/Space=run",
-        Style::default().fg(theme::LABEL),
-    ));
+    if p.sequential_mode {
+        spans.push(Span::styled(
+            "   Sequential (pipeline off) — one instruction at a time",
+            Style::default().fg(theme::PAUSED),
+        ));
+    } else {
+        spans.push(Span::styled(
+            "   r=reset  f=speed  s=step  p/Space=run",
+            Style::default().fg(theme::LABEL),
+        ));
+    }
     let line1 = Line::from(spans);
 
     let (cpi_str, stall_str) = if p.instr_committed > 0 {
