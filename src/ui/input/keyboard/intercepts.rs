@@ -32,10 +32,31 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
             }
             KeyCode::Enter => {
                 let q = app.path_input.query.trim().to_string();
-                let path = std::path::PathBuf::from(&q);
-                if q.ends_with('/') || path.is_dir() {
-                    if !q.ends_with('/') {
-                        app.path_input.query = format!("{q}/");
+                let selected = app
+                    .path_input
+                    .completions
+                    .get(app.path_input.completion_sel)
+                    .cloned();
+                let typed_path = std::path::PathBuf::from(&q);
+
+                let chosen = if q.ends_with('/') || typed_path.is_dir() {
+                    selected.unwrap_or(q)
+                } else if let Some(sel) = selected {
+                    if sel != q {
+                        sel
+                    } else {
+                        q
+                    }
+                } else {
+                    q
+                };
+
+                let chosen_path = std::path::PathBuf::from(&chosen);
+                if chosen.ends_with('/') || chosen_path.is_dir() {
+                    if chosen.ends_with('/') {
+                        app.path_input.query = chosen;
+                    } else {
+                        app.path_input.query = format!("{chosen}/");
                     }
                     refresh_path_completions(&mut app.path_input);
                 } else {
@@ -43,7 +64,7 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
                     app.path_input.open = false;
                     app.path_input.query.clear();
                     app.path_input.completions.clear();
-                    dispatch_path_input(app, action, path);
+                    dispatch_path_input(app, action, chosen_path);
                 }
             }
             KeyCode::Tab => {

@@ -1,5 +1,6 @@
 # R300 - perfil geral para D3
-# Cache habilitada, 1 hart em foco, sem trace de syscalls.
+# Cache habilitada, pipeline desligado, 1 hart em foco, sem trace de syscalls.
+# Os arquivos C3xx.fcache definem a geometria/politica detalhada da cache.
 cache_enabled=true
 pipeline_enabled=false
 trace_syscalls=false

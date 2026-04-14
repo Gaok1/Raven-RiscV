@@ -1,7 +1,9 @@
 # R100 - perfil geral para D1, D2, D4 e D6
-# Cache desabilitada, 1 hart em foco, sem trace de syscalls.
+# Cache desabilitada, pipeline habilitado por padrao, 1 hart em foco,
+# sem trace de syscalls. Quando uma atividade precisar de pipeline desligado,
+# o arquivo P101.pcfg deve ser importado depois para sobrepor esse estado.
 cache_enabled=false
-pipeline_enabled=false
+pipeline_enabled=true
 trace_syscalls=false
 mem_kb=16384
 max_cores=1

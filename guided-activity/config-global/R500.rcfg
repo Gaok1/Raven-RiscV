@@ -1,5 +1,6 @@
 # R500 - perfil base para D5
-# Define cache desabilitada, pipeline desligado e escopo All Harts com 2 cores.
+# Define cache desabilitada, pipeline desligado, escopo All Harts
+# e 2 cores explicitamente para a atividade de multi-core.
 cache_enabled=false
 pipeline_enabled=false
 trace_syscalls=false
