@@ -75,6 +75,10 @@ pub(crate) struct SettingsState {
     pub(crate) hover_trace_syscalls: bool,
     /// Mouse hover over the run_scope selector
     pub(crate) hover_run_scope: bool,
+    /// Mouse hover over the config import button
+    pub(crate) hover_import_rcfg: bool,
+    /// Mouse hover over the config export button
+    pub(crate) hover_export_rcfg: bool,
     /// Geometry of the cache bool button (y, x_start, x_end) — written by render, read by mouse
     pub(crate) bool_btn_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the pipeline bool button (y, x_start, x_end)
@@ -83,6 +87,10 @@ pub(crate) struct SettingsState {
     pub(crate) bool_btn_trace_syscalls_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the run scope button (y, x_start, x_end)
     pub(crate) run_scope_rect: std::cell::Cell<(u16, u16, u16)>,
+    /// Geometry of the import rcfg button (y, x_start, x_end)
+    pub(crate) import_rcfg_rect: std::cell::Cell<(u16, u16, u16)>,
+    /// Geometry of the export rcfg button (y, x_start, x_end)
+    pub(crate) export_rcfg_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the visible settings list area (x, y, width, height)
     pub(crate) list_rect: std::cell::Cell<(u16, u16, u16, u16)>,
     /// Geometry of each CPI row (y) — written by render, read by mouse
@@ -101,10 +109,14 @@ impl Default for SettingsState {
             hover_pipeline_enabled: false,
             hover_trace_syscalls: false,
             hover_run_scope: false,
+            hover_import_rcfg: false,
+            hover_export_rcfg: false,
             bool_btn_rect: std::cell::Cell::new((0, 0, 0)),
             bool_btn_pipeline_rect: std::cell::Cell::new((0, 0, 0)),
             bool_btn_trace_syscalls_rect: std::cell::Cell::new((0, 0, 0)),
             run_scope_rect: std::cell::Cell::new((0, 0, 0)),
+            import_rcfg_rect: std::cell::Cell::new((0, 0, 0)),
+            export_rcfg_rect: std::cell::Cell::new((0, 0, 0)),
             list_rect: std::cell::Cell::new((0, 0, 0, 0)),
             cpi_rows_y: std::cell::Cell::new([0u16; 10]),
         }

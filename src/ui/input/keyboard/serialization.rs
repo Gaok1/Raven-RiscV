@@ -43,14 +43,18 @@ pub(super) fn serialize_cache_configs(
 pub(super) fn serialize_rcfg(
     cpi: &CpiConfig,
     cache_enabled: bool,
+    pipeline_enabled: bool,
     trace_syscalls: bool,
     run_scope: RunScope,
     mem_kb: usize,
+    max_cores: usize,
 ) -> String {
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!("cache_enabled={}\n", cache_enabled));
+    s.push_str(&format!("pipeline_enabled={}\n", pipeline_enabled));
     s.push_str(&format!("trace_syscalls={}\n", trace_syscalls));
     s.push_str(&format!("mem_kb={}\n", mem_kb));
+    s.push_str(&format!("max_cores={}\n", max_cores));
     s.push_str(&format!(
         "run_scope={}\n",
         match run_scope {
@@ -82,9 +86,17 @@ pub(super) fn parse_pcfg(text: &str) -> Result<crate::ui::pipeline::PipelineConf
     crate::ui::pipeline::parse_pipeline_config(text)
 }
 
-pub(super) fn parse_rcfg(
-    text: &str,
-) -> Result<(CpiConfig, bool, bool, RunScope, Option<usize>), String> {
+pub(super) struct RcfgSettings {
+    pub(super) cpi: CpiConfig,
+    pub(super) cache_enabled: bool,
+    pub(super) pipeline_enabled: Option<bool>,
+    pub(super) trace_syscalls: bool,
+    pub(super) run_scope: RunScope,
+    pub(super) mem_bytes: Option<usize>,
+    pub(super) max_cores: Option<usize>,
+}
+
+pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
     let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -132,6 +144,7 @@ pub(super) fn parse_rcfg(
         .get("cache_enabled")
         .map(|v| v != "false")
         .unwrap_or(true);
+    let pipeline_enabled = map.get("pipeline_enabled").map(|v| v != "false");
     let trace_syscalls = map
         .get("trace_syscalls")
         .map(|v| v != "false")
@@ -152,7 +165,54 @@ pub(super) fn parse_rcfg(
     } else {
         None
     };
-    Ok((cpi, cache_enabled, trace_syscalls, run_scope, mem_bytes))
+    let max_cores = match map.get("max_cores") {
+        Some(v) => {
+            let parsed = v
+                .parse::<usize>()
+                .map_err(|_| "invalid max_cores: expected integer".to_string())?;
+            if !(1..=32).contains(&parsed) {
+                return Err(format!("invalid max_cores: {parsed} (use 1..=32)"));
+            }
+            Some(parsed)
+        }
+        None => None,
+    };
+    Ok(RcfgSettings {
+        cpi,
+        cache_enabled,
+        pipeline_enabled,
+        trace_syscalls,
+        run_scope,
+        mem_bytes,
+        max_cores,
+    })
+}
+
+fn apply_rcfg(app: &mut App, cfg: RcfgSettings) {
+    app.run.cpi_config = cfg.cpi;
+    app.set_cache_enabled(cfg.cache_enabled);
+    if let Some(enabled) = cfg.pipeline_enabled {
+        app.set_pipeline_enabled(enabled);
+    }
+    app.set_trace_syscalls(cfg.trace_syscalls);
+    app.run_scope = cfg.run_scope;
+
+    let mut needs_restart = false;
+    if let Some(max_cores) = cfg.max_cores {
+        if max_cores != app.max_cores {
+            app.max_cores = max_cores;
+            needs_restart = true;
+        }
+    }
+    if let Some(bytes) = cfg.mem_bytes {
+        if bytes != app.run.mem_size {
+            app.ram_override = Some(bytes);
+            needs_restart = true;
+        }
+    }
+    if needs_restart {
+        app.restart_simulation();
+    }
 }
 
 /// Returns prefix like "l2", "l3", etc. for extra_level index i (0-based → L2, L3, …)
@@ -489,13 +549,15 @@ pub(crate) fn do_import_cfg(app: &mut App) {
     }
 }
 
-pub(super) fn do_export_rcfg(app: &mut App) {
+pub(crate) fn do_export_rcfg(app: &mut App) {
     let text = serialize_rcfg(
         &app.run.cpi_config,
         app.run.cache_enabled,
+        app.pipeline.enabled,
         app.run.trace_syscalls,
         app.run_scope,
         app.run.mem_size / 1024,
+        app.max_cores,
     );
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Sim Config", &["rcfg"])
@@ -520,24 +582,15 @@ pub(super) fn do_export_rcfg(app: &mut App) {
     }
 }
 
-pub(super) fn do_import_rcfg(app: &mut App) {
+pub(crate) fn do_import_rcfg(app: &mut App) {
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Sim Config", &["rcfg"])
         .pick_file()
     {
         match std::fs::read_to_string(&path) {
             Ok(text) => match parse_rcfg(&text) {
-                Ok((cpi, cache_enabled, trace_syscalls, run_scope, mem_bytes)) => {
-                    app.run.cpi_config = cpi;
-                    app.set_cache_enabled(cache_enabled);
-                    app.set_trace_syscalls(trace_syscalls);
-                    app.run_scope = run_scope;
-                    if let Some(bytes) = mem_bytes {
-                        if bytes != app.run.mem_size {
-                            app.ram_override = Some(bytes);
-                            app.restart_simulation();
-                        }
-                    }
+                Ok(cfg) => {
+                    apply_rcfg(app, cfg);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Settings imported from {}",
@@ -1413,17 +1466,8 @@ pub(super) fn dispatch_path_input(
         }
         PathInputAction::OpenRcfg => match std::fs::read_to_string(&path) {
             Ok(text) => match parse_rcfg(&text) {
-                Ok((cpi, cache_enabled, trace_syscalls, run_scope, mem_bytes)) => {
-                    app.run.cpi_config = cpi;
-                    app.set_cache_enabled(cache_enabled);
-                    app.set_trace_syscalls(trace_syscalls);
-                    app.run_scope = run_scope;
-                    if let Some(bytes) = mem_bytes {
-                        if bytes != app.run.mem_size {
-                            app.ram_override = Some(bytes);
-                            app.restart_simulation();
-                        }
-                    }
+                Ok(cfg) => {
+                    apply_rcfg(app, cfg);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Settings imported from {}",
@@ -1444,9 +1488,11 @@ pub(super) fn dispatch_path_input(
             let text = serialize_rcfg(
                 &app.run.cpi_config,
                 app.run.cache_enabled,
+                app.pipeline.enabled,
                 app.run.trace_syscalls,
                 app.run_scope,
                 app.run.mem_size / 1024,
+                app.max_cores,
             );
             match std::fs::write(&path, &text) {
                 Ok(()) => {
@@ -1572,23 +1618,34 @@ mod tests {
 
     #[test]
     fn rcfg_round_trip_preserves_trace_syscalls() {
-        let text = serialize_rcfg(&CpiConfig::default(), true, true, RunScope::FocusedHart, 4096);
+        let text = serialize_rcfg(
+            &CpiConfig::default(),
+            true,
+            false,
+            true,
+            RunScope::FocusedHart,
+            4096,
+            2,
+        );
 
-        let (_, cache_enabled, trace_syscalls, run_scope, mem_bytes) =
-            parse_rcfg(&text).expect("parse rcfg");
+        let cfg = parse_rcfg(&text).expect("parse rcfg");
 
-        assert!(cache_enabled);
-        assert!(trace_syscalls);
-        assert_eq!(run_scope, RunScope::FocusedHart);
-        assert_eq!(mem_bytes, Some(4096 * 1024));
+        assert!(cfg.cache_enabled);
+        assert_eq!(cfg.pipeline_enabled, Some(false));
+        assert!(cfg.trace_syscalls);
+        assert_eq!(cfg.run_scope, RunScope::FocusedHart);
+        assert_eq!(cfg.mem_bytes, Some(4096 * 1024));
+        assert_eq!(cfg.max_cores, Some(2));
     }
 
     #[test]
     fn rcfg_defaults_trace_syscalls_to_false() {
         let text = "# Raven Sim Config v2\ncache_enabled=true\nrun_scope=all\nmem_kb=1024\n";
 
-        let (_, _, trace_syscalls, _, _) = parse_rcfg(text).expect("parse rcfg");
+        let cfg = parse_rcfg(text).expect("parse rcfg");
 
-        assert!(!trace_syscalls);
+        assert!(!cfg.trace_syscalls);
+        assert_eq!(cfg.pipeline_enabled, None);
+        assert_eq!(cfg.max_cores, None);
     }
 }

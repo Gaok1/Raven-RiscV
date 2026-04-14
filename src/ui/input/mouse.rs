@@ -1,5 +1,6 @@
 use crate::ui::input::keyboard::{
-    do_export_cfg, do_export_pipeline_results, do_export_results, do_import_cfg,
+    do_export_cfg, do_export_pipeline_results, do_export_rcfg, do_export_results, do_import_cfg,
+    do_import_rcfg,
 };
 use crate::ui::view::run::{
     RUN_COLLAPSED_RAIL_W, RUN_DETAILS_MIN_W, RUN_IMEM_MIN_W, RUN_SIDEBAR_MIN_W,
@@ -2300,8 +2301,19 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     app.settings.hover_pipeline_enabled = false;
     app.settings.hover_trace_syscalls = false;
     app.settings.hover_run_scope = false;
+    app.settings.hover_import_rcfg = false;
+    app.settings.hover_export_rcfg = false;
     app.settings.hover_cpi_field = None;
     app.settings.hover_row = None;
+
+    let (import_y, import_x0, import_x1) = app.settings.import_rcfg_rect.get();
+    if me.row == import_y && me.column >= import_x0 && me.column < import_x1 {
+        app.settings.hover_import_rcfg = true;
+    }
+    let (export_y, export_x0, export_x1) = app.settings.export_rcfg_rect.get();
+    if me.row == export_y && me.column >= export_x0 && me.column < export_x1 {
+        app.settings.hover_export_rcfg = true;
+    }
 
     let (list_x, list_y, list_w, list_h) = app.settings.list_rect.get();
     let in_list = me.column >= list_x
@@ -2364,6 +2376,17 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
 }
 
 fn handle_settings_click(app: &mut App, me: MouseEvent) {
+    let (import_y, import_x0, import_x1) = app.settings.import_rcfg_rect.get();
+    if me.row == import_y && me.column >= import_x0 && me.column < import_x1 {
+        do_import_rcfg(app);
+        return;
+    }
+    let (export_y, export_x0, export_x1) = app.settings.export_rcfg_rect.get();
+    if me.row == export_y && me.column >= export_x0 && me.column < export_x1 {
+        do_export_rcfg(app);
+        return;
+    }
+
     let (list_x, list_y, list_w, list_h) = app.settings.list_rect.get();
     let in_list = me.column >= list_x
         && me.column < list_x.saturating_add(list_w)

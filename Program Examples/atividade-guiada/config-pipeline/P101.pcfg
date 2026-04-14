@@ -1,0 +1,16 @@
+# RAVEN pipeline profile P101
+enabled=false
+bypass.ex_to_ex=true
+bypass.mem_to_ex=true
+bypass.wb_to_id=true
+bypass.store_to_load=false
+mode=Serialized
+fu.alu=1
+fu.mul=1
+fu.div=1
+fu.fpu=1
+fu.lsu=1
+fu.sys=1
+branch_resolve=Ex
+predict=NotTaken
+speed=Normal

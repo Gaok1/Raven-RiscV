@@ -122,6 +122,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         kv("", "Value is snapped to the nearest power of two."),
         kv("Enter", "Open edit mode on the selected field."),
         kv("↑ / ↓", "Navigate between fields."),
+        kv("Ctrl+e / Ctrl+l", "Export / import the full Config tab as .rcfg."),
     ]
 }
 
@@ -243,5 +244,6 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         ),
         kv("Enter", "Abre edição no campo selecionado."),
         kv("↑ / ↓", "Navega entre os campos."),
+        kv("Ctrl+e / Ctrl+l", "Exporta / importa a aba Config completa como .rcfg."),
     ]
 }

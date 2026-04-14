@@ -1,0 +1,20 @@
+# R500 - perfil base para D5
+# Define cache desabilitada, pipeline desligado e escopo All Harts com 2 cores.
+cache_enabled=false
+pipeline_enabled=false
+trace_syscalls=false
+mem_kb=16384
+max_cores=2
+run_scope=all
+
+# CPI (cycles per instruction)
+cpi.alu=1
+cpi.mul=3
+cpi.div=20
+cpi.load=0
+cpi.store=0
+cpi.branch_taken=3
+cpi.branch_not_taken=1
+cpi.jump=2
+cpi.system=10
+cpi.fp=5

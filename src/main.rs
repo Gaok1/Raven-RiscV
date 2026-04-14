@@ -1,3 +1,4 @@
+
 use ratatui::DefaultTerminal;
 use raven::{cli, ui};
 use std::io;
@@ -571,7 +572,7 @@ OPTIONS  build:
 
 OPTIONS  run:
     --cache-config <file>       Load cache hierarchy from .fcache
-    --sim-settings <file>       Load sim settings (CPI, memory, cache_enabled) from .rcfg
+    --sim-settings <file>       Load full Config-tab sim settings from .rcfg
     --pipeline                  Run using the pipeline simulator instead of sequential exec
     --pipeline-config <file>    Load pipeline config from a .pcfg file
     --pipeline-trace-out <file> Write per-cycle pipeline trace JSON (requires --pipeline)

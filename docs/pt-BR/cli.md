@@ -73,7 +73,7 @@ raven run <arquivo> [opções]
 | Flag | Padrão | Descrição |
 |---|---|---|
 | `--cache-config <arquivo>` | padrões embutidos | Carrega hierarquia de cache de um arquivo `.fcache` |
-| `--sim-settings <arquivo>` | padrões embutidos | Carrega configurações de simulação (CPI, memória, cache_enabled) de um `.rcfg` |
+| `--sim-settings <arquivo>` | padrões embutidos | Carrega o estado completo da aba Config a partir de um `.rcfg` |
 | `--pipeline` | desligado | Executa usando o simulador de pipeline em vez do executor sequencial |
 | `--pipeline-config <arquivo>` | padrões embutidos | Carrega o comportamento do pipeline de um `.pcfg` |
 | `--pipeline-trace-out <arquivo>` | desligado | Grava um JSON por ciclo do pipeline; requer `--pipeline` |
@@ -88,7 +88,7 @@ raven run <arquivo> [opções]
 | `--nout` | — | Suprime a saída de resultados (o stdout do programa ainda é exibido) |
 | `--format json\|fstats\|csv` | `json` | Formato dos resultados |
 
-> `--mem` tem prioridade sobre o valor `mem_mb` do `.rcfg`. Se nenhum dos dois for informado, o padrão é `16mb`.
+> `--mem` tem prioridade sobre o valor `mem_kb` ou o legado `mem_mb` do `.rcfg`. Se nenhum dos dois for informado, o padrão é `16mb`.
 
 **Exemplos**
 
@@ -365,10 +365,13 @@ Exportar / importar pela TUI: **aba Cache → `Ctrl+e` / `Ctrl+l`**
 Controla parâmetros globais de simulação: CPI por classe de instrução, se a cache está ativa, o tamanho padrão da RAM e o número padrão de cores disponíveis.
 
 ```ini
-# Raven Sim Config v1
+# Raven Sim Config v2
 cache_enabled=true
+pipeline_enabled=true
+trace_syscalls=false
+run_scope=focus
 max_cores=1
-mem_mb=16
+mem_kb=16384
 
 # CPI (ciclos por instrução)
 cpi.alu=1
@@ -384,8 +387,11 @@ cpi.fp=5
 ```
 
 - `cache_enabled=false` ignora toda a hierarquia de cache (todos os acessos vão direto para a RAM).
-- `max_cores` assume `1` quando omitido e deve ficar no intervalo `1..=8`.
-- `mem_mb` define o tamanho padrão da RAM em megabytes (deve ser potência de 2, ex.: `16`, `64`, `128`). A flag `--mem` da CLI substitui este valor.
+- `pipeline_enabled` alterna o estado global do pipeline usado na aba Config da TUI.
+- `trace_syscalls` controla o log de depuração de syscalls.
+- `run_scope` aceita `all` ou `focus`.
+- `max_cores` assume `1` quando omitido e deve ficar no intervalo `1..=32`.
+- `mem_kb` define o tamanho padrão da RAM em kilobytes e é ajustado para a potência de 2 mais próxima. O campo legado `mem_mb` continua aceito. A flag `--mem` da CLI substitui este valor.
 - No headless, `--pipeline` por enquanto suporta apenas `--cores 1`.
 - Os valores de CPI são ciclos extras somados à latência de cache para a classe de instrução correspondente.
 

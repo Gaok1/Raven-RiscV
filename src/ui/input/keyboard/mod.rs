@@ -21,7 +21,7 @@ use self::serialization::{
 };
 pub(crate) use self::serialization::{
     do_export_cfg, do_export_pcfg, do_export_pipeline_results, do_export_results, do_import_cfg,
-    do_import_pcfg, open_path_input,
+    do_import_pcfg, do_import_rcfg, do_export_rcfg, open_path_input,
 };
 
 use crate::ui::app::{App, EditorMode, Tab};

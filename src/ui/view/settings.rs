@@ -11,7 +11,7 @@ use crate::ui::app::{
     SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
 };
 use crate::ui::theme;
-use crate::ui::view::components::dense_value;
+use crate::ui::view::components::{dense_action, dense_value};
 
 pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
@@ -29,18 +29,24 @@ pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Two-column layout: settings list (left) | description panel (right)
+    // Two-column layout plus bottom controls bar.
     let col_w = inner.width.min(80);
     let col_x = inner.x + (inner.width.saturating_sub(col_w)) / 2;
     let col_area = Rect::new(col_x, inner.y, col_w, inner.height);
 
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(3)])
+        .split(col_area);
+
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(35), Constraint::Min(10)])
-        .split(col_area);
+        .split(layout[0]);
 
     render_settings_list(f, cols[0], app);
     render_hint_panel(f, cols[1], app);
+    render_controls_bar(f, layout[1], app);
 }
 
 fn bool_button(value: bool, hovered: bool) -> Span<'static> {
@@ -506,8 +512,45 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
         vec![]
     };
 
-    f.render_widget(
-        Paragraph::new(hint).wrap(ratatui::widgets::Wrap { trim: false }),
-        area,
-    );
+    f.render_widget(Paragraph::new(hint).wrap(ratatui::widgets::Wrap { trim: false }), area);
+}
+
+fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled("Actions", Style::default().fg(theme::LABEL)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.height == 0 {
+        app.settings.import_rcfg_rect.set((0, 0, 0));
+        app.settings.export_rcfg_rect.set((0, 0, 0));
+        return;
+    }
+
+    let line = Line::from(vec![
+        Span::raw(" "),
+        dense_action("import", theme::ACCENT, app.settings.hover_import_rcfg),
+        Span::raw("   "),
+        dense_action("export", theme::ACCENT, app.settings.hover_export_rcfg),
+        Span::styled(
+            "   Ctrl+l = import  Ctrl+e = export",
+            Style::default().fg(theme::LABEL),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(vec![line]), inner);
+
+    let mut x = inner.x + 1;
+    let import_x0 = x;
+    let import_x1 = import_x0 + "import".len() as u16;
+    x = import_x1 + 3;
+    let export_x0 = x;
+    let export_x1 = export_x0 + "export".len() as u16;
+    app.settings
+        .import_rcfg_rect
+        .set((inner.y, import_x0, import_x1));
+    app.settings
+        .export_rcfg_rect
+        .set((inner.y, export_x0, export_x1));
 }

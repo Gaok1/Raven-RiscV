@@ -1,0 +1,44 @@
+RAVEN - atividade guiada
+
+Estrutura da pasta
+- programas/: arquivos .fas a importar no Editor
+- config-global/: arquivos .rcfg para a aba Config
+- config-pipeline/: arquivos .pcfg para a aba Pipeline
+- config-cache/: arquivos .fcache para a aba Cache
+
+Programas
+- programas/D101.fas: pipeline com instrucoes independentes
+- programas/D102.fas: pipeline com cadeia de dependencias RAW
+- programas/D201.fas: load-use hazard
+- programas/D202.fas: flush por redirecionamento de controle
+- programas/D301.fas: streaming / AMAT / LRU vs FIFO
+- programas/D302.fas: thrashing por associatividade insuficiente
+- programas/D401.fas: comparacao R-type vs S-type
+- programas/D501.fas: multi-core / registradores independentes
+
+Perfis gerais (.rcfg)
+- config-global/R100.rcfg: 1 hart em foco, cache desabilitada
+- config-global/R300.rcfg: 1 hart em foco, cache habilitada
+- config-global/R500.rcfg: escopo All Harts, cache desabilitada, 2 cores
+
+Perfis de pipeline (.pcfg)
+- config-pipeline/P100.pcfg: pipeline habilitado
+- config-pipeline/P101.pcfg: pipeline desabilitado
+
+Perfis de cache (.fcache)
+- config-cache/C311.fcache: D3/Q1 Config A (16 KB, 4-way, hit latency 1)
+- config-cache/C312.fcache: D3/Q1 Config B (64 KB, 4-way, hit latency 4)
+- config-cache/C321.fcache: D3/Q2 streaming com LRU
+- config-cache/C322.fcache: D3/Q2 streaming com FIFO
+- config-cache/C331.fcache: D3/Q3 4 sets, 2 ways, line size 16
+- config-cache/C332.fcache: D3/Q3 4 sets, 8 ways, line size 16
+
+Mapeamento por dominio
+- D1: programas/D101 ou programas/D102 + config-global/R100 + config-pipeline/P100
+- D2: programas/D201 ou programas/D202 + config-global/R100 + config-pipeline/P100
+- D3/Q1: programas/D301 + config-global/R300 + config-pipeline/P101 + config-cache/C311 ou C312
+- D3/Q2: programas/D301 + config-global/R300 + config-pipeline/P101 + config-cache/C321 ou C322
+- D3/Q3: programas/D302 + config-global/R300 + config-pipeline/P101 + config-cache/C331 ou C332
+- D4: programas/D401 + config-global/R100 + config-pipeline/P101
+- D5: programas/D501 + config-global/R500 + config-pipeline/P101
+- D6: programas/D102 + config-global/R100 + config-pipeline/P101 ou P100
