@@ -163,6 +163,11 @@ fn setup_show_trace(app: &mut App) {
     app.run.show_trace = true;
 }
 
+fn setup_show_dyn(app: &mut App) {
+    app.run.show_dyn = true;
+    app.run.show_registers = false;
+}
+
 // ── Step definitions ────────────────────────────────────────────────────────
 
 pub static STEPS: &[TutorialStep] = &[
@@ -216,23 +221,67 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "RAM / Memory Panel",
         title_pt: "Painel RAM / memória",
         body_en: "Use [v] to switch the sidebar to RAM view. The [k] key cycles through regions: DATA → STACK → R/W → HEAP.\
-\n\nUse Ctrl+F to jump to a specific memory address. The number of bytes per row is configurable.",
+\n\nUse Ctrl+f to jump to a specific memory address. The number of bytes per row is configurable.",
         body_pt: "Com [v] alterne o painel lateral para visualizar a RAM. A tecla [k] cicla entre regiões: DATA → STACK → R/W → HEAP.\
-\n\nUse Ctrl+F para pular para um endereço de memória específico. O número de bytes por linha é configurável.",
+\n\nUse Ctrl+f para pular para um endereço de memória específico. O número de bytes por linha é configurável.",
         target: target_sidebar,
         setup: Some(setup_show_ram),
+    },
+    TutorialStep {
+        title_en: "Memory Display Controls",
+        title_pt: "Controles de exibição da memória",
+        body_en: "While the RAM panel is active, three buttons in the control bar change how values are rendered:\
+\n\nFormat [HEX / DEC / STR] — numeric base or raw character view.\
+\nSign [SGN / UNSGN] — signed or unsigned display (DEC mode only).\
+\nBytes [1B / 2B / 4B] — how many bytes are grouped into each cell per row.\
+\n\nThese settings persist across region changes and are visible in the Run controls bar.",
+        body_pt: "Com o painel de RAM ativo, três botões na barra de controles mudam como os valores são exibidos:\
+\n\nFormat [HEX / DEC / STR] — base numérica ou visualização de caracteres brutos.\
+\nSign [SGN / UNSGN] — exibição com ou sem sinal (apenas no modo DEC).\
+\nBytes [1B / 2B / 4B] — quantos bytes são agrupados em cada célula por linha.\
+\n\nEssas configurações persistem entre trocas de região e ficam visíveis na barra de controles do Run.",
+        target: target_sidebar,
+        setup: Some(setup_show_ram),
+    },
+    TutorialStep {
+        title_en: "Dynamic Sidebar (Dyn)",
+        title_pt: "Sidebar dinâmica (Dyn)",
+        body_en: "Press [v] a third time to reach Dyn mode. In this mode the sidebar follows the last executed instruction automatically:\
+\n\nAfter a STORE — switches to RAM view centered on the written address.\
+\nAfter a LOAD or ALU — switches to the register bank so you can see the result.\
+\n\nUseful for tracing data flow without manually switching between views.",
+        body_pt: "Pressione [v] uma terceira vez para entrar no modo Dyn. Nesse modo o sidebar acompanha automaticamente a última instrução executada:\
+\n\nApós um STORE — muda para a view de RAM centralizada no endereço escrito.\
+\nApós um LOAD ou ALU — muda para o banco de registradores para ver o resultado.\
+\n\nÚtil para rastrear o fluxo de dados sem trocar de view manualmente.",
+        target: target_sidebar,
+        setup: Some(setup_show_dyn),
     },
     TutorialStep {
         title_en: "Instruction Memory",
         title_pt: "Memória de instruções",
         body_en: "Center panel showing the program's instructions with their addresses and opcodes.\
 \n\nThe current instruction (PC) is highlighted. Breakpoints appear as red markers — press [F9] to toggle.\
-\n\nUse Ctrl+G to jump to a specific label.\
+\n\nUse Ctrl+g to jump to a specific label.\
 \n\nClicking an instruction moves the PC to it, allowing jumps at runtime.",
         body_pt: "Painel central mostrando as instruções do programa com seus endereços e opcodes.\
 \n\nA instrução atual (PC) é destacada. Breakpoints aparecem como marcadores vermelhos — pressione [F9] para alternar.\
-\n\nUse Ctrl+G para pular para uma label específica.\
+\n\nUse Ctrl+g para pular para uma label específica.\
 \n\nClicar em uma instrução move o PC para ela, permitindo jumps em tempo de execução.",
+        target: target_imem,
+        setup: None,
+    },
+    TutorialStep {
+        title_en: "Instruction View Toggles",
+        title_pt: "Toggles da view de instruções",
+        body_en: "Two toggles change what extra information is shown on each instruction line:\
+\n\n[e] — execution count heatmap: shows how many times each instruction ran (×N). Line numbers are coloured by frequency.\
+\n[y] — instruction type badge: shows the format class of each instruction ([R], [I], [S], [B], [U], [J]).\
+\n\nBoth are also available as the Count and Type buttons in the controls bar.",
+        body_pt: "Dois toggles mudam quais informações extras aparecem em cada linha de instrução:\
+\n\n[e] — heatmap de contagem de execuções: mostra quantas vezes cada instrução rodou (×N). Os números de linha são coloridos pela frequência.\
+\n[y] — badge de tipo de instrução: exibe a classe de formato de cada instrução ([R], [I], [S], [B], [U], [J]).\
+\n\nAmbos também estão disponíveis como botões Count e Type na barra de controles.",
         target: target_imem,
         setup: None,
     },
@@ -253,6 +302,20 @@ pub static STEPS: &[TutorialStep] = &[
 \n\nHover over an instruction in the center panel to see its decoded details here. Also shows the values of the registers involved.",
         body_pt: "O painel direito exibe informações detalhadas sobre a instrução sob o cursor: tipo, operandos, formato binário e descrição.\
 \n\nPasse o mouse sobre uma instrução no painel central para ver seus detalhes decodificados aqui. Mostra também o valor dos registradores envolvidos.",
+        target: target_details,
+        setup: None,
+    },
+    TutorialStep {
+        title_en: "Collapsible Panels",
+        title_pt: "Painéis colapsáveis",
+        body_en: "All three main panels (Sidebar, Instruction Memory, Details) can be collapsed to save space.\
+\n\nDrag the divider between any two panels to resize them. Drag it all the way to the edge to collapse.\
+\nYou can also click the narrow rail that appears when a panel is collapsed to expand it again.\
+\n\nCtrl+↑/↓ scrolls the console output independently of the other panels.",
+        body_pt: "Os três painéis principais (Sidebar, Memória de Instruções, Detalhes) podem ser colapsados para economizar espaço.\
+\n\nArraste o divisor entre dois painéis para redimensioná-los. Arraste até a borda para colapsar.\
+\nVocê também pode clicar no trilho estreito que aparece quando um painel está colapsado para expandi-lo.\
+\n\nCtrl+↑/↓ rola a saída do console de forma independente dos outros painéis.",
         target: target_details,
         setup: None,
     },

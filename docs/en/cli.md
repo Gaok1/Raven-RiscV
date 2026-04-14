@@ -363,7 +363,7 @@ raven debug-pipeline-stage --stage MEM --pred SPEC
 Describes the cache hierarchy: I-cache, D-cache, and any extra levels (L2, L3…).
 See [Cache Config Reference](cache-config.md) for the full field list.
 
-Export / import from the TUI: **Cache tab → `Ctrl+E` / `Ctrl+L`**
+Export / import from the TUI: **Cache tab → `Ctrl+e` / `Ctrl+l`**
 
 ### `.rcfg` — sim settings
 
@@ -394,7 +394,7 @@ cpi.fp=5
 - Headless `--pipeline` currently supports only `--cores 1`.
 - CPI values are extra cycles added on top of cache latency for the corresponding instruction class.
 
-Export / import from the TUI: **Config tab → `Ctrl+E` / `Ctrl+L`**
+Export / import from the TUI: **Config tab → `Ctrl+e` / `Ctrl+l`**
 
 ### `.pcfg` — pipeline settings
 
@@ -432,7 +432,7 @@ Fields:
 - `predict` — `NotTaken`, `Taken`, `Btfnt`, or `TwoBit`
 - `speed` — TUI playback speed (`Slow`, `Normal`, `Fast`, `Instant`)
 
-Export / import from the TUI: **Pipeline tab → `Ctrl+E` / `Ctrl+L`**
+Export / import from the TUI: **Pipeline tab → `Ctrl+e` / `Ctrl+l`**
 
 ---
 

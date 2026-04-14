@@ -358,7 +358,7 @@ raven debug-pipeline-stage --stage MEM --pred SPEC
 
 Descreve a hierarquia de cache: I-cache, D-cache e quaisquer níveis extras (L2, L3…).
 
-Exportar / importar pela TUI: **aba Cache → `Ctrl+E` / `Ctrl+L`**
+Exportar / importar pela TUI: **aba Cache → `Ctrl+e` / `Ctrl+l`**
 
 ### `.rcfg` — configurações de simulação
 
@@ -389,7 +389,7 @@ cpi.fp=5
 - No headless, `--pipeline` por enquanto suporta apenas `--cores 1`.
 - Os valores de CPI são ciclos extras somados à latência de cache para a classe de instrução correspondente.
 
-Exportar / importar pela TUI: **aba Config → `Ctrl+E` / `Ctrl+L`**
+Exportar / importar pela TUI: **aba Config → `Ctrl+e` / `Ctrl+l`**
 
 ### `.pcfg` — configurações de pipeline
 
@@ -427,7 +427,7 @@ Campos:
 - `predict` — `NotTaken`, `Taken`, `Btfnt` ou `TwoBit`
 - `speed` — velocidade de reprodução na TUI (`Slow`, `Normal`, `Fast`, `Instant`)
 
-Exportar / importar pela TUI: **aba Pipeline → `Ctrl+E` / `Ctrl+L`**
+Exportar / importar pela TUI: **aba Pipeline → `Ctrl+e` / `Ctrl+l`**
 
 ---
 

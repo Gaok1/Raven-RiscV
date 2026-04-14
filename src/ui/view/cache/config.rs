@@ -339,7 +339,7 @@ fn render_fields(
             if active.is_some() {
                 "  Enter=confirm  Esc=cancel  <- ->=cycle  Tab/↑↓=move"
             } else {
-                "  Click/edit  ◄►=cycle  Ctrl+E=export  Ctrl+L=import"
+                "  Click/edit  ◄►=cycle  Ctrl+e=export  Ctrl+l=import"
             },
             Style::default().fg(theme::LABEL),
         ))),

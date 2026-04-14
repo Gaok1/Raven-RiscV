@@ -1,0 +1,29 @@
+##! D302 — Thrashing por associatividade insuficiente
+##! Configure 4 sets, 2 ways e linha de 16 bytes.
+##! Depois aumente para 8 ways sem alterar o programa.
+
+.data
+base: .space 320          # 5 blocos separados por 64 bytes cabem aqui
+
+.text
+    la   t0, base
+    addi t1, t0, 0        # A
+    addi t2, t0, 64       # B
+    addi t3, t0, 128      # C
+    addi t4, t0, 192      # D
+    addi t5, t0, 256      # E
+
+    li   s0, 6000
+
+loop:
+    lw   a0, 0(t1)     #! A
+    lw   a1, 0(t2)     #! B
+    lw   a2, 0(t3)     #! C
+    lw   a3, 0(t4)     #! D
+    lw   a4, 0(t5)     #! E
+    addi s0, s0, -1
+    bnez s0, loop
+
+    li   a0, 0
+    li   a7, 93
+    ecall

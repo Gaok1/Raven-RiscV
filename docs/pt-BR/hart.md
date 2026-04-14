@@ -175,7 +175,7 @@ A aba Pipeline e a aba Run mostram um **seletor de núcleos** na barra de ferram
 
 Emblemas de status do núcleo aparecem ao lado de cada índice de núcleo: `RUN`, `BRK`, `EXIT`, `FAULT`, `FREE`.
 
-A configuração de **escopo de execução** (aba Settings) controla se `Run` (`Espaço`/`F5`) avança apenas o hart focado (`FOCUS`) ou todos os harts em execução simultaneamente (`ALL`). O escopo `ALL` é o padrão para programas multi-hart.
+A configuração de **escopo de execução** (aba Settings) controla se `Run` (`r`) avança apenas o hart focado (`FOCUS`) ou todos os harts em execução simultaneamente (`ALL`). O escopo `ALL` é o padrão para programas multi-hart.
 
 ---
 

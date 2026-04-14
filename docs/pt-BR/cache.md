@@ -240,7 +240,7 @@ O tamanho de linha deve ser potência de 2, e o tamanho total deve ser divisíve
 
 ## Salvar e carregar configurações (.fcache)
 
-Use **Ctrl+E** (exportar) e **Ctrl+L** (importar) na aba Cache. O formato é texto simples `chave=valor` — você pode abrir e editar em qualquer editor de texto.
+Use **Ctrl+e** (exportar) e **Ctrl+l** (importar) na aba Cache. O formato é texto simples `chave=valor` — você pode abrir e editar em qualquer editor de texto.
 
 ---
 

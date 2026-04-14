@@ -63,7 +63,7 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" Label: ", Style::default().fg(theme::ACCENT).bg(bg).bold()),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         result_span,
-        Span::styled("  Ctrl+V=paste", Style::default().fg(theme::IDLE).bg(bg)),
+        Span::styled("  Ctrl+v=paste", Style::default().fg(theme::IDLE).bg(bg)),
         Span::styled("  Esc=close", Style::default().fg(theme::IDLE).bg(bg)),
     ]);
 

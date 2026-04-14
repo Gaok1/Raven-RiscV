@@ -240,7 +240,7 @@ Line Size must be a power of 2, and the total Size must divide evenly into a who
 
 ## Saving and loading configs (.fcache)
 
-Use **Ctrl+E** (export) and **Ctrl+L** (import) in the Cache tab to save and restore configurations as text files. The format is plain `key=value` — you can open and edit it in any text editor.
+Use **Ctrl+e** (export) and **Ctrl+l** (import) in the Cache tab to save and restore configurations as text files. The format is plain `key=value` — you can open and edit it in any text editor.
 
 ---
 

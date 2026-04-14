@@ -316,7 +316,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         valid_span,
         Span::styled(
-            "  Ctrl+V=paste  Esc=close  Enter=ok",
+            "  Ctrl+v=paste  Esc=close  Enter=ok",
             Style::default().fg(theme::IDLE).bg(bg),
         ),
     ]);
