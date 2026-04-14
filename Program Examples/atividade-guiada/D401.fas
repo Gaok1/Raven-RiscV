@@ -1,0 +1,15 @@
+##! D401 — R-type vs. S-type
+##! Use Ctrl+E no Editor e compare o campo [11:7] das duas instrucoes.
+
+.data
+slot: .word 0
+
+.text
+    la   x1, slot
+    addi x2, x0, 7
+    add  x5, x1, x2    #! R-type: [11:7] = rd
+    sw   x5, 0(x1)     #! S-type: [11:7] = imediato[4:0]
+
+    li   a0, 0
+    li   a7, 93
+    ecall

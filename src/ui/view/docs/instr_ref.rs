@@ -1004,7 +1004,7 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     let table_area = chunks[4];
 
     let search_hint = if app.docs.search_open {
-        "  Ctrl+F=search"
+        "  Ctrl+f=search"
     } else {
         ""
     };

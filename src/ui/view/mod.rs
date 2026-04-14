@@ -123,12 +123,12 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Editor => {
             let mode = match app.mode { EditorMode::Insert => "INSERT", EditorMode::Command => "COMMAND" };
             (
-                format!("{mode}  │  Ctrl+O=Open  Ctrl+S=Save  Ctrl+Z=Undo  Ctrl+F=Find  Ctrl+G=Goto  Ctrl+/=Comment  [?]=Help"),
+                format!("{mode}  │  Ctrl+o=Open  Ctrl+s=Save  Ctrl+z=Undo  Ctrl+f=Find  Ctrl+g=Goto  Ctrl+/=Comment  [?]=Help"),
                 Style::default().fg(theme::LABEL),
             )
         }
         Tab::Run => (
-            "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Region  Ctrl+F=Jump RAM  Ctrl+G=Label  [?]=Help".to_string(),
+            "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Region  Ctrl+f=Jump RAM  Ctrl+g=Label  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
         Tab::Pipeline => {
@@ -138,7 +138,7 @@ pub fn ui(f: &mut Frame, app: &App) {
                 (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
             } else {
                 (
-                    "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Config  Ctrl+E/L=Config  Ctrl+R=Results  [?]=Help".to_string(),
+                    "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Config  Ctrl+e/l=Config  Ctrl+r=Results  [?]=Help".to_string(),
                     Style::default().fg(theme::LABEL),
                 )
             }
@@ -150,13 +150,13 @@ pub fn ui(f: &mut Frame, app: &App) {
                 (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
             } else {
                 (
-                    "Tab=Subtabs  Ctrl+E=Export config  Ctrl+L=Import config  Ctrl+R=Results  [?]=Help".to_string(),
+                    "Tab=Subtabs  Ctrl+e=Export config  Ctrl+l=Import config  Ctrl+r=Results  [?]=Help".to_string(),
                     Style::default().fg(theme::LABEL),
                 )
             }
         }
         Tab::Docs => (
-            "Ctrl+F=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language  [?]=Help".to_string(),
+            "Ctrl+f=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
         Tab::Config => (
@@ -467,9 +467,9 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[Tab] REGS", "toggle integer / float register bank"),
                 ("[F9]", "toggle breakpoint at hovered / PC"),
                 ("", ""),
-                ("[Ctrl+F]", "jump RAM view to address (type hex, live)"),
+                ("[Ctrl+f]", "jump RAM view to address (type hex, live)"),
                 (
-                    "[Ctrl+G]",
+                    "[Ctrl+g]",
                     "jump instruction view to label (type name, live)",
                 ),
                 ("[t]", "toggle instruction trace panel"),
@@ -506,19 +506,21 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         ],
         Tab::Editor => vec![vec![
             ("[Esc]", "switch to Command mode (click editor to return)"),
-            ("[Ctrl+Z]", "undo"),
-            ("[Ctrl+Y]", "redo"),
+            ("[Ctrl+z]", "undo"),
+            ("[Ctrl+y]", "redo"),
             ("[Ctrl+/]", "toggle line comment"),
-            ("[Ctrl+F]", "open find bar"),
-            ("[Ctrl+H]", "open find & replace bar"),
-            ("[Ctrl+G]", "goto line number"),
-            ("[Ctrl+O]", "import file"),
-            ("[Ctrl+S]", "export / save file"),
+            ("[#! text]", "visible runtime annotation attached to an instruction"),
+            ("[##! text]", "runtime block comment shown above the next instruction"),
+            ("[Ctrl+f]", "open find bar"),
+            ("[Ctrl+h]", "open find & replace bar"),
+            ("[Ctrl+g]", "goto line number"),
+            ("[Ctrl+o]", "import file"),
+            ("[Ctrl+s]", "export / save file"),
             ("", ""),
-            ("[Ctrl+A]", "select all"),
-            ("[Ctrl+C]", "copy selection"),
-            ("[Ctrl+V]", "paste"),
-            ("[Ctrl+X]", "cut selection"),
+            ("[Ctrl+a]", "select all"),
+            ("[Ctrl+c]", "copy selection"),
+            ("[Ctrl+v]", "paste"),
+            ("[Ctrl+x]", "cut selection"),
         ]],
         Tab::Cache => vec![vec![
             ("[Tab]", "cycle subtabs: Stats → View → Config"),
@@ -539,7 +541,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 "cycle cell data format: HEX → DEC-U → DEC-S → FLOAT",
             ),
             ("[g] View", "cycle byte grouping: 1B → 2B → 4B"),
-            ("[t] View", "toggle address / tag display (0x… ↔ t:…)"),
+            ("[t] View", "cycle address view: block base ↔ off|idx|tag"),
             (
                 "[↑/↓] View",
                 "scroll the active cache panel; in Both mode this follows the focused panel",
@@ -557,14 +559,14 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 "Hit rate History",
                 "updates on each sequential step or pipeline commit",
             ),
-            ("[Ctrl+E]", "export cache config (.fcache)"),
-            ("[Ctrl+L]", "import cache config (.fcache)"),
-            ("[Ctrl+R]", "export simulation results (.fstats / .csv)"),
+            ("[Ctrl+e]", "export cache config (.fcache)"),
+            ("[Ctrl+l]", "import cache config (.fcache)"),
+            ("[Ctrl+r]", "export simulation results (.fstats / .csv)"),
         ]],
         Tab::Docs => vec![vec![
             ("[↑/↓]", "scroll documentation"),
             ("[PgUp/PgDn]", "fast scroll"),
-            ("[Ctrl+F]", "open search bar (filter by name/desc)"),
+            ("[Ctrl+f]", "open search bar (filter by name/desc)"),
             ("[←/→]", "navigate type filter"),
             ("[Space]", "toggle selected type filter / restore All"),
         ]],
@@ -590,9 +592,9 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 "BTFNT",
                 "backward branches taken, forward branches not taken",
             ),
-            ("[Ctrl+E]", "export pipeline config (.pcfg)"),
-            ("[Ctrl+L]", "import pipeline config (.pcfg)"),
-            ("[Ctrl+R]", "export pipeline results (.pstats / .csv)"),
+            ("[Ctrl+e]", "export pipeline config (.pcfg)"),
+            ("[Ctrl+l]", "import pipeline config (.pcfg)"),
+            ("[Ctrl+r]", "export pipeline results (.pstats / .csv)"),
             ("Hazard Map", "shows RAW / load-use / flush / bypass traces"),
             ("History", "last cycles and per-instruction stage timeline"),
         ]],
@@ -606,8 +608,8 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 "Run Scope [ALL/FOCUS]",
                 "ALL advances all harts; FOCUS advances only observed hart in Run",
             ),
-            ("[Ctrl+E]", "export .rcfg"),
-            ("[Ctrl+L]", "import .rcfg"),
+            ("[Ctrl+e]", "export .rcfg"),
+            ("[Ctrl+l]", "import .rcfg"),
         ]],
     }
 }

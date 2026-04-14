@@ -1027,7 +1027,8 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
 
 fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) {
     let inner_x = status_area.x + 1;
-    let actions_y = status_area.y + 1 + 1;
+    // Keep this row in sync with render_editor_status(): [build, stats, actions].
+    let actions_y = status_area.y + 1 + 2;
     if me.row != actions_y {
         return;
     }
@@ -2067,7 +2068,7 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
-    // View legend bar button clicks: [FMT], [GROUP], and [TAG]
+    // View legend bar button clicks: [FMT], [GROUP], and address mode
     if matches!(app.cache.subtab, CacheSubtab::View) {
         let (fmt_y, fmt_x0, fmt_x1) = app.cache.view_fmt_btn.get();
         let (grp_y, grp_x0, grp_x1) = app.cache.view_group_btn.get();
@@ -2084,7 +2085,7 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
             return;
         }
         if tag_x1 > tag_x0 && me.row == tag_y && me.column >= tag_x0 && me.column < tag_x1 {
-            app.cache.show_tag = !app.cache.show_tag;
+            app.cache.addr_mode = app.cache.addr_mode.cycle();
             return;
         }
     }

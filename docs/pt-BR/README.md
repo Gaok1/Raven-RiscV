@@ -28,7 +28,8 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Highlight de sintaxe — instruções, registradores, diretivas, labels e strings com cores distintas
 - Hints de operandos enquanto digita
 - Ir para definição (`F12`), highlight de label sob o cursor, gutter de endereços (`F2`)
-- Desfazer/refazer (50 níveis), navegação por palavra, alternar comentário (`Ctrl+/`), duplicar linha (`Ctrl+D`)
+- `Ctrl+Enter` para montar rapidamente; erros mostram linha e motivo
+- Desfazer/refazer (50 níveis), navegação por palavra, alternar comentário (`Ctrl+/`), selecionar próxima ocorrência (`Ctrl+d`)
 - Auto-indent, colar com formatação, page up/down
 
 ### Aba Run (Aba 2)
@@ -37,7 +38,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Badge de tipo por instrução (`[R]` `[I]` `[S]` `[B]` `[U]` `[J]` `[A]` `[F]`)
 - Heat coloring — sufixo `×N` de contagem de execuções colorido por frequência
 - Resultado de branch no PC atual: `→ 0xADDR (taken)` / `↛ (not taken)`
-- Breakpoints (`b`), saltar para endereço (`g`), painel de trace de execução (`t`)
+- Breakpoints (`F9`), saltar para endereço (`Ctrl+f`), saltar para label (`Ctrl+g`), painel de trace de execução (`t`)
 
 **Painel de Detalhes Decodificados**
 - Breakdown completo dos campos (opcode, funct3/7, rs1/rs2/rd, imediato com sinal)
@@ -59,14 +60,19 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Políticas de inclusão: Não-inclusiva, Inclusiva, Exclusiva
 - Estatísticas ao vivo: hit rate, MPKI, tráfego de RAM, top miss PCs
 - Métricas acadêmicas: AMAT (hierárquico), IPC, breakdown de CPI por nível
-- Exportar resultados (`Ctrl+R`) para `.fstats` / `.csv`; carregar baseline para comparação delta (`Ctrl+M`)
+- Exportar resultados (`Ctrl+r`) para `.fstats` / `.csv`
 - Matriz visual de cache com scroll horizontal e drag por scrollbar
+
+### Aba Pipeline (Aba 4)
+- Visualização de pipeline clássico de 5 estágios com execução ciclo a ciclo
+- Sub-abas Main e Config para hazards, histórico, bypass e predição de desvio
+- Exportação/importação de `.pcfg` e exportação de `.pstats` / `.csv` com `Ctrl+e`, `Ctrl+l` e `Ctrl+r`
 
 ### Configuração de CPI
 - Custos de ciclo por classe: ALU, MUL, DIV, LOAD, STORE, branch taken/not-taken, JUMP, SYSTEM, FP
 - Configurável diretamente na aba Cache → Config
 
-### Aba Docs (Aba 4)
+### Aba Docs (Aba 5)
 - Referência de instruções e guia da aba Run embutidos no app
 
 ---
@@ -117,16 +123,17 @@ Requer Rust 1.75+. Sem dependências externas além da toolchain Rust.
 
 | Tecla | Ação |
 |-------|------|
-| `F5` / `Space` | Rodar / Pausar |
-| `s` / `F10` | Passo único |
+| `r` / `p` | Rodar / Pausar |
+| `s` | Passo único |
+| `R` | Reiniciar simulação |
 | `F9` | Alternar breakpoint no PC |
 | `f` | Ciclar velocidade: 1× → 2× → 4× → 8× → GO |
 | `v` | Ciclar sidebar: RAM → Registradores → Dyn |
 | `k` | Ciclar região de RAM: Data → Stack → R/W → Heap |
 | `Tab` | Alternar banco int / float (no modo REGS) |
 | `t` | Alternar painel de trace de execução |
-| `Ctrl+F` | Saltar visão de RAM para endereço |
-| `Ctrl+G` | Saltar instrução para label |
+| `Ctrl+f` | Saltar visão de RAM para endereço |
+| `Ctrl+g` | Saltar instrução para label |
 | `e` / `y` | Alternar contador de execuções / badges de tipo |
 | `P` / click | Fixar / desafixar registrador |
 

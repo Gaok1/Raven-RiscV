@@ -14,7 +14,7 @@ fn fcache_ref_lines_en() -> Vec<Line<'static>> {
         h1("RAVEN — .fcache Config Reference"),
         blank(),
         note("A .fcache file stores cache hierarchy and CPI settings for sharing and reloading."),
-        note("Use Ctrl+E to export and Ctrl+L to import on the Cache tab."),
+        note("Use Ctrl+e to export and Ctrl+l to import on the Cache tab."),
         blank(),
         h2("Format Rules"),
         blank(),
@@ -480,7 +480,7 @@ fn fcache_ref_lines_ptbr() -> Vec<Line<'static>> {
         note(
             "Um arquivo .fcache armazena configurações de hierarquia de cache e CPI para compartilhar e recarregar.",
         ),
-        note("Use Ctrl+E para exportar e Ctrl+L para importar na aba Cache."),
+        note("Use Ctrl+e para exportar e Ctrl+l para importar na aba Cache."),
         blank(),
         h2("Regras de Formato"),
         blank(),

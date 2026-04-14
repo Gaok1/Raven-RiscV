@@ -2,7 +2,7 @@
 
 **RAVEN** is a free, open-source RISC-V simulator and terminal IDE for students and anyone learning assembly. It covers **RV32IMAF** — the full base integer set, multiply/divide, atomics, and single-precision float — and makes every part of the machine visible while your program runs.
 
-Write assembly in the built-in editor, assemble with `Ctrl+R`, and step through every instruction watching registers, memory, and the cache update in real time. Nothing is hidden.
+Write assembly in the built-in editor, assemble with `Ctrl+Enter`, and step through every instruction watching registers, memory, and the cache update in real time. Nothing is hidden.
 
 ![RAVEN in action](../assets/raven-example.gif)
 
@@ -27,13 +27,13 @@ Requires Rust 1.75+. No other dependencies.
 ### Editor (Tab 1)
 - Syntax highlighting — instructions, registers, labels, directives, strings
 - Ghost operand hints while typing
-- `Ctrl+R` to assemble instantly; errors show line number and reason
-- Undo/redo (50 levels), word navigation, toggle comment (`Ctrl+/`), duplicate line (`Ctrl+D`)
+- `Ctrl+Enter` to assemble instantly; errors show line number and reason
+- Undo/redo (50 levels), word navigation, toggle comment (`Ctrl+/`), select next occurrence (`Ctrl+d`)
 - Go-to-definition (`F12`), label highlight, address gutter (`F2`)
 
 ### Debugger — Run Tab (Tab 2)
-- Run free, pause (`Space`/`F5`), or single-step (`s`/`F10`)
-- Breakpoints (`F9`), jump to label (`Ctrl+G`), jump to RAM address (`Ctrl+F`), execution trace (`t`)
+- Run free (`r`), pause (`p`), restart (`R`), or single-step (`s`)
+- Breakpoints (`F9`), jump to label (`Ctrl+g`), jump to RAM address (`Ctrl+f`), execution trace (`t`)
 - All 32 integer registers with ABI names, hex + decimal, change highlighting
 - Float registers (`f0–f31` / ABI names), toggled with `Tab` in REGS mode
 - Sidebar cycles with `v`: **RAM → Registers → Dyn**
@@ -50,10 +50,16 @@ Requires Rust 1.75+. No other dependencies.
 - Live stats: hit rate, MPKI, RAM traffic, top miss PCs
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
-- Export results (`Ctrl+R`) to `.fstats`/`.csv`; load baseline for delta comparison (`Ctrl+M`)
+- Export results (`Ctrl+r`) to `.fstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
-### Docs Tab (Tab 4)
+### Pipeline Simulator (Tab 4)
+- Five-stage in-order pipeline visualization with per-cycle stepping and run/pause controls
+- Main and Config subtabs for hazard/history inspection and pipeline configuration
+- Branch resolve and predictor controls, bypass toggles, and hazard map visualization
+- Export pipeline configs/results with `Ctrl+e`, `Ctrl+l`, and `Ctrl+r`
+
+### Docs Tab (Tab 5)
 - Instruction reference for all supported instructions
 - Run tab key guide
 
@@ -117,22 +123,22 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 ### Global
 | Key | Action |
 |-----|--------|
-| `Ctrl+R` | Assemble and load |
-| `1`–`4` | Switch tab (Editor / Run / Cache / Docs) |
+| `Ctrl+Enter` | Assemble and load |
 
 ### Run Tab
 | Key | Action |
 |-----|--------|
-| `F5` / `Space` | Run / Pause |
-| `s` / `F10` | Single step |
+| `r` / `p` | Run / Pause |
+| `s` | Single step |
+| `R` | Restart simulation |
 | `F9` | Toggle breakpoint at PC |
 | `f` | Cycle speed: 1× → 2× → 4× → 8× → GO |
 | `v` | Cycle sidebar: RAM → Registers → Dyn |
 | `k` | Cycle RAM region: Data → Stack → R/W → Heap |
 | `Tab` | Toggle integer / float register bank (REGS mode) |
 | `t` | Toggle execution trace panel |
-| `Ctrl+F` | Jump RAM view to address |
-| `Ctrl+G` | Jump instruction view to label |
+| `Ctrl+f` | Jump RAM view to address |
+| `Ctrl+g` | Jump instruction view to label |
 
 ---
 

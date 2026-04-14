@@ -93,21 +93,21 @@ pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
         title_en: "Keys & Shortcuts",
         title_pt: "Teclas e atalhos",
-        body_en: "Keyboard shortcuts in Raven are case-sensitive.\
-\n\n`r` runs the simulation, `R` restarts it — they are different keys. `Ctrl+E` activates the encoding overlay; plain `e` toggles execution count.\
-\n\nShortcuts shown as `[key]` are case-exact. When a modifier is shown (Ctrl+, Shift+), it is required.",
-        body_pt: "Os atalhos de teclado no Raven são sensíveis a maiúsculas/minúsculas.\
-\n\n`r` inicia a execução, `R` reinicia — são teclas diferentes. `Ctrl+E` ativa a sobreposição de encoding; `e` sem modificador alterna a contagem de execuções.\
-\n\nAtalhos exibidos como `[tecla]` são exatos quanto à capitalização. Quando um modificador é mostrado (Ctrl+, Shift+), ele é obrigatório.",
+        body_en: "Some Raven shortcuts are case-sensitive and some are not.\
+\n\nWhen upper and lower case mean different commands, the tutorial shows the exact key. Example: `r` runs in the Run tab while `R` restarts.\
+\n\nWhen a shortcut accepts the lowercase form, this tutorial shows it in lowercase. Example: `Ctrl+e` toggles the encoding overlay; plain `e` toggles execution count in runtime views.",
+        body_pt: "Alguns atalhos do Raven diferenciam maiúsculas e minúsculas, e outros não.\
+\n\nQuando maiúscula e minúscula têm comandos diferentes, o tutorial mostra a tecla exata. Exemplo: `r` executa na aba Run enquanto `R` reinicia.\
+\n\nQuando o atalho aceita a forma minúscula, este tutorial exibe em minúsculo. Exemplo: `Ctrl+e` alterna a sobreposição de encoding; `e` sem modificador alterna a contagem de execuções nas views de runtime.",
         target: target_footer,
         setup: None,
     },
     TutorialStep {
         title_en: "Navigation Tabs",
         title_pt: "Abas de navegação",
-        body_en: "This bar at the top contains the main tabs: Editor, Run, Cache and Docs.\
+        body_en: "This bar at the top contains the main tabs: Editor, Run, Cache, Pipeline and Docs.\
 \n\nClick a tab or use the mouse to navigate between them. The [?] button in the top-right corner opens this tour.",
-        body_pt: "Esta barra no topo contém as abas principais: Editor, Run, Cache e Docs.\
+        body_pt: "Esta barra no topo contém as abas principais: Editor, Run, Cache, Pipeline e Docs.\
 \n\nClique em uma aba ou use o mouse para navegar entre elas. O botão [?] no canto direito abre este tour.",
         target: target_tab_bar,
         setup: None,
@@ -127,10 +127,26 @@ pub static STEPS: &[TutorialStep] = &[
         title_pt: "Botões Import / Export",
         body_en: "Import [BIN] loads an ELF binary. Import [CODE] opens a .fas (assembly) file.\
 \n\nExport [BIN] saves the compiled binary. Export [CODE] saves the source code.\
-\n\nThe [▶ RUN] and [FORMAT] buttons execute and format the code respectively.",
+\n\nThe [▶ RUN] and [FORMAT] buttons execute and format the code respectively.\
+\n\nCtrl+o opens a file picker for import; Ctrl+s opens one for export.",
         body_pt: "Import [BIN] carrega um binário ELF. Import [CODE] abre um arquivo .fas (assembly).\
 \n\nExport [BIN] salva o binário compilado. Export [CODE] salva o código-fonte.\
-\n\nOs botões [▶ RUN] e [FORMAT] executam e formatam o código respectivamente.",
+\n\nOs botões [▶ RUN] e [FORMAT] executam e formatam o código respectivamente.\
+\n\nCtrl+o abre o seletor de arquivo para importação; Ctrl+s abre para exportação.",
+        target: target_actions,
+        setup: None,
+    },
+    TutorialStep {
+        title_en: "ELF Binary Mode",
+        title_pt: "Modo binário ELF",
+        body_en: "When an ELF binary is loaded the editor becomes read-only and shows a prompt with three choices:\
+\n\n[ Cancel ] — keep the ELF loaded and stay in read-only view.\
+\n[ Edit opcodes ] — disassemble the ELF and open it for opcode-level editing.\
+\n[ Discard ELF ] — remove the binary so you can edit assembly source freely again.",
+        body_pt: "Quando um binário ELF é carregado o editor vira somente-leitura e exibe um prompt com três opções:\
+\n\n[ Cancel ] — mantém o ELF carregado na view somente-leitura.\
+\n[ Edit opcodes ] — desmonta o ELF e abre para edição no nível de opcodes.\
+\n[ Discard ELF ] — remove o binário para você editar o código assembly livremente de novo.",
         target: target_actions,
         setup: None,
     },
@@ -139,19 +155,37 @@ pub static STEPS: &[TutorialStep] = &[
         title_pt: "Editor de código",
         body_en: "Main editing area for RISC-V assembly code.\
 \n\nThe left column displays line numbers. Highlighted numbers indicate execution counts (heatmap).\
-\n\nUse Ctrl+F to search, Ctrl+G to go to a line, Ctrl+Z/Y to undo/redo.",
+\n\nUse Ctrl+f to search, Ctrl+g to go to a line, Ctrl+z/y to undo/redo.",
         body_pt: "Área principal de edição do código assembly RISC-V.\
 \n\nA coluna da esquerda exibe números de linha. Números em destaque indicam contagem de execuções (heatmap).\
-\n\nUse Ctrl+F para buscar, Ctrl+G para ir a uma linha, Ctrl+Z/Y para desfazer/refazer.",
+\n\nUse Ctrl+f para buscar, Ctrl+g para ir a uma linha, Ctrl+z/y para desfazer/refazer.",
+        target: target_editor_body,
+        setup: None,
+    },
+    TutorialStep {
+        title_en: "Editing Shortcuts",
+        title_pt: "Atalhos de edição",
+        body_en: "Additional shortcuts inside the editor:\
+\n\nCtrl+h — find & replace bar (type search term, Tab to replacement field, Enter to replace).\
+\nCtrl+/ — toggle line comment for the current line.\
+\n#! text — visible annotation attached to an instruction in the Run tab.\
+\n##! text — block comment shown above the next emitted instruction in the Run tab.\
+\nCtrl+a — select all  •  Ctrl+c — copy  •  Ctrl+x — cut  •  Ctrl+v — paste.",
+        body_pt: "Atalhos adicionais dentro do editor:\
+\n\nCtrl+h — barra de busca e substituição (digite o termo, Tab para o campo de substituição, Enter para substituir).\
+\nCtrl+/ — alternar comentário na linha atual.\
+\n#! texto — anotação visível anexada à instrução na aba Run.\
+\n##! texto — comentário de bloco mostrado acima da próxima instrução emitida na aba Run.\
+\nCtrl+a — selecionar tudo  •  Ctrl+c — copiar  •  Ctrl+x — recortar  •  Ctrl+v — colar.",
         target: target_editor_body,
         setup: None,
     },
     TutorialStep {
         title_en: "Encoding Overlay",
         title_pt: "Sobreposição de encoding",
-        body_en: "Press Ctrl+E to enable the binary encoding view for instructions.\
+        body_en: "Press Ctrl+e to enable the binary encoding view for instructions.\
 \n\nEach instruction appears with its binary opcode overlaid, useful for studying RISC-V instruction formats.",
-        body_pt: "Pressione Ctrl+E para ativar a visualização de encoding binário das instruções.\
+        body_pt: "Pressione Ctrl+e para ativar a visualização de encoding binário das instruções.\
 \n\nCada instrução aparece com seu opcode em binário sobreposto, útil para estudar o formato das instruções RISC-V.",
         target: target_editor_body,
         setup: None,

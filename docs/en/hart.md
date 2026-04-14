@@ -182,7 +182,7 @@ The Pipeline tab and the Run tab both show a **core selector** in the toolbar. C
 
 Core status badges appear next to each core index: `RUN`, `BRK`, `EXIT`, `FAULT`, `FREE`.
 
-The **Run scope** setting (Settings tab) controls whether `Run` (`Space`/`F5`) advances only the focused hart (`FOCUS`) or all running harts simultaneously (`ALL`). The `ALL` scope is the default for multi-hart programs.
+The **Run scope** setting (Settings tab) controls whether `Run` (`r`) advances only the focused hart (`FOCUS`) or all running harts simultaneously (`ALL`). The `ALL` scope is the default for multi-hart programs.
 
 ---
 

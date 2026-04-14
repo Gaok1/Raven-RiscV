@@ -154,8 +154,10 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Execution Controls",
         title_pt: "Execution Controls",
         body_en: "The controls bar drives the pipeline clock: Step advances one cycle, State runs or pauses, Reset restarts, and Speed changes the animation rate.\
+\n\nPress [e] to toggle the pipeline on or off entirely. When disabled, the simulator falls back to sequential execution and the stage view becomes inactive.\
 \n\nIn multi-core mode, these controls observe the selected core while the simulator advances the configured runtime model.",
         body_pt: "A barra de controles dirige o clock do pipeline: Step avança um ciclo, State executa ou pausa, Reset reinicia e Speed muda a taxa da animação.\
+\n\nPressione [e] para ativar ou desativar o pipeline por completo. Quando desativado, o simulador volta à execução sequencial e a view de estágios fica inativa.\
 \n\nNo modo multicore, esses controles observam o core selecionado enquanto o simulador avança o modelo de execução configurado.",
         target: target_controls,
         setup: Some(setup_main),
@@ -194,10 +196,28 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Pipeline Config",
         title_pt: "Pipeline Config",
         body_en: "The Config subtab changes the simulator model itself: EX->EX, MEM->EX, WB->ID and Store->Load bypass paths, the execution model, branch resolution stage and prediction policy.\
-\n\nThe execution model now controls whether Raven serializes execution or allows parallel work across UFs when hazards permit it. Prediction still includes static and dynamic modes, so wrong-path work and flush rate visibly change as you compare Not-Taken, Always-Taken, BTFNT and 2-bit Dynamic.",
+\n\nThe execution model controls whether Raven serializes execution or allows parallel work across UFs when hazards permit it. Prediction includes static and dynamic modes — wrong-path work and flush rate change visibly as you compare Not-Taken, Always-Taken, BTFNT and 2-bit Dynamic.\
+\n\nPress [b] anywhere in the Pipeline tab to quickly cycle the branch resolve stage: ID → EX → MEM, without opening Config.",
         body_pt: "A subtab Config altera o próprio modelo do simulador: caminhos de bypass EX->EX, MEM->EX, WB->ID e Store->Load, o modelo de execução, o estágio de resolução de branch e a política de predição.\
-\n\nO modelo de execução agora controla se o Raven serializa a execução ou permite trabalho paralelo entre UFs quando os hazards permitem. A predição continua incluindo modos estáticos e dinâmicos, então trabalho em caminho errado e taxa de flush mudam visivelmente ao comparar Not-Taken, Always-Taken, BTFNT e 2-bit Dynamic.",
+\n\nO modelo de execução controla se o Raven serializa a execução ou permite trabalho paralelo entre UFs quando os hazards permitem. A predição inclui modos estáticos e dinâmicos — trabalho em caminho errado e taxa de flush mudam visivelmente ao comparar Not-Taken, Always-Taken, BTFNT e 2-bit Dynamic.\
+\n\nPressione [b] em qualquer lugar na aba Pipeline para ciclar rapidamente o estágio de resolução de branch: ID → EX → MEM, sem abrir a Config.",
         target: target_config,
+        setup: Some(setup_config),
+    },
+    TutorialStep {
+        title_en: "Export & Import",
+        title_pt: "Export & Import",
+        body_en: "Three shortcuts manage pipeline data outside the session:\
+\n\nCtrl+e — export the current pipeline configuration as a .pcfg file.\
+\nCtrl+l — import a .pcfg file and apply it immediately.\
+\nCtrl+r — export simulation results (stage timings, hazard counts) as .pstats or .csv.\
+\n\nThese are also available as buttons in the controls bar at the bottom of the Pipeline tab.",
+        body_pt: "Três atalhos gerenciam os dados do pipeline fora da sessão:\
+\n\nCtrl+e — exporta a configuração atual do pipeline como arquivo .pcfg.\
+\nCtrl+l — importa um arquivo .pcfg e aplica imediatamente.\
+\nCtrl+r — exporta os resultados da simulação (timings de estágios, contagem de hazards) em .pstats ou .csv.\
+\n\nEstes também estão disponíveis como botões na barra de controles na parte inferior da aba Pipeline.",
+        target: target_controls,
         setup: Some(setup_config),
     },
 ];

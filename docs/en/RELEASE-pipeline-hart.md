@@ -168,7 +168,7 @@ Five programs in `Program Examples/` are designed specifically for these feature
 
 Suggested workflow for the pipeline demos:
 
-1. Open a program in the Editor tab and assemble (`Ctrl+R`)
+1. Open a program in the Editor tab and assemble (`Ctrl+Enter`)
 2. Switch to the Pipeline tab
 3. Press `Space` to run — watch the Gantt fill up in real time
 4. Slow down with the speed control to step cycle by cycle
