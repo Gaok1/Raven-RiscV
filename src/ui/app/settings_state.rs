@@ -31,8 +31,8 @@ pub(crate) const SETTINGS_ROW_PIPELINE_ENABLED: usize = 4;
 pub(crate) const SETTINGS_ROW_TRACE_SYSCALLS: usize = 5;
 /// First CPI row index in the settings list (6 rows + 1 blank separator).
 pub(crate) const SETTINGS_ROW_CPI_START: usize = 7;
-/// Total number of settings rows (6 rows + 1 blank + 10 CPI fields).
-pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_CPI_START + 10;
+/// Total number of settings rows (6 rows + 1 blank + 11 CPI fields).
+pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_CPI_START + 11;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub(crate) enum RunScope {
@@ -94,7 +94,7 @@ pub(crate) struct SettingsState {
     /// Geometry of the visible settings list area (x, y, width, height)
     pub(crate) list_rect: std::cell::Cell<(u16, u16, u16, u16)>,
     /// Geometry of each CPI row (y) — written by render, read by mouse
-    pub(crate) cpi_rows_y: std::cell::Cell<[u16; 10]>,
+    pub(crate) cpi_rows_y: std::cell::Cell<[u16; 11]>,
 }
 
 impl Default for SettingsState {
@@ -118,7 +118,7 @@ impl Default for SettingsState {
             import_rcfg_rect: std::cell::Cell::new((0, 0, 0)),
             export_rcfg_rect: std::cell::Cell::new((0, 0, 0)),
             list_rect: std::cell::Cell::new((0, 0, 0, 0)),
-            cpi_rows_y: std::cell::Cell::new([0u16; 10]),
+            cpi_rows_y: std::cell::Cell::new([0u16; 11]),
         }
     }
 }

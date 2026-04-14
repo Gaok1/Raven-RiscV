@@ -67,7 +67,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         .set((area.x, area.y, area.width, area.height));
 
     // Record geometry for mouse handling
-    let mut rows_y = [0u16; 10];
+    let mut rows_y = [0u16; 11];
 
     let mut items: Vec<ListItem> = Vec::new();
 

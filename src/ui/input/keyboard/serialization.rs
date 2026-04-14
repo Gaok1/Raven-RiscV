@@ -73,6 +73,7 @@ pub(super) fn serialize_rcfg(
     s.push_str(&format!("cpi.jump={}\n", cpi.jump));
     s.push_str(&format!("cpi.system={}\n", cpi.system));
     s.push_str(&format!("cpi.fp={}\n", cpi.fp));
+    s.push_str(&format!("cpi.stage_overhead={}\n", cpi.stage_overhead));
     s
 }
 
@@ -139,6 +140,10 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(10),
         fp: map.get("cpi.fp").and_then(|v| v.parse().ok()).unwrap_or(5),
+        stage_overhead: map
+            .get("cpi.stage_overhead")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3),
     };
     let cache_enabled = map
         .get("cache_enabled")

@@ -68,7 +68,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('t') if matches!(app.cache.subtab, CacheSubtab::View) => {
-            app.cache.show_tag = !app.cache.show_tag;
+            app.cache.addr_mode = app.cache.addr_mode.cycle();
             true
         }
         KeyCode::Char('v') if !matches!(app.cache.subtab, CacheSubtab::Config) => {

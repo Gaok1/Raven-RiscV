@@ -163,7 +163,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     // Compute base CPI cycles for current instruction
     let cpi = &app.run.cpi_config;
     let base_cycles =
-        crate::ui::app::classify_cpi_for_display(ctx.word, ctx.addr, &app.run.cpu, cpi);
+        crate::ui::app::classify_cpi_for_display(ctx.word, ctx.addr, &app.run.cpu, cpi, app.pipeline.enabled);
     let class_label = cpi_class_label(ctx.word);
 
     let mut lines = vec![

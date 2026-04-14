@@ -43,7 +43,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('s') => {
             app.pipeline.clear_hover_state();
-            if app.pipeline.enabled && !app.pipeline.faulted {
+            if (app.pipeline.enabled || app.pipeline.sequential_mode) && !app.pipeline.faulted {
                 app.single_step();
             }
             true
@@ -55,7 +55,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.pipeline.clear_hover_state();
-            if app.pipeline.enabled && !app.pipeline.faulted {
+            if (app.pipeline.enabled || app.pipeline.sequential_mode) && !app.pipeline.faulted {
                 if app.pipeline.halted {
                     app.restart_simulation();
                     if app.can_start_run() {

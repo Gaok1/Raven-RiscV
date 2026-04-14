@@ -1,6 +1,7 @@
 # R500 - perfil base para D5
 # Define cache desabilitada, pipeline desligado, escopo All Harts
 # e 2 cores explicitamente para a atividade de multi-core.
+# As latencias-base das classes de instrucao foram uniformizadas para 1 ciclo.
 cache_enabled=false
 pipeline_enabled=false
 trace_syscalls=false
@@ -9,13 +10,13 @@ max_cores=2
 run_scope=all
 
 # CPI (cycles per instruction)
-cpi.alu=1
-cpi.mul=3
-cpi.div=20
+cpi.alu=0
+cpi.mul=0
+cpi.div=0
 cpi.load=0
 cpi.store=0
-cpi.branch_taken=3
-cpi.branch_not_taken=1
-cpi.jump=2
-cpi.system=10
-cpi.fp=5
+cpi.branch_taken=0
+cpi.branch_not_taken=0
+cpi.jump=0
+cpi.system=0
+cpi.fp=0

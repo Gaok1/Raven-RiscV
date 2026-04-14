@@ -23,11 +23,53 @@ use unicode_truncate::UnicodeTruncateStr;
 use crate::falcon::cache::{
     CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy,
 };
-use crate::ui::app::{App, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope};
+use crate::ui::app::{
+    App, CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope,
+};
 use crate::ui::theme;
 
 const DIRTY_COLOR: Color = theme::DIRTY;
-const DIRTY_ADDR_COLOR: Color = theme::DIRTY_DIM;
+fn addr_mode_hint(addr_mode: CacheAddrMode, cfgs: &[&CacheConfig]) -> String {
+    if !matches!(addr_mode, CacheAddrMode::Breakdown) {
+        return String::new();
+    }
+    let valid: Vec<&CacheConfig> = cfgs
+        .iter()
+        .copied()
+        .filter(|cfg| cfg.is_valid_config())
+        .collect();
+    if valid.is_empty() {
+        return String::new();
+    }
+
+    let first = valid[0];
+    let off = first.offset_bits();
+    let idx = first.index_bits();
+    let tag = 32u32.saturating_sub(off + idx);
+    let same = valid
+        .iter()
+        .all(|cfg| cfg.offset_bits() == off && cfg.index_bits() == idx);
+
+    if same {
+        format!(" off:{off}b idx:{idx}b tag:{tag}b")
+    } else {
+        " off|idx|tag".to_string()
+    }
+}
+
+fn addr_text_width(addr_mode: CacheAddrMode, cfg: &CacheConfig) -> usize {
+    match addr_mode {
+        CacheAddrMode::Base => 10,
+        CacheAddrMode::Breakdown => {
+            let off_hex = ((cfg.offset_bits() as usize).saturating_add(3) / 4).max(1);
+            let idx_digits = cfg.num_sets().saturating_sub(1).to_string().len().max(1);
+            let tag_hex = (32usize.saturating_sub((cfg.offset_bits() + cfg.index_bits()) as usize))
+                .div_ceil(4)
+                .max(1);
+            2 + off_hex + 3 + idx_digits + 3 + tag_hex
+        }
+    }
+}
 
 pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
     app.cache.view_num_sets.set(0);
@@ -92,12 +134,7 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
         legend_button_styles(app);
 
-    // When showing raw tags, append ">>Nb" hint so students see the formula: tag = addr >> N
-    let tag_shift_hint = if app.cache.show_tag && cfg.is_valid_config() {
-        format!(" >>{}b", cfg.offset_bits() + cfg.index_bits())
-    } else {
-        String::new()
-    };
+    let addr_hint = addr_mode_hint(app.cache.addr_mode, &[cfg]);
 
     // " V D=valid/dirty bits  " is 23 chars
     let prefix_len: u16 = 23;
@@ -120,7 +157,7 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         Span::styled(group_label, group_style),
         Span::raw(" "),
         Span::styled(tag_label, tag_style),
-        Span::styled(tag_shift_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(addr_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
         Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
@@ -156,33 +193,10 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
         legend_button_styles(app);
 
-    // When showing raw tags, append ">>Nb" so students see: tag = addr >> N bits.
-    // In Both scope, show the hint only if both caches share the same shift.
-    let tag_shift_hint = if app.cache.show_tag {
-        let i_shift = if icfg.is_valid_config() {
-            Some(icfg.offset_bits() + icfg.index_bits())
-        } else {
-            None
-        };
-        let d_shift = if dcfg.is_valid_config() {
-            Some(dcfg.offset_bits() + dcfg.index_bits())
-        } else {
-            None
-        };
-        let shift_opt = match scope {
-            CacheScope::ICache => i_shift,
-            CacheScope::DCache => d_shift,
-            CacheScope::Both => {
-                if i_shift == d_shift {
-                    i_shift
-                } else {
-                    None
-                }
-            }
-        };
-        shift_opt.map(|s| format!(" >>{}b", s)).unwrap_or_default()
-    } else {
-        String::new()
+    let addr_hint = match scope {
+        CacheScope::ICache => addr_mode_hint(app.cache.addr_mode, &[icfg]),
+        CacheScope::DCache => addr_mode_hint(app.cache.addr_mode, &[dcfg]),
+        CacheScope::Both => addr_mode_hint(app.cache.addr_mode, &[icfg, dcfg]),
     };
 
     // " V D=valid/dirty bits  " is 23 chars
@@ -206,7 +220,7 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(group_label, group_style),
         Span::raw(" "),
         Span::styled(tag_label, tag_style),
-        Span::styled(tag_shift_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(addr_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
         Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
         Span::raw("  "),
@@ -228,11 +242,7 @@ fn legend_button_styles(app: &App) -> (Style, Style, Style, String, String, Stri
     } else {
         format!("[g:{}]", app.cache.data_group.label())
     };
-    let tag_label = if app.cache.show_tag {
-        "[t:TAG]".to_string()
-    } else {
-        "[t:ADDR]".to_string()
-    };
+    let tag_label = format!("[t:{}]", app.cache.addr_mode.label());
 
     let fmt_style = if matches!(app.cache.hover, Some(CacheHoverTarget::ViewFmt)) {
         Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
@@ -424,8 +434,9 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         ReplacementPolicy::Random => 2,
         _ => 4,
     };
-    // Fixed overhead: ○  0x00001000  = 1+2+10 = 13, + "  " before bytes + "  " before policy = 4
+    // Fixed overhead: V + D + spacing + address block + spacing before data/policy.
     let cell_overhead = 17 + policy_w;
+    let cell_overhead = cell_overhead - 10 + addr_text_width(app.cache.addr_mode, cfg);
     let total_way_space =
         (inner.width as usize).saturating_sub(set_col_w + sep_w + ways.saturating_sub(1) * sep_w);
     let ideal_way_col_w = total_way_space / ways.max(1);
@@ -537,7 +548,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
                     way_col_w,
                     fmt,
                     group,
-                    app.cache.show_tag,
+                    app.cache.addr_mode,
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
@@ -647,14 +658,14 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let set_col_w: usize = 5; // " NNN "
     let sep_w: usize = 1; // "|"
 
-    // Fixed overhead: ○  0x00001000  = 1+2+10 = 13, + "  " before bytes + "  " before policy = 4
+    // Fixed overhead: V + D + spacing + address block + spacing before data/policy.
     let policy_w = match policy {
         ReplacementPolicy::Lfu => 6,   // "f:9999"
         ReplacementPolicy::Clock => 4, // ">R" or "> " etc.
         ReplacementPolicy::Random => 2,
         _ => 4, // "r:NN"
     };
-    let cell_overhead = 17 + policy_w;
+    let cell_overhead = 17 + policy_w - 10 + addr_text_width(app.cache.addr_mode, cfg);
 
     // way_col_w: prefer fitting the screen, but guarantee a useful minimum so
     // that content is always readable and horizontal scrolling becomes possible.
@@ -788,7 +799,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
                     way_col_w,
                     fmt,
                     group,
-                    app.cache.show_tag,
+                    app.cache.addr_mode,
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
@@ -998,7 +1009,7 @@ fn build_cell(
     cell_width: usize,
     fmt: CacheDataFmt,
     group: CacheDataGroup,
-    show_tag: bool,
+    addr_mode: CacheAddrMode,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -1022,8 +1033,9 @@ fn build_cell(
     // ── Valid line, continuation row ─────────────────────────────────────────
     if !is_first_row {
         let is_dirty = is_dcache && line.dirty;
-        // 17 chars = V(1)+sp(1)+D(1)+sp(2)+addr(10)+sp(2) — align data under first row
-        spans.push(Span::raw(" ".repeat(17)));
+        let addr_w = addr_text_width(addr_mode, cfg);
+        // Prefix width = V(1)+sp(1)+D(1)+sp(2)+addr(addr_w)+sp(2)
+        spans.push(Span::raw(" ".repeat(7 + addr_w)));
         if byte_offset < line.data.len() && bytes_per_row > 0 {
             let tint = if is_dirty { Some(DIRTY_COLOR) } else { None };
             spans.extend(render_data(
@@ -1087,7 +1099,7 @@ fn build_cell(
     }
     spans.push(Span::raw("  "));
 
-    // Address or raw tag (both are exactly 10 chars)
+    // Address block: either the line base or its off/index/tag decomposition.
     // Cyan "MRU" highlight only for policies where recency == safety (LRU, MRU).
     // LFU evicts by frequency, not recency — cyan highlight would be misleading there.
     let is_mru = matches!(policy, ReplacementPolicy::Lru | ReplacementPolicy::Mru)
@@ -1099,12 +1111,30 @@ fn build_cell(
     } else {
         Style::default().fg(theme::TEXT)
     };
-    if show_tag {
-        spans.push(Span::styled(format!("t:{:08X}", line.tag), addr_style));
-    } else {
-        let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
-            | ((set_idx as u32) << cfg.offset_bits());
-        spans.push(Span::styled(format!("0x{base:08X}"), addr_style));
+    match addr_mode {
+        CacheAddrMode::Base => {
+            let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
+                | ((set_idx as u32) << cfg.offset_bits());
+            spans.push(Span::styled(format!("0x{base:08X}"), addr_style));
+        }
+        CacheAddrMode::Breakdown => {
+            let off_hex_w = ((cfg.offset_bits() as usize).saturating_add(3) / 4).max(1);
+            let idx_w = cfg.num_sets().saturating_sub(1).to_string().len().max(1);
+            let tag_w =
+                (32usize.saturating_sub((cfg.offset_bits() + cfg.index_bits()) as usize))
+                    .div_ceil(4)
+                    .max(1);
+            let breakdown = format!(
+                "o:{:0off_hex_w$X} i:{:0idx_w$} t:{:0tag_w$X}",
+                0,
+                set_idx,
+                line.tag,
+                off_hex_w = off_hex_w,
+                idx_w = idx_w,
+                tag_w = tag_w
+            );
+            spans.push(Span::styled(breakdown, addr_style));
+        }
     }
 
     // Data (first row: bytes [byte_offset .. byte_offset + bytes_per_row])

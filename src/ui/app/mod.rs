@@ -15,8 +15,9 @@ use self::formatting::{classify_mem_access, word_at};
 // Re-export pub(crate) items from submodules so they are accessible as
 // `crate::ui::app::X` from other modules in the crate.
 pub(crate) use self::cache_state::{
-    CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheResultsSnapshot, CacheScope, CacheState,
-    CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot, PipelineResultsSnapshot,
+    CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheResultsSnapshot,
+    CacheScope, CacheState, CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot,
+    PipelineResultsSnapshot,
 };
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
@@ -76,6 +77,7 @@ pub struct CpiConfig {
     pub jump: u64,             // jal, jalr = 2
     pub system: u64,           // ecall, ebreak, halt = 10
     pub fp: u64,               // RV32F instructions = 5
+    pub stage_overhead: u64,   // Non-pipeline stage overhead (IF+ID+WB), added when pipeline off = 3
 }
 
 impl Default for CpiConfig {
@@ -93,6 +95,7 @@ impl Default for CpiConfig {
             jump: 1,             // effective 2
             system: 9,           // effective 10
             fp: 4,               // effective 5
+            stage_overhead: 3,   // IF+ID+WB added in non-pipeline mode
         }
     }
 }
@@ -110,6 +113,7 @@ impl CpiConfig {
             "Jump",
             "System",
             "FP",
+            "Stages",
         ]
     }
 
@@ -125,6 +129,7 @@ impl CpiConfig {
             7 => self.jump,
             8 => self.system,
             9 => self.fp,
+            10 => self.stage_overhead,
             _ => 0,
         }
     }
@@ -141,6 +146,7 @@ impl CpiConfig {
             7 => self.jump = val,
             8 => self.system = val,
             9 => self.fp = val,
+            10 => self.stage_overhead = val,
             _ => {}
         }
     }
@@ -157,6 +163,7 @@ impl CpiConfig {
             "jal / jalr",
             "ecall / ebreak / halt",
             "RV32F float instructions",
+            "stage overhead added when pipeline is off (IF+ID+WB)",
         ]
     }
 }
@@ -437,7 +444,7 @@ impl App {
                 view_h_scroll_d: 0,
                 data_fmt: CacheDataFmt::Hex,
                 data_group: CacheDataGroup::B1,
-                show_tag: false,
+                addr_mode: CacheAddrMode::Base,
                 subtab_stats_btn: std::cell::Cell::new((0, 0, 0)),
                 subtab_view_btn: std::cell::Cell::new((0, 0, 0)),
                 subtab_config_btn: std::cell::Cell::new((0, 0, 0)),
@@ -1371,7 +1378,8 @@ impl App {
             // use pipeline speed for rate-limiting (educational slow stepping).
             // Otherwise use run speed.
             use crate::ui::pipeline::PipelineSpeed;
-            let use_pipeline_speed = self.pipeline.enabled && matches!(self.tab, Tab::Pipeline);
+            let use_pipeline_speed = (self.pipeline.enabled || self.pipeline.sequential_mode)
+                && matches!(self.tab, Tab::Pipeline);
 
             if use_pipeline_speed {
                 match self.pipeline.speed {
@@ -1649,6 +1657,20 @@ impl App {
     /// Execute one pipeline tick using shared cpu/mem state.
     /// Execute one pipeline cycle. Returns true if an instruction was committed.
     fn pipeline_step(&mut self) -> bool {
+        // Sequential mode: if the CPU advanced outside the pipeline (e.g. the
+        // user stepped in the Run tab), auto-reset so the visualization starts
+        // fresh from the current PC.
+        if self.pipeline.sequential_mode {
+            let all_clear = self.pipeline.stages.iter().all(|s| s.is_none());
+            if all_clear
+                && self.pipeline.fetch_pc != self.run.cpu.pc
+                && !self.pipeline.halted
+                && !self.pipeline.faulted
+            {
+                self.pipeline.reset_stages(self.run.cpu.pc);
+            }
+        }
+
         if self.pipeline.halted || self.pipeline.faulted {
             return false;
         }
@@ -1735,7 +1757,7 @@ impl App {
             self.run.mem_size.saturating_sub(3) as u32
         };
         let mem_size = self.run.mem_size;
-        let pipeline_enabled = self.pipeline.enabled;
+        let pipeline_enabled = self.pipeline.enabled || self.pipeline.sequential_mode;
         // CpiConfig is ~80 bytes; cheap to clone once per round.
         let cpi = self.run.cpi_config.clone();
 
@@ -1827,7 +1849,7 @@ impl App {
         if status == HartLifecycle::Paused {
             self.resume_selected_hart();
         }
-        if self.pipeline.enabled {
+        if self.pipeline.enabled || self.pipeline.sequential_mode {
             self.pipeline_step()
         } else {
             self.single_step_selected_sequential();
@@ -1836,6 +1858,11 @@ impl App {
     }
 
     fn pipeline_tab_step_once(&mut self) -> bool {
+        // Sequential mode always drives the selected hart through the pipeline
+        // visualizer; other harts stay paused.
+        if self.pipeline.sequential_mode {
+            return self.pipeline_step();
+        }
         if self.max_cores > 1 {
             if matches!(self.run_scope, RunScope::AllHarts) {
                 self.step_all_cores_once()
@@ -1852,10 +1879,12 @@ impl App {
             self.resume_selected_hart();
         }
 
-        if self.pipeline.enabled && matches!(self.tab, Tab::Pipeline) {
-            // Pipeline tab: advance one cycle, then skip only consecutive
-            // cache-only hold cycles. If a cycle advanced stages or committed,
-            // stop immediately so EX/MEM/WB remain visible to the user.
+        if matches!(self.tab, Tab::Pipeline)
+            && (self.pipeline.enabled || self.pipeline.sequential_mode)
+        {
+            // Pipeline tab (pipelined or sequential): advance one cycle, then
+            // skip only consecutive cache-only hold cycles. If a cycle advanced
+            // stages or committed, stop immediately so EX/MEM/WB remain visible.
             let committed = self.pipeline_tab_step_once();
             if committed || !self.pipeline.last_cycle_cache_only {
                 if !self.run.is_running {
@@ -1881,7 +1910,7 @@ impl App {
         if self.max_cores > 1 {
             let all_scope = matches!(self.run_scope, RunScope::AllHarts);
 
-            if self.pipeline.enabled && !matches!(self.tab, Tab::Pipeline) {
+            if (self.pipeline.enabled || self.pipeline.sequential_mode) && !matches!(self.tab, Tab::Pipeline) {
                 for _ in 0..200 {
                     let selected_running =
                         self.core_status(self.selected_core) == HartLifecycle::Running;
@@ -1927,7 +1956,7 @@ impl App {
             return;
         }
 
-        if self.pipeline.enabled {
+        if self.pipeline.enabled || self.pipeline.sequential_mode {
             // Run/Cache/other tabs: advance until one instruction commits
             // Safety limit to prevent infinite loop on stall/halt/fault
             for _ in 0..200 {

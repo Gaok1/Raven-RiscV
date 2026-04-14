@@ -236,6 +236,22 @@ pub static STEPS: &[TutorialStep] = &[
         setup: Some(setup_view),
     },
     TutorialStep {
+        title_en: "View Subtab — display controls",
+        title_pt: "Subtab View — controles de exibição",
+        body_en: "Three keys change how the data inside cache lines is rendered:\
+\n\n[m] — cycle cell data format: HEX → DEC-U → DEC-S → FLOAT.\
+\n[g] — cycle byte grouping per cell: 1B → 2B → 4B.\
+\n[t] — cycle address display mode: block base address ↔ offset | index | tag decomposition.\
+\n\nThese are per-view settings and work independently for I-Cache and D-Cache panels.",
+        body_pt: "Três teclas alteram como os dados dentro das linhas de cache são exibidos:\
+\n\n[m] — ciclo de formato dos dados: HEX → DEC-U → DEC-S → FLOAT.\
+\n[g] — ciclo de agrupamento de bytes por célula: 1B → 2B → 4B.\
+\n[t] — ciclo de modo de endereço: endereço base do bloco ↔ decomposição offset | índice | tag.\
+\n\nSão configurações por painel e funcionam de forma independente para I-Cache e D-Cache.",
+        target: target_content,
+        setup: Some(setup_view),
+    },
+    TutorialStep {
         title_en: "Config Subtab — overview",
         title_pt: "Subtab Config — visão geral",
         body_en: "The Config subtab lets you configure the parameters of each cache level before starting simulation.\
