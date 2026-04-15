@@ -19,6 +19,8 @@ pub(crate) mod run;
 mod settings;
 mod splash;
 
+use crate::guided_learning::view::render_guided_learning;
+
 use cache::render_cache;
 use docs::render_docs;
 use editor::{render_editor, render_editor_status};
@@ -117,6 +119,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Pipeline => render_pipeline(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
         Tab::Config => render_settings(f, chunks[1], app),
+        Tab::Activity => render_guided_learning(f, chunks[1], app),
     }
 
     let (footer_text, footer_style) = match app.tab {
@@ -163,6 +166,18 @@ pub fn ui(f: &mut Frame, app: &App) {
             "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
+        Tab::Activity => {
+            if let Some(ref err) = app.activity.status_err {
+                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+            } else if let Some(ref ok) = app.activity.status_msg {
+                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+            } else {
+                (
+                    "↑/↓=Selecionar  Enter=Aplicar preset".to_string(),
+                    Style::default().fg(theme::LABEL),
+                )
+            }
+        }
     };
 
     f.render_widget(Paragraph::new(footer_text).style(footer_style), chunks[2]);
@@ -610,6 +625,17 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ),
             ("[Ctrl+e]", "export full Config tab state (.rcfg)"),
             ("[Ctrl+l]", "import full Config tab state (.rcfg)"),
+        ]],
+        Tab::Activity => vec![vec![
+            ("[↑/↓]", "navigate preset list"),
+            ("[Enter]", "apply selected preset (loads config + program)"),
+            ("", ""),
+            ("D1", "Pipeline Hazards — view: Pipeline tab"),
+            ("D2", "Load-use / Flush — view: Pipeline tab"),
+            ("D3", "Cache & AMAT — view: Cache tab"),
+            ("D4", "Instruction Encoding — view: Pipeline tab"),
+            ("D5", "Multi-core — view: Run tab"),
+            ("D6", "Pipeline Speedup — view: Pipeline tab"),
         ]],
     }
 }

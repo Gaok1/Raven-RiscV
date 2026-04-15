@@ -20,8 +20,9 @@ use self::serialization::{
     serialize_results_fstats,
 };
 pub(crate) use self::serialization::{
-    do_export_cfg, do_export_pcfg, do_export_pipeline_results, do_export_results, do_import_cfg,
-    do_import_pcfg, do_import_rcfg, do_export_rcfg, open_path_input,
+    apply_fcache_text, apply_pcfg_text, apply_rcfg_text, do_export_cfg, do_export_pcfg,
+    do_export_pipeline_results, do_export_results, do_import_cfg, do_import_pcfg, do_import_rcfg,
+    do_export_rcfg, open_path_input,
 };
 
 use crate::ui::app::{App, EditorMode, Tab};
@@ -142,6 +143,7 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
         Tab::Pipeline => pipeline_keys::handle(app, key),
         Tab::Docs => docs_keys::handle(app, key),
         Tab::Config => config_keys::handle(app, key),
+        Tab::Activity => crate::guided_learning::keys::handle(app, key.code),
     }
 }
 
