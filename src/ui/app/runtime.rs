@@ -141,7 +141,7 @@ impl App {
     pub(in crate::ui) fn tab_visible(&self, tab: Tab) -> bool {
         match tab {
             Tab::Cache => self.run.cache_enabled,
-            Tab::Pipeline => true,
+            Tab::Pipeline | Tab::Activity => true,
             _ => true,
         }
     }

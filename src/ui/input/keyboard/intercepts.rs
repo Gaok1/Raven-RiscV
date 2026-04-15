@@ -163,7 +163,7 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
     if app.help_open {
         let pages_count: usize = match app.tab {
             Tab::Run => 2,
-            Tab::Editor | Tab::Cache | Tab::Pipeline | Tab::Docs | Tab::Config => 1,
+            Tab::Editor | Tab::Cache | Tab::Pipeline | Tab::Docs | Tab::Config | Tab::Activity => 1,
         };
         match key.code {
             KeyCode::Esc => {

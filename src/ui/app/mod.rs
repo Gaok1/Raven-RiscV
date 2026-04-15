@@ -176,6 +176,7 @@ pub(crate) enum Tab {
     Pipeline,
     Docs,
     Config,
+    Activity,
 }
 
 impl Tab {
@@ -187,10 +188,11 @@ impl Tab {
             Tab::Pipeline,
             Tab::Docs,
             Tab::Config,
+            Tab::Activity,
         ]
     }
 
-    pub(super) fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Tab::Editor => "Editor",
             Tab::Run => "Run",
@@ -198,6 +200,7 @@ impl Tab {
             Tab::Pipeline => "Pipeline",
             Tab::Docs => "Docs",
             Tab::Config => "Config",
+            Tab::Activity => "Activity",
         }
     }
 
@@ -261,6 +264,9 @@ pub struct App {
 
     // Interactive guided tutorial ([?] button)
     pub tutorial: TutorialState,
+
+    // Guided learning activity presets (Activity tab)
+    pub(crate) activity: crate::guided_learning::GuidedLearningState,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -516,6 +522,7 @@ impl App {
             splash_start: Some(Instant::now()),
             path_input: PathInput::new(),
             tutorial: TutorialState::default(),
+            activity: crate::guided_learning::GuidedLearningState::default(),
             settings: SettingsState::default(),
             pipeline: crate::ui::pipeline::PipelineSimState::new(),
             max_cores: 4,
@@ -530,7 +537,29 @@ impl App {
         app
     }
 
-    pub(super) fn assemble_and_load(&mut self) {
+    /// Load `text` into the editor and assemble + load the program.
+    /// Used by guided-learning presets (outside `ui/`).
+    pub(crate) fn load_editor_text(&mut self, text: &str) {
+        self.editor.buf.lines = text.lines().map(|s| s.to_string()).collect();
+        if self.editor.buf.lines.is_empty() {
+            self.editor.buf.lines.push(String::new());
+        }
+        self.editor.buf.cursor_row = 0;
+        self.editor.buf.cursor_col = 0;
+        self.assemble_and_load();
+    }
+
+    /// Switch to the given tab (used by guided-learning presets).
+    pub(crate) fn navigate_to_tab(&mut self, tab: Tab) {
+        self.tab = tab;
+    }
+
+    /// Reset the pipeline to the current CPU PC (used after loading a preset).
+    pub(crate) fn pipeline_reset_to_current_pc(&mut self) {
+        self.pipeline.reset_stages(self.run.cpu.pc);
+    }
+
+    pub(crate) fn assemble_and_load(&mut self) {
         use falcon::asm::assemble;
         use falcon::program::{load_bytes, load_words, zero_bytes};
 

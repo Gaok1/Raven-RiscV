@@ -140,7 +140,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.docs.scroll = app.docs.scroll.saturating_sub(1);
                 clamp_docs_scroll(app, area);
             }
-            Tab::Config => {}
+            Tab::Config | Tab::Activity => {}
         },
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.buf.move_down(),
@@ -184,7 +184,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.docs.scroll = app.docs.scroll.saturating_add(1);
                 clamp_docs_scroll(app, area);
             }
-            Tab::Config => {}
+            Tab::Config | Tab::Activity => {}
         },
         MouseEventKind::ScrollLeft => {
             if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {

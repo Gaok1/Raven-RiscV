@@ -1125,15 +1125,20 @@ fn disabling_cache_hides_cache_tab_and_falls_back_to_run() {
 }
 
 #[test]
-fn disabling_pipeline_hides_pipeline_tab_and_falls_back_to_run() {
+fn disabling_pipeline_keeps_pipeline_tab_visible_for_sequential_mode() {
+    // Pipeline tab is always visible — when disabled it shows sequential mode.
     let mut app = App::new(None);
     app.set_pipeline_enabled(true);
     app.tab = Tab::Pipeline;
 
     app.set_pipeline_enabled(false);
 
-    assert!(app.tab == Tab::Run);
-    assert!(!app.visible_tabs().contains(&Tab::Pipeline));
+    // Tab stays on Pipeline; it is still reachable (sequential-mode view).
+    assert!(app.tab == Tab::Pipeline);
+    assert!(app.visible_tabs().contains(&Tab::Pipeline));
+    // Sequential mode flag is set when pipeline is disabled
+    assert!(app.pipeline.sequential_mode);
+    assert!(!app.pipeline.enabled);
 }
 
 #[test]

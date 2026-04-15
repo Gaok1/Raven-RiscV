@@ -482,6 +482,42 @@ fn capture_selected_pipeline_export_snapshot(app: &App) -> CacheResultsSnapshot 
     snap
 }
 
+// ── pub(crate) helpers used by the guided-learning module ────────────────────
+
+/// Apply a raw .rcfg text to the app (parse + apply, no file I/O).
+pub(crate) fn apply_rcfg_text(app: &mut App, text: &str) -> Result<(), String> {
+    let cfg = parse_rcfg(text)?;
+    apply_rcfg(app, cfg);
+    Ok(())
+}
+
+/// Apply a raw .pcfg text to the app (parse + apply, no file I/O).
+pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
+    let cfg = parse_pcfg(text)?;
+    cfg.apply_to_state(&mut app.pipeline);
+    Ok(())
+}
+
+/// Apply a raw .fcache text to the app (parse + apply, no file I/O).
+pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String> {
+    let (icfg, dcfg, extra) = parse_cache_configs(text)?;
+    app.cache.pending_icache = icfg;
+    app.cache.pending_dcache = dcfg;
+    let n_extra = extra.len();
+    app.cache.extra_pending = extra;
+    app.run.mem.extra_levels.clear();
+    for cfg in &app.cache.extra_pending {
+        app.run
+            .mem
+            .extra_levels
+            .push(crate::falcon::cache::Cache::new(cfg.clone()));
+    }
+    if app.cache.selected_level > n_extra {
+        app.cache.selected_level = n_extra;
+    }
+    Ok(())
+}
+
 pub(crate) fn do_export_cfg(app: &mut App) {
     let text = serialize_cache_configs(
         &app.cache.pending_icache,
