@@ -125,9 +125,9 @@ fn render_info_panel(f: &mut Frame, area: Rect, app: &App) {
         GuidedPreset::D3_03 => "R300 + P101 + C321",
         GuidedPreset::D3_04 => "R300 + P101 + C322",
         GuidedPreset::D3_05 => "R300 + P101 + C331",
-        GuidedPreset::D3_06 => "R300 + P101 + C332",
         GuidedPreset::D5_01 => "R500 + P101",
-        GuidedPreset::D1_01 | GuidedPreset::D1_02 => "R100 + P100",
+        GuidedPreset::D1_01 => "R100 + P100",
+        GuidedPreset::D1_02 => "R100 + P102",
         GuidedPreset::D2_01 | GuidedPreset::D2_02 => "R100 + P100",
         GuidedPreset::D4_01 => "R100 + P101",
         GuidedPreset::D6_01 => "R100 + P101",
@@ -139,11 +139,9 @@ fn render_info_panel(f: &mut Frame, area: Rect, app: &App) {
         GuidedPreset::D1_02 | GuidedPreset::D6_01 | GuidedPreset::D6_02 => "D102.fas",
         GuidedPreset::D2_01 => "D201.fas",
         GuidedPreset::D2_02 => "D202.fas",
-        GuidedPreset::D3_01
-        | GuidedPreset::D3_02
-        | GuidedPreset::D3_03
-        | GuidedPreset::D3_04 => "D301.fas",
-        GuidedPreset::D3_05 | GuidedPreset::D3_06 => "D302.fas",
+        GuidedPreset::D3_01 | GuidedPreset::D3_02 => "D301b.fas",
+        GuidedPreset::D3_03 | GuidedPreset::D3_04 => "D301.fas",
+        GuidedPreset::D3_05 => "D302.fas",
         GuidedPreset::D4_01 => "D401.fas",
         GuidedPreset::D5_01 => "D501.fas",
     };

@@ -295,12 +295,7 @@ pub(super) fn handle_post_find_intercepts(app: &mut App, key: KeyEvent) -> Optio
 }
 
 pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
-    if matches!(app.tab, Tab::Run) && matches!(key.code, KeyCode::Char('R')) {
-        app.restart_simulation();
-        return true;
-    }
-
-    if matches!(app.tab, Tab::Run | Tab::Pipeline) {
+    if matches!(app.tab, Tab::Run | Tab::Pipeline | Tab::Cache) {
         match key.code {
             KeyCode::Char('[') => {
                 app.cycle_selected_core(-1);
@@ -314,7 +309,7 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
         }
     }
 
-    if key.code == KeyCode::Char('?') {
+    if matches!(key.code, KeyCode::Char('?') | KeyCode::Char('h')) {
         if !matches!(app.tab, Tab::Docs) && !crate::ui::tutorial::get_steps(app.tab).is_empty() {
             crate::ui::tutorial::start_tutorial(app);
         } else {

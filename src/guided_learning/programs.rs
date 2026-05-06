@@ -7,6 +7,7 @@ pub(super) const D102: &str = include_str!("../../guided-activity/programas/D102
 pub(super) const D201: &str = include_str!("../../guided-activity/programas/D201.fas");
 pub(super) const D202: &str = include_str!("../../guided-activity/programas/D202.fas");
 pub(super) const D301: &str = include_str!("../../guided-activity/programas/D301.fas");
+pub(super) const D301B: &str = include_str!("../../guided-activity/programas/D301b.fas");
 pub(super) const D302: &str = include_str!("../../guided-activity/programas/D302.fas");
 pub(super) const D401: &str = include_str!("../../guided-activity/programas/D401.fas");
 pub(super) const D501: &str = include_str!("../../guided-activity/programas/D501.fas");

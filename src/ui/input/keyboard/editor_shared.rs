@@ -95,7 +95,9 @@ pub(super) fn handle_common_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
         }
     }
 
-    if ctrl && key.code == KeyCode::Enter && matches!(app.tab, Tab::Editor) {
+    let compile_trigger = matches!(app.tab, Tab::Editor)
+        && ((ctrl && key.code == KeyCode::Enter) || key.code == KeyCode::F(5));
+    if compile_trigger {
         app.assemble_and_load();
         if app.editor.last_compile_ok == Some(true) {
             app.tab = Tab::Run;

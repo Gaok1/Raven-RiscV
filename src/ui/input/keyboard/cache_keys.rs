@@ -30,7 +30,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             app.restart_simulation();
             true
         }
-        KeyCode::Char('p') if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+        KeyCode::Char('p') | KeyCode::Char(' ')
+            if !matches!(app.cache.subtab, CacheSubtab::Config) => {
             if app.run.is_running {
                 app.run.is_running = false;
             } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
@@ -114,7 +115,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             app.run.speed = app.run.speed.cycle();
             true
         }
-        KeyCode::Char('D')
+        KeyCode::Char('d')
             if matches!(app.cache.subtab, CacheSubtab::Stats)
                 && !app.cache.session_history.is_empty() =>
         {

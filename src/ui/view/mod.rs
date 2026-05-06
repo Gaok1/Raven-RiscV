@@ -131,7 +131,7 @@ pub fn ui(f: &mut Frame, app: &App) {
             )
         }
         Tab::Run => (
-            "s=Step  r=Run  p=Pause  R=Restart  f=Speed  v=Sidebar  k=Region  Ctrl+f=Jump RAM  Ctrl+g=Label  [?]=Help".to_string(),
+            "s=Step  r=Restart  p/Space=Run/Pause  f=Speed  v=Sidebar  k=Region  Ctrl+f=Jump RAM  Ctrl+g=Label  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
         Tab::Pipeline => {
@@ -472,9 +472,8 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         Tab::Run => vec![
             vec![
                 ("[s]", "step one instruction"),
-                ("[r]", "run / stop execution"),
-                ("[p]", "pause"),
-                ("[R]", "restart from beginning"),
+                ("[r]", "restart simulation"),
+                ("[p] / [Space]", "run / pause toggle"),
                 ("Core [[]/]]", "select which core/hart runtime to observe"),
                 ("[f]", "cycle execution speed (1x → 2x → 4x → 8x → GO)"),
                 ("[v]", "cycle sidebar: RAM → REGS → Dyn"),
@@ -521,14 +520,19 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         ],
         Tab::Editor => vec![vec![
             ("[Esc]", "switch to Command mode (click editor to return)"),
+            ("[Ctrl+Enter]", "assemble and switch to Run"),
+            ("[Ctrl+e]", "toggle inline encoding display"),
             ("[Ctrl+z]", "undo"),
             ("[Ctrl+y]", "redo"),
             ("[Ctrl+/]", "toggle line comment"),
+            ("[F2]", "toggle address hints"),
+            ("[F12]", "go to label definition"),
             ("[#! text]", "visible runtime annotation attached to an instruction"),
             ("[##! text]", "runtime block comment shown above the next instruction"),
             ("[Ctrl+f]", "open find bar"),
             ("[Ctrl+h]", "open find & replace bar"),
             ("[Ctrl+g]", "goto line number"),
+            ("[Ctrl+w]", "select word at cursor"),
             ("[Ctrl+o]", "import file"),
             ("[Ctrl+s]", "export / save file"),
             ("", ""),
@@ -539,8 +543,13 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         ]],
         Tab::Cache => vec![vec![
             ("[Tab]", "cycle subtabs: Stats → View → Config"),
+            ("Core [[]/]]", "select which core/hart to observe"),
             ("[r]", "restart simulation"),
-            ("[p]", "pause / resume execution"),
+            ("[p] / [Space]", "run / pause toggle"),
+            ("[s] View", "step one instruction"),
+            ("[s] Stats", "capture snapshot of current cache statistics"),
+            ("[d] Stats", "delete selected snapshot"),
+            ("[Enter] Stats", "inspect selected snapshot"),
             ("[v]", "cycle sidebar view: RAM → REGS → Dyn"),
             ("[k]", "cycle RAM region: DATA → STACK → R/W → HEAP"),
             ("[f]", "cycle speed: 1x → 2x → 4x → 8x → GO"),
@@ -581,13 +590,19 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         Tab::Docs => vec![vec![
             ("[↑/↓]", "scroll documentation"),
             ("[PgUp/PgDn]", "fast scroll"),
+            ("[Tab]", "next docs page"),
             ("[Ctrl+f]", "open search bar (filter by name/desc)"),
             ("[←/→]", "navigate type filter"),
             ("[Space]", "toggle selected type filter / restore All"),
+            ("[1/2/3/4]", "jump to: ISA Reference / Syscalls / Memory Map / Cache Reference"),
+            ("[l]", "toggle display language"),
         ]],
         Tab::Pipeline => vec![vec![
             ("[s]", "step one cycle"),
-            ("[Space/p] Main", "run / pause"),
+            ("[Space/p] Main", "run / pause toggle"),
+            ("[r]", "restart simulation"),
+            ("[↑/↓] Main", "scroll gantt chart"),
+            ("[PgUp/PgDn] Main", "page scroll gantt chart"),
             ("[Tab]", "switch subtab: Main ↔ Config"),
             ("Core [[]/]]", "select which core/hart pipeline to inspect"),
             ("[e]", "toggle pipeline enabled"),
@@ -630,12 +645,12 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[↑/↓]", "navigate preset list"),
             ("[Enter]", "apply selected preset (loads config + program)"),
             ("", ""),
-            ("D1", "Pipeline Hazards — view: Pipeline tab"),
+            ("D1", "Pipeline Hazards — view: Run tab"),
             ("D2", "Load-use / Flush — view: Pipeline tab"),
             ("D3", "Cache & AMAT — view: Cache tab"),
-            ("D4", "Instruction Encoding — view: Pipeline tab"),
+            ("D4", "Instruction Encoding — view: Run tab"),
             ("D5", "Multi-core — view: Run tab"),
-            ("D6", "Pipeline Speedup — view: Pipeline tab"),
+            ("D6", "Pipeline Speedup — view: Run tab"),
         ]],
     }
 }

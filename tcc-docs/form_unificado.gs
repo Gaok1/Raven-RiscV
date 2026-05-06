@@ -12,9 +12,9 @@
  *
  * ESTRUTURA:
  *   Seção 1 — Perfil do Participante
- *   Seção 2 — Pré-Teste (Q1–Q17 com "Não sei")
- *   Seção 3 — Atividade Guiada no RAVEN (D1–D6, ~65 min)
- *   Seção 4 — Pós-Teste (Q1–Q17 sem "Não sei")
+ *   Seção 2 — Pré-Teste (Q1–Q12 com "Não sei")
+ *   Seção 3 — Atividade Guiada no RAVEN (D1–D6, ~55 min)
+ *   Seção 4 — Pós-Teste (Q1–Q12 sem "Não sei")
  */
 
 function criarValidacaoPorRegex(pattern, helpText) {
@@ -43,9 +43,13 @@ function criarFormulario() {
   var form = FormApp.create('RAVEN — Avaliação Didática');
   form.setDescription(
     'Este formulário faz parte de uma pesquisa sobre o simulador educacional RAVEN (RISC-V). ' +
-    'A sessão tem duração aproximada de 105 a 115 minutos e está organizada em quatro partes: ' +
-    'perfil do participante, questionário inicial, atividade prática com o simulador e questionário final. ' +
-    'As respostas são anônimas e utilizadas exclusivamente para fins de pesquisa.'
+    'As respostas são anônimas e utilizadas exclusivamente para fins de pesquisa.\n\n' +
+    'Como participar:\n' +
+    '1) Preencha o breve perfil do participante.\n' +
+    '2) Responda o Pré-Teste (questionário inicial).\n' +
+    '3) Realize a Atividade Guiada seguindo o tutorial no simulador RAVEN.\n' +
+    '4) Responda o Pós-Teste (questionário final).\n\n' +
+    'Duração aproximada: 80 a 90 minutos.'
   );
   form.setCollectEmail(false);
   form.setShowLinkToRespondAgain(false);
@@ -56,40 +60,14 @@ function criarFormulario() {
 
   form.addSectionHeaderItem().setTitle('Seção 1 — Perfil do Participante');
 
-  // Forma de identificação
-  var p1a = form.addMultipleChoiceItem();
-  p1a.setTitle('Como você prefere se identificar nesta pesquisa?');
-  p1a.setRequired(true);
-  p1a.setChoices([
-    p1a.createChoice('Número de matrícula'),
-    p1a.createChoice('E-mail pessoal')
-  ]);
-
-  // Identificador
-  var p1b = form.addTextItem();
-  p1b.setTitle('Identificador');
-  p1b.setHelpText(
-    'De acordo com a opção escolhida acima:\n' +
-    '• Número de matrícula: informe o número completo\n' +
-    '• E-mail pessoal: informe seu e-mail'
-  );
-  p1b.setValidation(
-    criarValidacaoPorRegex(
-      '^(?:\\d{4,20}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})$',
-      'Informe apenas um número de matrícula (somente dígitos) ou um e-mail válido.'
-    )
-  );
-  p1b.setRequired(true);
-
   // Curso
   var p2 = form.addMultipleChoiceItem();
-  p2.setTitle('Qual é o seu curso?');
+  p2.setTitle('Curso de graduação');
   p2.setRequired(true);
   p2.setChoices([
     p2.createChoice('Ciência da Computação'),
     p2.createChoice('Engenharia de Computação'),
-    p2.createChoice('Sistemas de Informação'),
-    p2.createChoice('Outro')
+    p2.createChoice('Sistemas de Informação')
   ]);
   p2.showOtherOption(true);
 
@@ -115,12 +93,7 @@ function criarFormulario() {
   // Assuntos já estudados
   var p4b = form.addCheckboxItem();
   p4b.setTitle('Quais assuntos você já estudou na universidade?');
-  p4b.setHelpText(
-    'Marque todos os que se aplicam, independentemente da disciplina. ' +
-    'Siglas usadas nesta lista: ISA = Instruction Set Architecture; RAW = Read-After-Write; WAR = Write-After-Read; ' +
-    'WAW = Write-After-Write; LRU = Least Recently Used; FIFO = First In, First Out; ' +
-    'AMAT = Average Memory Access Time; CPI = Cycles Per Instruction.'
-  );
+  p4b.setHelpText('Marque todos os que se aplicam, independentemente da disciplina.');
   p4b.setRequired(false);
   p4b.setChoices([
     p4b.createChoice('Arquitetura geral da CPU (registradores, memória, ciclo de instrução, ISA - Instruction Set Architecture)'),
@@ -141,7 +114,6 @@ function criarFormulario() {
     p5.createChoice('Não'),
     p5.createChoice('Sim')
   ]);
-  p5.showOtherOption(true);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SEÇÃO 2 — Pré-Teste
@@ -153,46 +125,22 @@ function criarFormulario() {
     'Responda com base no seu conhecimento atual, sem consultar materiais ou o simulador. ' +
     'As questões avaliam compreensão de conceitos, não realização de cálculos. ' +
     'A opção "E) Não sei" está disponível e deve ser usada quando não houver certeza — ' +
-    'ela é parte do instrumento de avaliação. Tempo estimado: 20 minutos.'
+    'ela é parte do instrumento de avaliação. Tempo estimado: 15 minutos.'
   );
 
   var q1 = form.addMultipleChoiceItem();
   q1.setTitle('Questão 1 — Formatos de instrução RISC-V\n\nQuais formatos de instrução RISC-V não possuem o campo rd (registrador de destino) em sua codificação binária?');
   q1.setRequired(true);
   q1.setChoices([
-    q1.createChoice('A) R-type (add, sub, mul) e I-type (addi, lw, jalr) — porque operações com dois registradores de fonte nunca precisam de destino explícito na codificação binária.'),
-    q1.createChoice('B) S-type (sw, sb) e B-type (beq, bne) — porque produzem efeito em memória (store) ou no PC (branch) e não escrevem em nenhum registrador de destino. Os bits [11:7] codificam parte do imediato nesses formatos.'),
-    q1.createChoice('C) U-type (upper immediate) e J-type (jump) — porque trabalham com imediatos de 20 bits que ocupam todo o espaço disponível, inclusive os bits onde normalmente estaria o rd.'),
-    q1.createChoice('D) Apenas ECALL e EBREAK — por serem instruções de sistema tratadas de forma especial pelo hardware, sem registrador de destino definido.'),
+    q1.createChoice('A) R-type (add, sub, mul) e I-type (addi, lw, jalr) — porque usam dois operandos fonte e poderiam reaproveitar o espaço de rd para ampliar o imediato.'),
+    q1.createChoice('B) S-type (sw, sb) e B-type (beq, bne) — porque produzem efeito em memória ou no PC e não escrevem em registrador de destino. Nesses formatos, os bits [11:7] são reaproveitados para codificar parte do imediato.'),
+    q1.createChoice('C) U-type (upper immediate) e J-type (jump) — porque o imediato de 20 bits ocupa quase toda a instrução e empurra o campo rd para fora da codificação útil.'),
+    q1.createChoice('D) Apenas ECALL e EBREAK — porque instruções de sistema são tratadas por um caminho especial de controle e, por isso, dispensam qualquer registrador de destino.'),
     q1.createChoice('E) Não sei')
   ]);
 
-  var q2 = form.addMultipleChoiceItem();
-  q2.setTitle('Questão 2 — Desempenho RISC vs. CISC\n\nUm aluno conclui: "Processadores RISC precisam de mais instruções para realizar o mesmo trabalho e, portanto, são mais lentos que CISC." Por que esse argumento é uma simplificação incorreta?');
-  q2.setHelpText('Nesta questão, CPI significa Cycles Per Instruction (ciclos por instrução).');
-  q2.setRequired(true);
-  q2.setChoices([
-    q2.createChoice('A) O argumento está correto — arquiteturas RISC executam mais instruções que CISC, mas compensam com frequências de clock muito mais altas que dobram o desempenho de forma consistente.'),
-    q2.createChoice('B) Está incorreto porque o CPI de processadores RISC é sempre exatamente 1 — como cada instrução completa em 1 ciclo, o número maior de instruções se compensa automaticamente.'),
-    q2.createChoice('C) Está incorreto porque o número de instruções por programa não é um bom indicador de desempenho isoladamente — o que importa é o tempo total (N × CPI × período de clock). A regularidade RISC viabiliza pipelines mais profundos e frequências mais altas, o que frequentemente compensa o overhead em contagem de instruções.'),
-    q2.createChoice('D) Está incorreto apenas para operações de ponto flutuante — para operações inteiras puras, arquiteturas CISC de fato superam RISC em desempenho absoluto por instrução.'),
-    q2.createChoice('E) Não sei')
-  ]);
-
-  var q3 = form.addMultipleChoiceItem();
-  q3.setTitle('Questão 3 — Contexto de execução em multi-core\n\nDois cores de um processador executam programas em paralelo. Ao inspecionar o banco de registradores do Core 0 e do Core 1, os valores são completamente diferentes — x1, x5, x10 e até o PC apontam para valores distintos em cada core. Por que isso é correto e esperado?');
-  q3.setHelpText('Nesta questão, PC significa Program Counter (contador de programa).');
-  q3.setRequired(true);
-  q3.setChoices([
-    q3.createChoice('A) Os dois cores compartilham o mesmo banco de registradores físico — o que difere é apenas o PC, que aponta para posições distintas de um único fluxo de instruções compartilhado.'),
-    q3.createChoice('B) As diferenças são temporárias — os bancos sincronizam automaticamente via cache coherence ao fim de cada fase de execução.'),
-    q3.createChoice('C) Os registradores diferem porque os dois cores operam em frequências de clock distintas; em hardware com clock unificado, os valores seriam idênticos.'),
-    q3.createChoice('D) Cada core possui seu próprio banco de registradores privado (x0–x31), seu próprio PC e estado interno completamente independentes. O que compartilham é apenas a memória principal (RAM) e o subsistema de cache.'),
-    q3.createChoice('E) Não sei')
-  ]);
-
   var q4 = form.addMultipleChoiceItem();
-  q4.setTitle('Questão 4 — Função do campo tag no endereçamento de cache\n\nUm endereço de memória é dividido em: offset (seleciona o byte dentro do bloco), índice (seleciona o set da cache) e tag (bits de alta ordem). Qual desses campos é usado para verificar se o bloco armazenado em um determinado set corresponde ao endereço sendo acessado?');
+  q4.setTitle('Questão 2 — Função do campo tag no endereçamento de cache\n\nUm endereço de memória é dividido em: offset (seleciona o byte dentro do bloco), índice (seleciona o set da cache) e tag (bits de alta ordem). Qual desses campos é usado para verificar se o bloco armazenado em um determinado set corresponde ao endereço sendo acessado?');
   q4.setRequired(true);
   q4.setChoices([
     q4.createChoice('A) O campo índice, porque ele identifica unicamente o set e — em mapeamento direto — também identifica unicamente o bloco armazenado naquele set.'),
@@ -203,42 +151,30 @@ function criarFormulario() {
   ]);
 
   var q5 = form.addMultipleChoiceItem();
-  q5.setTitle('Questão 5 — Limitação da política LRU em varredura sequencial\n\nUm aluno argumenta que LRU (Least Recently Used) é sempre a melhor escolha porque "o que foi usado mais recentemente provavelmente será usado de novo." Por que essa lógica falha para programas que fazem varreduras sequenciais de arrays grandes (padrão streaming)?');
+  q5.setTitle('Questão 3 — Limitação da política LRU em varredura sequencial\n\nUm aluno argumenta que LRU (Least Recently Used) é sempre a melhor escolha porque "o que foi usado mais recentemente provavelmente será usado de novo." Por que essa lógica falha para programas que fazem varreduras sequenciais de arrays grandes (padrão streaming)?');
   q5.setHelpText('Nesta questão, FIFO significa First In, First Out.');
   q5.setRequired(true);
   q5.setChoices([
-    q5.createChoice('A) Falha porque o LRU exige mais hardware que FIFO (First In, First Out) — o overhead de manutenção do rank aumenta o hit time a ponto de superar o ganho em hit rate para arrays grandes.'),
-    q5.createChoice('B) Falha porque em streaming o programa acessa cada elemento exatamente uma vez, em ordem, sem retornar ao mesmo bloco no curto prazo. A localidade temporal simplesmente não existe em streaming — LRU mantém blocos que não serão reutilizados.'),
-    q5.createChoice('C) Falha apenas quando o array não cabe inteiramente na cache — se couber, LRU tem desempenho perfeito para qualquer padrão de acesso, incluindo sequencial.'),
-    q5.createChoice('D) Falha porque varreduras sequenciais ativam um modo de prefetch automático no hardware que contorna a política LRU, tornando a escolha de política irrelevante.'),
+    q5.createChoice('A) Falha porque o LRU exige mais hardware que FIFO (First In, First Out) — esse overhead de manutenção do rank pode anular o ganho esperado em hit rate quando o array é muito grande.'),
+    q5.createChoice('B) Falha porque em streaming o programa percorre os blocos em ordem e quase não volta a usá-los no curto prazo. Sem localidade temporal, o LRU preserva linhas que já cumpriram seu papel e não serão reutilizadas tão cedo.'),
+    q5.createChoice('C) Falha apenas quando o array não cabe inteiramente na cache — se couber, LRU passa a ser automaticamente a melhor política para qualquer padrão de acesso sequencial.'),
+    q5.createChoice('D) Falha porque varreduras sequenciais ativam um modo de prefetch automático no hardware que contorna a política LRU, tornando a escolha de política praticamente irrelevante.'),
     q5.createChoice('E) Não sei')
   ]);
 
   var q6 = form.addMultipleChoiceItem();
-  q6.setTitle('Questão 6 — AMAT (Average Memory Access Time / tempo médio de acesso à memória) e o trade-off entre tamanho e latência de cache\n\nDois projetos de cache L1:\n• Config A: 16 KB, 4-way, hit time = 1 ciclo, miss rate = 8%\n• Config B: 64 KB, 4-way, hit time = 4 ciclos, miss rate = 6%\nAmbas com miss penalty = 50 ciclos. Apesar de a Config B ter miss rate menor, seu AMAT é maior. Como isso é possível?');
+  q6.setTitle('Questão 4 — AMAT (Average Memory Access Time / tempo médio de acesso à memória) e o trade-off entre tamanho e latência de cache\n\nDois projetos de cache L1:\n• Config A: 16 KB, 4-way, hit time = 1 ciclo, miss rate = 8%\n• Config B: 64 KB, 4-way, hit time = 4 ciclos, miss rate = 6%\nAmbas com miss penalty = 50 ciclos. Apesar de a Config B ter miss rate menor, seu AMAT é maior. Como isso é possível?');
   q6.setRequired(true);
   q6.setChoices([
-    q6.createChoice('A) AMAT = Hit Time + Miss Rate × Miss Penalty. O Hit Time 4× maior da Config B pode dominar o cálculo. Uma cache maior pode reduzir misses mas aumentar a latência de cada hit — se o aumento do hit time superar a redução do miss rate, o AMAT total piora.'),
-    q6.createChoice('B) É um erro de configuração — hit time nunca pode ser maior que 1 ciclo em caches L1 reais.'),
-    q6.createChoice('C) Indica que a miss penalty domina completamente o cálculo — o hit time não influencia o AMAT de forma significativa em programas reais.'),
-    q6.createChoice('D) O RAVEN calcula o AMAT incorretamente quando o hit time é maior que 2 ciclos; é uma limitação conhecida do simulador.'),
+    q6.createChoice('A) AMAT = Hit Time + Miss Rate × Miss Penalty. A Config B sofre menos misses, mas cada hit custa muito mais; se esse aumento de hit time superar o ganho na miss rate, o AMAT total piora mesmo em uma cache maior.'),
+    q6.createChoice('B) É um erro de configuração — hit time acima de 1 ciclo não deveria aparecer em L1, então a diferença observada indica parâmetros incoerentes ou entrada incorreta no experimento.'),
+    q6.createChoice('C) Indica que a miss penalty domina completamente o cálculo — por isso diferenças de hit time quase não pesam no AMAT final quando o programa acessa memória com frequência.'),
+    q6.createChoice('D) Caches maiores sempre produzem AMAT menor, independentemente do hit time — a fórmula AMAT = Hit Time + Miss Rate × Miss Penalty não captura esse efeito, portanto a comparação entre Config A e B por AMAT não tem validade.'),
     q6.createChoice('E) Não sei')
   ]);
 
-  var q7 = form.addMultipleChoiceItem();
-  q7.setTitle('Questão 7 — Working set vs. associatividade de cache\n\nUma D-Cache com 4 sets e 2 ways executa um loop que acessa ciclicamente 5 endereços (A, B, C, D, E) todos mapeando para o mesmo set. Tanto LRU (Least Recently Used) quanto FIFO (First In, First Out) produzem 100% de miss rate. O que explica esse resultado?');
-  q7.setRequired(true);
-  q7.setChoices([
-    q7.createChoice('A) O problema é a política de escrita — ao usar write-through em vez de write-back, as linhas seriam preservadas entre iterações e o miss rate cairia.'),
-    q7.createChoice('B) A cache de 2 ways é muito pequena para qualquer programa com 5 endereços distintos — seria necessário aumentar o tamanho total para 5× o tamanho do bloco atual.'),
-    q7.createChoice('C) Com apenas 2 ways e 5 endereços competindo pelo mesmo set, nenhuma política de substituição pode evitar misses — o working set (5 blocos) excede a associatividade disponível (2 ways). É um miss de conflito estrutural que só seria resolvido aumentando a associatividade para 5 ways ou mais.'),
-    q7.createChoice('D) O resultado indica um erro de mapeamento de endereços — com 4 sets disponíveis, os 5 endereços deveriam se distribuir entre sets diferentes, eliminando os conflitos.'),
-    q7.createChoice('E) Não sei')
-  ]);
-
   var q8 = form.addMultipleChoiceItem();
-  q8.setTitle('Questão 8 — Função do estágio WB no pipeline de cinco estágios\n\nNo pipeline: IF → ID → EX → MEM → WB. Qual é a função primária do estágio WB (Write-Back)?');
-  q8.setHelpText('Siglas dos estágios: IF = Instruction Fetch; ID = Instruction Decode; EX = Execute; MEM = Memory Access; WB = Write-Back. PC significa Program Counter (contador de programa).');
+  q8.setTitle('Questão 5 — Função do estágio WB no pipeline de cinco estágios\n\nNo pipeline: IF → ID → EX → MEM → WB. Qual é a função primária do estágio WB (Write-Back)?');
   q8.setRequired(true);
   q8.setChoices([
     q8.createChoice('A) Ler os operandos do banco de registradores (rs1, rs2) e detectar dependências de dados entre instruções em voo.'),
@@ -249,7 +185,7 @@ function criarFormulario() {
   ]);
 
   var q9 = form.addMultipleChoiceItem();
-  q9.setTitle('Questão 9 — Pipeline aumenta throughput, não reduz latência individual\n\nUm aluno afirma: "O pipeline do RAVEN acelera o processamento porque cada instrução individual é executada mais rápido." Por que essa afirmação está incorreta?');
+  q9.setTitle('Questão 6 — Pipeline aumenta throughput, não reduz latência individual\n\nUm aluno afirma: "O pipeline acelera o processamento porque cada instrução individual é executada mais rápido." Por que essa afirmação está incorreta?');
   q9.setRequired(true);
   q9.setChoices([
     q9.createChoice('A) Está incorreta porque o pipeline reduz a frequência de clock para acomodar os múltiplos estágios, e o ganho de desempenho vem apenas do paralelismo entre programas diferentes rodando simultaneamente.'),
@@ -260,95 +196,69 @@ function criarFormulario() {
   ]);
 
   var q10 = form.addMultipleChoiceItem();
-  q10.setTitle('Questão 10 — Load-Use Hazard com forwarding ativo\n\nCom pipeline e forwarding ativados, o seguinte trecho é executado:\n  lw  x5, 0(x1)   ← carrega da memória para x5\n  add x6, x5, x2  ← usa x5 imediatamente\nUma bolha é inserida entre as duas instruções. Qual é a causa correta?');
+  q10.setTitle('Questão 7 — Load-Use Hazard com forwarding ativo\n\nCom pipeline e forwarding ativados, o seguinte trecho é executado:\n  lw  x5, 0(x1)   ← carrega da memória para x5\n  add x6, x5, x2  ← usa x5 imediatamente\nUma bolha é inserida entre as duas instruções. Qual é a causa correta?');
   q10.setHelpText('Nesta questão, WAW significa Write-After-Write.');
   q10.setRequired(true);
   q10.setChoices([
-    q10.createChoice('A) O forwarding não foi ativado corretamente — a bolha indica que o dado de x5 não foi encaminhado do estágio EX para o ID.'),
-    q10.createChoice('B) O lw e o add formam um hazard WAW (Write-After-Write), pois ambas as instruções envolvem o registrador x5, forçando o pipeline a serializar as escritas.'),
-    q10.createChoice('C) O branch predictor detectou um possível desvio de controle e inseriu a bolha preventivamente antes de confirmar que não há branch.'),
-    q10.createChoice('D) O lw produz o valor de x5 somente ao final do estágio MEM, mas o add precisa desse valor no início de EX — um ciclo antes. Nenhum caminho de bypass pode fazer o dado chegar antes de estar pronto: exatamente 1 stall é inevitável no load-use hazard, mesmo com todos os caminhos de forwarding ativos.'),
+    q10.createChoice('A) O forwarding não foi ativado corretamente — a bolha sugere que o valor de x5 deixou de ser encaminhado a tempo do estágio que faria a soma, algo resolvível pela configuração.'),
+    q10.createChoice('B) O lw e o add formam um hazard WAW (Write-After-Write), pois as duas instruções passam pelo registrador x5 e o pipeline precisa serializar esse conflito de escrita.'),
+    q10.createChoice('C) O branch predictor detectou um possível desvio de controle e inseriu a bolha preventivamente antes de confirmar que não havia nenhum branch relevante no trecho.'),
+    q10.createChoice('D) O lw só entrega o valor de x5 ao final de MEM, mas o add precisa dele no início de EX. Mesmo com forwarding, o dado ainda não existe no ciclo necessário, então exatamente 1 stall continua inevitável no caso load-use.'),
     q10.createChoice('E) Não sei')
   ]);
 
-  var q11 = form.addMultipleChoiceItem();
-  q11.setTitle('Questão 11 — CPI: ciclos por instrução, não contagem de instruções\n\nComparando dois programas:\n• Programa α: add e xor entre registradores independentes → CPI = 1,05\n• Programa β: cada instrução usa o resultado da anterior → CPI = 2,4\nUm aluno conclui: "Programa β tem mais instruções, por isso tem CPI mais alto." O que há de errado?');
-  q11.setHelpText('Nesta questão, CPI significa Cycles Per Instruction (ciclos por instrução) e RAW significa Read-After-Write.');
-  q11.setRequired(true);
-  q11.setChoices([
-    q11.createChoice('A) O CPI mede ciclos por instrução — não a quantidade de instruções. O CPI 2,4 indica que cada instrução consome em média 2,4 ciclos devido a stalls por dependências RAW. Os dois programas podem ter o mesmo número de instruções; o custo extra vem das bolhas inseridas no pipeline.'),
-    q11.createChoice('B) O raciocínio está correto — mais instruções sempre resultam em CPI mais alto, pois o pipeline fica mais ocupado.'),
-    q11.createChoice('C) O CPI é uma métrica de consumo de energia, não de tempo.'),
-    q11.createChoice('D) O aluno confundiu CPI com IPC — um CPI de 2,4 na verdade significa 2,4 instruções por ciclo.'),
-    q11.createChoice('E) Não sei')
-  ]);
-
-  var q12 = form.addMultipleChoiceItem();
-  q12.setTitle('Questão 12 — Por que forwarding não elimina o stall do load-use hazard\n\nUm aluno ativa o forwarding esperando eliminar todos os stalls. Por que isso não é possível para um lw seguido imediatamente da instrução que usa o valor carregado?');
-  q12.setRequired(true);
-  q12.setChoices([
-    q12.createChoice('A) O forwarding só pode encaminhar um resultado quando ele já está disponível. Para um lw, o dado da memória só existe ao final do estágio MEM — mas a instrução seguinte precisa desse valor no início de EX, um ciclo antes. Exatamente 1 stall é inevitável no load-use hazard, mesmo com todos os caminhos de forwarding ativos.'),
-    q12.createChoice('B) O forwarding resolve o load-use hazard normalmente; se ainda há stalls, é porque o compilador não reorganizou as instruções.'),
-    q12.createChoice('C) O forwarding é desativado automaticamente para instruções de load no RAVEN porque causaria conflito no barramento interno do pipeline.'),
-    q12.createChoice('D) O stall extra no load-use existe para proteger a integridade da D-Cache.'),
-    q12.createChoice('E) Não sei')
-  ]);
-
   var q13 = form.addMultipleChoiceItem();
-  q13.setTitle('Questão 13 — Stall vs. Flush: causas diferentes, efeito visual parecido\n\nNo painel de pipeline do RAVEN, o aluno observa: (1) uma instrução permanece parada em estágios iniciais enquanto estágios à frente recebem bolhas; (2) várias instruções já avançadas no pipeline são descartadas e substituídas por bolhas. Por que esses dois eventos têm causas fundamentalmente diferentes?');
+  q13.setTitle('Questão 8 — Stall vs. Flush: causas diferentes, efeito visual parecido\n\nEm um pipeline em execução, o aluno observa: (1) uma instrução permanece parada em estágios iniciais enquanto estágios à frente recebem bolhas; (2) várias instruções já avançadas no pipeline são descartadas e substituídas por bolhas. Por que esses dois eventos têm causas fundamentalmente diferentes?');
   q13.setRequired(true);
   q13.setChoices([
-    q13.createChoice('A) Os dois eventos são a mesma coisa — termos distintos para qualquer ciclo improdutivo, sem diferença de causa ou mecanismo.'),
-    q13.createChoice('B) O primeiro ocorre apenas sem forwarding; o segundo só ocorre com forwarding ativado — são mutuamente exclusivos por design.'),
-    q13.createChoice('C) O primeiro é um stall (hazard RAW): o pipeline insere bolhas para aguardar o resultado ficar disponível. O segundo é um flush/squash (hazard de controle): após detectar uma misprediction de branch ou exceção, o pipeline descarta instruções buscadas por um caminho errado. Causas diferentes, mecanismos distintos.'),
-    q13.createChoice('D) O primeiro ocorre quando a D-Cache tem um miss; o segundo, quando a I-Cache tem um miss — ambos têm origem no subsistema de memória.'),
+    q13.createChoice('A) Os dois eventos são a mesma coisa — nomes diferentes para qualquer ciclo improdutivo, sem distinção real entre causa, momento de detecção ou mecanismo interno.'),
+    q13.createChoice('B) O primeiro ocorre apenas sem forwarding; o segundo só com forwarding ativado, já que os dois comportamentos são mutuamente exclusivos na lógica de controle do pipeline.'),
+    q13.createChoice('C) O primeiro é um stall por hazard de dados: o pipeline segura uma instrução e injeta bolhas para esperar o operando. O segundo é um flush por hazard de controle: instruções já buscadas são descartadas porque vieram de um caminho errado, como após branch mal previsto ou exceção.'),
+    q13.createChoice('D) O primeiro ocorre quando a D-Cache tem um miss; o segundo, quando a I-Cache tem um miss, então ambos são variações de latência do subsistema de memória.'),
     q13.createChoice('E) Não sei')
   ]);
 
   var q14 = form.addMultipleChoiceItem();
-  q14.setTitle('Questão 14 — Identificar o tipo de hazard de dados em um trecho de código\n\nCom pipeline habilitado, o seguinte trecho gera uma dependência destacada:\n  mul x5, x1, x2  ← rd=x5\n  add x6, x5, x3  ← rs1=x5\nQual tipo de hazard de dados está sendo detectado, e por quê?');
-  q14.setHelpText('Siglas desta questão: WAW = Write-After-Write; WAR = Write-After-Read; RAW = Read-After-Write.');
+  q14.setTitle('Questão 9 — Identificar o tipo de hazard de dados em um trecho de código\n\nCom pipeline habilitado, o seguinte trecho gera uma dependência destacada:\n  mul x5, x1, x2  ← rd=x5\n  add x6, x5, x3  ← rs1=x5\nQual tipo de hazard de dados está sendo detectado, e por quê?');
   q14.setRequired(true);
   q14.setChoices([
-    q14.createChoice('A) WAW (Write-After-Write): tanto mul quanto add escrevem em registradores, criando um conflito de escrita.'),
-    q14.createChoice('B) WAR (Write-After-Read): o add lê x5 e só depois o mul termina de escrevê-lo.'),
-    q14.createChoice('C) Nenhum hazard relevante: as instruções escrevem em registradores de destino diferentes (x5 e x6).'),
-    q14.createChoice('D) RAW (Read-After-Write): o add precisa ler x5 (rs1) antes que o mul tenha terminado de escrevê-lo (rd). Em um pipeline em-ordem, o mul ainda está em EX ou MEM quando o add chega ao estágio que precisa do valor.'),
+    q14.createChoice('A) WAW (Write-After-Write): como ambas escrevem resultados em registradores, o pipeline detecta um conflito de escrita e força a serialização da confirmação final.'),
+    q14.createChoice('B) WAR (Write-After-Read): o add lê x5 enquanto o mul ainda está produzindo esse valor, criando o risco de uma escrita posterior atrapalhar a leitura já iniciada.'),
+    q14.createChoice('C) Nenhum hazard relevante: como os destinos finais são diferentes, a dependência observada é apenas aparente e não exige tratamento especial do hardware.'),
+    q14.createChoice('D) RAW (Read-After-Write): o add precisa ler x5 como fonte antes de o mul terminar de escrevê-lo como destino. Em pipeline em ordem, essa dependência de dado é a que gera stall real e precisa de forwarding ou espera.'),
     q14.createChoice('E) Não sei')
   ]);
 
   var q15 = form.addMultipleChoiceItem();
-  q15.setTitle('Questão 15 — Por que WAR e WAW não causam stalls em pipelines em-ordem\n\nApós executar um programa no RAVEN, as estatísticas mostram: hazards RAW aparecem dezenas de vezes; WAR e WAW aparecem zero vezes. O aluno suspeita de um bug. Por que essa distribuição é correta e esperada?');
-  q15.setHelpText('Siglas desta questão: RAW = Read-After-Write; WAR = Write-After-Read; WAW = Write-After-Write.');
+  q15.setTitle('Questão 10 — Por que WAR e WAW não causam stalls em pipelines em-ordem\n\nAs estatísticas de execução de um pipeline em ordem mostram: hazards RAW aparecem dezenas de vezes; WAR e WAW aparecem zero vezes. O aluno suspeita de um bug. Por que essa distribuição é correta e esperada?');
   q15.setRequired(true);
   q15.setChoices([
-    q15.createChoice('A) É um bug — em qualquer pipeline real, os três tipos ocorrem com frequência semelhante.'),
-    q15.createChoice('B) Em pipelines em-ordem, as instruções são sempre lidas no estágio ID antes de escritas no WB, e cada instrução termina na mesma sequência em que foi buscada. WAR e WAW só seriam problemáticos se uma instrução posterior pudesse completar antes de uma anterior — o que não ocorre em pipelines em-ordem. Apenas RAW cria stalls reais.'),
-    q15.createChoice('C) WAR e WAW aparecem como zero porque o RAVEN simplifica o modelo de hazards para fins didáticos.'),
-    q15.createChoice('D) WAR e WAW só ocorrem em programas com laços muito longos — para programas curtos, é normal que não apareçam.'),
+    q15.createChoice('A) É um bug — em qualquer pipeline real, RAW, WAR e WAW tendem a aparecer com frequência semelhante sempre que várias instruções compartilham registradores.'),
+    q15.createChoice('B) Em pipeline em ordem, as leituras acontecem antes das escritas posteriores e as instruções terminam na mesma sequência em que foram emitidas. Por isso WAR e WAW não viram stalls reais; quem gera espera de verdade é o RAW.'),
+    q15.createChoice('C) WAR e WAW só aparecem em programas com laços muito longos ou rastros extensos; em exemplos curtos, é esperado que esses contadores permaneçam zerados.'),
     q15.createChoice('E) Não sei')
   ]);
 
   var q16 = form.addMultipleChoiceItem();
-  q16.setTitle('Questão 16 — O que o CPI mede e o que ele não mede\n\nNa aba Run do RAVEN, o painel exibe "CPI: 1,85". Um aluno interpreta: "Cada instrução demorou 1,85 segundos para executar." O que essa leitura significa corretamente, e por que a interpretação está errada?');
+  q16.setTitle('Questão 11 — O que o CPI mede e o que ele não mede\n\nO resultado de uma simulação exibe "CPI: 1,85". Um aluno interpreta: "Cada instrução demorou 1,85 segundos para executar." O que essa leitura significa corretamente, e por que a interpretação está errada?');
   q16.setHelpText('Nesta questão, CPI significa Cycles Per Instruction (ciclos por instrução).');
   q16.setRequired(true);
   q16.setChoices([
-    q16.createChoice('A) A interpretação está errada porque CPI é medido em nanosegundos, não segundos.'),
-    q16.createChoice('B) CPI (Cycles Per Instruction) é a média de ciclos de clock gastos por instrução. Um CPI de 1,85 significa que cada instrução consumiu em média 1,85 ciclos. O tempo real de execução depende também da frequência do clock (t = N × CPI / frequência) e não pode ser lido diretamente do CPI.'),
-    q16.createChoice('C) A interpretação está parcialmente correta: ciclos modernos duram exatamente 1 nanosegundo, então o valor em ns seria numericamente o mesmo.'),
-    q16.createChoice('D) CPI de 1,85 significa que o pipeline executou 1,85 instruções por ciclo (IPC = 1,85).'),
+    q16.createChoice('A) A interpretação está errada porque CPI é medido em nanosegundos, não em segundos; logo 1,85 já descreveria diretamente o tempo médio por instrução em hardware moderno.'),
+    q16.createChoice('B) CPI é a média de ciclos de clock gastos por instrução ao longo da execução. Um CPI de 1,85 significa 1,85 ciclos por instrução em média; para virar tempo, ainda falta considerar o número de instruções e a frequência do clock.'),
+    q16.createChoice('C) A interpretação está parcialmente correta: como ciclos modernos costumam ser muito curtos, o valor numérico do CPI pode ser lido aproximadamente como tempo em nanossegundos por instrução.'),
+    q16.createChoice('D) CPI de 1,85 significa que o pipeline executou 1,85 instruções por ciclo, isto é, um IPC elevado apesar das bolhas e dos stalls observados.'),
     q16.createChoice('E) Não sei')
   ]);
 
   var q17 = form.addMultipleChoiceItem();
-  q17.setTitle('Questão 17 — Por que o speedup do pipeline não é linear com o número de estágios\n\nUm aluno calcula que um pipeline de 5 estágios deveria oferecer speedup de 5×. Ao comparar no RAVEN pipeline habilitado vs. desabilitado, obtém speedup real de apenas 2,8×. Qual combinação de fatores explica a diferença?');
+  q17.setTitle('Questão 12 — Por que o speedup do pipeline não é linear com o número de estágios\n\nUm aluno calcula que um pipeline de 5 estágios deveria oferecer speedup de 5×. Ao comparar execução pipelined vs. sequencial, obtém speedup real de apenas 2,8×. Qual combinação de fatores explica a diferença?');
   q17.setRequired(true);
   q17.setChoices([
-    q17.createChoice('A) O speedup é limitado principalmente pelo barramento de memória — em execução sequencial, a memória opera a 5× a velocidade do pipeline.'),
-    q17.createChoice('B) O speedup real seria 5× se o programa não contivesse instruções de branch — branches são o único fator limitante.'),
-    q17.createChoice('C) O speedup de 5× assume que o RAVEN paraleliza apenas instruções independentes; instruções com qualquer dependência são sempre serializadas.'),
-    q17.createChoice('D) O speedup teórico de N× assume pipeline perfeito sem overhead. Na prática, é reduzido por: (1) stalls por hazards RAW e load-use; (2) flushes por misprediction de branch; (3) miss penalties de cache; e (4) desequilíbrio entre estágios. O CPI observado reflete a soma de todos esses overheads.'),
+    q17.createChoice('A) O speedup é limitado principalmente pelo barramento de memória: sem pipeline, a memória efetiva fica relativamente mais rápida e compensa boa parte da vantagem teórica do paralelismo entre estágios.'),
+    q17.createChoice('B) O speedup real seria 5× se o programa não tivesse branches; como há desvios, eles se tornam o único fator relevante para derrubar o ganho abaixo do valor ideal.'),
+    q17.createChoice('C) O speedup de 5× pressupõe que apenas instruções independentes sejam sobrepostas; sempre que surge qualquer dependência, o hardware volta ao comportamento quase sequencial e perde paralelismo.'),
+    q17.createChoice('D) O speedup ideal de N× assume um pipeline perfeito e sem overhead. Na prática, stalls de dados, flushes de controle, misses de cache e desequilíbrio entre estágios somam ciclos extras, então o ganho observado fica bem abaixo do teto teórico.'),
     q17.createChoice('E) Não sei')
   ]);
 
@@ -357,22 +267,16 @@ function criarFormulario() {
   // ═══════════════════════════════════════════════════════════════════════════
 
   var pg3 = form.addPageBreakItem();
-  pg3.setTitle('Seção 3 — Atividade Guiada no RAVEN (≈65 min)');
+  pg3.setTitle('Seção 3 — Atividade Guiada no RAVEN (≈55 min)');
   pg3.setHelpText(
-    'Esta seção acompanha a atividade prática com o simulador RAVEN.\n' +
-    'Para cada domínio, siga as orientações do aplicador e registre o que foi observado.\n' +
-    'Quando houver campos numéricos, informe apenas os valores observados.\n' +
-    'Quando houver observação visual, foque apenas no trecho ou momento indicado.\n' +
-    'Use ponto ou vírgula para decimais.\n' +
-    'As respostas descritivas continuam focadas em observação, não em acertar.\n' +
-    'Os arquivos desta atividade estão organizados em:\n' +
-    '• "guided-activity/programas"\n' +
-    '• "guided-activity/config-global"\n' +
-    '• "guided-activity/config-pipeline"\n' +
-    '• "guided-activity/config-cache"\n' +
-    'Sempre importe primeiro o arquivo da aba Config (.rcfg).\n' +
-    'Depois, importe o da aba Pipeline (.pcfg).\n' +
-    'Por fim, importe o da aba Cache (.fcache), quando houver.'
+    'Sobre o RAVEN: é um simulador educacional de um processador RISC-V com visualização de pipeline, hierarquia de cache e execução multi-core.\n\n' +
+    'Download: baixe o executável para a sua arquitetura em https://github.com/Gaok1/Raven-RiscV/releases/tag/v1.27.0 e execute o aplicativo.\n\n' +
+    'Como funcionam as atividades: cada pergunta abaixo indica um preset identificado por um código (ex.: D1-01, D3-05). Na aba "Activity" do RAVEN, selecione o preset indicado — o simulador carrega automaticamente o programa e as configurações necessárias (pipeline, cache, multi-core).\n\n' +
+    'Orientações gerais:\n' +
+    '• Execute o preset até o final e anote os valores solicitados.\n' +
+    '• Em campos numéricos, informe apenas o valor observado (use ponto ou vírgula para decimais).\n' +
+    '• Em observações visuais, foque apenas no trecho ou momento indicado.\n' +
+    '• As respostas descritivas valem pela observação, não pelo acerto.'
   );
 
   // ── D1: Pipeline ──────────────────────────────────────────────────────────
@@ -392,7 +296,7 @@ function criarFormulario() {
   var d1p1b = form.addTextItem();
   d1p1b.setTitle('CPI com instruções dependentes (cada instrução usa o resultado da anterior)');
   d1p1b.setHelpText(
-    'Preset: D1-02 (mantém R100 + P100, troca para D102).\n\n' +
+    'Preset: D1-02 (mantém R100 + D102, mas troca o pipeline para P102 com forwarding desativado).\n\n' +
     'Execute o programa e anote o CPI exibido na aba Run.\n' +
     'Compare com o valor obtido no D1-01.'
   );
@@ -429,7 +333,7 @@ function criarFormulario() {
   d2p1b.setHelpText(
     'Mantenha as mesmas configurações (Preset D2-01 já carregado).\n\n' +
     'No Editor, localize as linhas com lw e add (D201.fas) e insira uma linha "nop" entre elas.\n' +
-    'Pressione Ctrl+Enter para recompilar. Execute novamente e observe o par lw/nop/add no diagrama.\n\n' +
+    'Pressione F5 para recompilar. Execute novamente e observe o par lw/nop/add no diagrama.\n\n' +
     'Quantas bolhas aparecem antes do add agora? Compare com o resultado anterior.'
   );
   d2p1b.setValidation(criarValidacaoInteiro(0, 99, 'Informe apenas a quantidade de bolhas observada após inserir o nop.'));
@@ -459,14 +363,15 @@ function criarFormulario() {
 
   // ── D3: Cache ─────────────────────────────────────────────────────────────
 
-  form.addSectionHeaderItem().setTitle('D3 — Cache (≈15 min)');
+  form.addSectionHeaderItem().setTitle('D3 — Cache (≈10 min)');
 
   // D3 — Experimento 1: Tamanho vs. Latência de Acesso (AMAT)
 
   var d3p1a = form.addTextItem();
   d3p1a.setTitle('AMAT (Average Memory Access Time) — Config A: cache pequena, hit time baixo');
   d3p1a.setHelpText(
-    'Preset: D3-01 (carrega R300 + P101 + C311 + D301 automaticamente).\n\n' +
+    'Preset: D3-01 (carrega R300 + P101 + C311 + D301b automaticamente).\n\n' +
+    'Config A: D-Cache 256 B, 2-way, hit time = 1 ciclo.\n\n' +
     'Execute o programa e leia o AMAT da D-Cache no resumo da aba Cache.\n' +
     'AMAT = Hit Time + Miss Rate × Miss Penalty.\n\n' +
     'Informe o valor observado (em ciclos).'
@@ -477,7 +382,8 @@ function criarFormulario() {
   var d3p1b = form.addTextItem();
   d3p1b.setTitle('AMAT — Config B: cache maior, hit time mais alto');
   d3p1b.setHelpText(
-    'Preset: D3-02 (mantém R300 + P101 + D301, troca para C312).\n\n' +
+    'Preset: D3-02 (mantém R300 + P101 + D301b, troca para C312).\n\n' +
+    'Config B: D-Cache 1 KB, 2-way, hit time = 4 ciclos.\n\n' +
     'Execute e leia o AMAT da D-Cache na aba Cache.\n\n' +
     'Informe o valor observado e compare com o da Config A.'
   );
@@ -491,8 +397,8 @@ function criarFormulario() {
   );
   d3p1c.setRequired(true);
   d3p1c.setChoices([
-    d3p1c.createChoice('Config A (16 KB, hit time 1 ciclo)'),
-    d3p1c.createChoice('Config B (64 KB, hit time 4 ciclos)'),
+    d3p1c.createChoice('Config A (256 B, hit time 1 ciclo)'),
+    d3p1c.createChoice('Config B (1 KB, hit time 4 ciclos)'),
     d3p1c.createChoice('Empate / muito semelhante')
   ]);
 
@@ -529,41 +435,6 @@ function criarFormulario() {
   );
   d3p2c.setRequired(true);
 
-  // D3 — Experimento 3: Associatividade e Working Set (Thrashing)
-
-  var d3p3a = form.addTextItem();
-  d3p3a.setTitle('Miss rate com cache de 2 ways (associatividade baixa)');
-  d3p3a.setHelpText(
-    'Preset: D3-05 (carrega R300 + P101 + C331 + D302).\n\n' +
-    'D302 acessa ciclicamente 5 endereços diferentes. A cache tem 4 sets com 2 ways cada.\n' +
-    'Execute e leia o D-Cache miss rate no resumo da aba Cache.\n\n' +
-    'Informe o miss rate observado.'
-  );
-  d3p3a.setValidation(criarValidacaoNumeroDecimal('Informe apenas o miss rate observado com 2 ways.'));
-  d3p3a.setRequired(true);
-
-  var d3p3b = form.addMultipleChoiceItem();
-  d3p3b.setTitle('Ao aumentar a associatividade de 2 ways para 8 ways, o que acontece com o miss rate?');
-  d3p3b.setHelpText(
-    'Preset: D3-06 (mantém R300 + P101 + D302, troca para C332).\n\n' +
-    'Execute e compare o miss rate com o resultado anterior.'
-  );
-  d3p3b.setRequired(true);
-  d3p3b.setChoices([
-    d3p3b.createChoice('Diminui'),
-    d3p3b.createChoice('Permanece igual'),
-    d3p3b.createChoice('Aumenta')
-  ]);
-
-  var d3p3c = form.addParagraphTextItem();
-  d3p3c.setTitle('Thrashing por working set — por que aumentar a associatividade resolveu (ou não) o problema?');
-  d3p3c.setHelpText(
-    'Compare os resultados de C331 (2 ways) e C332 (8 ways) com D302.\n\n' +
-    'O que mudou entre as duas configurações? O que o miss rate indica sobre a relação\n' +
-    'entre o padrão de acesso do programa e a configuração de cache?'
-  );
-  d3p3c.setRequired(true);
-
   // ── D4: ISA RISC-V ────────────────────────────────────────────────────────
 
   form.addSectionHeaderItem().setTitle('D4 — ISA (Instruction Set Architecture) RISC-V (≈8 min)');
@@ -572,8 +443,8 @@ function criarFormulario() {
   d4p1.setTitle('Codificação binária: por que S-type não tem campo rd?');
   d4p1.setHelpText(
     'Preset: D4-01 (carrega R100 + P101 + D401 automaticamente).\n\n' +
-    'No Editor, clique sobre a instrução add e depois sobre a instrução sw.\n' +
-    'O painel de detalhes mostra a codificação binária de cada uma.\n\n' +
+    'Na aba Run, mova o cursor sobre a instrução add e depois sobre a instrução sw.\n' +
+    'O painel de detalhes à direita mostra a codificação binária de cada uma.\n\n' +
     'Compare os bits [11:7] nas duas instruções. O que você encontra em cada caso?\n' +
     'O que isso sugere sobre a diferença de propósito entre as duas instruções?'
   );
@@ -658,43 +529,21 @@ function criarFormulario() {
   pg4.setHelpText(
     'Responda com base no que foi trabalhado durante a sessão com o RAVEN. ' +
     'Não consulte materiais externos. As questões são as mesmas da seção inicial — ' +
-    'responda de forma independente. Tempo estimado: 20 minutos.'
+    'responda de forma independente. Tempo estimado: 15 minutos.'
   );
 
   var pos1 = form.addMultipleChoiceItem();
   pos1.setTitle('Questão 1 — Formatos de instrução RISC-V\n\nQuais formatos de instrução RISC-V não possuem o campo rd (registrador de destino) em sua codificação binária?');
   pos1.setRequired(true);
   pos1.setChoices([
-    pos1.createChoice('A) R-type (add, sub, mul) e I-type (addi, lw, jalr) — porque operações com dois registradores de fonte nunca precisam de destino explícito na codificação binária.'),
-    pos1.createChoice('B) S-type (sw, sb) e B-type (beq, bne) — porque produzem efeito em memória (store) ou no PC (branch) e não escrevem em nenhum registrador de destino. Os bits [11:7] codificam parte do imediato nesses formatos.'),
-    pos1.createChoice('C) U-type (upper immediate) e J-type (jump) — porque trabalham com imediatos de 20 bits que ocupam todo o espaço disponível, inclusive os bits onde normalmente estaria o rd.'),
-    pos1.createChoice('D) Apenas ECALL e EBREAK — por serem instruções de sistema tratadas de forma especial pelo hardware, sem registrador de destino definido.')
-  ]);
-
-  var pos2 = form.addMultipleChoiceItem();
-  pos2.setTitle('Questão 2 — Desempenho RISC vs. CISC\n\nUm aluno conclui: "Processadores RISC precisam de mais instruções para realizar o mesmo trabalho e, portanto, são mais lentos que CISC." Por que esse argumento é uma simplificação incorreta?');
-  pos2.setHelpText('Nesta questão, CPI significa Cycles Per Instruction (ciclos por instrução).');
-  pos2.setRequired(true);
-  pos2.setChoices([
-    pos2.createChoice('A) O argumento está correto — arquiteturas RISC executam mais instruções que CISC, mas compensam com frequências de clock muito mais altas que dobram o desempenho de forma consistente.'),
-    pos2.createChoice('B) Está incorreto porque o CPI de processadores RISC é sempre exatamente 1 — como cada instrução completa em 1 ciclo, o número maior de instruções se compensa automaticamente.'),
-    pos2.createChoice('C) Está incorreto porque o número de instruções por programa não é um bom indicador de desempenho isoladamente — o que importa é o tempo total (N × CPI × período de clock). A regularidade RISC viabiliza pipelines mais profundos e frequências mais altas.'),
-    pos2.createChoice('D) Está incorreto apenas para operações de ponto flutuante — para operações inteiras puras, arquiteturas CISC de fato superam RISC em desempenho absoluto por instrução.')
-  ]);
-
-  var pos3 = form.addMultipleChoiceItem();
-  pos3.setTitle('Questão 3 — Contexto de execução em multi-core\n\nDois cores executam programas em paralelo. Ao inspecionar o banco de registradores do Core 0 e do Core 1, os valores são completamente diferentes. Por que isso é correto e esperado?');
-  pos3.setHelpText('Nesta questão, PC significa Program Counter (contador de programa).');
-  pos3.setRequired(true);
-  pos3.setChoices([
-    pos3.createChoice('A) Os dois cores compartilham o mesmo banco de registradores físico — o que difere é apenas o PC.'),
-    pos3.createChoice('B) As diferenças são temporárias — os bancos sincronizam automaticamente via cache coherence ao fim de cada fase de execução.'),
-    pos3.createChoice('C) Os registradores diferem porque os dois cores operam em frequências de clock distintas.'),
-    pos3.createChoice('D) Cada core possui seu próprio banco de registradores privado (x0–x31), seu próprio PC e estado interno completamente independentes. O que compartilham é apenas a memória principal (RAM) e o subsistema de cache.')
+    pos1.createChoice('A) R-type (add, sub, mul) e I-type (addi, lw, jalr) — porque usam dois operandos fonte e poderiam reaproveitar o espaço de rd para ampliar o imediato.'),
+    pos1.createChoice('B) S-type (sw, sb) e B-type (beq, bne) — porque produzem efeito em memória ou no PC e não escrevem em registrador de destino. Nesses formatos, os bits [11:7] são reaproveitados para codificar parte do imediato.'),
+    pos1.createChoice('C) U-type (upper immediate) e J-type (jump) — porque o imediato de 20 bits ocupa quase toda a instrução e empurra o campo rd para fora da codificação útil.'),
+    pos1.createChoice('D) Apenas ECALL e EBREAK — porque instruções de sistema são tratadas por um caminho especial de controle e, por isso, dispensam qualquer registrador de destino.')
   ]);
 
   var pos4 = form.addMultipleChoiceItem();
-  pos4.setTitle('Questão 4 — Função do campo tag no endereçamento de cache\n\nUm endereço de memória é dividido em: offset, índice e tag. Qual desses campos verifica se o bloco armazenado em um set corresponde ao endereço sendo acessado?');
+  pos4.setTitle('Questão 2 — Função do campo tag no endereçamento de cache\n\nUm endereço de memória é dividido em: offset, índice e tag. Qual desses campos verifica se o bloco armazenado em um set corresponde ao endereço sendo acessado?');
   pos4.setRequired(true);
   pos4.setChoices([
     pos4.createChoice('A) O campo índice, porque identifica unicamente o set e — em mapeamento direto — também identifica unicamente o bloco armazenado naquele set.'),
@@ -704,39 +553,28 @@ function criarFormulario() {
   ]);
 
   var pos5 = form.addMultipleChoiceItem();
-  pos5.setTitle('Questão 5 — Limitação da política LRU (Least Recently Used) em varredura sequencial\n\nPor que a política LRU falha para programas que fazem varreduras sequenciais de arrays grandes (padrão streaming)?');
+  pos5.setTitle('Questão 3 — Limitação da política LRU (Least Recently Used) em varredura sequencial\n\nPor que a política LRU falha para programas que fazem varreduras sequenciais de arrays grandes (padrão streaming)?');
   pos5.setHelpText('Nesta questão, FIFO significa First In, First Out.');
   pos5.setRequired(true);
   pos5.setChoices([
-    pos5.createChoice('A) Falha porque o LRU exige mais hardware que FIFO (First In, First Out) — o overhead aumenta o hit time a ponto de superar o ganho em hit rate.'),
-    pos5.createChoice('B) Falha porque em streaming o programa acessa cada elemento exatamente uma vez, em ordem, sem retornar ao mesmo bloco no curto prazo. A localidade temporal simplesmente não existe em streaming.'),
-    pos5.createChoice('C) Falha apenas quando o array não cabe inteiramente na cache.'),
-    pos5.createChoice('D) Falha porque varreduras sequenciais ativam um modo de prefetch automático que contorna a política LRU.')
+    pos5.createChoice('A) Falha porque o LRU exige mais hardware que FIFO (First In, First Out) — esse overhead de manutenção do rank pode anular o ganho esperado em hit rate quando o array é muito grande.'),
+    pos5.createChoice('B) Falha porque em streaming o programa percorre os blocos em ordem e quase não volta a usá-los no curto prazo. Sem localidade temporal, o LRU preserva linhas que já cumpriram seu papel e não serão reutilizadas tão cedo.'),
+    pos5.createChoice('C) Falha apenas quando o array não cabe inteiramente na cache — se couber, LRU passa a ser automaticamente a melhor política para qualquer padrão de acesso sequencial.'),
+    pos5.createChoice('D) Falha porque varreduras sequenciais ativam um modo de prefetch automático que contorna a política LRU, tornando a escolha de política praticamente irrelevante.')
   ]);
 
   var pos6 = form.addMultipleChoiceItem();
-  pos6.setTitle('Questão 6 — AMAT (Average Memory Access Time / tempo médio de acesso à memória) e o trade-off entre tamanho e latência de cache\n\n• Config A: 16 KB, 4-way, hit time = 1 ciclo, miss rate = 8%\n• Config B: 64 KB, 4-way, hit time = 4 ciclos, miss rate = 6%\nAmbas com miss penalty = 50 ciclos. Como o AMAT da Config B pode ser maior mesmo com miss rate menor?');
+  pos6.setTitle('Questão 4 — AMAT (Average Memory Access Time / tempo médio de acesso à memória) e o trade-off entre tamanho e latência de cache\n\n• Config A: 16 KB, 4-way, hit time = 1 ciclo, miss rate = 8%\n• Config B: 64 KB, 4-way, hit time = 4 ciclos, miss rate = 6%\nAmbas com miss penalty = 50 ciclos. Como o AMAT da Config B pode ser maior mesmo com miss rate menor?');
   pos6.setRequired(true);
   pos6.setChoices([
-    pos6.createChoice('A) AMAT = Hit Time + Miss Rate × Miss Penalty. O Hit Time 4× maior da Config B pode dominar o cálculo — se o aumento do hit time superar a redução do miss rate, o AMAT total piora.'),
-    pos6.createChoice('B) É um erro de configuração — hit time nunca pode ser maior que 1 ciclo em caches L1 reais.'),
-    pos6.createChoice('C) Indica que a miss penalty domina completamente — o hit time não influencia o AMAT de forma significativa.'),
-    pos6.createChoice('D) O RAVEN calcula o AMAT incorretamente quando o hit time é maior que 2 ciclos.')
-  ]);
-
-  var pos7 = form.addMultipleChoiceItem();
-  pos7.setTitle('Questão 7 — Working set vs. associatividade de cache\n\nUma D-Cache com 4 sets e 2 ways executa um loop que acessa ciclicamente 5 endereços mapeados para o mesmo set. Tanto LRU (Least Recently Used) quanto FIFO (First In, First Out) produzem 100% de miss rate. O que explica esse resultado?');
-  pos7.setRequired(true);
-  pos7.setChoices([
-    pos7.createChoice('A) O problema é a política de escrita — ao usar write-back em vez de write-through, as linhas seriam preservadas e o miss rate cairia.'),
-    pos7.createChoice('B) A cache de 2 ways é muito pequena — seria necessário aumentar o tamanho total para 5× o tamanho do bloco atual.'),
-    pos7.createChoice('C) Com apenas 2 ways e 5 endereços competindo pelo mesmo set, nenhuma política de substituição pode evitar misses — o working set (5 blocos) excede a associatividade disponível (2 ways). É um miss de conflito estrutural.'),
-    pos7.createChoice('D) O resultado indica um erro de mapeamento de endereços — com 4 sets disponíveis, os 5 endereços deveriam se distribuir entre sets diferentes.')
+    pos6.createChoice('A) AMAT = Hit Time + Miss Rate × Miss Penalty. A Config B sofre menos misses, mas cada hit custa muito mais; se esse aumento de hit time superar o ganho na miss rate, o AMAT total piora mesmo em uma cache maior.'),
+    pos6.createChoice('B) É um erro de configuração — hit time acima de 1 ciclo não deveria aparecer em L1, então a diferença observada indica parâmetros incoerentes ou entrada incorreta no experimento.'),
+    pos6.createChoice('C) Indica que a miss penalty domina completamente — por isso diferenças de hit time quase não pesam no AMAT final quando o programa acessa memória com frequência.'),
+    pos6.createChoice('D) Caches maiores sempre produzem AMAT menor, independentemente do hit time — a fórmula AMAT = Hit Time + Miss Rate × Miss Penalty não captura esse efeito, portanto a comparação entre Config A e B por AMAT não tem validade.')
   ]);
 
   var pos8 = form.addMultipleChoiceItem();
-  pos8.setTitle('Questão 8 — Função do estágio WB no pipeline de cinco estágios\n\nNo pipeline IF → ID → EX → MEM → WB. Qual é a função primária do estágio WB?');
-  pos8.setHelpText('Siglas dos estágios: IF = Instruction Fetch; ID = Instruction Decode; EX = Execute; MEM = Memory Access; WB = Write-Back. PC significa Program Counter (contador de programa).');
+  pos8.setTitle('Questão 5 — Função do estágio WB no pipeline de cinco estágios\n\nNo pipeline IF → ID → EX → MEM → WB. Qual é a função primária do estágio WB?');
   pos8.setRequired(true);
   pos8.setChoices([
     pos8.createChoice('A) Ler os operandos do banco de registradores (rs1, rs2) e detectar dependências de dados entre instruções em voo.'),
@@ -746,7 +584,7 @@ function criarFormulario() {
   ]);
 
   var pos9 = form.addMultipleChoiceItem();
-  pos9.setTitle('Questão 9 — Pipeline aumenta throughput, não reduz latência individual\n\nPor que a afirmação "o pipeline acelera o processamento porque cada instrução individual é executada mais rápido" está incorreta?');
+  pos9.setTitle('Questão 6 — Pipeline aumenta throughput, não reduz latência individual\n\nPor que a afirmação "o pipeline acelera o processamento porque cada instrução individual é executada mais rápido" está incorreta?');
   pos9.setRequired(true);
   pos9.setChoices([
     pos9.createChoice('A) Está incorreta porque o pipeline reduz a frequência de clock para acomodar os múltiplos estágios, e o ganho vem apenas do paralelismo entre programas diferentes.'),
@@ -756,88 +594,64 @@ function criarFormulario() {
   ]);
 
   var pos10 = form.addMultipleChoiceItem();
-  pos10.setTitle('Questão 10 — Load-Use Hazard com forwarding ativo\n\n  lw  x5, 0(x1)\n  add x6, x5, x2\n\nCom pipeline e forwarding ativos, por que uma bolha ainda é inserida?');
+  pos10.setTitle('Questão 7 — Load-Use Hazard com forwarding ativo\n\n  lw  x5, 0(x1)\n  add x6, x5, x2\n\nCom pipeline e forwarding ativos, por que uma bolha ainda é inserida?');
   pos10.setHelpText('Nesta questão, WAW significa Write-After-Write.');
   pos10.setRequired(true);
   pos10.setChoices([
-    pos10.createChoice('A) O forwarding não foi ativado corretamente — a bolha indica que o dado de x5 não foi encaminhado do estágio EX para o ID.'),
-    pos10.createChoice('B) Formam um hazard WAW (Write-After-Write), forçando o pipeline a serializar as escritas.'),
-    pos10.createChoice('C) O branch predictor detectou um possível desvio e inseriu a bolha preventivamente.'),
-    pos10.createChoice('D) O lw produz o valor de x5 somente ao final do estágio MEM, mas o add precisa desse valor no início de EX — um ciclo antes. Exatamente 1 stall é inevitável no load-use hazard, mesmo com todos os caminhos de forwarding ativos.')
-  ]);
-
-  var pos11 = form.addMultipleChoiceItem();
-  pos11.setTitle('Questão 11 — CPI: ciclos por instrução, não contagem de instruções\n\n• Programa α: add e xor independentes → CPI = 1,05\n• Programa β: cada instrução usa o resultado da anterior → CPI = 2,4\n\nUm aluno conclui: "Programa β tem mais instruções, por isso tem CPI mais alto." O que há de errado?');
-  pos11.setHelpText('Nesta questão, CPI significa Cycles Per Instruction (ciclos por instrução) e RAW significa Read-After-Write.');
-  pos11.setRequired(true);
-  pos11.setChoices([
-    pos11.createChoice('A) O CPI mede ciclos por instrução — não a quantidade de instruções. O CPI 2,4 indica que cada instrução consome em média 2,4 ciclos devido a stalls por dependências RAW. Os dois programas podem ter o mesmo número de instruções; o custo extra vem das bolhas inseridas no pipeline.'),
-    pos11.createChoice('B) O raciocínio está correto — mais instruções sempre resultam em CPI mais alto.'),
-    pos11.createChoice('C) O CPI é uma métrica de consumo de energia, não de tempo.'),
-    pos11.createChoice('D) O aluno confundiu CPI com IPC — um CPI de 2,4 na verdade significa 2,4 instruções por ciclo.')
-  ]);
-
-  var pos12 = form.addMultipleChoiceItem();
-  pos12.setTitle('Questão 12 — Por que forwarding não elimina o stall do load-use hazard\n\nPor que ativar o forwarding não elimina o stall de um lw seguido imediatamente da instrução que usa o valor carregado?');
-  pos12.setRequired(true);
-  pos12.setChoices([
-    pos12.createChoice('A) O forwarding só pode encaminhar um resultado quando ele já está disponível. Para um lw, o dado da memória só existe ao final do estágio MEM — mas a instrução seguinte precisa desse valor no início de EX, um ciclo antes. Exatamente 1 stall é inevitável, mesmo com todos os caminhos de forwarding ativos.'),
-    pos12.createChoice('B) O forwarding resolve o load-use hazard normalmente; se ainda há stalls, é porque o compilador não reorganizou as instruções.'),
-    pos12.createChoice('C) O forwarding é desativado automaticamente para instruções de load no RAVEN porque causaria conflito no barramento interno do pipeline.'),
-    pos12.createChoice('D) O stall extra no load-use existe para proteger a integridade da D-Cache.')
+    pos10.createChoice('A) O forwarding não foi ativado corretamente — a bolha sugere que o valor de x5 deixou de ser encaminhado a tempo do estágio que faria a soma, algo resolvível pela configuração.'),
+    pos10.createChoice('B) Formam um hazard WAW (Write-After-Write), pois as duas instruções passam pelo registrador x5 e o pipeline precisa serializar esse conflito de escrita.'),
+    pos10.createChoice('C) O branch predictor detectou um possível desvio e inseriu a bolha preventivamente antes de confirmar que não havia nenhum branch relevante no trecho.'),
+    pos10.createChoice('D) O lw só entrega o valor de x5 ao final de MEM, mas o add precisa dele no início de EX. Mesmo com forwarding, o dado ainda não existe no ciclo necessário, então exatamente 1 stall continua inevitável no caso load-use.')
   ]);
 
   var pos13 = form.addMultipleChoiceItem();
-  pos13.setTitle('Questão 13 — Stall vs. Flush: causas diferentes, efeito visual parecido\n\nPor que (1) instrução parada com bolhas à frente e (2) várias instruções avançadas sendo descartadas têm causas fundamentalmente diferentes?');
+  pos13.setTitle('Questão 8 — Stall vs. Flush: causas diferentes, efeito visual parecido\n\nPor que (1) instrução parada com bolhas à frente e (2) várias instruções avançadas sendo descartadas têm causas fundamentalmente diferentes?');
   pos13.setRequired(true);
   pos13.setChoices([
-    pos13.createChoice('A) Os dois eventos são a mesma coisa — termos distintos para qualquer ciclo improdutivo, sem diferença de causa ou mecanismo.'),
-    pos13.createChoice('B) O primeiro ocorre apenas sem forwarding; o segundo só ocorre com forwarding ativado — são mutuamente exclusivos por design.'),
-    pos13.createChoice('C) O primeiro é um stall (hazard RAW): o pipeline insere bolhas para aguardar o resultado ficar disponível. O segundo é um flush/squash (hazard de controle): o pipeline descarta instruções buscadas por um caminho errado após detectar misprediction de branch ou exceção.'),
-    pos13.createChoice('D) O primeiro ocorre quando a D-Cache tem um miss; o segundo, quando a I-Cache tem um miss — ambos têm origem no subsistema de memória.')
+    pos13.createChoice('A) Os dois eventos são a mesma coisa — nomes diferentes para qualquer ciclo improdutivo, sem distinção real entre causa, momento de detecção ou mecanismo interno.'),
+    pos13.createChoice('B) O primeiro ocorre apenas sem forwarding; o segundo só com forwarding ativado, já que os dois comportamentos são mutuamente exclusivos na lógica de controle do pipeline.'),
+    pos13.createChoice('C) O primeiro é um stall por hazard de dados: o pipeline segura uma instrução e injeta bolhas para esperar o operando. O segundo é um flush por hazard de controle: instruções já buscadas são descartadas porque vieram de um caminho errado, como após branch mal previsto ou exceção.'),
+    pos13.createChoice('D) O primeiro ocorre quando a D-Cache tem um miss; o segundo, quando a I-Cache tem um miss, então ambos são variações de latência do subsistema de memória.')
   ]);
 
   var pos14 = form.addMultipleChoiceItem();
-  pos14.setTitle('Questão 14 — Identificar o tipo de hazard de dados em um trecho de código\n\n  mul x5, x1, x2  ← rd=x5\n  add x6, x5, x3  ← rs1=x5\n\nQual tipo de hazard de dados está sendo detectado, e por quê?');
-  pos14.setHelpText('Siglas desta questão: WAW = Write-After-Write; WAR = Write-After-Read; RAW = Read-After-Write.');
+  pos14.setTitle('Questão 9 — Identificar o tipo de hazard de dados em um trecho de código\n\n  mul x5, x1, x2  ← rd=x5\n  add x6, x5, x3  ← rs1=x5\n\nQual tipo de hazard de dados está sendo detectado, e por quê?');
   pos14.setRequired(true);
   pos14.setChoices([
-    pos14.createChoice('A) WAW (Write-After-Write): tanto mul quanto add escrevem em registradores, criando um conflito de escrita.'),
-    pos14.createChoice('B) WAR (Write-After-Read): o add lê x5 e só depois o mul termina de escrevê-lo.'),
-    pos14.createChoice('C) Nenhum hazard relevante: as instruções escrevem em registradores de destino diferentes (x5 e x6).'),
-    pos14.createChoice('D) RAW (Read-After-Write): o add precisa ler x5 (rs1) antes que o mul tenha terminado de escrevê-lo (rd). Em um pipeline em-ordem, o mul ainda está em EX ou MEM quando o add chega ao estágio que precisa do valor.')
+    pos14.createChoice('A) WAW (Write-After-Write): como ambas escrevem resultados em registradores, o pipeline detecta um conflito de escrita e força a serialização da confirmação final.'),
+    pos14.createChoice('B) WAR (Write-After-Read): o add lê x5 enquanto o mul ainda está produzindo esse valor, criando o risco de uma escrita posterior atrapalhar a leitura já iniciada.'),
+    pos14.createChoice('C) Nenhum hazard relevante: como os destinos finais são diferentes, a dependência observada é apenas aparente e não exige tratamento especial do hardware.'),
+    pos14.createChoice('D) RAW (Read-After-Write): o add precisa ler x5 como fonte antes de o mul terminar de escrevê-lo como destino. Em pipeline em ordem, essa dependência de dado é a que gera stall real e precisa de forwarding ou espera.')
   ]);
 
   var pos15 = form.addMultipleChoiceItem();
-  pos15.setTitle('Questão 15 — Por que WAR e WAW não causam stalls em pipelines em-ordem\n\nAs estatísticas mostram: hazards RAW aparecem dezenas de vezes; WAR e WAW aparecem zero vezes. Por que essa distribuição é correta e esperada?');
-  pos15.setHelpText('Siglas desta questão: RAW = Read-After-Write; WAR = Write-After-Read; WAW = Write-After-Write.');
+  pos15.setTitle('Questão 10 — Por que WAR e WAW não causam stalls em pipelines em-ordem\n\nAs estatísticas mostram: hazards RAW aparecem dezenas de vezes; WAR e WAW aparecem zero vezes. Por que essa distribuição é correta e esperada?');
   pos15.setRequired(true);
   pos15.setChoices([
-    pos15.createChoice('A) É um bug — em qualquer pipeline real, os três tipos ocorrem com frequência semelhante.'),
-    pos15.createChoice('B) Em pipelines em-ordem, as instruções são sempre lidas no estágio ID antes de escritas no WB, e cada instrução termina na mesma sequência em que foi buscada. WAR e WAW só seriam problemáticos se uma instrução posterior pudesse completar antes de uma anterior — o que não ocorre em pipelines em-ordem.'),
-    pos15.createChoice('C) WAR e WAW aparecem como zero porque o RAVEN simplifica o modelo de hazards para fins didáticos.'),
-    pos15.createChoice('D) WAR e WAW só ocorrem em programas com laços muito longos.')
+    pos15.createChoice('A) É um bug — em qualquer pipeline real, RAW, WAR e WAW tendem a aparecer com frequência semelhante sempre que várias instruções compartilham registradores.'),
+    pos15.createChoice('B) Em pipeline em ordem, as leituras acontecem antes das escritas posteriores e as instruções terminam na mesma sequência em que foram emitidas. Por isso WAR e WAW não viram stalls reais; quem gera espera de verdade é o RAW.'),
+    pos15.createChoice('C) WAR e WAW só aparecem em programas com laços muito longos ou rastros extensos; em exemplos curtos, é esperado que esses contadores permaneçam zerados.')
   ]);
 
   var pos16 = form.addMultipleChoiceItem();
-  pos16.setTitle('Questão 16 — O que o CPI mede e o que ele não mede\n\nO painel exibe "CPI: 1,85". Por que a interpretação "cada instrução demorou 1,85 segundos" está errada?');
+  pos16.setTitle('Questão 11 — O que o CPI mede e o que ele não mede\n\nO painel exibe "CPI: 1,85". Por que a interpretação "cada instrução demorou 1,85 segundos" está errada?');
   pos16.setHelpText('Nesta questão, CPI significa Cycles Per Instruction (ciclos por instrução).');
   pos16.setRequired(true);
   pos16.setChoices([
-    pos16.createChoice('A) CPI é medido em nanosegundos, não segundos.'),
-    pos16.createChoice('B) CPI (Cycles Per Instruction) é a média de ciclos de clock gastos por instrução. Um CPI de 1,85 significa que cada instrução consumiu em média 1,85 ciclos. O tempo real de execução depende também da frequência do clock (t = N × CPI / frequência) e não pode ser lido diretamente do CPI.'),
-    pos16.createChoice('C) A interpretação está parcialmente correta: ciclos modernos duram exatamente 1 nanosegundo, então o valor em ns seria numericamente o mesmo.'),
-    pos16.createChoice('D) CPI de 1,85 significa que o pipeline executou 1,85 instruções por ciclo (IPC = 1,85).')
+    pos16.createChoice('A) CPI é medido em nanosegundos, não em segundos; logo 1,85 já descreveria diretamente o tempo médio por instrução em hardware moderno.'),
+    pos16.createChoice('B) CPI é a média de ciclos de clock gastos por instrução ao longo da execução. Um CPI de 1,85 significa 1,85 ciclos por instrução em média; para virar tempo, ainda falta considerar o número de instruções e a frequência do clock.'),
+    pos16.createChoice('C) A interpretação está parcialmente correta: como ciclos modernos costumam ser muito curtos, o valor numérico do CPI pode ser lido aproximadamente como tempo em nanossegundos por instrução.'),
+    pos16.createChoice('D) CPI de 1,85 significa que o pipeline executou 1,85 instruções por ciclo, isto é, um IPC elevado apesar das bolhas e dos stalls observados.')
   ]);
 
   var pos17 = form.addMultipleChoiceItem();
-  pos17.setTitle('Questão 17 — Por que o speedup do pipeline não é linear\n\nUm pipeline de 5 estágios produz speedup real de apenas 2,8× em vez de 5×. Qual combinação de fatores explica a diferença?');
+  pos17.setTitle('Questão 12 — Por que o speedup do pipeline não é linear\n\nUm pipeline de 5 estágios produz speedup real de apenas 2,8× em vez de 5×. Qual combinação de fatores explica a diferença?');
   pos17.setRequired(true);
   pos17.setChoices([
-    pos17.createChoice('A) O speedup é limitado principalmente pelo barramento de memória.'),
-    pos17.createChoice('B) O speedup real seria 5× se o programa não contivesse instruções de branch — branches são o único fator limitante.'),
-    pos17.createChoice('C) O speedup de 5× assume que o RAVEN paraleliza apenas instruções independentes; instruções com qualquer dependência são sempre serializadas.'),
-    pos17.createChoice('D) O speedup teórico de N× assume pipeline perfeito sem overhead. Na prática, é reduzido por: (1) stalls por hazards RAW e load-use; (2) flushes por misprediction de branch; (3) miss penalties de cache; e (4) desequilíbrio entre estágios. O CPI observado reflete a soma de todos esses overheads.')
+    pos17.createChoice('A) O speedup é limitado principalmente pelo barramento de memória: sem pipeline, a memória efetiva fica relativamente mais rápida e compensa boa parte da vantagem teórica do paralelismo entre estágios.'),
+    pos17.createChoice('B) O speedup real seria 5× se o programa não tivesse branches; como há desvios, eles se tornam o único fator relevante para derrubar o ganho abaixo do valor ideal.'),
+    pos17.createChoice('C) O speedup de 5× pressupõe que apenas instruções independentes sejam sobrepostas; sempre que surge qualquer dependência, o hardware volta ao comportamento quase sequencial e perde paralelismo.'),
+    pos17.createChoice('D) O speedup ideal de N× assume um pipeline perfeito e sem overhead. Na prática, stalls de dados, flushes de controle, misses de cache e desequilíbrio entre estágios somam ciclos extras, então o ganho observado fica bem abaixo do teto teórico.')
   ]);
 
   // ─── Log final ─────────────────────────────────────────────────────────────

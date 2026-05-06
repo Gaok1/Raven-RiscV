@@ -1,5 +1,5 @@
 # C311 - D3/Q1 Config A
-# D-Cache: 16 KB, 4-way, hit latency 1, miss penalty 50.
+# D-Cache: 256 B, 2-way, hit latency 1, miss penalty 100.
 levels=0
 icache.size=4096
 icache.line_size=32
@@ -12,14 +12,14 @@ icache.hit_latency=1
 icache.miss_penalty=50
 icache.assoc_penalty=1
 icache.transfer_width=8
-dcache.size=16384
-dcache.line_size=32
-dcache.associativity=4
+dcache.size=256
+dcache.line_size=16
+dcache.associativity=2
 dcache.replacement=Lru
 dcache.write_policy=WriteBack
 dcache.write_alloc=WriteAllocate
 dcache.inclusion=NonInclusive
 dcache.hit_latency=1
-dcache.miss_penalty=50
+dcache.miss_penalty=100
 dcache.assoc_penalty=1
 dcache.transfer_width=8
