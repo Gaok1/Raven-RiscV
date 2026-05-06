@@ -94,12 +94,62 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Keys & Shortcuts",
         title_pt: "Teclas e atalhos",
         body_en: "Some Raven shortcuts are case-sensitive and some are not.\
-\n\nWhen upper and lower case mean different commands, the tutorial shows the exact key. Example: `r` runs in the Run tab while `R` restarts.\
-\n\nWhen a shortcut accepts the lowercase form, this tutorial shows it in lowercase. Example: `Ctrl+e` toggles the encoding overlay; plain `e` toggles execution count in runtime views.",
+\n\nWhen upper and lower case mean different commands, the tutorial shows the exact key. Example: `[P]` pins a register, while `[p]` runs or pauses the simulation.\
+\n\nWhen a shortcut accepts a single exact form, the tutorial uses that exact form in the highlighted key column.",
         body_pt: "Alguns atalhos do Raven diferenciam maiúsculas e minúsculas, e outros não.\
-\n\nQuando maiúscula e minúscula têm comandos diferentes, o tutorial mostra a tecla exata. Exemplo: `r` executa na aba Run enquanto `R` reinicia.\
-\n\nQuando o atalho aceita a forma minúscula, este tutorial exibe em minúsculo. Exemplo: `Ctrl+e` alterna a sobreposição de encoding; `e` sem modificador alterna a contagem de execuções nas views de runtime.",
+\n\nQuando maiúscula e minúscula têm comandos diferentes, o tutorial mostra a tecla exata. Exemplo: `[P]` fixa um registrador, enquanto `[p]` executa ou pausa a simulação.\
+\n\nQuando um atalho aceita uma forma exata, o tutorial usa exatamente essa forma na coluna destacada de teclas.",
         target: target_footer,
+        setup: None,
+    },
+    TutorialStep {
+        title_en: "Editor Hotkeys",
+        title_pt: "Hotkeys do Editor",
+        body_en: "Build and files:\
+\n[Esc] :: switch to Command mode\
+\n[Ctrl+Enter] / [F5] :: assemble and open Run\
+\n[Ctrl+o] :: open a file\
+\n[Ctrl+s] :: save or export the file\
+\n\
+\nSearch and selection:\
+\n[Ctrl+f] :: find or jump to next match\
+\n[Ctrl+h] :: open find and replace\
+\n[Ctrl+g] :: go to a line number\
+\n[Ctrl+a] :: select all\
+\n[Ctrl+w] :: select word at cursor\
+\n[Ctrl+d] :: select next occurrence\
+\n\
+\nEditing:\
+\n[Ctrl+z] / [Ctrl+y] :: undo / redo\
+\n[Ctrl+/] :: toggle line comment\
+\n[Ctrl+c] / [Ctrl+x] / [Ctrl+v] :: copy / cut / paste\
+\n[Tab] / [Shift+Tab] :: indent / unindent\
+\n[Ctrl+e] :: toggle encoding overlay\
+\n[F2] :: toggle address hints\
+\n[F12] :: go to the selected label definition",
+        body_pt: "Build e arquivos:\
+\n[Esc] :: troca para o modo Command\
+\n[Ctrl+Enter] / [F5] :: monta e abre a aba Run\
+\n[Ctrl+o] :: abre um arquivo\
+\n[Ctrl+s] :: salva ou exporta o arquivo\
+\n\
+\nBusca e seleção:\
+\n[Ctrl+f] :: busca ou vai para a próxima ocorrência\
+\n[Ctrl+h] :: abre buscar e substituir\
+\n[Ctrl+g] :: vai para um número de linha\
+\n[Ctrl+a] :: seleciona tudo\
+\n[Ctrl+w] :: seleciona a palavra no cursor\
+\n[Ctrl+d] :: seleciona a próxima ocorrência\
+\n\
+\nEdição:\
+\n[Ctrl+z] / [Ctrl+y] :: desfaz / refaz\
+\n[Ctrl+/] :: alterna comentário de linha\
+\n[Ctrl+c] / [Ctrl+x] / [Ctrl+v] :: copia / recorta / cola\
+\n[Tab] / [Shift+Tab] :: indenta / remove indentação\
+\n[Ctrl+e] :: alterna a sobreposição de encoding\
+\n[F2] :: alterna dicas de endereço\
+\n[F12] :: vai para a definição da label selecionada",
+        target: target_editor_body,
         setup: None,
     },
     TutorialStep {
@@ -128,11 +178,11 @@ pub static STEPS: &[TutorialStep] = &[
         body_en: "Import [BIN] loads an ELF binary. Import [CODE] opens a .fas (assembly) file.\
 \n\nExport [BIN] saves the compiled binary. Export [CODE] saves the source code.\
 \n\nThe [▶ RUN] and [FORMAT] buttons execute and format the code respectively.\
-\n\nCtrl+o opens a file picker for import; Ctrl+s opens one for export.",
+\n\nCtrl+o opens a file picker for import; Ctrl+s opens one for export; Ctrl+Enter or F5 assembles and switches to Run.",
         body_pt: "Import [BIN] carrega um binário ELF. Import [CODE] abre um arquivo .fas (assembly).\
 \n\nExport [BIN] salva o binário compilado. Export [CODE] salva o código-fonte.\
 \n\nOs botões [▶ RUN] e [FORMAT] executam e formatam o código respectivamente.\
-\n\nCtrl+o abre o seletor de arquivo para importação; Ctrl+s abre para exportação.",
+\n\nCtrl+o abre o seletor de arquivo para importação; Ctrl+s abre para exportação; Ctrl+Enter ou F5 montam e trocam para a aba Run.",
         target: target_actions,
         setup: None,
     },
@@ -167,16 +217,20 @@ pub static STEPS: &[TutorialStep] = &[
         title_pt: "Atalhos de edição",
         body_en: "Additional shortcuts inside the editor:\
 \n\nCtrl+h — find & replace bar (type search term, Tab to replacement field, Enter to replace).\
+\nCtrl+f — find / next match  •  Ctrl+w — select word  •  Ctrl+d — select next occurrence.\
 \nCtrl+/ — toggle line comment for the current line.\
 \n#! text — visible annotation attached to an instruction in the Run tab.\
 \n##! text — block comment shown above the next emitted instruction in the Run tab.\
-\nCtrl+a — select all  •  Ctrl+c — copy  •  Ctrl+x — cut  •  Ctrl+v — paste.",
+\nCtrl+a — select all  •  Ctrl+c — copy  •  Ctrl+x — cut  •  Ctrl+v — paste.\
+\nF2 — toggle address hints  •  F12 — jump to the selected label definition.",
         body_pt: "Atalhos adicionais dentro do editor:\
 \n\nCtrl+h — barra de busca e substituição (digite o termo, Tab para o campo de substituição, Enter para substituir).\
+\nCtrl+f — buscar / próxima ocorrência  •  Ctrl+w — selecionar palavra  •  Ctrl+d — selecionar próxima ocorrência.\
 \nCtrl+/ — alternar comentário na linha atual.\
 \n#! texto — anotação visível anexada à instrução na aba Run.\
 \n##! texto — comentário de bloco mostrado acima da próxima instrução emitida na aba Run.\
-\nCtrl+a — selecionar tudo  •  Ctrl+c — copiar  •  Ctrl+x — recortar  •  Ctrl+v — colar.",
+\nCtrl+a — selecionar tudo  •  Ctrl+c — copiar  •  Ctrl+x — recortar  •  Ctrl+v — colar.\
+\nF2 — alterna dicas de endereço  •  F12 — vai para a definição da label selecionada.",
         target: target_editor_body,
         setup: None,
     },

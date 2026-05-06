@@ -58,7 +58,7 @@ fn imem_search_ignores_non_text_labels() {
 }
 
 #[test]
-fn run_key_resumes_paused_core_even_if_fault_flag_is_set() {
+fn run_pause_key_resumes_paused_core_even_if_fault_flag_is_set() {
     let mut app = App::new(None);
     app.editor.buf.lines = vec![
         ".text".into(),
@@ -76,7 +76,7 @@ fn run_key_resumes_paused_core_even_if_fault_flag_is_set() {
     app.run.faulted = true;
     let outcome = handle_key(
         &mut app,
-        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
     )
     .expect("key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
@@ -86,7 +86,7 @@ fn run_key_resumes_paused_core_even_if_fault_flag_is_set() {
 }
 
 #[test]
-fn run_key_starts_and_stops_continuous_execution_on_run_tab() {
+fn run_pause_and_space_toggle_continuous_execution_on_run_tab() {
     let mut app = App::new(None);
     app.tab = Tab::Run;
     app.mode = EditorMode::Command;
@@ -101,21 +101,21 @@ fn run_key_starts_and_stops_continuous_execution_on_run_tab() {
 
     let outcome = handle_key(
         &mut app,
-        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
     )
     .expect("run key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(app.run.is_running, "r should start continuous execution");
+    assert!(app.run.is_running, "p should start continuous execution");
 
     let outcome = handle_key(
         &mut app,
-        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
     )
     .expect("run key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
     assert!(
         !app.run.is_running,
-        "pressing r again should stop continuous execution"
+        "space should stop continuous execution when already running"
     );
 }
 
@@ -358,7 +358,7 @@ fn run_r_key_restarts_after_exit() {
     .expect("r handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(app.run.is_running);
+    assert!(!app.run.is_running);
     assert_eq!(app.run.cpu.exit_code, None);
     assert_eq!(app.run.cpu.pc, app.run.base_pc);
 }

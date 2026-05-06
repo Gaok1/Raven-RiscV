@@ -141,6 +141,52 @@ fn setup_config(app: &mut App) {
 
 pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
+        title_en: "Pipeline Hotkeys",
+        title_pt: "Hotkeys do Pipeline",
+        body_en: "General:\
+\n[Tab] :: switch Main / Config\
+\n[[ / ]] :: switch selected core / hart\
+\n[s] :: step one cycle\
+\n[p] / [Space] :: toggle run / pause on Main\
+\n[r] :: restart the simulation\
+\n[f] :: cycle speed\
+\n[e] :: enable or disable the pipeline\
+\n[b] :: cycle branch resolve stage: ID -> EX -> MEM\
+\n\
+\nMain:\
+\n[↑/↓] :: scroll gantt and history\
+\n[PageUp/PageDown] :: page through gantt and history\
+\n\
+\nConfig and files:\
+\n[↑/↓] :: move the config cursor\
+\n[Enter] :: toggle or cycle the selected option\
+\n[Ctrl+e] :: export config\
+\n[Ctrl+l] :: import config\
+\n[Ctrl+r] :: export results",
+        body_pt: "Geral:\
+\n[Tab] :: alterna entre Main / Config\
+\n[[ / ]] :: trocam o core / hart selecionado\
+\n[s] :: passo único de ciclo\
+\n[p] / [Espaço] :: alterna executar / pausar na Main\
+\n[r] :: reinicia a simulação\
+\n[f] :: cicla a velocidade\
+\n[e] :: liga ou desliga o pipeline\
+\n[b] :: cicla o estágio de resolução de branch: ID -> EX -> MEM\
+\n\
+\nMain:\
+\n[↑/↓] :: rolam o gantt e o histórico\
+\n[PageUp/PageDown] :: avançam páginas no gantt e histórico\
+\n\
+\nConfig e arquivos:\
+\n[↑/↓] :: movem o cursor de configuração\
+\n[Enter] :: alterna ou cicla a opção selecionada\
+\n[Ctrl+e] :: exporta a config\
+\n[Ctrl+l] :: importa a config\
+\n[Ctrl+r] :: exporta os resultados",
+        target: target_controls,
+        setup: Some(setup_main),
+    },
+    TutorialStep {
         title_en: "Pipeline Tabs & Core",
         title_pt: "Pipeline Tabs & Core",
         body_en: "The top bar switches between Main and Config. The Core selector lets you inspect the pipeline of a specific core/hart pair.\

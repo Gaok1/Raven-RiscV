@@ -1,7 +1,8 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    text::{Line, Span, Text},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
 use super::get_steps;
@@ -39,7 +40,7 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     // Compute popup size
     let max_w: u16 = 64.min(term.width.saturating_sub(2));
     let inner_w = max_w.saturating_sub(2) as usize;
-    let body_lines = wrap_text(body, inner_w);
+    let body_lines = format_tutorial_lines(body, inner_w);
     let popup_h: u16 = (body_lines.len() as u16) + 6; // 2 border + 1 title + 1 blank + 1 nav + 1 blank
     let popup_h = popup_h.min(term.height.saturating_sub(2));
     let popup_w = max_w;
@@ -70,9 +71,8 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
         height: inner.height.saturating_sub(2),
     };
     f.render_widget(
-        Paragraph::new(body)
-            .style(Style::default().fg(theme::TEXT))
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(Text::from(body_lines))
+            .style(Style::default().fg(theme::TEXT)),
         body_area,
     );
 
@@ -101,33 +101,199 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     );
 }
 
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
+fn format_tutorial_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return vec![Line::raw(text.to_string())];
+    }
+    let hotkey_col_width = detect_hotkey_column_width(text, width);
+    let mut lines = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim_end();
+        if line.is_empty() {
+            lines.push(Line::raw(String::new()));
+            continue;
+        }
+
+        if let Some((lhs, rhs)) = line.split_once("::") {
+            push_hotkey_lines(&mut lines, lhs.trim(), rhs.trim(), width, hotkey_col_width);
+            continue;
+        }
+
+        if line.ends_with(':') {
+            lines.push(Line::from(vec![Span::styled(
+                line.to_string(),
+                Style::default().fg(theme::LABEL_Y).bold(),
+            )]));
+            continue;
+        }
+
+        wrap_styled_line(&mut lines, line, width, Style::default().fg(theme::TEXT));
+    }
+    lines
+}
+
+fn detect_hotkey_column_width(text: &str, width: usize) -> usize {
+    let max_lhs = text
+        .lines()
+        .filter_map(|line| line.split_once("::").map(|(lhs, _)| lhs.trim()))
+        .map(str_width)
+        .max()
+        .unwrap_or(0);
+    max_lhs.min(width.saturating_div(2).max(12))
+}
+
+fn push_hotkey_lines(
+    lines: &mut Vec<Line<'static>>,
+    lhs: &str,
+    rhs: &str,
+    width: usize,
+    hotkey_col_width: usize,
+) {
+    let gap = 2usize;
+    let rhs_width = width.saturating_sub(hotkey_col_width + gap);
+    let wrapped_rhs = wrap_words(rhs, rhs_width.max(12));
+    let hotkey_style = Style::default().fg(theme::HOVER_FG).bg(theme::ACCENT).bold();
+
+    for (idx, chunk) in wrapped_rhs.iter().enumerate() {
+        if idx == 0 {
+            let padded = format!("{lhs:<hotkey_col_width$}");
+            lines.push(Line::from(vec![
+                Span::styled(padded, hotkey_style),
+                Span::raw("  "),
+                Span::styled(chunk.clone(), Style::default().fg(theme::TEXT)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(hotkey_col_width)),
+                Span::raw("  "),
+                Span::styled(chunk.clone(), Style::default().fg(theme::TEXT)),
+            ]));
+        }
+    }
+}
+
+fn wrap_styled_line(
+    out: &mut Vec<Line<'static>>,
+    text: &str,
+    width: usize,
+    base_style: Style,
+) {
+    let mut current_words: Vec<&str> = Vec::new();
+    let mut current_width = 0usize;
+
+    for word in text.split_whitespace() {
+        let word_width = str_width(word);
+        let next_width = if current_words.is_empty() {
+            word_width
+        } else {
+            current_width + 1 + word_width
+        };
+
+        if !current_words.is_empty() && next_width > width {
+            out.push(make_styled_line(&current_words.join(" "), base_style));
+            current_words.clear();
+            current_width = 0;
+        }
+
+        if !current_words.is_empty() {
+            current_width += 1;
+        }
+        current_words.push(word);
+        current_width += word_width;
+    }
+
+    if !current_words.is_empty() {
+        out.push(make_styled_line(&current_words.join(" "), base_style));
+    }
+}
+
+fn make_styled_line(text: &str, base_style: Style) -> Line<'static> {
+    let mut spans = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        if chars[i] == '[' {
+            if let Some(end) = chars[i..].iter().position(|&c| c == ']') {
+                let token: String = chars[i..=i + end].iter().collect();
+                spans.push(Span::styled(
+                    token,
+                    Style::default().fg(theme::HOVER_FG).bg(theme::ACCENT).bold(),
+                ));
+                i += end + 1;
+                continue;
+            }
+        }
+
+        if chars[i] == '`' {
+            if let Some(end) = chars[i + 1..].iter().position(|&c| c == '`') {
+                let token: String = chars[i + 1..i + 1 + end].iter().collect();
+                spans.push(Span::styled(
+                    token,
+                    Style::default().fg(theme::LABEL_Y).bold(),
+                ));
+                i += end + 2;
+                continue;
+            }
+        }
+
+        let next_special = chars[i..]
+            .iter()
+            .position(|&c| c == '[' || c == '`')
+            .map(|pos| i + pos)
+            .unwrap_or(chars.len());
+        let plain: String = chars[i..next_special].iter().collect();
+        spans.push(Span::styled(plain, base_style));
+        i = next_special;
+    }
+
+    Line::from(spans)
+}
+
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
     }
+
     let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        if paragraph.is_empty() {
-            lines.push(String::new());
-            continue;
-        }
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            if current.is_empty() {
-                current = word.to_string();
-            } else if current.len() + 1 + word.len() <= width {
-                current.push(' ');
-                current.push_str(word);
-            } else {
-                lines.push(current.clone());
-                current = word.to_string();
-            }
-        }
-        if !current.is_empty() {
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for word in text.split_whitespace() {
+        let word_width = str_width(word);
+        let next_width = if current.is_empty() {
+            word_width
+        } else {
+            current_width + 1 + word_width
+        };
+
+        if !current.is_empty() && next_width > width {
             lines.push(current);
+            current = String::new();
+            current_width = 0;
         }
+
+        if !current.is_empty() {
+            current.push(' ');
+            current_width += 1;
+        }
+        current.push_str(word);
+        current_width += word_width;
     }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
     lines
+}
+
+fn str_width(text: &str) -> usize {
+    text.chars().count()
 }
 
 /// Try positions: below → above → right → left → centered.

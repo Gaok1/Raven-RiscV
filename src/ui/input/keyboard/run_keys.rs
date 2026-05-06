@@ -21,16 +21,12 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
             true
         }
         KeyCode::Char('r') => {
+            app.restart_simulation();
+            true
+        }
+        KeyCode::Char('p') | KeyCode::Char(' ') => {
             if app.run.is_running {
                 app.run.is_running = false;
-            } else if matches!(
-                app.core_status(app.selected_core),
-                crate::ui::app::HartLifecycle::Exited
-            ) {
-                app.restart_simulation();
-                if app.can_start_run() {
-                    app.run.is_running = true;
-                }
             } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
                 || !app.run.faulted
             {
@@ -38,12 +34,6 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
                 if app.can_start_run() {
                     app.run.is_running = true;
                 }
-            }
-            true
-        }
-        KeyCode::Char('p') => {
-            if app.run.is_running {
-                app.run.is_running = false;
             }
             true
         }

@@ -13,7 +13,7 @@ base: .space 320          # 5 blocos separados por 64 bytes cabem aqui
     addi t4, t0, 192      # D
     addi t5, t0, 256      # E
 
-    li   s0, 6000
+    li   s0, 200
 
 loop:
     lw   a0, 0(t1)     #! A

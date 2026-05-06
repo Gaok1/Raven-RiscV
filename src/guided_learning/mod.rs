@@ -15,19 +15,18 @@ use crate::ui::{App, Tab, apply_fcache_text, apply_pcfg_text, apply_rcfg_text};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GuidedPreset {
-    // D1 — Pipeline Hazards
-    D1_01, // independent instructions   (R100 + P100 + D101)
-    D1_02, // RAW dependency chain        (R100 + P100 + D102)
+    // D1 — Pipeline, Stalls e Forwarding
+    D1_01, // independent instructions        (R100 + P100 + D101)
+    D1_02, // RAW chain — forwarding OFF       (R100 + P102 + D102)
     // D2 — Load-use / Flush
     D2_01, // load-use stall              (R100 + P100 + D201)
     D2_02, // control flush               (R100 + P100 + D202)
     // D3 — Cache & AMAT
-    D3_01, // AMAT config A 16KB lru      (R300 + P101 + C311 + D301)
-    D3_02, // AMAT config B 64KB lru      (R300 + P101 + C312 + D301)
+    D3_01, // AMAT config A 256B lru      (R300 + P101 + C311 + D301b)
+    D3_02, // AMAT config B 1KB lru       (R300 + P101 + C312 + D301b)
     D3_03, // streaming LRU               (R300 + P101 + C321 + D301)
     D3_04, // streaming FIFO              (R300 + P101 + C322 + D301)
     D3_05, // thrashing 2-way             (R300 + P101 + C331 + D302)
-    D3_06, // thrashing 8-way             (R300 + P101 + C332 + D302)
     // D4 — Encoding
     D4_01, // R-type vs S-type            (R100 + P101 + D401)
     // D5 — Multi-core
@@ -50,7 +49,6 @@ impl GuidedPreset {
             Self::D3_03 => "D3-03",
             Self::D3_04 => "D3-04",
             Self::D3_05 => "D3-05",
-            Self::D3_06 => "D3-06",
             Self::D4_01 => "D4-01",
             Self::D5_01 => "D5-01",
             Self::D6_01 => "D6-01",
@@ -62,15 +60,14 @@ impl GuidedPreset {
     pub fn description(self) -> &'static str {
         match self {
             Self::D1_01 => "instrucoes independentes",
-            Self::D1_02 => "cadeia de dependencias RAW",
+            Self::D1_02 => "RAW sem forwarding — stalls visiveis",
             Self::D2_01 => "load-use stall",
             Self::D2_02 => "flush por desvio de controle",
-            Self::D3_01 => "AMAT config A  (16 KB, hit=1)",
-            Self::D3_02 => "AMAT config B  (64 KB, hit=4)",
+            Self::D3_01 => "AMAT config A  (256 B, hit=1)",
+            Self::D3_02 => "AMAT config B  (1 KB, hit=4)",
             Self::D3_03 => "streaming com LRU",
             Self::D3_04 => "streaming com FIFO",
             Self::D3_05 => "thrashing 2-way (conflito)",
-            Self::D3_06 => "thrashing 8-way (resolvido)",
             Self::D4_01 => "R-type vs S-type",
             Self::D5_01 => "2 cores com registradores independentes",
             Self::D6_01 => "sem pipeline — referencia",
@@ -85,9 +82,14 @@ impl GuidedPreset {
             | Self::D3_02
             | Self::D3_03
             | Self::D3_04
-            | Self::D3_05
-            | Self::D3_06 => Tab::Cache,
-            Self::D5_01 => Tab::Run,
+            | Self::D3_05 => Tab::Cache,
+            // D1, D4, D5, D6 — CPI and instruction decode live in the Run tab
+            Self::D1_01
+            | Self::D1_02
+            | Self::D4_01
+            | Self::D5_01
+            | Self::D6_01
+            | Self::D6_02 => Tab::Run,
             _ => Tab::Pipeline,
         }
     }
@@ -104,7 +106,6 @@ impl GuidedPreset {
             Self::D3_03,
             Self::D3_04,
             Self::D3_05,
-            Self::D3_06,
             Self::D4_01,
             Self::D5_01,
             Self::D6_01,
@@ -157,8 +158,7 @@ pub fn apply_preset(app: &mut App, preset: GuidedPreset) -> Result<(), String> {
         | GuidedPreset::D3_02
         | GuidedPreset::D3_03
         | GuidedPreset::D3_04
-        | GuidedPreset::D3_05
-        | GuidedPreset::D3_06 => R300,
+        | GuidedPreset::D3_05 => R300,
         GuidedPreset::D5_01 => R500,
         _ => R100,
     };
@@ -167,10 +167,10 @@ pub fn apply_preset(app: &mut App, preset: GuidedPreset) -> Result<(), String> {
     // 2. Apply pipeline config (.pcfg)
     let pcfg_text = match preset {
         GuidedPreset::D1_01
-        | GuidedPreset::D1_02
         | GuidedPreset::D2_01
         | GuidedPreset::D2_02
         | GuidedPreset::D6_02 => P100,
+        GuidedPreset::D1_02 => P102,
         _ => P101,
     };
     apply_pcfg_text(app, pcfg_text)?;
@@ -182,7 +182,6 @@ pub fn apply_preset(app: &mut App, preset: GuidedPreset) -> Result<(), String> {
         GuidedPreset::D3_03 => apply_fcache_text(app, C321)?,
         GuidedPreset::D3_04 => apply_fcache_text(app, C322)?,
         GuidedPreset::D3_05 => apply_fcache_text(app, C331)?,
-        GuidedPreset::D3_06 => apply_fcache_text(app, C332)?,
         _ => {}
     }
 
@@ -192,11 +191,9 @@ pub fn apply_preset(app: &mut App, preset: GuidedPreset) -> Result<(), String> {
         GuidedPreset::D1_02 | GuidedPreset::D6_01 | GuidedPreset::D6_02 => D102,
         GuidedPreset::D2_01 => D201,
         GuidedPreset::D2_02 => D202,
-        GuidedPreset::D3_01
-        | GuidedPreset::D3_02
-        | GuidedPreset::D3_03
-        | GuidedPreset::D3_04 => D301,
-        GuidedPreset::D3_05 | GuidedPreset::D3_06 => D302,
+        GuidedPreset::D3_01 | GuidedPreset::D3_02 => D301B,
+        GuidedPreset::D3_03 | GuidedPreset::D3_04 => D301,
+        GuidedPreset::D3_05 => D302,
         GuidedPreset::D4_01 => D401,
         GuidedPreset::D5_01 => D501,
     };

@@ -19,6 +19,6 @@ dcache.write_policy=WriteBack
 dcache.write_alloc=WriteAllocate
 dcache.inclusion=NonInclusive
 dcache.hit_latency=1
-dcache.miss_penalty=100
+dcache.miss_penalty=10
 dcache.assoc_penalty=1
 dcache.transfer_width=8

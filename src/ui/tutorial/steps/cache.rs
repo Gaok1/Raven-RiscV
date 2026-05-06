@@ -160,6 +160,74 @@ fn setup_config(app: &mut App) {
 
 pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
+        title_en: "Cache Hotkeys",
+        title_pt: "Hotkeys do Cache",
+        body_en: "General:\
+\n[Tab] :: switch Stats / View / Config\
+\n[[ / ]] :: switch selected core / hart\
+\n[+/-] :: add or remove cache levels\
+\n[r] :: restart the simulation\
+\n[p] / [Space] :: toggle run / pause\
+\n[f] :: cycle speed\
+\n[i] / [d] / [b] :: choose I / D / Both scope\
+\n[v] :: cycle Registers / RAM / Dyn\
+\n[k] :: cycle RAM region\
+\n[e] :: toggle execution-count heatmap\
+\n[y] :: toggle instruction-type badges\
+\n\
+\nStats:\
+\n[s] :: capture a snapshot baseline\
+\n[d] :: delete the selected snapshot\
+\n[Enter] :: inspect the selected snapshot\
+\n\
+\nView:\
+\n[m] :: cycle data format\
+\n[g] :: cycle byte grouping\
+\n[t] :: cycle address mode\
+\n[↑/↓/←/→] :: scroll the cache view\
+\n\
+\nConfig and files:\
+\n[↑/↓] :: move between config fields\
+\n[Enter] :: edit or apply the selected field\
+\n[0-9] / [Backspace] / [Esc] :: edit, erase or cancel numeric input\
+\n[Ctrl+e] :: export config\
+\n[Ctrl+l] :: import config\
+\n[Ctrl+r] :: export results",
+        body_pt: "Geral:\
+\n[Tab] :: alterna entre Stats / View / Config\
+\n[[ / ]] :: trocam o core / hart selecionado\
+\n[+/-] :: adicionam ou removem níveis de cache\
+\n[r] :: reinicia a simulação\
+\n[p] / [Espaço] :: alterna executar / pausar\
+\n[f] :: cicla a velocidade\
+\n[i] / [d] / [b] :: escolhem o escopo I / D / Both\
+\n[v] :: alterna Registradores / RAM / Dyn\
+\n[k] :: troca a região da RAM\
+\n[e] :: alterna o heatmap de execuções\
+\n[y] :: alterna badges de tipo de instrução\
+\n\
+\nStats:\
+\n[s] :: captura um snapshot baseline\
+\n[d] :: remove o snapshot selecionado\
+\n[Enter] :: inspeciona o snapshot selecionado\
+\n\
+\nView:\
+\n[m] :: cicla o formato dos dados\
+\n[g] :: cicla o agrupamento de bytes\
+\n[t] :: cicla o modo de endereço\
+\n[↑/↓/←/→] :: rolam a visualização de cache\
+\n\
+\nConfig e arquivos:\
+\n[↑/↓] :: movem entre campos de configuração\
+\n[Enter] :: edita ou aplica o campo selecionado\
+\n[0-9] / [Backspace] / [Esc] :: editam, apagam ou cancelam entrada numérica\
+\n[Ctrl+e] :: exporta a config\
+\n[Ctrl+l] :: importa a config\
+\n[Ctrl+r] :: exporta os resultados",
+        target: target_subtab_and_content,
+        setup: None,
+    },
+    TutorialStep {
         title_en: "Level Selector",
         title_pt: "Seletor de nível",
         body_en: "This bar selects the cache level to configure: L1 (always present), L2, L3 and so on.\
@@ -299,9 +367,11 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Controls Bar",
         title_pt: "Barra de controles",
         body_en: "Bottom bar with global actions: [Export Results] saves statistics as .fstats or .csv, [Export Config] and [Import Config] save/load cache configurations as .fcache.\
-\n\nThe scope buttons [I] [D] [Both] filter which cache is shown in the Stats and View subtabs.",
+\n\nThe scope buttons [I] [D] [Both] filter which cache is shown in the Stats and View subtabs.\
+\n\nKeyboard equivalents: Ctrl+e exports config, Ctrl+l imports config, Ctrl+r exports results.",
         body_pt: "Barra inferior com ações globais: [Export Results] salva estatísticas em .fstats ou .csv, [Export Config] e [Import Config] salvam/carregam configurações de cache em .fcache.\
-\n\nOs botões de escopo [I] [D] [Both] filtram qual cache é mostrada nas subtabs Stats e View.",
+\n\nOs botões de escopo [I] [D] [Both] filtram qual cache é mostrada nas subtabs Stats e View.\
+\n\nEquivalentes no teclado: Ctrl+e exporta config, Ctrl+l importa config, Ctrl+r exporta resultados.",
         target: target_controls_bar,
         setup: None,
     },

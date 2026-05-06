@@ -25,6 +25,12 @@ fn run_inner(
         EnableMouseCapture,
         EnableBracketedPaste
     )?;
+    // Kitty keyboard protocol — lets the terminal distinguish Ctrl+Enter from Enter.
+    // Silently ignored on terminals that don't support it.
+    let _ = execute!(
+        terminal.backend_mut(),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
     let mut last_draw = Instant::now();
     loop {
         #[cfg(unix)]
@@ -80,6 +86,7 @@ fn run_inner(
             last_draw = Instant::now();
         }
     }
+    let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     execute!(
         terminal.backend_mut(),
         DisableMouseCapture,

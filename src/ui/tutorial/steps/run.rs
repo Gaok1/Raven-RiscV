@@ -172,12 +172,64 @@ fn setup_show_dyn(app: &mut App) {
 
 pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
+        title_en: "Run Hotkeys",
+        title_pt: "Hotkeys do Run",
+        body_en: "Execution:\
+\n[s] :: step one instruction\
+\n[p] / [Space] :: toggle run / pause\
+\n[r] :: restart the simulation\
+\n[f] :: cycle speed: 1x -> 2x -> 4x -> 8x -> GO\
+\n\
+\nNavigation:\
+\n[v] :: cycle sidebar mode: Registers / RAM / Dyn\
+\n[k] :: cycle RAM region\
+\n[[ / ]] :: switch selected core / hart\
+\n[Ctrl+g] :: search instruction or label\
+\n[Ctrl+f] :: jump to a memory address\
+\n[Ctrl+↑/↓] :: scroll the console\
+\n\
+\nPanels:\
+\n[↑/↓/PageUp/PageDown] :: scroll registers or RAM\
+\n[Enter] :: next match in instruction search\
+\n[Tab] :: switch integer / float register bank\
+\n[P] :: pin or unpin the selected integer register\
+\n[t] :: toggle trace\
+\n[e] :: toggle execution-count heatmap\
+\n[y] :: toggle instruction-type badges\
+\n[F9] :: toggle breakpoint on hovered / current instruction",
+        body_pt: "Execução:\
+\n[s] :: passo único\
+\n[p] / [Espaço] :: alterna executar / pausar\
+\n[r] :: reinicia a simulação\
+\n[f] :: cicla a velocidade: 1x -> 2x -> 4x -> 8x -> GO\
+\n\
+\nNavegação:\
+\n[v] :: alterna o sidebar: Registradores / RAM / Dyn\
+\n[k] :: troca a região da RAM\
+\n[[ / ]] :: trocam o core / hart selecionado\
+\n[Ctrl+g] :: busca instrução ou label\
+\n[Ctrl+f] :: pula para um endereço de memória\
+\n[Ctrl+↑/↓] :: rola o console\
+\n\
+\nPainéis:\
+\n[↑/↓/PageUp/PageDown] :: rolam registradores ou RAM\
+\n[Enter] :: próxima ocorrência na busca de instrução\
+\n[Tab] :: alterna banco de registradores inteiro / float\
+\n[P] :: fixa ou desfaz o pin do registrador inteiro selecionado\
+\n[t] :: alterna o trace\
+\n[e] :: alterna o heatmap de contagem de execuções\
+\n[y] :: alterna badges de tipo de instrução\
+\n[F9] :: alterna breakpoint na instrução atual / sob hover",
+        target: target_controls,
+        setup: None,
+    },
+    TutorialStep {
         title_en: "Execution Controls",
         title_pt: "Controles de execução",
-        body_en: "Control bar at the top: buttons [s] Step, [r] Run/Stop, [p] Pause, [R] Restart.\
+        body_en: "Control bar at the top: buttons [s] Step, [p] Run/Pause, [r] Restart.\
 \n\nThe Speed button controls the rate: 1x → 2x → 4x → 8x → GO (maximum speed).\
 \n\nThe State indicator shows whether the simulator is RUN or PAUSE.",
-        body_pt: "Barra de controles no topo: botões [s] Step, [r] Run/Stop, [p] Pause, [R] Restart.\
+        body_pt: "Barra de controles no topo: botões [s] Step, [p] Run/Pause, [r] Restart.\
 \n\nO botão Speed controla a velocidade: 1x → 2x → 4x → 8x → GO (máxima velocidade).\
 \n\nO indicador State mostra se o simulador está RUN ou PAUSE.",
         target: target_controls,

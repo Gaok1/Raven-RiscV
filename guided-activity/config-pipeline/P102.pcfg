@@ -1,0 +1,18 @@
+# RAVEN pipeline profile P102
+# Pipeline habilitado, forwarding DESATIVADO.
+# Usado em D1-02 para mostrar stalls RAW sem bypass.
+enabled=true
+bypass.ex_to_ex=false
+bypass.mem_to_ex=false
+bypass.wb_to_id=false
+bypass.store_to_load=false
+mode=Serialized
+fu.alu=1
+fu.mul=1
+fu.div=1
+fu.fpu=1
+fu.lsu=1
+fu.sys=1
+branch_resolve=Ex
+predict=NotTaken
+speed=Normal

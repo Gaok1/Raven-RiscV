@@ -11,11 +11,11 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) -> b
         return true;
     }
 
-    if handle_insert_readonly_guard(app, key) {
+    if handle_common_shortcuts(app, key, ctrl) {
         return true;
     }
 
-    if handle_common_shortcuts(app, key, ctrl) {
+    if handle_insert_readonly_guard(app, key) {
         return true;
     }
 
