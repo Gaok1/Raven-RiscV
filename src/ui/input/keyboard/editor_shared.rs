@@ -1,6 +1,6 @@
 use crate::ui::app::{App, PathInputAction, Tab};
+use crate::ui::platform::OSFileDialog;
 use crossterm::event::{KeyCode, KeyEvent};
-use rfd::FileDialog as OSFileDialog;
 use std::time::Instant;
 
 use super::paste::paste_editor;
