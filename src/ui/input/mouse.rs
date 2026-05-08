@@ -815,6 +815,11 @@ fn update_imem_hover(app: &mut App, me: MouseEvent, area: Rect) {
 /// accounting for block_comment/label rows.  `skip` = header rows hidden at the top of
 /// the first block (matches the value returned by `imem_addr_skip_for_scroll`).
 fn addr_at_visual_row(base: u32, skip: usize, target_row: usize, app: &App) -> Option<u32> {
+    if let Some(region) = app.active_imem_exec_region() {
+        let addr = base.saturating_add((target_row as u32).saturating_mul(4));
+        return if addr < region.end { Some(addr) } else { None };
+    }
+
     let mem_end = if let Some(text) = &app.editor.last_ok_text {
         app.run
             .base_pc

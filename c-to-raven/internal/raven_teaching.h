@@ -191,6 +191,10 @@ static inline int raven_strcmp(const char *s1, const char *s2) {
     return ret;
 }
 
+static inline int raven_map_exec(void *addr, size_t len) {
+    return __sys_raven_map_exec(addr, len);
+}
+
 typedef void (*raven_hart_fn)(unsigned int arg);
 
 // ── Internal payload ──────────────────────────────────────────────────────────

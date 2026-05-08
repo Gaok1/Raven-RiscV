@@ -6,7 +6,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
 use super::App;
-use super::memory::imem_address_in_range;
+use super::memory::exec_address_in_range;
 use super::registers::reg_name;
 
 // ── Public entry point ───────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ fn detail_context(app: &App) -> DetailContext {
     let (addr, word, origin) = if let Some(addr) = app.run.hover_imem_addr {
         let word = app.run.mem.peek32(addr).unwrap_or(0);
         (addr, word, "hover")
-    } else if imem_address_in_range(app, app.run.cpu.pc) {
+    } else if exec_address_in_range(app, app.run.cpu.pc) {
         let word = app.run.mem.peek32(app.run.cpu.pc).unwrap_or(0);
         (app.run.cpu.pc, word, "PC")
     } else {
@@ -162,8 +162,13 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
 
     // Compute base CPI cycles for current instruction
     let cpi = &app.run.cpi_config;
-    let base_cycles =
-        crate::ui::app::classify_cpi_for_display(ctx.word, ctx.addr, &app.run.cpu, cpi, app.pipeline.enabled);
+    let base_cycles = crate::ui::app::classify_cpi_for_display(
+        ctx.word,
+        ctx.addr,
+        &app.run.cpu,
+        cpi,
+        app.pipeline.enabled,
+    );
     let class_label = cpi_class_label(ctx.word);
 
     let mut lines = vec![

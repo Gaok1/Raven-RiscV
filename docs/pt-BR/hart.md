@@ -53,7 +53,7 @@ Use a syscall `1100` (`hart_start`) para criar um novo hart.
 |------|-------------------------------------------------|
 | ≥ 0  | ID de hart atribuído pelo simulador             |
 | −1   | Nenhum slot de núcleo livre disponível          |
-| −2   | PC de entrada está fora do programa carregado   |
+| −2   | PC de entrada está fora de toda região executável |
 | −3   | Stack pointer inválido (zero, não alinhado a 16 bytes, ou fora da memória) |
 
 O novo hart inicia com um banco de registradores limpo, exceto `sp` (definido como `a1`) e `a0` (definido como `a2`). Todos os outros registradores começam em zero.

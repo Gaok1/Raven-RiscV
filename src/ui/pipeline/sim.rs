@@ -1674,13 +1674,14 @@ fn detect_stall(
                         }
                     }
                     // Also check fu_bank producers in FunctionalUnits mode
-                    if found.is_none()
-                        && matches!(state.mode, super::PipelineMode::FunctionalUnits)
+                    if found.is_none() && matches!(state.mode, super::PipelineMode::FunctionalUnits)
                     {
                         'fu_abi: for fu_group in &state.fu_bank {
                             for fu in fu_group {
                                 let Some(p) = fu.slot.as_ref() else { continue };
-                                if p.is_bubble { continue; }
+                                if p.is_bubble {
+                                    continue;
+                                }
                                 let fu_label = fu.kind.map_or("FU", |k| k.label());
                                 if forwarding::slot_has_wb_only_syscall_result(p) {
                                     found = Some((
@@ -1695,15 +1696,22 @@ fn detect_stall(
                                             format!(
                                                 "{} -> {}",
                                                 p.disasm.split_whitespace().next().unwrap_or("?"),
-                                                id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                                id_s.disasm
+                                                    .split_whitespace()
+                                                    .next()
+                                                    .unwrap_or("?")
                                             ),
                                         )),
                                     ));
                                     break 'fu_abi;
                                 }
                                 if matches!(id_s.instr, Some(Instruction::Ecall)) {
-                                    if let Some((prod_file, prod_rd)) = forwarding::slot_destination(p) {
-                                        if prod_file == forwarding::RegFile::Int && prod_rd == arg_reg {
+                                    if let Some((prod_file, prod_rd)) =
+                                        forwarding::slot_destination(p)
+                                    {
+                                        if prod_file == forwarding::RegFile::Int
+                                            && prod_rd == arg_reg
+                                        {
                                             found = Some((
                                                 HazardType::Raw,
                                                 format!(
@@ -1715,8 +1723,14 @@ fn detect_stall(
                                                     Stage::ID as usize,
                                                     format!(
                                                         "{} -> {}",
-                                                        p.disasm.split_whitespace().next().unwrap_or("?"),
-                                                        id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                                        p.disasm
+                                                            .split_whitespace()
+                                                            .next()
+                                                            .unwrap_or("?"),
+                                                        id_s.disasm
+                                                            .split_whitespace()
+                                                            .next()
+                                                            .unwrap_or("?")
                                                     ),
                                                 )),
                                             ));
@@ -1795,13 +1809,14 @@ fn detect_stall(
                         }
                     }
                     // Also check fu_bank in FunctionalUnits mode
-                    if found.is_none()
-                        && matches!(state.mode, super::PipelineMode::FunctionalUnits)
+                    if found.is_none() && matches!(state.mode, super::PipelineMode::FunctionalUnits)
                     {
                         'fu_sr: for fu_group in &state.fu_bank {
                             for fu in fu_group {
                                 let Some(p) = fu.slot.as_ref() else { continue };
-                                if p.is_bubble { continue; }
+                                if p.is_bubble {
+                                    continue;
+                                }
                                 if forwarding::slot_has_wb_only_syscall_result(p) {
                                     let fu_label = fu.kind.map_or("FU", |k| k.label());
                                     found = Some((
@@ -1816,7 +1831,10 @@ fn detect_stall(
                                             format!(
                                                 "{} -> {}",
                                                 p.disasm.split_whitespace().next().unwrap_or("?"),
-                                                id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                                id_s.disasm
+                                                    .split_whitespace()
+                                                    .next()
+                                                    .unwrap_or("?")
                                             ),
                                         )),
                                     ));
@@ -1866,7 +1884,10 @@ fn detect_stall(
                     if forwarding::slot_reads_register(id_s, prod_file, ex_rd) {
                         result = Some((
                             HazardType::LoadUse,
-                            format!("load-use: ID uses {} written by load in EX", reg_name(ex_rd)),
+                            format!(
+                                "load-use: ID uses {} written by load in EX",
+                                reg_name(ex_rd)
+                            ),
                             Some((
                                 Stage::EX as usize,
                                 Stage::ID as usize,
@@ -1888,13 +1909,17 @@ fn detect_stall(
             if let Some(id_s) = id {
                 if !id_s.is_bubble {
                     'lsu_lu: for fu in &state.fu_bank[FuKind::Lsu.index()] {
-                        let Some(lsu_slot) = fu.slot.as_ref() else { continue };
+                        let Some(lsu_slot) = fu.slot.as_ref() else {
+                            continue;
+                        };
                         if lsu_slot.is_bubble || !forwarding::slot_has_late_mem_result(lsu_slot) {
                             continue;
                         }
                         // Load in LSU with exactly 1 cycle left: value only available after MEM
                         if lsu_slot.fu_cycles_left <= 1 {
-                            if let Some((prod_file, lsu_rd)) = forwarding::slot_destination(lsu_slot) {
+                            if let Some((prod_file, lsu_rd)) =
+                                forwarding::slot_destination(lsu_slot)
+                            {
                                 if forwarding::slot_reads_register(id_s, prod_file, lsu_rd) {
                                     result = Some((
                                         HazardType::LoadUse,
@@ -1907,8 +1932,15 @@ fn detect_stall(
                                             Stage::ID as usize,
                                             format!(
                                                 "{} -> {}",
-                                                lsu_slot.disasm.split_whitespace().next().unwrap_or("?"),
-                                                id_s.disasm.split_whitespace().next().unwrap_or("?")
+                                                lsu_slot
+                                                    .disasm
+                                                    .split_whitespace()
+                                                    .next()
+                                                    .unwrap_or("?"),
+                                                id_s.disasm
+                                                    .split_whitespace()
+                                                    .next()
+                                                    .unwrap_or("?")
                                             ),
                                         )),
                                     ));
@@ -2263,11 +2295,7 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                 };
                 let msg = format!(
                     "WAW: {} in {} and {} in {} both write {}",
-                    writers[j].3,
-                    writers[j].4,
-                    writers[i].3,
-                    writers[i].4,
-                    dest_name,
+                    writers[j].3, writers[j].4, writers[i].3, writers[i].4, dest_name,
                 );
                 state.hazard_msgs.push((HazardType::Waw, msg));
                 push_trace(
@@ -2305,11 +2333,7 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                 };
                 let msg = format!(
                     "WAR: {} in {} writes {} read by {} in {}",
-                    w_name,
-                    w_label,
-                    dest_name,
-                    r_name,
-                    r_label,
+                    w_name, w_label, dest_name, r_name, r_label,
                 );
                 state.hazard_msgs.push((HazardType::War, msg));
                 push_trace(
@@ -2525,7 +2549,9 @@ fn advance_stages(
         // in-flight stages are empty (i.e. the previous instruction has
         // fully committed from WB).
         let ok_to_fetch = !state.sequential_mode
-            || state.stages[1..].iter().all(|s| s.as_ref().map_or(true, |slot| slot.is_bubble));
+            || state.stages[1..]
+                .iter()
+                .all(|s| s.as_ref().map_or(true, |slot| slot.is_bubble));
         if ok_to_fetch {
             fetch_into_if(state, mem, console);
         }
@@ -3062,7 +3088,7 @@ fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, consol
         }
     } else if !has_in_flight_work(state) {
         console.push_error(format!(
-            "Execution reached 0x{:08X}, outside the loaded program. \
+            "Execution reached 0x{:08X}, outside any executable region. \
              Add `li a7, 93; ecall` to terminate cleanly.",
             state.fetch_pc
         ));
@@ -3215,9 +3241,7 @@ fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, Option<S
 }
 
 fn pc_in_program_range(state: &PipelineSimState, pc: u32) -> bool {
-    state
-        .program_range
-        .map_or(true, |(start, end)| pc >= start && pc < end)
+    state.exec_regions.is_empty() || state.exec_regions.iter().any(|region| region.contains(pc))
 }
 
 fn has_in_flight_work(state: &PipelineSimState) -> bool {

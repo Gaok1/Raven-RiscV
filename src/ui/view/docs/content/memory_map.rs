@@ -88,6 +88,18 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         raw("  advance it on each allocation. The heap grows upward; the stack grows"),
         raw("  downward — they will collide if combined use exceeds free space."),
         blank(),
+        h2("Dynamic executable memory"),
+        blank(),
+        raw("  Raven normally executes the loaded .text section only. For JIT-style"),
+        raw("  code emission, use syscall 1102 (map_exec) to mark a RAM range as"),
+        raw("  executable after you write valid RV32 instructions into it."),
+        raw("  The region is described as [addr, addr+len), with addr and len both"),
+        raw("  aligned to 4 bytes."),
+        blank(),
+        note(
+            "When the PC enters a mapped executable range outside .text, the Run tab's Instruction Memory panel follows that PC automatically.",
+        ),
+        blank(),
         mono("  .data"),
         mono("  heap_ptr: .word 0x00004000   ; initial heap base (above .bss)"),
         blank(),
@@ -111,7 +123,10 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         kv("s", "Step one instruction on the selected hart."),
         kv("r / p", "Run continuously / pause execution."),
         kv("R", "Restart simulation from the beginning."),
-        kv("F9", "Toggle breakpoint at the hovered instruction or current PC."),
+        kv(
+            "F9",
+            "Toggle breakpoint at the hovered instruction or current PC.",
+        ),
         blank(),
         h2("Keyboard Shortcuts — Config tab"),
         blank(),
@@ -122,7 +137,10 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         kv("", "Value is snapped to the nearest power of two."),
         kv("Enter", "Open edit mode on the selected field."),
         kv("↑ / ↓", "Navigate between fields."),
-        kv("Ctrl+e / Ctrl+l", "Export / import the full Config tab as .rcfg."),
+        kv(
+            "Ctrl+e / Ctrl+l",
+            "Export / import the full Config tab as .rcfg.",
+        ),
     ]
 }
 
@@ -207,6 +225,19 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         raw("  heap no .data e avance-o a cada alocação. O heap cresce para cima; a"),
         raw("  pilha cresce para baixo — colidem se o uso combinado exceder o espaço livre."),
         blank(),
+        h2("Memória executável dinâmica"),
+        blank(),
+        raw("  O Raven normalmente executa apenas a seção .text carregada. Para"),
+        raw("  geração dinâmica de código (estilo JIT), use a syscall 1102"),
+        raw("  (map_exec) para marcar uma faixa de RAM como executável depois de"),
+        raw("  escrever nela instruções RV32 válidas."),
+        raw("  A faixa é descrita como [endereço, endereço+tamanho), com ambos"),
+        raw("  alinhados a 4 bytes."),
+        blank(),
+        note(
+            "Quando o PC entra em uma faixa executável mapeada fora do .text, o painel Instruction Memory da aba Run passa a seguir esse PC automaticamente.",
+        ),
+        blank(),
         mono("  .data"),
         mono("  heap_ptr: .word 0x00004000   ; base inicial do heap (acima do .bss)"),
         blank(),
@@ -233,7 +264,10 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         kv("s", "Avança uma instrução no hart selecionado."),
         kv("r / p", "Inicia execução contínua / pausa a execução."),
         kv("R", "Reinicia a simulação do início."),
-        kv("F9", "Alterna breakpoint na instrução sob o cursor ou no PC atual."),
+        kv(
+            "F9",
+            "Alterna breakpoint na instrução sob o cursor ou no PC atual.",
+        ),
         blank(),
         h2("Atalhos de Teclado — aba Config"),
         blank(),
@@ -244,6 +278,9 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         ),
         kv("Enter", "Abre edição no campo selecionado."),
         kv("↑ / ↓", "Navega entre os campos."),
-        kv("Ctrl+e / Ctrl+l", "Exporta / importa a aba Config completa como .rcfg."),
+        kv(
+            "Ctrl+e / Ctrl+l",
+            "Exporta / importa a aba Config completa como .rcfg.",
+        ),
     ]
 }

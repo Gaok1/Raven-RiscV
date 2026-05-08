@@ -1,5 +1,5 @@
 use super::CpiConfig;
-use crate::falcon::{CacheController, Cpu};
+use crate::falcon::{CacheController, Cpu, registers::ExecRegion};
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
 
@@ -143,6 +143,7 @@ pub(crate) struct RunState {
     pub(crate) base_pc: u32,
     pub(crate) data_base: u32,
     pub(crate) heap_start: u32,
+    pub(crate) exec_regions: Vec<ExecRegion>,
 
     // Memory view
     pub(crate) mem_view_addr: u32,

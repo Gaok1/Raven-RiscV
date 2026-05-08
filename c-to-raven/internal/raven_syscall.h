@@ -121,6 +121,14 @@ static inline int __sys_clock_gettime(int clockid, raven_timespec *tp) {
     return _a0;
 }
 
+static inline int __sys_raven_map_exec(void *addr, size_t len) {
+    register int   _a7 __asm__("a7") = SYS_RAVEN_MAP_EXEC;
+    register void *_a0 __asm__("a0") = addr;
+    register int   _a1 __asm__("a1") = (int)len;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7), "r"(_a1));
+    return (int)(size_t)_a0;
+}
+
 static inline void raven_pause(void) {
     __asm__ volatile("ebreak");
 }

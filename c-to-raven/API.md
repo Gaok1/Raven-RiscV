@@ -256,10 +256,16 @@ raven_assert(index < array_size);
 
 ```c
 raven_pause();  // emits ebreak — freezes execution in Raven for inspection
+raven_map_exec(buf, 8);  // allow instruction fetch from buf..buf+8
 ```
 
 Use `raven_pause()` as a software breakpoint to inspect registers, memory, and the pipeline view
 before resuming.
+
+`raven_map_exec(addr, len)` marks `[addr, addr + len)` executable. It does not allocate,
+copy, or validate the instructions you wrote there; it only authorizes instruction fetch.
+Both `addr` and `len` must be 4-byte aligned, `len` must be non-zero, and the whole
+range must fit inside Raven RAM.
 
 ---
 
