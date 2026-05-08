@@ -278,9 +278,9 @@ fn bit_position_line(segs: &[Seg]) -> Line<'static> {
     let mut spans = Vec::new();
     let mut bit = 31i32;
     for seg in segs {
-        let w = seg.width as usize;
+        let w = display_width(seg);
         let hi = bit;
-        let lo = bit - w as i32 + 1;
+        let lo = bit - seg.width as i32 + 1;
         let marker = if w == 1 {
             format!("{hi:<w$}", w = w)
         } else {
@@ -302,16 +302,15 @@ fn label_line(segs: &[Seg]) -> Line<'static> {
         .enumerate()
         .map(|(i, s)| {
             let is_last = i + 1 == n;
-            let w = s.width as usize; // display columns for this field's content
+            let w = display_width(s);
             let label_len = s.label.chars().count();
 
-            // Name always comes first; ▮ blocks fill any leftover columns
-            let content: String = if label_len <= w {
+            // Name always comes first; ▮ blocks fill any leftover columns.
+            let content = if label_len < w {
                 let blocks = "▮".repeat(w - label_len);
                 format!("{}{blocks}", s.label)
             } else {
-                // Truncate label to fit exactly w columns
-                s.label.chars().take(w).collect()
+                s.label.to_string()
             };
 
             // Non-last segments get one trailing separator space for alignment
@@ -333,15 +332,20 @@ fn bits_line(word: u32, segs: &[Seg]) -> Line<'static> {
     for (i, seg) in segs.iter().enumerate() {
         let end = idx + seg.width as usize;
         let slice = &bit_str[idx..end];
+        let disp_w = display_width(seg);
         let padded = if i + 1 < segs.len() {
-            format!("{slice:<w$} ", w = seg.width as usize)
+            format!("{slice:<w$} ", w = disp_w)
         } else {
-            slice.to_string()
+            format!("{slice:<w$}", w = disp_w)
         };
         spans.push(Span::styled(padded, Style::default().fg(seg.color).bold()));
         idx = end;
     }
     Line::from(spans)
+}
+
+fn display_width(seg: &Seg) -> usize {
+    (seg.width as usize).max(seg.label.chars().count())
 }
 
 // ── Section 3 : Decoded fields + description ─────────────────────────────────

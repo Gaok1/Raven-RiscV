@@ -24,7 +24,7 @@ pub(crate) use status::{render_run_status, run_controls_plain_text, state_text};
 pub(crate) const RUN_COLLAPSED_RAIL_W: u16 = 2;
 pub(crate) const RUN_SIDEBAR_MIN_W: u16 = 20;
 pub(crate) const RUN_IMEM_MIN_W: u16 = 20;
-pub(crate) const RUN_DETAILS_MIN_W: u16 = 40;
+pub(crate) const RUN_DETAILS_MIN_W: u16 = 46;
 
 pub(crate) fn run_panel_constraints(app: &App) -> [Constraint; 3] {
     let sidebar = if app.run.sidebar_collapsed {
