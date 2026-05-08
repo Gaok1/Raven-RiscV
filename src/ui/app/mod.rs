@@ -42,7 +42,7 @@ use super::{
 };
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::{self, CacheController, Cpu};
-use arboard::Clipboard;
+use crate::ui::platform::Clipboard;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,

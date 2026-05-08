@@ -31,8 +31,8 @@ incremental = false
 rfd     = "0.15"
 arboard = "3"
 
-# Linux: arboard sem X11/Wayland obrigatório (usa o que estiver disponível)
-[target.'cfg(target_os = "linux")'.dependencies]
+# Linux glibc: desktop integrations enabled.
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 rfd     = "0.15"
 arboard = { version = "3", default-features = false }
 

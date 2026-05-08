@@ -9,6 +9,7 @@ use crate::ui::view::run::{
 use crate::ui::view::{
     ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W,
 };
+use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
@@ -20,7 +21,6 @@ use crate::ui::{
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use rfd::FileDialog as OSFileDialog;
 
 use super::max_regs_scroll;
 use crate::ui::view::docs::{docs_body_line_count, free_page_line_count};

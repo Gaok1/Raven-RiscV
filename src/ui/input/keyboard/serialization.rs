@@ -5,7 +5,7 @@ use crate::ui::app::{
     App, CacheResultsSnapshot, CpiConfig, LevelSnapshot, PathInput, PathInputAction,
     PipelineResultsSnapshot, RunScope,
 };
-use rfd::FileDialog as OSFileDialog;
+use crate::ui::platform::OSFileDialog;
 use std::collections::HashMap;
 
 // ── Cache config serialization ────────────────────────────────────────────────
