@@ -12,7 +12,7 @@ impl App {
         dst.mode = src.mode;
         dst.set_predict(src.predict);
         dst.speed = src.speed;
-        dst.program_range = src.program_range;
+        dst.exec_regions = src.exec_regions.clone();
         dst.fu_capacity = src.fu_capacity;
     }
 
@@ -353,7 +353,7 @@ impl App {
     }
 
     pub(super) fn is_pc_in_program(&self, pc: u32) -> bool {
-        self.imem_in_range(pc)
+        self.pc_in_executable_region(pc)
     }
 
     pub(super) fn process_pending_hart_start_for_selected(&mut self) {
@@ -385,7 +385,7 @@ impl App {
             self.run.cpu.write(10, (-2i32) as u32);
             self.console.push_colored(
                 format!(
-                    "[C{}:H{}] hart start failed: entry PC 0x{:08X} is outside the loaded program",
+                    "[C{}:H{}] hart start failed: entry PC 0x{:08X} is outside any executable region",
                     self.selected_core,
                     self.core_hart_id(self.selected_core).unwrap_or(0),
                     request.entry_pc
@@ -476,7 +476,7 @@ impl App {
             self.harts[core_idx].cpu.write(10, (-2i32) as u32);
             self.console.push_colored(
                 format!(
-                    "[C{}:H{}] hart start failed: entry PC 0x{:08X} is outside the loaded program",
+                    "[C{}:H{}] hart start failed: entry PC 0x{:08X} is outside any executable region",
                     core_idx,
                     self.harts[core_idx].hart_id.unwrap_or(0),
                     request.entry_pc

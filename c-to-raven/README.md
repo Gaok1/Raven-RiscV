@@ -105,6 +105,7 @@ Note: only anonymous mappings (`MAP_ANONYMOUS`, `fd=-1`) are supported. `munmap`
 | Function | Description |
 |----------|-------------|
 | `raven_pause()` | Emit `ebreak` — Raven pauses so you can inspect registers and memory |
+| `raven_map_exec(addr, len)` | Mark `[addr, addr+len)` executable so Raven may fetch instructions there |
 
 ### I/O helpers (C implementation via `_sys_write`)
 

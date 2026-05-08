@@ -3,6 +3,7 @@ pub mod predictor;
 pub mod sim;
 
 use crate::falcon::instruction::Instruction;
+use crate::falcon::registers::ExecRegion;
 use crate::ui::app::CpiConfig;
 use crate::ui::view::disasm::disasm_word;
 use ratatui::style::Color;
@@ -1033,7 +1034,7 @@ pub struct PipelineSimState {
     pub mode: PipelineMode,
     pub predict: BranchPredict,
     pub predictor: predictor::PredictorState,
-    pub program_range: Option<(u32, u32)>,
+    pub exec_regions: Vec<ExecRegion>,
 
     // ── Pipeline own state (shares cpu/mem with RunState) ──
     pub fetch_pc: u32,
@@ -1135,7 +1136,7 @@ impl PipelineSimState {
             mode: PipelineMode::SingleCycle,
             predict: BranchPredict::NotTaken,
             predictor: predictor::PredictorState::default(),
-            program_range: None,
+            exec_regions: Vec::new(),
             fetch_pc: 0,
             halted: false,
             faulted: false,
@@ -1190,9 +1191,9 @@ impl PipelineSimState {
         }
     }
 
-    pub fn set_program_range(&mut self, base_pc: u32, text_words: usize) {
-        let bytes = (text_words as u32).saturating_mul(4);
-        self.program_range = Some((base_pc, base_pc.saturating_add(bytes)));
+    pub fn set_exec_regions(&mut self, regions: &[ExecRegion]) {
+        self.exec_regions.clear();
+        self.exec_regions.extend_from_slice(regions);
     }
 
     /// Reset pipeline stages and stats (shares cpu/mem with RunState).

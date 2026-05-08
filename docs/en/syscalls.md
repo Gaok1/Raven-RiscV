@@ -323,6 +323,36 @@ Current v1 semantics:
 
 This syscall is only meaningful when the machine is configured with more than one core.
 
+### `1102` — map executable memory
+
+Mark a RAM range as executable so the `PC` may fetch instructions from it.
+This is intended for dynamic code generation, trampolines, and JIT-style experiments.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1102` |
+| `a0`     | start address |
+| `a1`     | length in bytes |
+| **`a0` (ret)** | `0`, or negative error code |
+
+Rules:
+
+- the executable interval is `[a0, a0 + a1)`
+- `a0` must be 4-byte aligned
+- `a1` must be a non-zero multiple of 4
+- the whole interval must fit inside Raven RAM
+- the syscall does not allocate or copy memory; it only authorizes instruction fetch
+
+Typical flow:
+
+1. allocate or choose a writable RAM buffer
+2. store valid RV32 instruction words into that buffer
+3. call `map_exec`
+4. jump to the buffer with `jalr` or a function pointer
+
+When execution enters a mapped executable range outside `.text`, the Run tab's
+`Instruction Memory` panel follows the current `PC` and shows that region.
+
 ### `1000` — print integer
 
 Print the signed 32-bit integer in `a0` to the console (no newline).
@@ -730,4 +760,7 @@ Num   Name             a0          a1          a2          ret
 1051  memcpy           dst addr    src addr    len         —
 1052  strlen           str addr    —           —           len
 1053  strcmp           s1 addr     s2 addr     —           <0 / 0 / >0
+1100  hart_start       entry pc    stack ptr   arg         hart id / -err
+1101  hart_exit        —           —           —           (no return)
+1102  map_exec         addr        len         —           0 / -err
 ```

@@ -2,7 +2,7 @@ use crate::{
     falcon::{
         errors::FalconError,
         memory::Bus,
-        registers::{Cpu, HartStartRequest},
+        registers::{Cpu, ExecRegion, HartStartRequest},
     },
     ui::{Console, console::ConsoleColor},
 };
@@ -45,6 +45,7 @@ const FALCON_STRLEN: u32 = 1052;
 const FALCON_STRCMP: u32 = 1053;
 pub const FALCON_HART_START: u32 = 1100;
 pub const FALCON_HART_EXIT: u32 = 1101;
+pub const FALCON_MAP_EXEC: u32 = 1102;
 
 // Linux errno values
 const LINUX_EBADF: u32 = (-9i32) as u32;
@@ -90,6 +91,7 @@ fn syscall_name(code: u32) -> &'static str {
         FALCON_STRCMP => "strcmp",
         FALCON_HART_START => "hart_start",
         FALCON_HART_EXIT => "hart_exit",
+        FALCON_MAP_EXEC => "map_exec",
         _ => "unknown",
     }
 }
@@ -122,7 +124,12 @@ fn trace_syscall(console: &mut Console, cpu: &Cpu, code: u32) {
         return;
     }
     console.push_colored(
-        format!("[H{}] syscall {} ({})", cpu.hart_id, code, syscall_name(code)),
+        format!(
+            "[H{}] syscall {} ({})",
+            cpu.hart_id,
+            code,
+            syscall_name(code)
+        ),
         ConsoleColor::Warning,
     );
 }
@@ -346,6 +353,25 @@ pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
             // Exit only this hart; does not affect other harts or the program exit code.
             cpu.local_exit = true;
             Ok(false)
+        }
+        FALCON_MAP_EXEC => {
+            let start = cpu.read(10);
+            let len = cpu.read(11);
+            if len == 0 || (start & 3) != 0 || (len & 3) != 0 {
+                cpu.write(10, LINUX_EINVAL);
+                return Ok(true);
+            }
+            let Some(end) = start.checked_add(len) else {
+                cpu.write(10, LINUX_EINVAL);
+                return Ok(true);
+            };
+            if mem.load8(start).is_err() || mem.load8(end - 1).is_err() {
+                cpu.write(10, LINUX_EFAULT);
+                return Ok(true);
+            }
+            cpu.pending_exec_map = Some(ExecRegion::new(start, end));
+            cpu.write(10, 0);
+            Ok(true)
         }
         _ => {
             console.push_error(format!("Unimplemented syscall {code}"));

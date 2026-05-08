@@ -28,11 +28,11 @@ pub(crate) use self::hart::{
 pub(crate) use self::run_state::{
     BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunSpeed, RunState,
 };
-    pub(crate) use self::settings_state::{
-        RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
-        SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
-        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState, nearest_pow2_clamp,
-    };
+pub(crate) use self::settings_state::{
+    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
+    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
+    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState, nearest_pow2_clamp,
+};
 
 use super::{
     console::Console,
@@ -46,8 +46,7 @@ use arboard::Clipboard;
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
+        Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
 };
@@ -78,7 +77,7 @@ pub struct CpiConfig {
     pub jump: u64,             // jal, jalr = 2
     pub system: u64,           // ecall, ebreak, halt = 10
     pub fp: u64,               // RV32F instructions = 5
-    pub stage_overhead: u64,   // Non-pipeline stage overhead (IF+ID+WB), added when pipeline off = 3
+    pub stage_overhead: u64, // Non-pipeline stage overhead (IF+ID+WB), added when pipeline off = 3
 }
 
 impl Default for CpiConfig {
@@ -356,6 +355,7 @@ impl App {
                 base_pc,
                 data_base,
                 heap_start: data_base,
+                exec_regions: Vec::new(),
                 mem_view_addr: data_base,
                 mem_view_bytes: 4,
                 mem_region: MemRegion::Data,
@@ -633,6 +633,7 @@ impl App {
                 });
                 self.run.imem_scroll = 0;
                 self.run.hover_imem_addr = None;
+                self.reset_exec_regions_to_loaded_text();
                 self.sync_pipeline_program_range();
 
                 // Reset pipeline stages (shares cpu/mem with RunState)
@@ -710,21 +711,11 @@ impl App {
     }
 
     fn sync_pipeline_program_range(&mut self) {
-        let Some(text) = self.editor.last_ok_text.as_ref() else {
-            self.pipeline.program_range = None;
-            for hart in &mut self.harts {
-                if let Some(p) = hart.pipeline.as_mut() {
-                    p.program_range = None;
-                }
-            }
-            return;
-        };
-        self.pipeline
-            .set_program_range(self.run.base_pc, text.len());
-        let range = self.pipeline.program_range;
+        self.pipeline.set_exec_regions(&self.run.exec_regions);
+        let regions = self.pipeline.exec_regions.clone();
         for hart in &mut self.harts {
             if let Some(p) = hart.pipeline.as_mut() {
-                p.program_range = range;
+                p.set_exec_regions(&regions);
             }
         }
     }
@@ -811,6 +802,7 @@ impl App {
             self.rebuild_imem_vrow_cache();
             self.run.imem_scroll = 0;
             self.run.hover_imem_addr = None;
+            self.reset_exec_regions_to_loaded_text();
             self.sync_pipeline_program_range();
             // Reset pipeline stages so it picks up the reloaded program
             self.pipeline.reset_stages(self.run.cpu.pc);
@@ -1028,6 +1020,7 @@ impl App {
         self.editor.diag_line_text = None;
         self.run.imem_scroll = 0;
         self.run.hover_imem_addr = None;
+        self.reset_exec_regions_to_loaded_text();
         self.sync_pipeline_program_range();
         // Lock the editor when a binary is loaded; close any stale prompt.
         self.mode = EditorMode::Command;
@@ -1257,18 +1250,92 @@ impl App {
 
     // ── Instruction-memory scroll helpers (visual-row units) ─────────────────
 
-    fn imem_in_range(&self, addr: u32) -> bool {
+    pub(crate) fn text_exec_region(&self) -> Option<crate::falcon::registers::ExecRegion> {
         if let Some(text) = &self.editor.last_ok_text {
             let start = self.run.base_pc;
             let end = start.saturating_add((text.len() as u32).saturating_mul(4));
-            addr >= start && addr < end
+            Some(crate::falcon::registers::ExecRegion::new(start, end))
         } else {
-            (addr as usize) < self.run.mem_size.saturating_sub(3)
+            None
+        }
+    }
+
+    fn imem_in_range(&self, addr: u32) -> bool {
+        self.text_exec_region()
+            .is_some_and(|region| region.contains(addr))
+    }
+
+    pub(crate) fn executable_region_containing(
+        &self,
+        addr: u32,
+    ) -> Option<crate::falcon::registers::ExecRegion> {
+        self.run
+            .exec_regions
+            .iter()
+            .copied()
+            .find(|region| region.contains(addr))
+    }
+
+    pub(crate) fn pc_in_executable_region(&self, addr: u32) -> bool {
+        self.executable_region_containing(addr).is_some()
+    }
+
+    pub(crate) fn active_imem_exec_region(&self) -> Option<crate::falcon::registers::ExecRegion> {
+        let pc = self.run.cpu.pc;
+        let region = self.executable_region_containing(pc)?;
+        if self.imem_in_range(pc) {
+            None
+        } else {
+            Some(region)
+        }
+    }
+
+    fn reset_exec_regions_to_loaded_text(&mut self) {
+        self.run.exec_regions.clear();
+        if let Some(region) = self.text_exec_region() {
+            self.run.exec_regions.push(region);
+        }
+    }
+
+    fn register_exec_region(&mut self, region: crate::falcon::registers::ExecRegion) {
+        if region.start >= region.end {
+            return;
+        }
+        self.run.exec_regions.push(region);
+        self.run.exec_regions.sort_by_key(|r| r.start);
+
+        let mut merged: Vec<crate::falcon::registers::ExecRegion> =
+            Vec::with_capacity(self.run.exec_regions.len());
+        for current in self.run.exec_regions.iter().copied() {
+            if let Some(last) = merged.last_mut() {
+                if current.start <= last.end {
+                    last.end = last.end.max(current.end);
+                    continue;
+                }
+            }
+            merged.push(current);
+        }
+        self.run.exec_regions = merged;
+        self.sync_pipeline_program_range();
+    }
+
+    fn process_pending_exec_map_for_selected(&mut self) {
+        if let Some(region) = self.run.cpu.pending_exec_map.take() {
+            self.register_exec_region(region);
+        }
+    }
+
+    fn process_pending_exec_map_for_bg(&mut self, core_idx: usize) {
+        if let Some(region) = self.harts[core_idx].cpu.pending_exec_map.take() {
+            self.register_exec_region(region);
         }
     }
 
     /// Total visual rows in the instruction list (block_comment + labels + instruction per addr).
     pub(super) fn imem_total_visual_rows(&self) -> usize {
+        if let Some(region) = self.active_imem_exec_region() {
+            return ((region.end.saturating_sub(region.start)) / 4) as usize;
+        }
         let mut count = 0usize;
         let mut addr = self.run.base_pc;
         loop {
@@ -1290,6 +1357,12 @@ impl App {
     /// Returns (start_addr, header_skip) for the current imem_scroll (visual row offset).
     /// header_skip = how many block_comment/label rows to skip at the top of start_addr's block.
     pub(super) fn imem_addr_skip_for_scroll(&self) -> (u32, usize) {
+        if let Some(region) = self.active_imem_exec_region() {
+            let start = region
+                .start
+                .saturating_add((self.run.imem_scroll as u32).saturating_mul(4));
+            return (start.min(region.end.saturating_sub(4)), 0);
+        }
         let scroll = self.run.imem_scroll;
         let base = self.run.base_pc;
         let mut vrow = 0usize;
@@ -1316,6 +1389,9 @@ impl App {
     /// Visual row of the current PC within the full instruction list.
     pub(super) fn imem_visual_row_of_pc(&self) -> Option<usize> {
         let pc = self.run.cpu.pc;
+        if let Some(region) = self.active_imem_exec_region() {
+            return Some(((pc.saturating_sub(region.start)) / 4) as usize);
+        }
         if pc < self.run.base_pc {
             return None;
         }
@@ -1343,6 +1419,20 @@ impl App {
     pub(super) fn ensure_pc_visible_in_imem(&mut self) {
         let visible = self.run.imem_inner_height.get();
         if visible == 0 {
+            return;
+        }
+        if let Some(region) = self.active_imem_exec_region() {
+            let pc_row = ((self.run.cpu.pc.saturating_sub(region.start)) / 4) as usize;
+            let max_scroll = ((region.end.saturating_sub(region.start)) / 4) as usize;
+            let max_scroll = max_scroll.saturating_sub(visible);
+            let scroll = self.run.imem_scroll.min(max_scroll);
+            if pc_row < scroll {
+                self.run.imem_scroll = pc_row.saturating_sub(2);
+            } else if pc_row + 1 >= scroll + visible {
+                self.run.imem_scroll = pc_row
+                    .saturating_sub(visible.saturating_sub(3))
+                    .min(max_scroll);
+            }
             return;
         }
         let Some(pc_vrow) = self.imem_visual_row_of_pc() else {
@@ -1510,6 +1600,7 @@ impl App {
 
     fn finalize_selected_core_after_step(&mut self) {
         self.process_pending_hart_start_for_selected();
+        self.process_pending_exec_map_for_selected();
         let heap_break = self.run.cpu.heap_break;
         self.propagate_heap_break(heap_break);
         let program_exit = self.run.cpu.exit_code;
@@ -1579,6 +1670,7 @@ impl App {
     /// but operates directly on `self.harts[core_idx]` instead of `self.run`.
     fn finalize_bg_hart(&mut self, core_idx: usize, breakpoint_hit: bool) {
         self.process_pending_hart_start_for_bg(core_idx);
+        self.process_pending_exec_map_for_bg(core_idx);
 
         let heap_break = self.harts[core_idx].cpu.heap_break;
         self.propagate_heap_break(heap_break);
@@ -1778,14 +1870,7 @@ impl App {
         // Pre-compute values needed by step_hart_bg_inner.  These are read
         // here — before any mutable borrow of self.harts — to satisfy the
         // borrow checker's disjoint-field rules.
-        let imem_start = self.run.base_pc;
-        let imem_end = if let Some(text) = &self.editor.last_ok_text {
-            self.run
-                .base_pc
-                .saturating_add((text.len() as u32).saturating_mul(4))
-        } else {
-            self.run.mem_size.saturating_sub(3) as u32
-        };
+        let exec_regions = self.run.exec_regions.clone();
         let mem_size = self.run.mem_size;
         let pipeline_enabled = self.pipeline.enabled || self.pipeline.sequential_mode;
         // CpiConfig is ~80 bytes; cheap to clone once per round.
@@ -1824,8 +1909,7 @@ impl App {
                         mem,
                         console,
                         &cpi,
-                        imem_start,
-                        imem_end,
+                        &exec_regions,
                         mem_size,
                         pipeline_enabled,
                     )
@@ -1940,7 +2024,9 @@ impl App {
         if self.max_cores > 1 {
             let all_scope = matches!(self.run_scope, RunScope::AllHarts);
 
-            if (self.pipeline.enabled || self.pipeline.sequential_mode) && !matches!(self.tab, Tab::Pipeline) {
+            if (self.pipeline.enabled || self.pipeline.sequential_mode)
+                && !matches!(self.tab, Tab::Pipeline)
+            {
                 for _ in 0..200 {
                     let selected_running =
                         self.core_status(self.selected_core) == HartLifecycle::Running;
@@ -2015,9 +2101,9 @@ impl App {
             self.run.prev_pc = self.run.cpu.pc;
             let step_pc = self.run.cpu.pc;
 
-            if !self.imem_in_range(step_pc) {
+            if !self.pc_in_executable_region(step_pc) {
                 self.console.push_error(format!(
-                    "Execution reached 0x{step_pc:08X}, outside the loaded program. \
+                    "Execution reached 0x{step_pc:08X}, outside any executable region. \
                      Add `li a7, 93; ecall` to terminate cleanly."
                 ));
                 self.run.faulted = true;

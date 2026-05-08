@@ -1,5 +1,5 @@
 use super::{CpiConfig, classify_cpi_cycles};
-use crate::falcon::{self, CacheController, Cpu, Instruction};
+use crate::falcon::{self, CacheController, Cpu, Instruction, registers::ExecRegion};
 use crate::ui::console::Console;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,8 +89,7 @@ pub(crate) fn step_hart_bg_inner(
     mem: &mut CacheController,
     console: &mut Console,
     cpi: &CpiConfig,
-    imem_start: u32,
-    imem_end: u32,
+    exec_regions: &[ExecRegion],
     mem_size: usize,
     pipeline_enabled: bool,
 ) -> bool {
@@ -123,9 +122,9 @@ pub(crate) fn step_hart_bg_inner(
 
         // ── Sequential mode ───────────────────────────────────────────────────
         let step_pc = hart.cpu.pc;
-        if step_pc < imem_start || step_pc >= imem_end {
+        if !exec_regions.iter().any(|region| region.contains(step_pc)) {
             console.push_error(format!(
-                "Hart reached 0x{step_pc:08X}, outside the loaded program. \
+                "Hart reached 0x{step_pc:08X}, outside any executable region. \
                  Add `li a7, 93; ecall` to terminate cleanly."
             ));
             hart.faulted = true;

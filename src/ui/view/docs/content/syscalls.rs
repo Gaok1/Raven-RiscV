@@ -281,6 +281,14 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         "—",
         "stops only the current hart; other harts keep running",
     );
+    add_row(
+        &mut lines,
+        "1102",
+        "map_exec",
+        "a0=addr, a1=len",
+        "a0=0 / -err",
+        "marks [addr,addr+len) executable; addr and len must be 4-byte aligned",
+    );
     lines.extend([
         blank(),
         h2("RAVEN memory utilities  (a7 ≥ 1050)"),
@@ -579,6 +587,14 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         "—",
         "—",
         "encerra apenas o hart atual; os demais continuam rodando",
+    );
+    add_row(
+        &mut lines,
+        "1102",
+        "map_exec",
+        "a0=endereço, a1=tamanho",
+        "a0=0 / -erro",
+        "marca [endereço,endereço+tamanho) como executável; endereço e tamanho devem ser alinhados a 4 bytes",
     );
     lines.extend([
         blank(),

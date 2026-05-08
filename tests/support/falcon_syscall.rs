@@ -1,4 +1,4 @@
-use super::{FALCON_HART_START, handle_syscall};
+use super::{FALCON_HART_START, FALCON_MAP_EXEC, handle_syscall};
 use crate::falcon::memory::Ram;
 use crate::falcon::registers::Cpu;
 use crate::falcon::syscall::handle_syscall_with_cycle_override;
@@ -22,6 +22,40 @@ fn hart_start_syscall_emits_pending_request() {
     assert_eq!(req.entry_pc, 0x100);
     assert_eq!(req.stack_ptr, 0x200);
     assert_eq!(req.arg, 0x300);
+}
+
+#[test]
+fn map_exec_syscall_emits_pending_region() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    cpu.write(10, 0x100);
+    cpu.write(11, 0x20);
+
+    let cont = handle_syscall(FALCON_MAP_EXEC, &mut cpu, &mut mem, &mut console).expect("syscall");
+
+    assert!(cont);
+    assert_eq!(cpu.read(10), 0);
+    let region = cpu.pending_exec_map.expect("pending exec map");
+    assert_eq!(region.start, 0x100);
+    assert_eq!(region.end, 0x120);
+}
+
+#[test]
+fn map_exec_syscall_rejects_unaligned_region() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    cpu.write(10, 0x101);
+    cpu.write(11, 0x20);
+
+    let cont = handle_syscall(FALCON_MAP_EXEC, &mut cpu, &mut mem, &mut console).expect("syscall");
+
+    assert!(cont);
+    assert_eq!(cpu.read(10) as i32, -22);
+    assert!(cpu.pending_exec_map.is_none());
 }
 
 #[test]

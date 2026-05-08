@@ -1327,7 +1327,7 @@ fn rebuild_harts_copies_parallel_fu_config_to_background_cores() {
     let bg = app.harts[1].pipeline.as_ref().expect("background pipeline");
     assert_eq!(bg.mode, app.pipeline.mode);
     assert_eq!(bg.fu_capacity, app.pipeline.fu_capacity);
-    assert_eq!(bg.program_range, app.pipeline.program_range);
+    assert_eq!(bg.exec_regions, app.pipeline.exec_regions);
 }
 
 #[test]

@@ -44,6 +44,7 @@
 #define SYS_RAVEN_STRCMP           1053
 #define SYS_RAVEN_HART_START       1100
 #define SYS_RAVEN_HART_EXIT        1101
+#define SYS_RAVEN_MAP_EXEC         1102
 
 // ── mmap flags / prot ────────────────────────────────────────────────────────
 #define PROT_NONE     0x00

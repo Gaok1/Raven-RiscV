@@ -4,7 +4,7 @@ use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 
 use super::App;
 use super::instruction_details::disasm_word;
-use super::memory::imem_address_in_range;
+use super::memory::{exec_address_in_range, imem_address_in_range};
 use crate::ui::theme;
 
 pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
@@ -92,6 +92,10 @@ fn instruction_block(app: &App) -> Block<'static> {
 }
 
 fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
+    if let Some(region) = app.active_imem_exec_region() {
+        return instruction_items_dynamic(inner, app, region.start, region.end);
+    }
+
     // imem_scroll is now in visual rows; compute the starting address + how many
     // header rows (block_comment/labels) to skip at the first block.
     let (mut addr, mut skip) = app.imem_addr_skip_for_scroll();
@@ -150,6 +154,28 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
         }
         items.push(instruction_item(app, addr));
         remaining -= 1;
+        addr = addr.wrapping_add(4);
+    }
+    items
+}
+
+fn instruction_items_dynamic(
+    inner: Rect,
+    app: &App,
+    start: u32,
+    end: u32,
+) -> Vec<ListItem<'static>> {
+    let mut items = Vec::new();
+    let mut addr = start.saturating_add((app.run.imem_scroll as u32).saturating_mul(4));
+    if addr >= end {
+        addr = end.saturating_sub(4);
+    }
+
+    for _ in 0..inner.height {
+        if !exec_address_in_range(app, addr) || addr >= end {
+            break;
+        }
+        items.push(instruction_item(app, addr));
         addr = addr.wrapping_add(4);
     }
     items

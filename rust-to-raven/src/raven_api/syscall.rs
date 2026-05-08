@@ -225,6 +225,25 @@ pub unsafe fn mmap(addr: usize, len: usize, prot: u32, flags: u32, fd: i32, offs
     ret
 }
 
+/// map_exec(addr, len) — Raven syscall 1102
+/// Marks `[addr, addr + len)` as executable for instruction fetch.
+/// The region must be 4-byte aligned and stay within Raven RAM.
+#[unsafe(no_mangle)]
+#[inline(always)]
+pub unsafe fn map_exec(addr: usize, len: usize) -> isize {
+    let ret: isize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1102_u32,
+            in("a0") addr,
+            in("a1") len,
+            lateout("a0") ret,
+        );
+    }
+    ret
+}
+
 /// clock_gettime(clockid, tp) — syscall 403
 /// Writes { tv_sec: u32, tv_nsec: u32 } at tp (instruction-based time).
 #[unsafe(no_mangle)]

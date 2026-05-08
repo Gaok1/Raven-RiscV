@@ -6,6 +6,24 @@ pub struct HartStartRequest {
     pub arg: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecRegion {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl ExecRegion {
+    #[inline]
+    pub const fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+
+    #[inline]
+    pub fn contains(&self, addr: u32) -> bool {
+        addr >= self.start && addr < self.end
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct Cpu {
     pub(crate) x: [u32; 32], // x0..x31 (integer registers) — write via write()/fwrite() to enforce x0=0
@@ -31,6 +49,8 @@ pub struct Cpu {
     pub instr_count: u64,
     /// Deferred multi-hart start request emitted by SYS_HART_START.
     pub pending_hart_start: Option<HartStartRequest>,
+    /// Deferred executable-range registration emitted by SYS_RAVEN_MAP_EXEC.
+    pub pending_exec_map: Option<ExecRegion>,
     /// Set by FALCON_HART_EXIT (1101): exit only this hart, not the whole program.
     pub local_exit: bool,
 }

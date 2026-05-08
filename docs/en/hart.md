@@ -53,7 +53,7 @@ Use syscall `1100` (`hart_start`) to spawn a new hart.
 |------|--------------------------------------|
 | ≥ 0  | Hart ID assigned by the simulator    |
 | −1   | No free core slot available          |
-| −2   | Entry PC is outside the loaded program |
+| −2   | Entry PC is outside every executable region |
 | −3   | Stack pointer is invalid (zero, not 16-byte aligned, or outside memory) |
 
 The new hart starts with a clean register file except for `sp` (set to `a1`) and `a0` (set to `a2`). All other registers begin at zero.

@@ -226,6 +226,36 @@ Semântica atual de `v1`:
 
 Essa syscall só faz sentido quando a máquina está configurada com mais de um core.
 
+### `1102` — mapear memória executável
+
+Marca uma faixa de RAM como executável para que o `PC` possa buscar instruções nela.
+Ela existe para geração dinâmica de código, trampolins e experimentos estilo JIT.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1102` |
+| `a0`       | endereço inicial |
+| `a1`       | tamanho em bytes |
+| **`a0` (ret)** | `0`, ou código negativo de erro |
+
+Regras:
+
+- o intervalo executável é `[a0, a0 + a1)`
+- `a0` deve ser alinhado a 4 bytes
+- `a1` deve ser um múltiplo não nulo de 4
+- toda a faixa deve caber dentro da RAM do Raven
+- a syscall não aloca nem copia memória; ela só autoriza o fetch de instruções
+
+Fluxo típico:
+
+1. escolha ou aloque um buffer gravável na RAM
+2. escreva nesse buffer palavras contendo instruções RV32 válidas
+3. chame `map_exec`
+4. salte para o buffer com `jalr` ou ponteiro de função
+
+Quando a execução entra em uma faixa executável mapeada fora do `.text`, o
+painel `Instruction Memory` da aba Run passa a seguir o `PC` atual e mostra essa região.
+
 ### `1000` — imprimir inteiro
 
 Imprime o inteiro com sinal de 32 bits em `a0` no console (sem newline).
@@ -411,4 +441,7 @@ Num   Nome             a0        a1        a2        retorno
 1012  read_u32         end. dst  —         —         —
 1030  get_instr_count  —         —         —         contagem (u32)
 1031  get_cycle_count  —         —         —         contagem (u32)
+1100  hart_start       entry pc  stack ptr arg       hart id / -err
+1101  hart_exit        —         —         —         (não retorna)
+1102  map_exec         endereço  tamanho   —         0 / -err
 ```
