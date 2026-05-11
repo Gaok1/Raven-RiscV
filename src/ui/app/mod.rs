@@ -424,6 +424,8 @@ impl App {
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
                 trace_syscalls: false,
+                backend: crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None)
+                    .expect("interpreter backend is always available"),
             },
             docs: DocsState {
                 page: DocsPage::InstrRef,
@@ -1899,11 +1901,13 @@ impl App {
                 if self.harts[core_idx].lifecycle != HartLifecycle::Running {
                     continue;
                 }
-                // Disjoint field borrows: self.harts vs self.run.mem vs self.console.
+                // Disjoint field borrows: self.harts vs self.run.mem vs
+                // self.run.backend vs self.console.
                 let faulted = {
                     let hart = &mut self.harts[core_idx];
                     let mem = &mut self.run.mem;
                     let console = &mut self.console;
+                    let backend = self.run.backend.as_mut();
                     step_hart_bg_inner(
                         hart,
                         mem,
@@ -1912,6 +1916,7 @@ impl App {
                         &exec_regions,
                         mem_size,
                         pipeline_enabled,
+                        backend,
                     )
                 };
                 let bp_hit = self.run.breakpoints.contains(&self.harts[core_idx].cpu.pc);
@@ -2119,10 +2124,19 @@ impl App {
             };
 
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
+                let mut ctx = crate::falcon::jit::ExecCtx::new(
+                    &mut self.run.cpu,
+                    &mut self.run.mem,
+                    &mut self.console,
+                );
+                self.run.backend.run_until_yield(&mut ctx)
             }));
             let alive = match res {
-                Ok(Ok(v)) => v,
+                Ok(Ok(crate::falcon::jit::ExecOutcome::Stepped { .. })) => true,
+                Ok(Ok(
+                    crate::falcon::jit::ExecOutcome::Halted
+                    | crate::falcon::jit::ExecOutcome::AwaitingInput,
+                )) => false,
                 Ok(Err(e)) => {
                     use crate::falcon::errors::FalconError;
                     let msg = if matches!(&e, FalconError::Bus(_)) {

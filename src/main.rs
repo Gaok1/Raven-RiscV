@@ -1,4 +1,3 @@
-
 use ratatui::DefaultTerminal;
 use raven::{cli, ui};
 use std::io;
@@ -316,6 +315,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
             "--cores",
             "--expect-exit",
             "--expect-stdout",
+            "--jit",
         ],
     )?;
     let file = positional(args)
@@ -358,6 +358,16 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         Some(s) => parse_cores_arg(&s)?,
         None => 0,
     };
+    let jit_mode = match flag_value(args, "--jit").as_deref() {
+        None | Some("none") => raven::falcon::BackendKind::None,
+        Some("hot") => raven::falcon::BackendKind::Hot,
+        Some("full") => raven::falcon::BackendKind::Full,
+        Some(other) => {
+            return Err(format!(
+                "unknown --jit '{other}' (use none, hot, or full)"
+            ));
+        }
+    };
 
     cli::run_headless(cli::RunArgs {
         file,
@@ -376,6 +386,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         expect_stdout: flag_value(args, "--expect-stdout"),
         expect_regs,
         expect_mems,
+        jit_mode,
     })
 }
 

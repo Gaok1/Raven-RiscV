@@ -1,4 +1,5 @@
 use super::CpiConfig;
+use crate::falcon::jit::ExecutionBackend;
 use crate::falcon::{CacheController, Cpu, registers::ExecRegion};
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
@@ -263,4 +264,7 @@ pub(crate) struct RunState {
     pub(crate) cache_enabled: bool,
     /// When true, non-I/O syscalls are mirrored to the debug console.
     pub(crate) trace_syscalls: bool,
+    /// Execution backend selected for the TUI session.
+    /// Phase A always uses the interpreter; future modes plug in here.
+    pub(crate) backend: Box<dyn ExecutionBackend<CacheController>>,
 }
