@@ -3,6 +3,7 @@ pub mod cache;
 pub mod errors;
 pub mod exec;
 pub mod instruction;
+pub mod jit;
 pub mod memory;
 pub mod registers;
 pub mod syscall;
@@ -17,6 +18,8 @@ pub mod program;
 pub use cache::CacheController;
 #[allow(unused_imports)]
 pub use instruction::Instruction;
+#[allow(unused_imports)]
+pub use jit::{BackendKind, ExecutionBackend};
 #[allow(unused_imports)]
 pub use memory::Bus;
 #[allow(unused_imports)]
