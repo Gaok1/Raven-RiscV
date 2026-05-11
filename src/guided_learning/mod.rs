@@ -28,7 +28,7 @@ pub enum GuidedPreset {
     D3_04, // streaming FIFO              (R300 + P101 + C322 + D301)
     D3_05, // thrashing 2-way             (R300 + P101 + C331 + D302)
     // D4 — Encoding
-    D4_01, // R-type vs S-type            (R100 + P101 + D401)
+    D4_01, // I/R/M/S encodings           (R100 + P101 + D401)
     // D5 — Multi-core
     D5_01, // 2 cores independent regs    (R500 + P101 + D501)
     // D6 — Pipeline Speedup
@@ -68,7 +68,7 @@ impl GuidedPreset {
             Self::D3_03 => "streaming com LRU",
             Self::D3_04 => "streaming com FIFO",
             Self::D3_05 => "thrashing 2-way (conflito)",
-            Self::D4_01 => "R-type vs S-type",
+            Self::D4_01 => "I/R/M/S encodings",
             Self::D5_01 => "2 cores com registradores independentes",
             Self::D6_01 => "sem pipeline — referencia",
             Self::D6_02 => "com pipeline — speedup",
@@ -166,10 +166,8 @@ pub fn apply_preset(app: &mut App, preset: GuidedPreset) -> Result<(), String> {
 
     // 2. Apply pipeline config (.pcfg)
     let pcfg_text = match preset {
-        GuidedPreset::D1_01
-        | GuidedPreset::D2_01
-        | GuidedPreset::D2_02
-        | GuidedPreset::D6_02 => P100,
+        GuidedPreset::D1_01 | GuidedPreset::D2_02 | GuidedPreset::D6_02 => P100,
+        GuidedPreset::D2_01 => P103,
         GuidedPreset::D1_02 => P102,
         _ => P101,
     };

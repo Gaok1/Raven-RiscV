@@ -3407,6 +3407,14 @@ fn update_gantt(state: &mut PipelineSimState) {
                     }
             });
             if let Some(row) = row {
+                let expected_len = (cycle - row.first_cycle) as usize;
+                // In the serial EX path, the same instruction can be observed once via
+                // the EX stage mirror and again via the FU bank in the same cycle.
+                // Keep the first cell emitted for that cycle instead of overwriting it
+                // with a duplicate FU observation that would look like a stall.
+                if row.cells.len() > expected_len {
+                    continue;
+                }
                 let emit_cell = match cell {
                     GanttCell::InFu(kind) => {
                         if row.last_stage == Some(GanttTrack::Fu(kind)) {
@@ -3422,7 +3430,6 @@ fn update_gantt(state: &mut PipelineSimState) {
                     }
                     other => other,
                 };
-                let expected_len = (cycle - row.first_cycle) as usize;
                 while row.cells.len() < expected_len {
                     row.cells.push_back(GanttCell::Empty);
                 }

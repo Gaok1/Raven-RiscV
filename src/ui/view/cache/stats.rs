@@ -329,7 +329,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     } else {
         app.run.mem.dcache_amat()
     };
-    let line8 = format!("Memory Access Time: {amat:.2} cyc");
+    let line8 = format!("Avarage Memory Access Time: {amat:.2} cyc");
     f.render_widget(
         Paragraph::new(Span::styled(line8, Style::default().fg(theme::CACHE_L2))),
         Rect::new(inner.x, inner.y + 7, inner.width, 1),
@@ -653,7 +653,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     let amat = app.run.mem.extra_level_amat(extra_idx);
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("Memory Access Time: {amat:.2} cyc"),
+            format!("Avarage Memory Access Time: {amat:.2} cyc"),
             Style::default().fg(theme::CACHE_L2),
         )),
         Rect::new(inner.x, inner.y + 6, inner.width, 1),
