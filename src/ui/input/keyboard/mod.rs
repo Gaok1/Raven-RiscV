@@ -14,15 +14,15 @@ mod serialization;
 pub(crate) use self::paste::paste_from_terminal;
 #[cfg(test)]
 use self::paste::{paste_imem_search, paste_mem_search};
+pub(crate) use self::serialization::{
+    apply_fcache_text, apply_pcfg_text, apply_rcfg_text, do_export_cfg, do_export_pcfg,
+    do_export_pipeline_results, do_export_rcfg, do_export_results, do_import_cfg, do_import_pcfg,
+    do_import_rcfg, open_path_input,
+};
 #[cfg(test)]
 use self::serialization::{
     apply_imem_search, capture_snapshot, serialize_pipeline_results_pstats, serialize_results_csv,
     serialize_results_fstats,
-};
-pub(crate) use self::serialization::{
-    apply_fcache_text, apply_pcfg_text, apply_rcfg_text, do_export_cfg, do_export_pcfg,
-    do_export_pipeline_results, do_export_results, do_import_cfg, do_import_pcfg, do_import_rcfg,
-    do_export_rcfg, open_path_input,
 };
 
 use crate::ui::app::{App, EditorMode, Tab};

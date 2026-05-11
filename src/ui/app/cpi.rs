@@ -115,7 +115,11 @@ pub(crate) fn classify_cpi_for_display(
     pipeline_enabled: bool,
 ) -> u64 {
     use crate::falcon::instruction::Instruction::*;
-    let s = if pipeline_enabled { 0 } else { cpi.stage_overhead };
+    let s = if pipeline_enabled {
+        0
+    } else {
+        cpi.stage_overhead
+    };
     match crate::falcon::decoder::decode(word) {
         Ok(
             Add { .. }
