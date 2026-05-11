@@ -234,6 +234,60 @@ fn fp_compare_reads_both_operands() {
 }
 
 #[test]
+fn gantt_keeps_effective_ex_cell_when_fu_bank_mirrors_serial_ex() {
+    let mut state = PipelineSimState::new();
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let cpi = CpiConfig::default();
+    let mut console = Console::default();
+
+    mem.bypass = true;
+    let program = [
+        encode(Instruction::Addi {
+            rd: 10,
+            rs1: 0,
+            imm: 1,
+        })
+        .unwrap(),
+        encode(Instruction::Halt).unwrap(),
+    ];
+
+    for (i, word) in program.iter().enumerate() {
+        mem.store32((i as u32) * 4, *word).unwrap();
+    }
+    state.reset_stages(0);
+
+    for _ in 0..8 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+        if state.gantt.iter().any(|row| {
+            row.disasm.starts_with("addi")
+                && row.cells.iter().any(|cell| matches!(cell, GanttCell::InFu(FuKind::Alu)))
+        }) {
+            break;
+        }
+    }
+
+    let addi_row = state
+        .gantt
+        .iter()
+        .find(|row| row.disasm.starts_with("addi"))
+        .expect("addi row should be recorded in gantt");
+
+    assert!(
+        addi_row
+            .cells
+            .iter()
+            .any(|cell| matches!(cell, GanttCell::InFu(FuKind::Alu))),
+        "effective EX cycle should remain visible instead of collapsing into Stall"
+    );
+}
+
+#[test]
 fn branch_prediction_taken_redirects_fetch() {
     let mut state = PipelineSimState::new();
     let mut cpu = Cpu::default();

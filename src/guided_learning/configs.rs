@@ -24,6 +24,10 @@ pub(super) const P101: &str = include_str!("../../guided-activity/config-pipelin
 /// Pipeline enabled, forwarding OFF — exposes raw RAW stalls.  Used by D1-02.
 pub(super) const P102: &str = include_str!("../../guided-activity/config-pipeline/P102.pcfg");
 
+/// Pipeline enabled, forwarding on, BTFNT prediction — keeps D2-01 focused on
+/// load-use instead of the loop-back branch flush.
+pub(super) const P103: &str = include_str!("../../guided-activity/config-pipeline/P103.pcfg");
+
 // ── Cache configs (.fcache) ───────────────────────────────────────────────────
 
 /// D3/Q1 config A — 256 B D-cache, 2-way, hit latency 1.

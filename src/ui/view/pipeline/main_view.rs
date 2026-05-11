@@ -992,9 +992,10 @@ mod tests {
     }
 
     #[test]
-    fn gantt_fu_cells_render_fu_labels() {
-        assert_eq!(cell_to_span(GanttCell::InFu(FuKind::Mul)).0, "MUL");
-        assert_eq!(cell_to_span(GanttCell::SpeculativeFu(FuKind::Lsu)).0, "LSU");
+    fn gantt_fu_cells_render_as_ex_in_history() {
+        assert_eq!(cell_to_span(GanttCell::InFu(FuKind::Mul)).0, "EX");
+        assert_eq!(cell_to_span(GanttCell::SpeculativeFu(FuKind::Lsu)).0, "EX");
+        assert_eq!(cell_to_span(GanttCell::Stall).0, "──");
     }
 
     #[test]
@@ -1260,23 +1261,23 @@ fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
         GanttCell::InStage(Stage::EX) => ("EX", Style::default().fg(theme::RUNNING)),
         GanttCell::InStage(Stage::MEM) => ("MEM", Style::default().fg(theme::LABEL_Y)),
         GanttCell::InStage(Stage::WB) => ("WB", Style::default().fg(theme::ACCENT)),
-        GanttCell::InFu(FuKind::Alu) => ("ALU", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Mul) => ("MUL", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Div) => ("DIV", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Fpu) => ("FPU", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Lsu) => ("LSU", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Sys) => ("SYS", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Alu) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Mul) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Div) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Fpu) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Lsu) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Sys) => ("EX", Style::default().fg(theme::RUNNING)),
         GanttCell::Speculative(Stage::IF) => ("IF", spec_style),
         GanttCell::Speculative(Stage::ID) => ("ID", spec_style),
         GanttCell::Speculative(Stage::EX) => ("EX", spec_style),
         GanttCell::Speculative(Stage::MEM) => ("MEM", spec_style),
         GanttCell::Speculative(Stage::WB) => ("WB", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Alu) => ("ALU", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Mul) => ("MUL", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Div) => ("DIV", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Fpu) => ("FPU", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Lsu) => ("LSU", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Sys) => ("SYS", spec_style),
+        GanttCell::SpeculativeFu(FuKind::Alu) => ("EX", spec_style),
+        GanttCell::SpeculativeFu(FuKind::Mul) => ("EX", spec_style),
+        GanttCell::SpeculativeFu(FuKind::Div) => ("EX", spec_style),
+        GanttCell::SpeculativeFu(FuKind::Fpu) => ("EX", spec_style),
+        GanttCell::SpeculativeFu(FuKind::Lsu) => ("EX", spec_style),
+        GanttCell::SpeculativeFu(FuKind::Sys) => ("EX", spec_style),
         GanttCell::Stall => ("──", Style::default().fg(theme::PAUSED)),
         GanttCell::Bubble => (
             "NOP",
