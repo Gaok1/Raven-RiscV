@@ -31,7 +31,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('p') | KeyCode::Char(' ')
-            if !matches!(app.cache.subtab, CacheSubtab::Config) => {
+            if !matches!(app.cache.subtab, CacheSubtab::Config) =>
+        {
             if app.run.is_running {
                 app.run.is_running = false;
             } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused

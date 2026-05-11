@@ -42,11 +42,7 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
                 let chosen = if q.ends_with('/') || typed_path.is_dir() {
                     selected.unwrap_or(q)
                 } else if let Some(sel) = selected {
-                    if sel != q {
-                        sel
-                    } else {
-                        q
-                    }
+                    if sel != q { sel } else { q }
                 } else {
                     q
                 };

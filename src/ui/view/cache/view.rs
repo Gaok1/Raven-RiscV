@@ -1120,10 +1120,9 @@ fn build_cell(
         CacheAddrMode::Breakdown => {
             let off_hex_w = ((cfg.offset_bits() as usize).saturating_add(3) / 4).max(1);
             let idx_w = cfg.num_sets().saturating_sub(1).to_string().len().max(1);
-            let tag_w =
-                (32usize.saturating_sub((cfg.offset_bits() + cfg.index_bits()) as usize))
-                    .div_ceil(4)
-                    .max(1);
+            let tag_w = (32usize.saturating_sub((cfg.offset_bits() + cfg.index_bits()) as usize))
+                .div_ceil(4)
+                .max(1);
             let breakdown = format!(
                 "o:{:0off_hex_w$X} i:{:0idx_w$} t:{:0tag_w$X}",
                 0,

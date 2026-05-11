@@ -202,10 +202,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let trace_item = ListItem::new(Line::from(vec![
         Span::styled(format!("{:<20}", "  Syscall Debug Log"), label_style_trace),
         Span::raw("  "),
-        bool_button(
-            app.run.trace_syscalls,
-            app.settings.hover_trace_syscalls,
-        ),
+        bool_button(app.run.trace_syscalls, app.settings.hover_trace_syscalls),
         Span::raw("  "),
         Span::styled(
             "[?]",
@@ -512,7 +509,10 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
         vec![]
     };
 
-    f.render_widget(Paragraph::new(hint).wrap(ratatui::widgets::Wrap { trim: false }), area);
+    f.render_widget(
+        Paragraph::new(hint).wrap(ratatui::widgets::Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {

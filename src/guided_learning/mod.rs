@@ -5,8 +5,8 @@
 //! `pub mod guided_learning;` line in `src/lib.rs`.
 
 mod configs;
-mod programs;
 pub mod keys;
+mod programs;
 pub mod view;
 
 use crate::ui::{App, Tab, apply_fcache_text, apply_pcfg_text, apply_rcfg_text};
@@ -59,37 +59,30 @@ impl GuidedPreset {
     /// One-line description shown next to the label.
     pub fn description(self) -> &'static str {
         match self {
-            Self::D1_01 => "instrucoes independentes",
-            Self::D1_02 => "RAW sem forwarding — stalls visiveis",
-            Self::D2_01 => "load-use stall",
-            Self::D2_02 => "flush por desvio de controle",
-            Self::D3_01 => "AMAT config A  (256 B, hit=1)",
-            Self::D3_02 => "AMAT config B  (1 KB, hit=4)",
-            Self::D3_03 => "streaming com LRU",
-            Self::D3_04 => "streaming com FIFO",
-            Self::D3_05 => "thrashing 2-way (conflito)",
-            Self::D4_01 => "R-type vs S-type",
+            Self::D1_01 => "pipeline base — instrucoes independentes",
+            Self::D1_02 => "pipeline com hazard RAW — forwarding off",
+            Self::D2_01 => "hazard load-use — stall apos load",
+            Self::D2_02 => "desvio de controle — flush do pipeline",
+            Self::D3_01 => "AMAT — config A (256 B, hit=1)",
+            Self::D3_02 => "AMAT — config B (1 KB, hit=4)",
+            Self::D3_03 => "localidade sequencial — LRU",
+            Self::D3_04 => "localidade sequencial — FIFO",
+            Self::D3_05 => "thrashing por conflito — 2-way",
+            Self::D4_01 => "codificacao — R-type vs S-type",
             Self::D5_01 => "2 cores com registradores independentes",
-            Self::D6_01 => "sem pipeline — referencia",
-            Self::D6_02 => "com pipeline — speedup",
+            Self::D6_01 => "sem pipeline — referencia de CPI",
+            Self::D6_02 => "com pipeline — speedup observado",
         }
     }
 
     /// After applying this preset, which tab should be active?
     pub(crate) fn suggested_tab(self) -> Tab {
         match self {
-            Self::D3_01
-            | Self::D3_02
-            | Self::D3_03
-            | Self::D3_04
-            | Self::D3_05 => Tab::Cache,
+            Self::D3_01 | Self::D3_02 | Self::D3_03 | Self::D3_04 | Self::D3_05 => Tab::Cache,
             // D1, D4, D5, D6 — CPI and instruction decode live in the Run tab
-            Self::D1_01
-            | Self::D1_02
-            | Self::D4_01
-            | Self::D5_01
-            | Self::D6_01
-            | Self::D6_02 => Tab::Run,
+            Self::D1_01 | Self::D1_02 | Self::D4_01 | Self::D5_01 | Self::D6_01 | Self::D6_02 => {
+                Tab::Run
+            }
             _ => Tab::Pipeline,
         }
     }
@@ -117,12 +110,12 @@ impl GuidedPreset {
     /// its domain group so the view can insert a separator).
     pub fn section_header(self) -> Option<&'static str> {
         match self {
-            Self::D1_01 => Some("D1 · Hazards de Pipeline"),
-            Self::D2_01 => Some("D2 · Load-use / Flush"),
-            Self::D3_01 => Some("D3 · Cache e AMAT"),
+            Self::D1_01 => Some("D1 · Pipeline e Hazards Basicos"),
+            Self::D2_01 => Some("D2 · Stalls e Flush de Controle"),
+            Self::D3_01 => Some("D3 · Cache, AMAT e Conflitos"),
             Self::D4_01 => Some("D4 · Codificacao de Instrucoes"),
             Self::D5_01 => Some("D5 · Multi-core"),
-            Self::D6_01 => Some("D6 · Speedup de Pipeline"),
+            Self::D6_01 => Some("D6 · Pipeline e Ganho de Desempenho"),
             _ => None,
         }
     }
@@ -166,10 +159,9 @@ pub fn apply_preset(app: &mut App, preset: GuidedPreset) -> Result<(), String> {
 
     // 2. Apply pipeline config (.pcfg)
     let pcfg_text = match preset {
-        GuidedPreset::D1_01
-        | GuidedPreset::D2_01
-        | GuidedPreset::D2_02
-        | GuidedPreset::D6_02 => P100,
+        GuidedPreset::D1_01 | GuidedPreset::D2_01 | GuidedPreset::D2_02 | GuidedPreset::D6_02 => {
+            P100
+        }
         GuidedPreset::D1_02 => P102,
         _ => P101,
     };

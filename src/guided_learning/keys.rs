@@ -1,6 +1,6 @@
-use crossterm::event::KeyCode;
-use crate::ui::App;
 use super::{GuidedPreset, apply_preset};
+use crate::ui::App;
+use crossterm::event::KeyCode;
 
 /// Handle a key press on the Activity tab.
 /// Returns `true` if the key was consumed.
@@ -29,8 +29,7 @@ pub fn handle(app: &mut App, key: KeyCode) -> bool {
                 Ok(()) => {
                     // Update state — must re-borrow after apply_preset moved app
                     app.activity.last_applied = Some(preset);
-                    app.activity.status_msg =
-                        Some(format!("{} aplicado", preset.label()));
+                    app.activity.status_msg = Some(format!("{} aplicado", preset.label()));
                     app.activity.status_err = None;
                 }
                 Err(msg) => {
