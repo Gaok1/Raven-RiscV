@@ -29,9 +29,10 @@ pub(crate) use self::run_state::{
     BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunSpeed, RunState,
 };
 pub(crate) use self::settings_state::{
-    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
-    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
-    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState, nearest_pow2_clamp,
+    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
+    SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState,
+    nearest_pow2_clamp,
 };
 
 use super::{
@@ -424,6 +425,7 @@ impl App {
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
                 trace_syscalls: false,
+                jit_kind: crate::falcon::jit::BackendKind::None,
                 backend: crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None)
                     .expect("interpreter backend is always available"),
             },
@@ -828,6 +830,8 @@ impl App {
         // Reset pipeline AFTER loading program (cpu.pc is now set correctly)
         self.pipeline.reset_stages(self.run.cpu.pc);
         self.rebuild_harts();
+        // Rebuild JIT backend AFTER load so FullBackend can scan the loaded program.
+        self.rebuild_backend();
     }
 
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {

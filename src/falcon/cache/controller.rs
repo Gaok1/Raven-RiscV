@@ -831,6 +831,31 @@ impl CacheController {
         self.ram.load32(addr)
     }
 
+    /// Contabiliza o fetch de instrução no I-cache sem retornar o dado.
+    /// Usado pelo JIT: a palavra já foi decodificada em compile-time; só
+    /// precisamos atualizar hits/misses e instruction_count para manter
+    /// fidelidade de métricas. Evita o Vec::clone() do hit path de fetch32.
+    pub(crate) fn account_fetch32(&mut self, addr: u32) {
+        if self.bypass || !self.icache.config.is_valid_config() {
+            self.instruction_count += 1;
+            return;
+        }
+        let tag = self.icache.config.addr_tag(addr);
+        let idx = self.icache.config.addr_index(addr);
+        let tag_search = self.icache.config.tag_search_cycles();
+        let replacement = self.icache.config.replacement;
+        self.instruction_count += 1;
+        if let Some(way) = self.icache.sets[idx].lookup(tag) {
+            self.icache.stats.hits += 1;
+            self.icache.stats.total_cycles += tag_search;
+            self.icache.sets[idx].touch(way, replacement);
+            return;
+        }
+        // Miss: preenche a linha para manter o estado do cache coerente com o
+        // interpretador, mas descarta o dado (não precisamos da palavra).
+        let _ = self.load_icache_line(addr);
+    }
+
     /// Effective read: returns the most-recent dirty byte from the cache hierarchy,
     /// falling back to RAM. Checks L1 D-cache first, then extra_levels in order.
     /// No stats side-effects. Use for syscalls and the Run-tab memory view.

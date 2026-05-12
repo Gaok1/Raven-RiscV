@@ -29,18 +29,37 @@ use super::interpreter::InterpreterBackend;
 
 /// Constrói o backend de execução correspondente ao `kind` selecionado pela CLI.
 ///
-/// Parameterizado em `CacheController` — o único tipo `Bus` usado nos caminhos
-/// de execução hoje.
+/// `Hot` e `Full` requerem a cargo feature `jit` (dynasm-rs). Sem ela, retornam
+/// `FalconError::Unsupported` com sugestão de uso.
 pub fn make_backend(
     kind: BackendKind,
 ) -> Result<Box<dyn ExecutionBackend<CacheController>>, FalconError> {
     match kind {
         BackendKind::None => Ok(Box::new(InterpreterBackend::new())),
+
+        #[cfg(feature = "jit")]
+        BackendKind::Hot => Ok(Box::new(super::hot::HotBackend::new())),
+
+        #[cfg(not(feature = "jit"))]
         BackendKind::Hot => Err(FalconError::Unsupported(
-            "JIT 'hot' mode is not yet implemented (Phase B). Use --jit=none.".into(),
+            "JIT 'hot' mode requires the 'jit' cargo feature. Rebuild with --features jit or use --jit=none.".into(),
         )),
+
+        // Full requer cpu+mem para o scan eager; retorna Unsupported via make_backend.
+        // Use make_full_backend para construir com estado inicial.
         BackendKind::Full => Err(FalconError::Unsupported(
-            "JIT 'full' mode is not yet implemented (Phase B). Use --jit=none.".into(),
+            "Use make_full_backend(cpu, mem) para o modo --jit=full.".into(),
         )),
     }
+}
+
+/// Constrói o `FullBackend` com scan eager a partir do estado inicial do hart.
+///
+/// Separado de `make_backend` porque precisa de `cpu` e `mem` para o BFS inicial.
+#[cfg(feature = "jit")]
+pub fn make_full_backend(
+    cpu: &crate::falcon::registers::Cpu,
+    mem: &CacheController,
+) -> Box<dyn ExecutionBackend<CacheController>> {
+    Box::new(super::full::FullBackend::new(cpu, mem))
 }

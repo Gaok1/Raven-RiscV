@@ -264,7 +264,8 @@ pub(crate) struct RunState {
     pub(crate) cache_enabled: bool,
     /// When true, non-I/O syscalls are mirrored to the debug console.
     pub(crate) trace_syscalls: bool,
+    /// Which JIT mode is currently active.
+    pub(crate) jit_kind: crate::falcon::jit::BackendKind,
     /// Execution backend selected for the TUI session.
-    /// Phase A always uses the interpreter; future modes plug in here.
     pub(crate) backend: Box<dyn ExecutionBackend<CacheController>>,
 }

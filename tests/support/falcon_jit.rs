@@ -35,18 +35,27 @@ fn factory_returns_interpreter_for_none() {
 }
 
 #[test]
+#[cfg(not(feature = "jit"))]
 fn factory_rejects_hot_mode_as_unsupported() {
     match make_backend(BackendKind::Hot) {
-        Ok(_) => panic!("Hot mode should be unimplemented in Phase A"),
+        Ok(_) => panic!("Hot mode should be unsupported without the jit feature"),
         Err(FalconError::Unsupported(_)) => {}
         Err(other) => panic!("expected Unsupported, got {other:?}"),
     }
 }
 
 #[test]
-fn factory_rejects_full_mode_as_unsupported() {
+#[cfg(feature = "jit")]
+fn factory_returns_hot_backend() {
+    assert!(make_backend(BackendKind::Hot).is_ok());
+}
+
+#[test]
+fn factory_rejects_full_mode_via_make_backend() {
+    // Full mode requires cpu+mem for eager scan; make_backend always returns Unsupported.
+    // Use make_full_backend(cpu, mem) to construct it.
     match make_backend(BackendKind::Full) {
-        Ok(_) => panic!("Full mode should be unimplemented in Phase A"),
+        Ok(_) => panic!("make_backend should not construct Full; use make_full_backend"),
         Err(FalconError::Unsupported(_)) => {}
         Err(other) => panic!("expected Unsupported, got {other:?}"),
     }

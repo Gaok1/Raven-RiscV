@@ -6,9 +6,9 @@ use ratatui::{
 };
 
 use crate::ui::app::{
-    App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
-    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
-    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
+    App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
+    SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
 };
 use crate::ui::theme;
 use crate::ui::view::components::{dense_action, dense_value};
@@ -189,7 +189,25 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     ]));
     items.push(pipe_item);
 
-    // Row 5: Syscall debug log toggle
+    // Row 5: JIT mode selector
+    let is_sel_jit = sel == SETTINGS_ROW_JIT_MODE;
+    let is_hov_jit = app.settings.hover_row == Some(SETTINGS_ROW_JIT_MODE);
+    let label_style_jit = if is_sel_jit {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_jit {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let jit_label = app.run.jit_kind.as_str().to_uppercase();
+    let jit_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  JIT Mode"), label_style_jit),
+        Span::raw("  "),
+        dense_value(&jit_label, app.settings.hover_jit_mode, true, theme::LABEL_Y),
+    ]));
+    items.push(jit_item);
+
+    // Row 6: Syscall debug log toggle
     let is_sel_trace = sel == SETTINGS_ROW_TRACE_SYSCALLS;
     let is_hov_trace = app.settings.hover_row == Some(SETTINGS_ROW_TRACE_SYSCALLS);
     let label_style_trace = if is_sel_trace {
@@ -345,6 +363,36 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
                 Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
+    } else if sel == SETTINGS_ROW_JIT_MODE {
+        vec![
+            Line::from(Span::styled(
+                "JIT Mode",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "none  — interpreter puro (padrão)",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "hot   — compila blocos quentes",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "full  — scan eager ao carregar",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "hot/full requerem --features jit.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" / Click = ciclar modo", Style::default().fg(theme::LABEL)),
             ]),
         ]
     } else if sel == SETTINGS_ROW_TRACE_SYSCALLS {
