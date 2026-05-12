@@ -179,6 +179,30 @@ impl App {
         self.console.trace_syscalls = enabled;
     }
 
+    pub(in crate::ui) fn set_jit_mode(&mut self, kind: crate::falcon::jit::BackendKind) {
+        self.run.jit_kind = kind;
+        self.rebuild_backend();
+    }
+
+    /// Reconstrói o backend de execução com base em `run.jit_kind` e o
+    /// estado atual de cpu/mem. Chamado ao trocar o modo JIT ou ao carregar
+    /// um programa (para que FullBackend faça o scan eager no estado correto).
+    pub(in crate::ui) fn rebuild_backend(&mut self) {
+        use crate::falcon::jit::{BackendKind, make_backend};
+        self.run.backend = match self.run.jit_kind {
+            BackendKind::None | BackendKind::Hot => {
+                make_backend(self.run.jit_kind)
+                    .unwrap_or_else(|_| make_backend(BackendKind::None).unwrap())
+            }
+            BackendKind::Full => {
+                #[cfg(feature = "jit")]
+                { crate::falcon::jit::make_full_backend(&self.run.cpu, &self.run.mem) }
+                #[cfg(not(feature = "jit"))]
+                { make_backend(BackendKind::None).unwrap() }
+            }
+        };
+    }
+
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
         self.run.is_running = false;
         self.pipeline.reset_stages(self.run.cpu.pc);

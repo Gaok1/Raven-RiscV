@@ -287,8 +287,16 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     mem.invalidate_all();
     mem.reset_stats();
 
-    let mut backend = jit::make_backend(args.jit_mode)
-        .map_err(|e| format!("--jit={}: {e}", args.jit_mode.as_str()))?;
+    let mut backend: Box<dyn jit::ExecutionBackend<_>> =
+        if args.jit_mode == jit::BackendKind::Full {
+            #[cfg(feature = "jit")]
+            { jit::make_full_backend(&cpu, &mem) }
+            #[cfg(not(feature = "jit"))]
+            { return Err("--jit=full requires the 'jit' cargo feature. Rebuild with --features jit.".to_string()); }
+        } else {
+            jit::make_backend(args.jit_mode)
+                .map_err(|e| format!("--jit={}: {e}", args.jit_mode.as_str()))?
+        };
 
     if args.pipeline && max_cores > 1 {
         return Err(

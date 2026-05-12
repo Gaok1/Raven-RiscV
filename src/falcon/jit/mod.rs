@@ -43,12 +43,23 @@ pub mod profile;
 
 #[cfg(feature = "jit")]
 pub mod codegen;
+#[cfg(feature = "jit")]
+pub mod hot;
+#[cfg(feature = "jit")]
+pub mod full;
 
 pub use backend::{BackendKind, ExecCtx, ExecOutcome, ExecutionBackend};
 pub use block::{scan_block, BasicBlock, BlockTerminator};
 pub use factory::make_backend;
+#[cfg(feature = "jit")]
+pub use factory::make_full_backend;
 pub use interpreter::InterpreterBackend;
 pub use profile::HotProfile;
+
+#[cfg(feature = "jit")]
+pub use hot::HotBackend;
+#[cfg(feature = "jit")]
+pub use full::FullBackend;
 
 #[cfg(test)]
 #[path = "../../../tests/support/falcon_jit.rs"]

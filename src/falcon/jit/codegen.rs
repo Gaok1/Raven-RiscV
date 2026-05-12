@@ -117,8 +117,16 @@ const LOCAL_EXIT_OFF: usize = offset_of!(Cpu, local_exit);
 // Trampolines extern "C"
 // ---------------------------------------------------------------------------
 
+/// Contabiliza fetch de instrução no I-cache sem retornar o dado.
+/// O JIT já tem a palavra decodificada em compile-time; só precisamos
+/// atualizar hits/misses/instruction_count. Evita Vec::clone() no hit path.
+unsafe extern "C" fn jit_account_fetch(mem: *mut CacheController, addr: u32) {
+    unsafe { (*mem).account_fetch32(addr) }
+}
+
 /// Executa `fetch32` com contabilidade de I-cache.
-/// Retorna `u32::MAX` se a leitura falhar (indica fault ao dispatcher).
+/// Mantido para compatibilidade; não usado pelo codegen principal.
+#[allow(dead_code)]
 unsafe extern "C" fn jit_fetch32(mem: *mut CacheController, addr: u32) -> u32 {
     unsafe { (*mem).fetch32(addr) }.unwrap_or(u32::MAX)
 }
@@ -189,11 +197,12 @@ unsafe extern "C" fn jit_handle_ecall(
 // Helpers de emissão
 // ---------------------------------------------------------------------------
 
-/// Emite a chamada ao trampoline `jit_fetch32(mem, pc)`.
-/// Após esta chamada, o bloco tem a contabilidade de I-cache correta para este PC.
+/// Emite contabilidade de I-cache via `jit_account_fetch(mem, pc)`.
+/// Não retorna dado (a palavra já está decodificada em compile-time).
+/// Evita Vec::clone() no hit path — principal fonte de overhead por instrução.
 #[inline(always)]
 fn emit_fetch32(ops: &mut Assembler, pc: u32) {
-    let fn_ptr = jit_fetch32 as *const () as i64;
+    let fn_ptr = jit_account_fetch as *const () as i64;
     let pc_i32 = pc as i32;
     dynasm!(ops
         ; mov rdi, r12           // arg0 = mem
