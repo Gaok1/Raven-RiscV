@@ -296,6 +296,13 @@ pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize,
 
 impl App {
     pub fn new(ram_override: Option<usize>) -> Self {
+        Self::new_with_jit(ram_override, crate::falcon::jit::BackendKind::None)
+    }
+
+    pub fn new_with_jit(
+        ram_override: Option<usize>,
+        initial_jit_kind: crate::falcon::jit::BackendKind,
+    ) -> Self {
         let mut cpu = Cpu::default();
         let base_pc = 0x0000_0000;
         cpu.pc = base_pc;
@@ -539,6 +546,9 @@ impl App {
         app.console.trace_syscalls = app.run.trace_syscalls;
         app.assemble_and_load();
         app.rebuild_harts();
+        if initial_jit_kind != crate::falcon::jit::BackendKind::None {
+            app.set_jit_mode(initial_jit_kind);
+        }
         app
     }
 
