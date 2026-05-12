@@ -2133,7 +2133,15 @@ impl App {
                     &mut self.run.mem,
                     &mut self.console,
                 );
-                self.run.backend.run_until_yield(&mut ctx)
+                if go_mode {
+                    // Run mode: usa o backend JIT completo (blocos compilados).
+                    self.run.backend.run_until_yield(&mut ctx)
+                } else {
+                    // Step mode: sempre 1 instrução via interpretador para que
+                    // trace, highlights e exec_counts sejam por-instrução.
+                    use crate::falcon::jit::ExecutionBackend as _;
+                    crate::falcon::jit::InterpreterBackend::default().run_until_yield(&mut ctx)
+                }
             }));
             let alive = match res {
                 Ok(Ok(crate::falcon::jit::ExecOutcome::Stepped { .. })) => true,
