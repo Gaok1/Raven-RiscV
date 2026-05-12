@@ -1,15 +1,36 @@
+//! Construção do backend de execução selecionado pela CLI.
+//!
+//! # Responsabilidade
+//!
+//! `make_backend` é o único ponto onde o código de fora do módulo `jit` decide
+//! qual implementação concreta de [`ExecutionBackend`] usar. O restante do
+//! sistema (CLI, TUI, testes) opera exclusivamente sobre o trait object
+//! `Box<dyn ExecutionBackend<CacheController>>`, sem conhecer a variante concreta.
+//!
+//! Esse isolamento facilita a adição de novos backends (Fase C: `HotBackend`,
+//! `FullBackend`) sem alterar nenhum call site fora deste arquivo.
+//!
+//! # Estado por fase
+//!
+//! | Fase | `None`  | `Hot`       | `Full`      |
+//! |------|---------|-------------|-------------|
+//! | A    | ✓       | Unsupported | Unsupported |
+//! | B    | ✓       | Unsupported | Unsupported |
+//! | C    | ✓       | ✓           | ✓           |
+//!
+//! Retornar `FalconError::Unsupported` com mensagem clara é melhor do que
+//! `panic!` — a CLI pode exibir a mensagem ao usuário e sugerir `--jit=none`.
+
 use crate::falcon::CacheController;
 use crate::falcon::errors::FalconError;
 
 use super::backend::{BackendKind, ExecutionBackend};
 use super::interpreter::InterpreterBackend;
 
-/// Construct the execution backend selected by the CLI.
+/// Constrói o backend de execução correspondente ao `kind` selecionado pela CLI.
 ///
-/// Phase A only implements `BackendKind::None`. `Hot` and `Full` return a
-/// clean `FalconError::Unsupported` so the CLI can surface a useful message
-/// instead of panicking. The boxed trait object is parameterized on
-/// `CacheController` — the only `Bus` type used in execution paths today.
+/// Parameterizado em `CacheController` — o único tipo `Bus` usado nos caminhos
+/// de execução hoje.
 pub fn make_backend(
     kind: BackendKind,
 ) -> Result<Box<dyn ExecutionBackend<CacheController>>, FalconError> {

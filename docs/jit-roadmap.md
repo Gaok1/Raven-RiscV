@@ -1,6 +1,6 @@
 # JIT Roadmap
 
-Status atual: **Fase A concluída** (modularização). Backend `ExecutionBackend` trait, factory, `InterpreterBackend` wrapping `falcon::exec::step`, `HotProfile` always-on, flag `--jit=none|hot|full`, todos os call sites roteados. `hot` e `full` retornam `FalconError::Unsupported` por enquanto.
+Status atual: **Fase B concluída** (codegen + infraestrutura). `scan_block` implementado e testado (8 testes), `compile_block` emite x86_64 nativo via dynasm-rs 5 para ALU R/I-type completo + loads/stores (trampolines) + todos os terminadores. `CompiledBlockCache` real com `HashMap<u32, Arc<CompiledBlock>>` e `invalidate_range`. Todos os 8 módulos do `src/falcon/jit/` documentados com `//!`. **Pendente:** `HotBackend` em `factory.rs` para conectar o codegen ao loop de execução (`--jit=hot`).
 
 Decisões arquiteturais que continuam valendo nas próximas fases:
 
@@ -11,7 +11,7 @@ Decisões arquiteturais que continuam valendo nas próximas fases:
 
 ---
 
-## Fase B — Scaffold de codegen
+## Fase B — Scaffold de codegen ✓ CONCLUÍDA
 
 Objetivo: provar viabilidade compilando UM basic block de instruções ALU e validando equivalência bit-exata contra o interpretador. Sem políticas de hot/full ainda.
 
