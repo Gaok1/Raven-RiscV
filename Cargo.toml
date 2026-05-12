@@ -7,9 +7,11 @@ edition = "2024"
 default = []
 # Phase B (future) will pull in dynasm-rs behind this feature so default
 # builds stay free of the codegen dependency.
-jit = []
+jit = ["dep:dynasm", "dep:dynasmrt"]
 
 [dependencies]
+dynasm    = { version = "5", optional = true }
+dynasmrt  = { version = "5", optional = true }
 ratatui = { version = "0.28", features = ["all-widgets"] }
 crossterm = "0.29"
 thiserror = "1"
