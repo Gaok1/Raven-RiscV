@@ -200,11 +200,23 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(theme::LABEL)
     };
     let jit_label = app.run.jit_kind.as_str().to_uppercase();
-    let jit_item = ListItem::new(Line::from(vec![
+    #[cfg(feature = "jit")]
+    let jit_unavailable = false;
+    #[cfg(not(feature = "jit"))]
+    let jit_unavailable = app.run.jit_kind != crate::falcon::jit::BackendKind::None;
+    let mut jit_spans = vec![
         Span::styled(format!("{:<20}", "  JIT Mode"), label_style_jit),
         Span::raw("  "),
         dense_value(&jit_label, app.settings.hover_jit_mode, true, theme::LABEL_Y),
-    ]));
+    ];
+    if jit_unavailable {
+        jit_spans.push(Span::raw("  "));
+        jit_spans.push(Span::styled(
+            "recompile com --features jit",
+            Style::default().fg(theme::DANGER),
+        ));
+    }
+    let jit_item = ListItem::new(Line::from(jit_spans));
     items.push(jit_item);
 
     // Row 6: Syscall debug log toggle
@@ -387,6 +399,10 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
             Line::raw(""),
             Line::from(Span::styled(
                 "hot/full requerem --features jit.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::from(Span::styled(
+                "Aviso vermelho = sem efeito nesta build.",
                 Style::default().fg(theme::LABEL),
             )),
             Line::raw(""),
