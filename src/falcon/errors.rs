@@ -10,4 +10,8 @@ pub enum FalconError {
     /// Bus or memory access errors.
     #[error("Bus error: {0}")]
     Bus(String),
+
+    /// Feature or backend not implemented in the current build.
+    #[error("Unsupported: {0}")]
+    Unsupported(String),
 }

@@ -9,9 +9,10 @@ pub use self::output::{parse_expect_mem_spec, parse_expect_reg_spec};
 use crate::falcon::cache::{
     CacheConfig, InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy,
 };
+use crate::falcon::jit::{self, BackendKind, ExecCtx, ExecOutcome, ExecutionBackend};
 use crate::falcon::program::{load_bytes, load_elf};
 use crate::falcon::registers::HartStartRequest;
-use crate::falcon::{self, CacheController, Cpu};
+use crate::falcon::{CacheController, Cpu};
 use crate::ui::pipeline::sim::pipeline_tick;
 use crate::ui::pipeline::{PipelineConfig, parse_pipeline_config, serialize_pipeline_config};
 use crate::ui::{Console, CpiConfig};
@@ -41,6 +42,8 @@ pub struct RunArgs {
     pub expect_stdout: Option<String>,
     pub expect_regs: Vec<(u8, u32)>,
     pub expect_mems: Vec<(u32, u32)>,
+    /// Execution backend (`--jit=none|hot|full`). Defaults to `None`.
+    pub jit_mode: BackendKind,
 }
 
 pub enum OutputFormat {
@@ -209,22 +212,29 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     }
 
     // ── 2. Apply sim settings (.rcfg) ────────────────────────────────────────
-    let (cpi_config, cache_enabled, _pipeline_enabled, _trace_syscalls, _run_scope, settings_max_cores, settings_mem_size) =
-        if let Some(path) = &args.settings {
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| format!("Cannot read settings '{}': {e}", path))?;
-            parse_rcfg_cli_full(&text)?
-        } else {
-            (
-                default_cpi_config(),
-                true,
-                true,
-                false,
-                "focus".to_string(),
-                DEFAULT_MAX_CORES,
-                16 * 1024 * 1024,
-            )
-        };
+    let (
+        cpi_config,
+        cache_enabled,
+        _pipeline_enabled,
+        _trace_syscalls,
+        _run_scope,
+        settings_max_cores,
+        settings_mem_size,
+    ) = if let Some(path) = &args.settings {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("Cannot read settings '{}': {e}", path))?;
+        parse_rcfg_cli_full(&text)?
+    } else {
+        (
+            default_cpi_config(),
+            true,
+            true,
+            false,
+            "focus".to_string(),
+            DEFAULT_MAX_CORES,
+            16 * 1024 * 1024,
+        )
+    };
     let max_cores = if args.max_cores == 0 {
         settings_max_cores
     } else {
@@ -277,6 +287,17 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     mem.invalidate_all();
     mem.reset_stats();
 
+    let mut backend: Box<dyn jit::ExecutionBackend<_>> =
+        if args.jit_mode == jit::BackendKind::Full {
+            #[cfg(feature = "jit")]
+            { jit::make_full_backend(&cpu, &mem) }
+            #[cfg(not(feature = "jit"))]
+            { return Err("--jit=full requires the 'jit' cargo feature. Rebuild with --features jit.".to_string()); }
+        } else {
+            jit::make_backend(args.jit_mode)
+                .map_err(|e| format!("--jit={}: {e}", args.jit_mode.as_str()))?
+        };
+
     if args.pipeline && max_cores > 1 {
         return Err(
             "headless multi-hart execution is not implemented for --pipeline yet; use sequential mode or --cores 1"
@@ -317,6 +338,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
             args.max_cycles,
             &mut captured_stdout,
             max_cores,
+            backend.as_mut(),
         )?;
         None
     };
@@ -408,15 +430,8 @@ pub fn export_sim_settings(output: Option<&str>) -> Result<(), String> {
 pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
     // Reuse the same strict parser as `run --sim-settings`
-    let (
-        cpi,
-        cache_enabled,
-        pipeline_enabled,
-        trace_syscalls,
-        run_scope,
-        max_cores,
-        mem_size,
-    ) = parse_rcfg_cli_full(&text)?;
+    let (cpi, cache_enabled, pipeline_enabled, trace_syscalls, run_scope, max_cores, mem_size) =
+        parse_rcfg_cli_full(&text)?;
     let mem_kb = mem_size / 1024;
     let cpi_keys = [
         "alu",
@@ -484,7 +499,9 @@ fn default_cpi_config() -> CpiConfig {
     }
 }
 
-fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, bool, bool, String, usize, usize), String> {
+fn parse_rcfg_cli_full(
+    text: &str,
+) -> Result<(CpiConfig, bool, bool, bool, String, usize, usize), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -555,14 +572,14 @@ fn parse_rcfg_cli_full(text: &str) -> Result<(CpiConfig, bool, bool, bool, Strin
         }
         None => match map.get("mem_mb") {
             Some(v) => {
-            let mb = v
-                .parse::<usize>()
-                .map_err(|_| "Invalid mem_mb: expected integer".to_string())?;
-            if !(1..=4096).contains(&mb) {
-                return Err(format!("Invalid mem_mb: {mb} (use 1..=4096)"));
+                let mb = v
+                    .parse::<usize>()
+                    .map_err(|_| "Invalid mem_mb: expected integer".to_string())?;
+                if !(1..=4096).contains(&mb) {
+                    return Err(format!("Invalid mem_mb: {mb} (use 1..=4096)"));
+                }
+                mb * 1024 * 1024
             }
-            mb * 1024 * 1024
-        }
             None => 16 * 1024 * 1024,
         },
     };
@@ -584,6 +601,7 @@ fn run_headless_sequential(
     max_cycles: u64,
     captured_stdout: &mut Vec<u8>,
     max_cores: usize,
+    backend: &mut dyn ExecutionBackend<CacheController>,
 ) -> Result<(), String> {
     if max_cores > 1 {
         return run_headless_multihart_sequential(
@@ -593,6 +611,7 @@ fn run_headless_sequential(
             max_cycles,
             captured_stdout,
             max_cores,
+            backend,
         );
     }
     let mut cycles: u64 = 0;
@@ -602,20 +621,23 @@ fn run_headless_sequential(
             break;
         }
 
-        match falcon::exec::step(cpu, mem, console) {
-            Ok(true) => {}
-            Ok(false) => {
-                if console.reading {
-                    flush_cpu_stdout(cpu, captured_stdout);
-                    let mut line = String::new();
-                    match std::io::stdin().read_line(&mut line) {
-                        Ok(0) => break,
-                        Ok(_) => {
-                            console.push_input(line.trim_end_matches(['\n', '\r']).to_string())
-                        }
-                        Err(_) => break,
-                    }
-                } else if cpu.ebreak_hit || cpu.local_exit || cpu.exit_code.is_some() {
+        let outcome = {
+            let mut ctx = ExecCtx::new(cpu, mem, console);
+            backend.run_until_yield(&mut ctx)
+        };
+        match outcome {
+            Ok(ExecOutcome::Stepped { .. }) => {}
+            Ok(ExecOutcome::AwaitingInput) => {
+                flush_cpu_stdout(cpu, captured_stdout);
+                let mut line = String::new();
+                match std::io::stdin().read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => console.push_input(line.trim_end_matches(['\n', '\r']).to_string()),
+                    Err(_) => break,
+                }
+            }
+            Ok(ExecOutcome::Halted) => {
+                if cpu.ebreak_hit || cpu.local_exit || cpu.exit_code.is_some() {
                     break;
                 } else {
                     return Err(format!("raven: fault at PC=0x{:08X}", cpu.pc));
@@ -638,6 +660,7 @@ fn run_headless_multihart_sequential(
     max_cycles: u64,
     captured_stdout: &mut Vec<u8>,
     max_cores: usize,
+    backend: &mut dyn ExecutionBackend<CacheController>,
 ) -> Result<(), String> {
     let mut harts = Vec::with_capacity(max_cores);
     harts.push(HeadlessHart {
@@ -675,8 +698,12 @@ fn run_headless_multihart_sequential(
                 continue;
             }
             any_running = true;
-            match falcon::exec::step(&mut harts[idx].cpu, mem, console) {
-                Ok(true) => {
+            let outcome = {
+                let mut ctx = ExecCtx::new(&mut harts[idx].cpu, mem, console);
+                backend.run_until_yield(&mut ctx)
+            };
+            match outcome {
+                Ok(ExecOutcome::Stepped { .. }) => {
                     flush_cpu_stdout(&mut harts[idx].cpu, captured_stdout);
                     service_pending_hart_start(
                         &mut harts,
@@ -686,7 +713,7 @@ fn run_headless_multihart_sequential(
                         mem.ram.data_len(),
                     )?;
                 }
-                Ok(false) => {
+                Ok(outcome @ (ExecOutcome::Halted | ExecOutcome::AwaitingInput)) => {
                     flush_cpu_stdout(&mut harts[idx].cpu, captured_stdout);
                     service_pending_hart_start(
                         &mut harts,
@@ -695,7 +722,7 @@ fn run_headless_multihart_sequential(
                         max_cores,
                         mem.ram.data_len(),
                     )?;
-                    if console.reading {
+                    if matches!(outcome, ExecOutcome::AwaitingInput) {
                         let mut line = String::new();
                         match std::io::stdin().read_line(&mut line) {
                             Ok(0) => break,

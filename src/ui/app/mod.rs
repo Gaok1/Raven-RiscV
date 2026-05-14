@@ -29,9 +29,10 @@ pub(crate) use self::run_state::{
     BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunSpeed, RunState,
 };
 pub(crate) use self::settings_state::{
-    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
-    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
-    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState, nearest_pow2_clamp,
+    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
+    SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState,
+    nearest_pow2_clamp,
 };
 
 use super::{
@@ -295,6 +296,13 @@ pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize,
 
 impl App {
     pub fn new(ram_override: Option<usize>) -> Self {
+        Self::new_with_jit(ram_override, crate::falcon::jit::BackendKind::None)
+    }
+
+    pub fn new_with_jit(
+        ram_override: Option<usize>,
+        initial_jit_kind: crate::falcon::jit::BackendKind,
+    ) -> Self {
         let mut cpu = Cpu::default();
         let base_pc = 0x0000_0000;
         cpu.pc = base_pc;
@@ -424,6 +432,9 @@ impl App {
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
                 trace_syscalls: false,
+                jit_kind: crate::falcon::jit::BackendKind::None,
+                backend: crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None)
+                    .expect("interpreter backend is always available"),
             },
             docs: DocsState {
                 page: DocsPage::InstrRef,
@@ -535,6 +546,9 @@ impl App {
         app.console.trace_syscalls = app.run.trace_syscalls;
         app.assemble_and_load();
         app.rebuild_harts();
+        if initial_jit_kind != crate::falcon::jit::BackendKind::None {
+            app.set_jit_mode(initial_jit_kind);
+        }
         app
     }
 
@@ -826,6 +840,8 @@ impl App {
         // Reset pipeline AFTER loading program (cpu.pc is now set correctly)
         self.pipeline.reset_stages(self.run.cpu.pc);
         self.rebuild_harts();
+        // Rebuild JIT backend AFTER load so FullBackend can scan the loaded program.
+        self.rebuild_backend();
     }
 
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
@@ -1899,11 +1915,13 @@ impl App {
                 if self.harts[core_idx].lifecycle != HartLifecycle::Running {
                     continue;
                 }
-                // Disjoint field borrows: self.harts vs self.run.mem vs self.console.
+                // Disjoint field borrows: self.harts vs self.run.mem vs
+                // self.run.backend vs self.console.
                 let faulted = {
                     let hart = &mut self.harts[core_idx];
                     let mem = &mut self.run.mem;
                     let console = &mut self.console;
+                    let backend = self.run.backend.as_mut();
                     step_hart_bg_inner(
                         hart,
                         mem,
@@ -1912,6 +1930,7 @@ impl App {
                         &exec_regions,
                         mem_size,
                         pipeline_enabled,
+                        backend,
                     )
                 };
                 let bp_hit = self.run.breakpoints.contains(&self.harts[core_idx].cpu.pc);
@@ -2119,10 +2138,27 @@ impl App {
             };
 
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                falcon::exec::step(&mut self.run.cpu, &mut self.run.mem, &mut self.console)
+                let mut ctx = crate::falcon::jit::ExecCtx::new(
+                    &mut self.run.cpu,
+                    &mut self.run.mem,
+                    &mut self.console,
+                );
+                if go_mode {
+                    // Run mode: usa o backend JIT completo (blocos compilados).
+                    self.run.backend.run_until_yield(&mut ctx)
+                } else {
+                    // Step mode: sempre 1 instrução via interpretador para que
+                    // trace, highlights e exec_counts sejam por-instrução.
+                    use crate::falcon::jit::ExecutionBackend as _;
+                    crate::falcon::jit::InterpreterBackend::default().run_until_yield(&mut ctx)
+                }
             }));
             let alive = match res {
-                Ok(Ok(v)) => v,
+                Ok(Ok(crate::falcon::jit::ExecOutcome::Stepped { .. })) => true,
+                Ok(Ok(
+                    crate::falcon::jit::ExecOutcome::Halted
+                    | crate::falcon::jit::ExecOutcome::AwaitingInput,
+                )) => false,
                 Ok(Err(e)) => {
                     use crate::falcon::errors::FalconError;
                     let msg = if matches!(&e, FalconError::Bus(_)) {

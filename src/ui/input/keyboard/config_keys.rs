@@ -1,7 +1,8 @@
+use crate::falcon::jit::BackendKind;
 use crate::ui::app::{
-    App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES,
-    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
-    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
+    App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
+    SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
 };
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -14,8 +15,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Up => {
             if app.settings.selected > 0 {
                 app.settings.selected -= 1;
-                if app.settings.selected == 6 {
-                    app.settings.selected = SETTINGS_ROW_PIPELINE_ENABLED;
+                // Skip blank separator row (index 7, between trace_syscalls and CPI section)
+                if app.settings.selected == 7 {
+                    app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
                 }
             }
             true
@@ -23,7 +25,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Down => {
             if app.settings.selected + 1 < SETTINGS_ROWS {
                 app.settings.selected += 1;
-                if app.settings.selected == 6 {
+                // Skip blank separator row
+                if app.settings.selected == 7 {
                     app.settings.selected = SETTINGS_ROW_CPI_START;
                 }
             }
@@ -43,6 +46,13 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 app.run_scope = app.run_scope.cycle();
             } else if app.settings.selected == SETTINGS_ROW_PIPELINE_ENABLED {
                 app.set_pipeline_enabled(!app.pipeline.enabled);
+            } else if app.settings.selected == SETTINGS_ROW_JIT_MODE {
+                let next = match app.run.jit_kind {
+                    BackendKind::None => BackendKind::Hot,
+                    BackendKind::Hot  => BackendKind::Full,
+                    BackendKind::Full => BackendKind::None,
+                };
+                app.set_jit_mode(next);
             } else if app.settings.selected == SETTINGS_ROW_TRACE_SYSCALLS {
                 app.set_trace_syscalls(!app.run.trace_syscalls);
             } else if app.settings.selected >= SETTINGS_ROW_CPI_START {
@@ -83,8 +93,8 @@ fn handle_numeric_edit(app: &mut App, code: KeyCode) -> bool {
             app.settings.cpi_edit_buf.clear();
             if app.settings.selected > 0 {
                 app.settings.selected -= 1;
-                if app.settings.selected == 6 {
-                    app.settings.selected = SETTINGS_ROW_PIPELINE_ENABLED;
+                if app.settings.selected == 7 {
+                    app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
                 }
             }
         }

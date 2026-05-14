@@ -1,4 +1,3 @@
-
 use ratatui::DefaultTerminal;
 use raven::{cli, ui};
 use std::io;
@@ -166,6 +165,7 @@ fn main() -> io::Result<()> {
     let quit_flag = setup_sigint();
 
     let mut ram_override: Option<usize> = None;
+    let mut jit_override: raven::falcon::BackendKind = raven::falcon::BackendKind::None;
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--mem" {
@@ -185,6 +185,36 @@ fn main() -> io::Result<()> {
                     return Ok(());
                 }
             }
+        } else if let Some(val) = args[i].strip_prefix("--jit=") {
+            jit_override = match val {
+                "none" => raven::falcon::BackendKind::None,
+                "hot" => raven::falcon::BackendKind::Hot,
+                "full" => raven::falcon::BackendKind::Full,
+                other => {
+                    eprintln!("error: unknown --jit '{other}' (use none, hot, or full)");
+                    return Ok(());
+                }
+            };
+            i += 1;
+        } else if args[i] == "--jit" {
+            match args.get(i + 1) {
+                Some(val) => {
+                    jit_override = match val.as_str() {
+                        "none" => raven::falcon::BackendKind::None,
+                        "hot" => raven::falcon::BackendKind::Hot,
+                        "full" => raven::falcon::BackendKind::Full,
+                        other => {
+                            eprintln!("error: unknown --jit '{other}' (use none, hot, or full)");
+                            return Ok(());
+                        }
+                    };
+                    i += 2;
+                }
+                None => {
+                    eprintln!("error: --jit requires a value (none, hot, or full)");
+                    return Ok(());
+                }
+            }
         } else {
             i += 1;
         }
@@ -196,9 +226,16 @@ fn main() -> io::Result<()> {
     let mut terminal: DefaultTerminal = ratatui::init();
 
     #[cfg(unix)]
-    let res = ui::run(&mut terminal, ui::App::new(ram_override), quit_flag);
+    let res = ui::run(
+        &mut terminal,
+        ui::App::new_with_jit(ram_override, jit_override),
+        quit_flag,
+    );
     #[cfg(not(unix))]
-    let res = ui::run(&mut terminal, ui::App::new(ram_override));
+    let res = ui::run(
+        &mut terminal,
+        ui::App::new_with_jit(ram_override, jit_override),
+    );
 
     ratatui::restore();
 
@@ -316,6 +353,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
             "--cores",
             "--expect-exit",
             "--expect-stdout",
+            "--jit",
         ],
     )?;
     let file = positional(args)
@@ -358,6 +396,16 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         Some(s) => parse_cores_arg(&s)?,
         None => 0,
     };
+    let jit_mode = match flag_value(args, "--jit").as_deref() {
+        None | Some("none") => raven::falcon::BackendKind::None,
+        Some("hot") => raven::falcon::BackendKind::Hot,
+        Some("full") => raven::falcon::BackendKind::Full,
+        Some(other) => {
+            return Err(format!(
+                "unknown --jit '{other}' (use none, hot, or full)"
+            ));
+        }
+    };
 
     cli::run_headless(cli::RunArgs {
         file,
@@ -376,6 +424,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         expect_stdout: flag_value(args, "--expect-stdout"),
         expect_regs,
         expect_mems,
+        jit_mode,
     })
 }
 

@@ -527,8 +527,14 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+/]", "toggle line comment"),
             ("[F2]", "toggle address hints"),
             ("[F12]", "go to label definition"),
-            ("[#! text]", "visible runtime annotation attached to an instruction"),
-            ("[##! text]", "runtime block comment shown above the next instruction"),
+            (
+                "[#! text]",
+                "visible runtime annotation attached to an instruction",
+            ),
+            (
+                "[##! text]",
+                "runtime block comment shown above the next instruction",
+            ),
             ("[Ctrl+f]", "open find bar"),
             ("[Ctrl+h]", "open find & replace bar"),
             ("[Ctrl+g]", "goto line number"),
@@ -594,7 +600,10 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+f]", "open search bar (filter by name/desc)"),
             ("[←/→]", "navigate type filter"),
             ("[Space]", "toggle selected type filter / restore All"),
-            ("[1/2/3/4]", "jump to: ISA Reference / Syscalls / Memory Map / Cache Reference"),
+            (
+                "[1/2/3/4]",
+                "jump to: ISA Reference / Syscalls / Memory Map / Cache Reference",
+            ),
             ("[l]", "toggle display language"),
         ]],
         Tab::Pipeline => vec![vec![

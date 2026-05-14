@@ -71,8 +71,7 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
         height: inner.height.saturating_sub(2),
     };
     f.render_widget(
-        Paragraph::new(Text::from(body_lines))
-            .style(Style::default().fg(theme::TEXT)),
+        Paragraph::new(Text::from(body_lines)).style(Style::default().fg(theme::TEXT)),
         body_area,
     );
 
@@ -152,7 +151,10 @@ fn push_hotkey_lines(
     let gap = 2usize;
     let rhs_width = width.saturating_sub(hotkey_col_width + gap);
     let wrapped_rhs = wrap_words(rhs, rhs_width.max(12));
-    let hotkey_style = Style::default().fg(theme::HOVER_FG).bg(theme::ACCENT).bold();
+    let hotkey_style = Style::default()
+        .fg(theme::HOVER_FG)
+        .bg(theme::ACCENT)
+        .bold();
 
     for (idx, chunk) in wrapped_rhs.iter().enumerate() {
         if idx == 0 {
@@ -172,12 +174,7 @@ fn push_hotkey_lines(
     }
 }
 
-fn wrap_styled_line(
-    out: &mut Vec<Line<'static>>,
-    text: &str,
-    width: usize,
-    base_style: Style,
-) {
+fn wrap_styled_line(out: &mut Vec<Line<'static>>, text: &str, width: usize, base_style: Style) {
     let mut current_words: Vec<&str> = Vec::new();
     let mut current_width = 0usize;
 
@@ -218,7 +215,10 @@ fn make_styled_line(text: &str, base_style: Style) -> Line<'static> {
                 let token: String = chars[i..=i + end].iter().collect();
                 spans.push(Span::styled(
                     token,
-                    Style::default().fg(theme::HOVER_FG).bg(theme::ACCENT).bold(),
+                    Style::default()
+                        .fg(theme::HOVER_FG)
+                        .bg(theme::ACCENT)
+                        .bold(),
                 ));
                 i += end + 1;
                 continue;
