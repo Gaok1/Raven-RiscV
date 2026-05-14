@@ -1,4 +1,5 @@
 use super::{CpiConfig, classify_cpi_cycles};
+use crate::falcon::jit::{ExecCtx, ExecOutcome, ExecutionBackend};
 use crate::falcon::{self, CacheController, Cpu, Instruction, registers::ExecRegion};
 use crate::ui::console::Console;
 
@@ -92,6 +93,7 @@ pub(crate) fn step_hart_bg_inner(
     exec_regions: &[ExecRegion],
     mem_size: usize,
     pipeline_enabled: bool,
+    backend: &mut dyn ExecutionBackend<CacheController>,
 ) -> bool {
     for _ in 0..16 {
         hart.prev_pc = hart.cpu.pc;
@@ -134,8 +136,13 @@ pub(crate) fn step_hart_bg_inner(
         let word = mem.peek32(step_pc).unwrap_or(0);
         let cpi_cycles = classify_cpi_cycles(word, &hart.cpu, cpi);
 
-        let alive = match falcon::exec::step(&mut hart.cpu, mem, console) {
-            Ok(v) => v,
+        let outcome = {
+            let mut ctx = ExecCtx::new(&mut hart.cpu, mem, console);
+            backend.run_until_yield(&mut ctx)
+        };
+        let alive = match outcome {
+            Ok(ExecOutcome::Stepped { .. }) => true,
+            Ok(ExecOutcome::Halted | ExecOutcome::AwaitingInput) => false,
             Err(e) => {
                 use crate::falcon::errors::FalconError;
                 let msg = if matches!(&e, FalconError::Bus(_)) {

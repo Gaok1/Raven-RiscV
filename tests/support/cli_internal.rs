@@ -119,8 +119,18 @@ fn headless_single_halt_is_treated_as_clean_exit() {
     cpu.pc = 0;
     cpu.write(2, 4096);
 
-    run_headless_sequential(&mut cpu, &mut mem, &mut console, 32, &mut stdout, 1)
-        .expect("headless run");
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    run_headless_sequential(
+        &mut cpu,
+        &mut mem,
+        &mut console,
+        32,
+        &mut stdout,
+        1,
+        backend.as_mut(),
+    )
+    .expect("headless run");
 
     assert_eq!(cpu.exit_code, Some(0));
 }
@@ -158,8 +168,18 @@ worker:
     cpu.write(2, (16 * 1024 * 1024) as u32);
     cpu.heap_break = prog.data_base;
 
-    run_headless_multihart_sequential(&mut cpu, &mut mem, &mut console, 128, &mut stdout, 2)
-        .expect("headless multi-hart run");
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    run_headless_multihart_sequential(
+        &mut cpu,
+        &mut mem,
+        &mut console,
+        128,
+        &mut stdout,
+        2,
+        backend.as_mut(),
+    )
+    .expect("headless multi-hart run");
 
     assert_eq!(cpu.exit_code, Some(0));
 }
@@ -195,8 +215,18 @@ worker:
     cpu.write(2, 0x0080_0000);
     cpu.heap_break = prog.data_base;
 
-    run_headless_multihart_sequential(&mut cpu, &mut mem, &mut console, 128, &mut stdout, 2)
-        .expect("headless multi-hart run");
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    run_headless_multihart_sequential(
+        &mut cpu,
+        &mut mem,
+        &mut console,
+        128,
+        &mut stdout,
+        2,
+        backend.as_mut(),
+    )
+    .expect("headless multi-hart run");
 
     assert_eq!(cpu.exit_code, Some(0));
 }
@@ -212,8 +242,18 @@ fn headless_invalid_instruction_is_reported_as_fault() {
     cpu.pc = 0;
     cpu.write(2, 4096);
 
-    let err = run_headless_sequential(&mut cpu, &mut mem, &mut console, 8, &mut stdout, 1)
-        .expect_err("invalid instruction should fault");
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    let err = run_headless_sequential(
+        &mut cpu,
+        &mut mem,
+        &mut console,
+        8,
+        &mut stdout,
+        1,
+        backend.as_mut(),
+    )
+    .expect_err("invalid instruction should fault");
     assert!(err.contains("fault at PC"));
 }
 

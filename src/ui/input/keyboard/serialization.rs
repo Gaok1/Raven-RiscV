@@ -1,6 +1,7 @@
 use crate::falcon::cache::{
     Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets,
 };
+use crate::falcon::jit::BackendKind;
 use crate::ui::app::{
     App, CacheResultsSnapshot, CpiConfig, LevelSnapshot, PathInput, PathInputAction,
     PipelineResultsSnapshot, RunScope,
@@ -48,11 +49,13 @@ pub(super) fn serialize_rcfg(
     run_scope: RunScope,
     mem_kb: usize,
     max_cores: usize,
+    jit_kind: BackendKind,
 ) -> String {
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!("cache_enabled={}\n", cache_enabled));
     s.push_str(&format!("pipeline_enabled={}\n", pipeline_enabled));
     s.push_str(&format!("trace_syscalls={}\n", trace_syscalls));
+    s.push_str(&format!("jit_mode={}\n", jit_kind.as_str()));
     s.push_str(&format!("mem_kb={}\n", mem_kb));
     s.push_str(&format!("max_cores={}\n", max_cores));
     s.push_str(&format!(
@@ -95,6 +98,7 @@ pub(super) struct RcfgSettings {
     pub(super) run_scope: RunScope,
     pub(super) mem_bytes: Option<usize>,
     pub(super) max_cores: Option<usize>,
+    pub(super) jit_kind: Option<BackendKind>,
 }
 
 pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
@@ -182,6 +186,13 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         }
         None => None,
     };
+    let jit_kind = match map.get("jit_mode").map(String::as_str) {
+        Some("none") => Some(BackendKind::None),
+        Some("hot") => Some(BackendKind::Hot),
+        Some("full") => Some(BackendKind::Full),
+        Some(other) => return Err(format!("invalid jit_mode: {other} (use none, hot, or full)")),
+        None => None,
+    };
     Ok(RcfgSettings {
         cpi,
         cache_enabled,
@@ -190,6 +201,7 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         run_scope,
         mem_bytes,
         max_cores,
+        jit_kind,
     })
 }
 
@@ -201,6 +213,9 @@ fn apply_rcfg(app: &mut App, cfg: RcfgSettings) {
     }
     app.set_trace_syscalls(cfg.trace_syscalls);
     app.run_scope = cfg.run_scope;
+    if let Some(kind) = cfg.jit_kind {
+        app.set_jit_mode(kind);
+    }
 
     let mut needs_restart = false;
     if let Some(max_cores) = cfg.max_cores {
@@ -599,6 +614,7 @@ pub(crate) fn do_export_rcfg(app: &mut App) {
         app.run_scope,
         app.run.mem_size / 1024,
         app.max_cores,
+        app.run.jit_kind,
     );
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Sim Config", &["rcfg"])
@@ -1534,6 +1550,7 @@ pub(super) fn dispatch_path_input(
                 app.run_scope,
                 app.run.mem_size / 1024,
                 app.max_cores,
+                app.run.jit_kind,
             );
             match std::fs::write(&path, &text) {
                 Ok(()) => {
@@ -1667,6 +1684,7 @@ mod tests {
             RunScope::FocusedHart,
             4096,
             2,
+            crate::falcon::jit::BackendKind::None,
         );
 
         let cfg = parse_rcfg(&text).expect("parse rcfg");
@@ -1677,6 +1695,29 @@ mod tests {
         assert_eq!(cfg.run_scope, RunScope::FocusedHart);
         assert_eq!(cfg.mem_bytes, Some(4096 * 1024));
         assert_eq!(cfg.max_cores, Some(2));
+        assert_eq!(cfg.jit_kind, Some(crate::falcon::jit::BackendKind::None));
+    }
+
+    #[test]
+    fn rcfg_round_trip_preserves_jit_mode() {
+        for kind in [
+            crate::falcon::jit::BackendKind::None,
+            crate::falcon::jit::BackendKind::Hot,
+            crate::falcon::jit::BackendKind::Full,
+        ] {
+            let text = serialize_rcfg(
+                &CpiConfig::default(),
+                true,
+                true,
+                false,
+                RunScope::AllHarts,
+                1024,
+                1,
+                kind,
+            );
+            let cfg = parse_rcfg(&text).expect("parse rcfg");
+            assert_eq!(cfg.jit_kind, Some(kind), "jit_kind round-trip failed for {kind:?}");
+        }
     }
 
     #[test]
@@ -1688,5 +1729,6 @@ mod tests {
         assert!(!cfg.trace_syscalls);
         assert_eq!(cfg.pipeline_enabled, None);
         assert_eq!(cfg.max_cores, None);
+        assert_eq!(cfg.jit_kind, None);
     }
 }
