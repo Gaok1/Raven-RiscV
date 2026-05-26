@@ -1,499 +1,484 @@
 # c-to-raven — API Reference
 
-`raven.h` is the public bare-metal runtime surface for C programs running in the Raven RISC-V simulator.
-No libc, no OS. Include it and you get the intended syscalls, I/O, strings, memory utilities, allocator, random, and multi-hart helpers — everything implemented as `static inline` functions.
-
-Implementation details live under `internal/` in headers such as `internal/raven_internal.h`, `internal/raven_syscall.h`, `internal/raven_libc.h`, `internal/raven_heap.h`, and `internal/raven_teaching.h`. They are included by `raven.h` and are not meant for direct user code.
+Everything you can call from a Raven C program, grouped by module. The umbrella `<raven/raven.h>` pulls in every module below except `<raven/advanced.h>`, which is a separate, opt-in include for low-level escape hatches.
 
 ---
 
-## Setup
+## Module index
 
-```c
-#include "raven.h"
-
-void _start(void) {
-    print_str("Hello, Raven!\n");
-    __sys_exit(0);
-}
-```
-
-Compile with your RISC-V cross-toolchain:
-
-```bash
-riscv32-unknown-elf-gcc -march=rv32im -mabi=ilp32 -nostdlib -O2 \
-    -o program.elf crt0.S main.c
-```
-
-The repo ships a `Makefile` and `crt0.S` that handle the entry point and stack setup.
+| Module | Purpose |
+|--------|---------|
+| [`<raven/types.h>`](#types--rangetypesh) | integer typedefs, `NULL`, `size_t` |
+| [`<raven/version.h>`](#version--ravenversionh) | API version macros |
+| [`<raven/io.h>`](#io--raveniooh) | print / read / println / eprint |
+| [`<raven/fmt.h>`](#fmt--ravenfmth) | printf / scanf / snprintf / sscanf |
+| [`<raven/mem.h>`](#mem--ravenmemh) | malloc family, memset / memcpy / memmove / memcmp |
+| [`<raven/str.h>`](#strings--ravenstrh) | strlen / strcmp / strcpy / ... |
+| [`<raven/math.h>`](#math--ravenmathh) | abs / min / max / clamp / ipow |
+| [`<raven/rand.h>`](#random--ravenrandh) | rand_u32 / rand_range / rand_bool |
+| [`<raven/hart.h>`](#harts--ravenharth) | multi-hart spawn / join / detach |
+| [`<raven/coro.h>`](#coroutines--ravencoroh) | cooperative coroutines: resume / yield |
+| [`<raven/perf.h>`](#perf--ravenperfh) | instr_count / cycle_count / RAVEN_MEASURE |
+| [`<raven/debug.h>`](#debug--ravendebugh) | assert / panic / exit |
+| [`<raven/advanced.h>`](#advanced---ravenadvancedh-opt-in) | ⚠ raw ecalls, ebreak, JIT mark-exec |
 
 ---
 
-## Syscall Wrappers
+## types — `<raven/types.h>`
 
-Direct `ecall` wrappers that follow the Linux RISC-V ABI (syscall number in `a7`, arguments in `a0`–`a5`).
-
-### Core I/O
-
-| Function | Syscall | Description |
-|---|---|---|
-| `__sys_write(fd, buf, len) -> int` | 64 | Low-level write wrapper |
-| `__sys_read(fd, buf, len) -> int` | 63 | Low-level read wrapper |
-| `__sys_writev(fd, iov, iovcnt) -> int` | 66 | Low-level scatter write wrapper |
+Canonical Raven types:
 
 ```c
-// raven_iovec for __sys_writev
-typedef struct {
-    void        *iov_base;
-    unsigned int iov_len;
-} raven_iovec;
+raven_u8,  raven_u16,  raven_u32,  raven_u64
+raven_i8,  raven_i16,  raven_i32,  raven_i64
+raven_size_t, raven_ssize_t, raven_uintptr_t, raven_ptrdiff_t
 ```
 
-### Process
-
-| Function | Syscall | Description |
-|---|---|---|
-| `__sys_exit(code)` | 93 | Low-level terminate wrapper (noreturn) |
-| `__sys_exit_group(code)` | 94 | Same as `__sys_exit` in Raven |
-| `__sys_getpid() -> int` | 172 | Always returns `1` |
-| `__sys_getuid() -> int` | 174 | Always returns `0` |
-| `__sys_getgid() -> int` | 176 | Always returns `0` |
-
-### Memory
-
-| Function | Syscall | Description |
-|---|---|---|
-| `__sys_brk(addr) -> void*` | 214 | Query or advance program break; pass `NULL` to query |
-| `__sys_mmap(addr, len, prot, flags, fd, offset) -> void*` | 222 | Anonymous mappings only (`flags=MAP_ANONYMOUS`, `fd=-1`) |
-| `__sys_munmap(addr, len) -> int` | 215 | No-op; always returns `0` |
-
-### Random
-
-| Function | Syscall | Description |
-|---|---|---|
-| `__sys_getrandom(buf, len, flags) -> int` | 278 | Fill buffer with random bytes |
-
-### Time
-
-| Function | Syscall | Description |
-|---|---|---|
-| `__sys_clock_gettime(clockid, tp) -> int` | 403 | Write `{ tv_sec, tv_nsec }` at `tp`; based on instruction count |
-
-```c
-typedef struct {
-    unsigned int tv_sec;
-    unsigned int tv_nsec;
-} raven_timespec;
-
-raven_timespec ts;
-__sys_clock_gettime(0, &ts);
-```
-
-### Constants
-
-```c
-// File descriptors
-#define STDIN   0
-#define STDOUT  1
-#define STDERR  2
-
-// mmap prot
-#define PROT_NONE   0x00
-#define PROT_READ   0x01
-#define PROT_WRITE  0x02
-#define PROT_EXEC   0x04
-
-// mmap flags
-#define MAP_SHARED    0x01
-#define MAP_PRIVATE   0x02
-#define MAP_ANONYMOUS 0x20
-```
+Libc-standard aliases also provided for ergonomics: `size_t`, `ptrdiff_t`, `NULL`. The raven-prefixed names are canonical; the aliases are there so generic C idioms compile under `-nostdlib`.
 
 ---
 
-## I/O Helpers
+## version — `<raven/version.h>`
 
-High-level helpers built on top of `__sys_write` / `__sys_read`.
+```c
+#define RAVEN_API_VERSION_MAJOR 1
+#define RAVEN_API_VERSION_MINOR 0
+#define RAVEN_API_VERSION       100      // major*100 + minor
+#define RAVEN_API_AT_LEAST(maj, min)     // true if current API ≥ maj.min
+```
+
+Use to gate code on the SDK version: `#if RAVEN_API_AT_LEAST(1, 1) ... #endif`.
+
+---
+
+## io — `<raven/io.h>`
+
+Each print/read function is a **single ecall** — the formatting work happens inside the simulator (in Rust) and therefore does **not** count toward `raven_instr_count`. This keeps benchmarks honest: only the *interesting* code shows up in the instruction count.
 
 ### Output
 
-| Function | Description |
-|---|---|
-| `print_char(c)` | Print single character to stdout |
-| `print_str(s)` | Print NUL-terminated string to stdout |
-| `print_newline()` | Print newline to stdout |
-| `print_int(n)` | Print signed `int` (decimal, no newline) |
-| `print_uint(n)` | Print unsigned `int` (decimal, no newline) |
-| `print_hex(n)` | Print as `0xDEADBEEF` (8 digits, no newline) |
-| `print_ptr(p)` | Print pointer address as hex |
-| `print_float(v, decimals)` | Print `float` with `decimals` decimal places (0–6) |
-| `print_bool(v)` | Print `"true"` or `"false"` |
-| `print_bin(n)` | Print 32-bit value as binary, grouped by byte |
+| Function | Notes |
+|----------|-------|
+| `raven_print_int(int n)` | signed decimal |
+| `raven_print_uint(raven_u32 n)` | unsigned decimal |
+| `raven_print_hex(raven_u32 n)` | `0xDEADBEEF` form |
+| `raven_print_str(const char *s)` | NUL-terminated string, no newline |
+| `raven_println_str(const char *s)` | + newline |
+| `raven_print_char(char c)` | one byte |
+| `raven_println(void)` | just a newline |
+| `raven_print_float(float v)` | default 6 sig digits, trailing zeros stripped |
+| `raven_print_float_n(float v, int decimals)` | custom precision (formats in C) |
+| `raven_print_ptr(const void *p)` | hex address |
+| `raven_print_bool(int v)` | `"true"` or `"false"` |
+| `raven_print_bin(raven_u32 n)` | 32 bits with byte grouping |
 
-> `print_ln()` is a legacy alias for `print_newline()`.
+### Stderr
 
-**Stderr variants** (same signatures, write to stderr):
-
-| Function |
-|---|
-| `eprint_char(c)` |
-| `eprint_str(s)` |
-| `eprint_ln()` |
-| `eprint_int(n)` |
-| `eprint_uint(n)` |
+`raven_eprint_str / _int / _uint / _char / raven_eprintln` — same as above but to fd=2 (rendered in red by the Raven TUI console).
 
 ### Input
 
-| Function | Description |
-|---|---|
-| `read_char() -> int` | Read one byte from stdin; returns `-1` on EOF |
-| `read_line(buf, max) -> int` | Read a line (stops on `\n`/EOF); always NUL-terminates; returns bytes read |
-| `read_int() -> int` | Parse signed decimal from one stdin line |
-| `read_uint() -> unsigned int` | Parse unsigned decimal from one stdin line |
+| Function | Notes |
+|----------|-------|
+| `int raven_read_int(void)` | parses decimal/hex (single ecall) |
+| `raven_u32 raven_read_uint(void)` | alias `raven_read_u32` |
+| `raven_u8 raven_read_u8(void)` | |
+| `raven_u16 raven_read_u16(void)` | |
+| `float raven_read_float(void)` | |
+| `int raven_read_line(char *buf, int max)` | **bounded**: ≤ max-1 bytes, NUL-terminates, returns byte count |
+| `int raven_read_char(void)` | -1 on EOF |
 
 ---
 
-## String Utilities
+## fmt — `<raven/fmt.h>`
 
-Standard C string functions provided without libc:
-
-| Function | Description |
-|---|---|
-| `strlen(s)` | Length of NUL-terminated string |
-| `strcmp(a, b)` | Compare strings; returns negative/0/positive |
-| `strncmp(a, b, n)` | Compare up to `n` characters |
-| `strcpy(dst, src)` | Copy string |
-| `strncpy(dst, src, n)` | Copy up to `n` characters, zero-pads |
-| `strcat(dst, src)` | Append string |
-| `strchr(s, c)` | First occurrence of `c`; returns `NULL` if not found |
-| `strrchr(s, c)` | Last occurrence of `c`; returns `NULL` if not found |
-
----
-
-## Memory Utilities
-
-| Function | Description |
-|---|---|
-| `memset(dst, c, n)` | Fill `n` bytes with value `c` |
-| `memcpy(dst, src, n)` | Copy `n` bytes (non-overlapping) |
-| `memmove(dst, src, n)` | Copy `n` bytes (handles overlap) |
-| `memcmp(a, b, n)` | Compare `n` bytes; returns negative/0/positive |
-
----
-
-## Math Utilities
-
-| Function | Description |
-|---|---|
-| `abs(n)` | Absolute value of `int` |
-| `min(a, b)` | Minimum of two `int` values |
-| `max(a, b)` | Maximum of two `int` values |
-| `umin(a, b)` | Minimum of two `unsigned int` values |
-| `umax(a, b)` | Maximum of two `unsigned int` values |
-| `ipow(base, exp)` | Integer power `base^exp` (no overflow check) |
-
----
-
-## Random Utilities
-
-Backed by `__sys_getrandom` (cryptographic quality RNG).
-
-| Function | Description |
-|---|---|
-| `rand_u32() -> unsigned int` | Uniformly random 32-bit unsigned integer |
-| `rand_u8() -> unsigned char` | Uniformly random byte (0–255) |
-| `rand_i32() -> int` | Random signed 32-bit integer |
-| `rand_range(lo, hi) -> unsigned int` | Random value in `[lo, hi)` |
-| `rand_bool() -> int` | `0` or `1` with equal probability |
-
-> `rand_range` uses modulo reduction — suitable for teaching, not for cryptographic use.
+Formatted I/O. Unlike `<raven/io.h>`, **formatting happens in C**, so the work
+counts toward `raven_instr_count`. Reach here when you want a single call to
+assemble a mixed-format line; reach for `<raven/io.h>` when you want each
+typed value to cost one ecall and stay invisible to benchmarks.
 
 ```c
-unsigned int die = rand_range(1, 7);  // d6
-int flip = rand_bool();
+int raven_printf  (const char *fmt, ...);
+int raven_snprintf(char *buf, raven_size_t size, const char *fmt, ...);
+int raven_scanf   (const char *fmt, ...);
+int raven_sscanf  (const char *str, const char *fmt, ...);
+
+/* va_list variants */
+int raven_vprintf  (const char *fmt, raven_va_list ap);
+int raven_vsnprintf(char *buf, raven_size_t size, const char *fmt, raven_va_list ap);
+int raven_vscanf   (const char *fmt, raven_va_list ap);
+int raven_vsscanf  (const char *str, const char *fmt, raven_va_list ap);
+```
+
+`raven_snprintf` follows C99 semantics: it always NUL-terminates when `size > 0`,
+writes at most `size - 1` bytes of content, and returns the number of bytes
+that *would* have been written if the buffer was large enough — so truncation
+is detectable via `(return_value >= size)`.
+
+`raven_printf` batches output into a 128-byte buffer flushed via one write
+ecall per fill — cheaper than calling `raven_print_char` per byte.
+
+### Supported conversions
+
+| Specifier | Meaning |
+|-----------|---------|
+| `%d` `%i` | signed decimal (`int`) |
+| `%u`      | unsigned decimal (`raven_u32`) |
+| `%x` `%X` | unsigned hex (lower / upper) |
+| `%o`      | unsigned octal |
+| `%b`      | unsigned binary (Raven extension) |
+| `%c`      | char |
+| `%s`      | NUL-terminated string |
+| `%p`      | pointer, printed as `0xHHHHHHHH` |
+| `%%`      | literal `%` |
+
+Modifiers: flags `-`, `+`, ` `, `0`, `#`; decimal width; `.precision`;
+length modifiers `h`, `hh`, `l`, `ll`, `z`, `j`, `t` are accepted and
+ignored (`int` and `long` are both 32-bit on rv32 — pass a `raven_u64` as
+two `raven_u32` args if you need 64-bit). `scanf` additionally honors `*`
+to suppress an assignment.
+
+### Floats
+
+`%f` is **intentionally not supported**. Variadic float promotion to
+`double` would pull in soft-float helpers from `compiler-rt` that
+`-nostdlib` strips, so the project keeps float printing on the dedicated
+path: format integer/string parts with `raven_snprintf`, then call
+`raven_print_float_n` from `<raven/io.h>` for each float.
+
+---
+
+## mem — `<raven/mem.h>`
+
+### Heap
+
+| Function | Notes |
+|----------|-------|
+| `void *raven_malloc(raven_size_t)` | first-fit; NULL on OOM |
+| `void *raven_calloc(raven_size_t n, raven_size_t sz)` | zero-initialised |
+| `void *raven_realloc(void *, raven_size_t)` | in-place when possible |
+| `void  raven_free(void *)` | coalesces free neighbours |
+| `raven_size_t raven_heap_used(void)` | bytes in use (including block headers) |
+| `raven_size_t raven_heap_free(void)` | bytes currently free |
+
+Default heap size is 64 KB; rebuild `libraven.a` with `-DRAVEN_HEAP_SIZE=<bytes>` to change it.
+
+### memcpy / memset family — two flavours
+
+```c
+raven_memset (dst, byte, len);    // simulator-accelerated (1 ecall)
+raven_memset_c(dst, byte, len);   // pure C loop (counts toward instr_count)
+
+raven_memcpy (dst, src, len);     // simulator-accelerated
+raven_memcpy_c(dst, src, len);    // pure C loop
+
+raven_memmove(dst, src, len);     // overlap-safe; C only
+raven_memcmp (a, b, len);
+```
+
+The plain `raven_X` form is the default; reach for `raven_X_c` when you specifically want the cost to show up in `raven_instr_count`.
+
+---
+
+## strings — `<raven/str.h>`
+
+```c
+raven_size_t raven_strlen (const char *);     // 1 ecall
+int          raven_strcmp (const char *, const char *);    // 1 ecall
+
+raven_size_t raven_strlen_c (const char *);   // C loop
+int          raven_strcmp_c (const char *, const char *);  // C loop
+
+int   raven_strncmp(const char *, const char *, raven_size_t);
+char *raven_strcpy (char *, const char *);
+char *raven_strncpy(char *, const char *, raven_size_t);
+char *raven_strcat (char *, const char *);
+char *raven_strchr (const char *, int);
+char *raven_strrchr(const char *, int);
 ```
 
 ---
 
-## Heap Allocator
+## math — `<raven/math.h>`
 
-A first-fit free-list allocator backed by a static `RAVEN_HEAP_SIZE`-byte buffer (default 64 KB).
-Every allocation is visible in Raven's **Dyn view** as a `sw` writing the block header.
-
-| Function | Description |
-|---|---|
-| `malloc(size) -> void*` | Allocate `size` bytes; returns `NULL` on OOM |
-| `calloc(nmemb, size) -> void*` | Allocate zeroed `nmemb * size` bytes |
-| `realloc(ptr, new_size) -> void*` | Resize a previous allocation |
-| `free(ptr)` | Free a previous allocation; coalesces adjacent free blocks |
-| `raven_heap_free() -> size_t` | Approximate bytes still available |
-| `raven_heap_used() -> size_t` | Bytes currently in use |
-
-**Resize the heap** by defining the macro before including the header:
+Header-only, all `static inline`:
 
 ```c
-#define RAVEN_HEAP_SIZE (256 * 1024)  // 256 KB
-#include "raven.h"
+int          raven_abs  (int);
+int          raven_min  (int, int);
+int          raven_max  (int, int);
+unsigned int raven_umin (unsigned, unsigned);
+unsigned int raven_umax (unsigned, unsigned);
+int          raven_clamp(int v, int lo, int hi);
+int          raven_ipow (int base, unsigned exp);   // base^exp, no overflow check
 ```
 
 ---
 
-## Assert and Panic
+## random — `<raven/rand.h>`
+
+Backed by Linux `getrandom` (cryptographic quality — not a seedable PRNG).
 
 ```c
-// Terminate with "PANIC: <msg>" on stderr and exit(1).
-// Also hits ebreak first so you can inspect state in Raven.
-raven_panic("something went wrong");
-
-// Assert: if expr is false, calls raven_panic with the expression text.
-raven_assert(ptr != NULL);
-raven_assert(index < array_size);
+raven_u32    raven_rand_u32  (void);
+raven_u8     raven_rand_u8   (void);
+int          raven_rand_i32  (void);
+int          raven_rand_bool (void);
+unsigned int raven_rand_range(unsigned lo, unsigned hi);   // [lo, hi)
 ```
 
 ---
 
-## Simulator Control
+## harts — `<raven/hart.h>`
+
+Multi-hart execution. Each hart has its own PC, registers, and stack; harts share one flat memory.
+
+### Spawning
 
 ```c
-raven_pause();  // emits ebreak — freezes execution in Raven for inspection
-raven_map_exec(buf, 8);  // allow instruction fetch from buf..buf+8
+typedef void (*RavenHartEntry)(unsigned int arg);
+
+RAVEN_HART_STACK(worker_stack, 4096);     // 16-byte aligned char buffer
+
+RavenHart h = raven_hart_spawn(my_worker, worker_stack, sizeof(worker_stack), 42);
+// or, with the stack-array macro that infers the size and rejects pointers:
+RavenHart h = RAVEN_HART_SPAWN(my_worker, worker_stack, 42);
 ```
 
-Use `raven_pause()` as a software breakpoint to inspect registers, memory, and the pipeline view
-before resuming.
+If you prefer to bundle launch parameters:
 
-`raven_map_exec(addr, len)` marks `[addr, addr + len)` executable. It does not allocate,
-copy, or validate the instructions you wrote there; it only authorizes instruction fetch.
-Both `addr` and `len` must be 4-byte aligned, `len` must be non-zero, and the whole
-range must fit inside Raven RAM.
+```c
+RavenHartTask t = raven_hart_task(my_worker, stack, sizeof(stack), 42);
+//             or RAVEN_HART_TASK(my_worker, stack, 42)
+RavenHart h = raven_hart_start(&t);
+```
+
+### Lifecycle
+
+```c
+int  raven_hart_is_done(RavenHart h);     // 0 = running, 1 = exited
+void raven_hart_join   (RavenHart *h);    // spin-wait; frees payload; invalidates h
+void raven_hart_detach (RavenHart *h);    // trampoline frees on exit; invalidates h
+```
+
+If a hart's entry function returns, the trampoline:
+1. marks the payload as done,
+2. frees it if the hart was detached,
+3. calls the `hart_exit` ecall.
+
+You never need to call `raven_unsafe_hart_exit()` manually.
+
+`RavenHart` is opaque — do not read or write `_payload` directly.
 
 ---
 
-## Raven Teaching Extensions (syscalls 1000–1053)
+## coroutines — `<raven/coro.h>`
 
-Raven-specific single-instruction shortcuts. Simpler than the standard wrappers above —
-no strlen loop, no fd argument — useful in small programs or in `.fas` assembly.
+Stackful, **cooperative** coroutines: a function that runs on its own stack and can suspend itself with `raven_coro_yield`, handing control back to whoever resumed it. Its stack and registers stay live across the suspension, so the next `raven_coro_resume` continues exactly where it left off.
 
-The API uses the `raven_*` prefix throughout. The old `falcon_*` names were removed.
+Unlike `<raven/hart.h>` (parallel execution on another hart), coroutines are single-hart — exactly one runs at a time and control only moves on an explicit resume/yield. A switch is a pure user-space register/stack swap: **no ecall is involved**.
 
-### Output
-
-| Function | Syscall | Description |
-|---|---|---|
-| `raven_print_int(n)` | 1000 | Print `int` (no newline) |
-| `raven_print_uint(n)` | 1004 | Print `unsigned int` (no newline) |
-| `raven_print_hex(n)` | 1005 | Print as `0xDEADBEEF` (no newline) |
-| `raven_print_char(c)` | 1006 | Print single ASCII character |
-| `raven_print_newline()` | 1008 | Print newline |
-| `raven_print_str(s)` | 1001 | Print NUL-terminated string (no newline) |
-| `raven_println_str(s)` | 1002 | Print NUL-terminated string with newline |
-| `raven_print_float(v)` | 1015 | Print `float` (up to 6 significant digits, no newline) |
-| `raven_print_bool(v)` | — | Print `"true"` or `"false"` |
-| `raven_print_ptr(p)` | — | Print pointer address as hex |
-| `raven_print_bin(n)` | — | Print 32-bit value as binary, grouped by byte |
-
-### Input
-
-All read functions **return** their value — no pointer argument needed.
-
-| Function | Syscall | Description |
-|---|---|---|
-| `raven_read_line(buf)` | 1003 | Read line into NUL-terminated buffer |
-| `raven_read_int() -> int` | 1013 | Read signed integer (accepts `-`) |
-| `raven_read_uint() -> unsigned int` | 1012 | Read unsigned decimal integer |
-| `raven_read_float() -> float` | 1014 | Read IEEE 754 float |
-| `raven_read_u8() -> unsigned char` | 1010 | Read decimal/hex byte |
-| `raven_read_u16() -> unsigned short` | 1011 | Read 16-bit unsigned |
-| `raven_read_u32() -> unsigned int` | 1012 | Read 32-bit unsigned |
-
-### Performance Counters
-
-| Function | Syscall | Description |
-|---|---|---|
-| `raven_get_instr_count() -> raven_u64` | 1030 | Instructions executed so far (64-bit) |
-| `raven_get_cycle_count() -> raven_u64` | 1031 | Simulated cycle count (64-bit) |
-| `raven_get_instr_count32() -> unsigned int` | helper | Low 32-bit compatibility wrapper |
-| `raven_get_cycle_count32() -> unsigned int` | helper | Low 32-bit compatibility wrapper |
-
-Useful for measuring algorithm cost inside the simulator:
+### Types
 
 ```c
-unsigned int before = raven_get_instr_count32();
-bubble_sort(arr, 1000);
-unsigned int cost = raven_get_instr_count32() - before;
-raven_print_uint(cost);
-raven_println_str(" instructions");
+typedef struct RavenCoro RavenCoro;                       // place on the stack or in static storage
+typedef void (*RavenCoroFn)(RavenCoro *self, void *arg);  // coroutine body
+
+typedef enum {
+    RAVEN_CORO_READY, RAVEN_CORO_SUSPENDED,
+    RAVEN_CORO_RUNNING, RAVEN_CORO_DONE
+} RavenCoroState;
+
+RAVEN_CORO_STACK(stack, 4096);   // 16-byte-aligned char buffer, owned by the caller
 ```
 
-### Simulator-accelerated Memory (syscalls 1050–1053)
+### API
 
-Execute in the simulator without running a C loop — compare with the standard C implementations
-using `raven_get_instr_count32` to see the difference.
+| Function | Notes |
+|----------|-------|
+| `void raven_coro_init(RavenCoro *co, void *stack, raven_size_t size, RavenCoroFn fn, void *arg)` | prepare `co`; does not start it. The stack buffer is caller-owned and must outlive `co` |
+| `void *raven_coro_resume(RavenCoro *co, void *send)` | run/continue `co`; `send` becomes the return value of the `yield` that paused it. Returns the value yielded back, or `NULL` once the body has finished |
+| `void *raven_coro_yield(RavenCoro *self, void *value)` | suspend `self`, handing `value` to the resumer. Returns the next `send`. Call this from inside the body |
+| `int raven_coro_done(const RavenCoro *co)` | 1 once the body has returned |
+| `RavenCoroState raven_coro_status(const RavenCoro *co)` | current lifecycle state |
 
-| Function | Syscall | Description |
-|---|---|---|
-| `raven_memset(dst, byte, len)` | 1050 | Fill region (simulator-side) |
-| `raven_memcpy(dst, src, len)` | 1051 | Copy non-overlapping region (simulator-side) |
-| `raven_strlen(s) -> size_t` | 1052 | Length of NUL-terminated string (simulator-side) |
-| `raven_strcmp(s1, s2) -> int` | 1053 | Compare NUL-terminated strings (simulator-side) |
+`resume`/`yield` exchange one `void*` in each direction — enough for the generator pattern. Pass `NULL` and ignore the result if you don't need values.
 
----
-
-## Hart Management (syscalls 1100–1101)
-
-Raven supports multiple hardware threads (harts) running concurrently.
-The user-level API has two layers: `RavenHartTask` for building a task before launching it,
-and `RavenHartHandle` for joining or polling after launch.
-The raw `__sys_hart_start` / `__sys_hart_exit` syscalls are internal — prefer the helpers below.
-
-### `RavenHartHandle`
-
-Returned by every start/spawn function.  Carries three embedded method pointers
-so you can call them directly on the struct, or use the free-function aliases.
+### Example — a generator
 
 ```c
-struct RavenHartHandle {
-    __RavenHartPayload *__p;           // internal — do not touch
-    int  (*is_finished)(const RavenHartHandle *h);
-    void (*join)(RavenHartHandle *h);
-    void (*detach)(RavenHartHandle *h);
-};
-```
-
-| Method / alias | Description |
-|---|---|
-| `h.is_finished(&h)` / `raven_hart_handle_is_finished(&h)` | Returns 1 when the hart has exited, 0 while running |
-| `h.join(&h)` / `raven_hart_handle_join(&h)` | Spin-wait until done, then free internal resources. Do not use handle after this. |
-| `h.detach(&h)` / `raven_hart_handle_detach(&h)` | Abandon: the hart frees itself on exit. Use when you don't need to wait. |
-
-### `RavenHartTask`
-
-Describes a hart before launching it.  A plain value — no hidden function pointers.
-
-```c
-typedef struct {
-    raven_hart_fn entry;
-    void         *stack_base;
-    size_t        stack_size;
-    unsigned int  arg;
-} RavenHartTask;
-
-// Constructor:
-RavenHartTask raven_hart_task(raven_hart_fn entry,
-                              void *stack_base, size_t stack_size,
-                              unsigned int arg);
-
-// Macro for real arrays (including VLAs). Pointers are rejected, so
-// malloc()-backed stacks must call raven_hart_task(..., stack_ptr, stack_size, ...)
-// explicitly.
-#define raven_hart_task_array(fn_ptr, stack_arr, arg_value)
-
-// Launch the task.  Returns a handle for join / poll.
-RavenHartHandle raven_hart_task_start(const RavenHartTask *task);
-```
-
-### `raven_spawn_hart` — quick one-liner
-
-Skip the task descriptor when you only need a handle back.
-
-```c
-RavenHartHandle raven_spawn_hart(raven_hart_fn entry,
-                                 void *stack_base, size_t stack_size,
-                                 unsigned int arg);
-
-// Macro variant for real arrays (including VLAs). For malloc() or any pointer,
-// call raven_spawn_hart(entry, stack_ptr, stack_size, arg) explicitly.
-#define raven_spawn_hart_array(fn_ptr, stack_arr, arg)
-```
-
-### Examples
-
-**Task + join** — build first, launch later, wait:
-
-```c
-static char worker_stack[4096];
-
-void worker(unsigned int n) {
-    raven_print_str("sum = ");
-    unsigned int s = 0;
-    for (unsigned int i = 1; i <= n; i++) s += i;
-    raven_print_uint(s);
-    raven_print_newline();
+static void counter(RavenCoro *self, void *arg) {
+    int n = (int)(raven_uintptr_t)arg;
+    for (int i = 1; i <= n; i++)
+        raven_coro_yield(self, (void *)(raven_uintptr_t)i);
 }
 
 int main(void) {
-    RavenHartTask task = raven_hart_task_array(worker, worker_stack, /*arg=*/100);
-    RavenHartHandle h = raven_hart_task_start(&task);
+    RAVEN_CORO_STACK(stack, 4096);
+    RavenCoro co;
+    raven_coro_init(&co, stack, sizeof(stack), counter, (void *)(raven_uintptr_t)5);
 
-    print_str("main running while worker computes...\n");
-    h.join(&h);   // or: raven_hart_handle_join(&h)
-    print_str("worker finished.\n");
+    while (!raven_coro_done(&co)) {
+        void *v = raven_coro_resume(&co, NULL);
+        if (!raven_coro_done(&co)) {
+            raven_print_str("yielded ");
+            raven_print_int((int)(raven_uintptr_t)v);
+            raven_println();
+        }
+    }
     return 0;
 }
 ```
 
-**Quick spawn + poll** — one-liner, non-blocking check:
+> Keep stacks modest — the default RAM is 128 KB and there is no stack-overflow guard. Only callee-saved registers are switched (the compiler spills caller-saved ones around the call); on the hardware-float build (`libraven_f.a`) the `fs0–fs11` registers are saved as well.
+
+---
+
+## perf — `<raven/perf.h>`
 
 ```c
-static char stack[4096];
-
-RavenHartHandle h = raven_spawn_hart_array(worker, stack, /*arg=*/50);
-while (!h.is_finished(&h)) { /* do other work */ }
+raven_u64 raven_instr_count(void);       // 64-bit retired-instruction count
+raven_u64 raven_cycle_count(void);       // 64-bit cycle count (incl. cache penalties)
+raven_u32 raven_instr_count32(void);
+raven_u32 raven_cycle_count32(void);
 ```
 
-**Heap / dynamic stack** — pass the size explicitly:
+### `RAVEN_MEASURE(label, block)`
 
 ```c
-char *stack = malloc(stack_size);
-if (!stack) return 1;
-
-RavenHartHandle h = raven_spawn_hart(worker, stack, stack_size, /*arg=*/50);
-h.join(&h);
-free(stack);
+RAVEN_MEASURE("bubble sort", {
+    bubble_sort(arr, N);
+});
+// → bubble sort: 75025007 instr, 549034132 cycles
 ```
 
-**Fire and forget (detach)** — hart cleans itself up, no need to join:
+The `block` is a normal compound statement — declare locals, break, return, anything. The instrumentation itself is two ecalls each side, well below normal benchmark resolution.
+
+---
+
+## debug — `<raven/debug.h>`
 
 ```c
-RavenHartHandle h = raven_spawn_hart_array(worker, stack, /*arg=*/0);
-h.detach(&h);   // main continues; hart frees its own resources on exit
+__attribute__((noreturn)) void raven_panic(const char *msg);
+__attribute__((noreturn)) void raven_exit (int code);
+#define raven_assert(expr)   // prints "ASSERT failed: <expr> at <file>:<line>" and exits 1
+```
+
+`raven_panic` writes `"PANIC: <msg>\n"` to stderr and exits with code 1. It does **not** ebreak first; if you want the simulator to pause for inspection, call `raven_unsafe_breakpoint()` from `<raven/advanced.h>` before panicking.
+
+---
+
+## advanced - `<raven/advanced.h>` (opt-in)
+
+> ⚠ Everything in this header bypasses Raven's safety and ergonomics. Use only when you have a specific reason.
+
+Two naming conventions inside this header:
+
+- `raven_sys_*` — maps directly to one Linux RISC-V ecall, follows the Linux ABI.
+- `raven_unsafe_*` — does something whose correctness depends on Raven internals (memory map, JIT, hart scheduler).
+
+### Constants
+
+```c
+RAVEN_FD_STDIN  RAVEN_FD_STDOUT  RAVEN_FD_STDERR
+RAVEN_PROT_NONE|READ|WRITE|EXEC
+RAVEN_MAP_SHARED|PRIVATE|ANONYMOUS
+```
+
+### Linux syscall wrappers
+
+```c
+int  raven_sys_write (int fd, const void *buf, int len);
+int  raven_sys_read  (int fd, void *buf, int len);
+int  raven_sys_writev(int fd, const RavenIovec *iov, int iovcnt);
+void raven_sys_exit  (int code) __attribute__((noreturn));
+
+int  raven_sys_getpid (void);  // always 1
+int  raven_sys_getuid (void);  // always 0
+int  raven_sys_getgid (void);  // always 0
+
+void *raven_sys_brk  (void *addr);
+void *raven_sys_mmap (void *addr, raven_size_t len, int prot, int flags,
+                      int fd, int offset);
+int   raven_sys_munmap(void *addr, raven_size_t len);
+
+int   raven_sys_getrandom    (void *buf, int len, unsigned flags);
+int   raven_sys_clock_gettime(int clockid, RavenTimespec *tp);
+```
+
+### Unsafe primitives
+
+```c
+void raven_unsafe_breakpoint(void);
+// Emits ebreak. The simulator pauses; you can inspect state, step, or
+// resume from the UI. This is NOT an exit.
+
+int  raven_unsafe_map_exec(void *addr, raven_size_t len);
+// Required after writing instruction bytes to memory if you intend to jump
+// into them and the simulator runs with --jit=hot or --jit=full. Both addr
+// and len must be 4-byte aligned. Returns 0 on success, negative on error.
+
+void raven_unsafe_hart_exit(void) __attribute__((noreturn));
+// Exit only the current hart (program continues on other harts). The hart
+// trampoline in <raven/hart.h> already calls this for you when an entry
+// function returns; calling it directly skips payload cleanup.
+
+int  raven_unsafe_hart_start(unsigned entry_pc, unsigned sp, unsigned arg);
+// Raw hart_start ecall. The trampoline-and-payload machinery built on top
+// of this is in <raven/hart.h>; use that unless you really need raw access.
+// Returns hart_id ≥ 1 on success, -1 if no free core, -2 if entry_pc is
+// outside an executable region.
+```
+
+### Raw ecall numbers
+
+All ecall numbers are exposed as `RAVEN_ECALL_*` constants in `<raven/_ecall.h>` (transitively included by every module). Use them if you want to invoke ecalls via inline assembly directly.
+
+```c
+#define RAVEN_ECALL_WRITE          64
+#define RAVEN_ECALL_PRINT_INT    1000
+#define RAVEN_ECALL_INSTR_COUNT  1030
+// ... see include/raven/_ecall.h for the complete list
 ```
 
 ---
 
-## Complete Example
+## Example: complete program
 
 ```c
-#include "raven.h"
+#include <raven/raven.h>
+#include <raven/advanced.h>      // for raven_unsafe_breakpoint
 
-static char input_buf[64];
-static char hart_stack[4096];
-
-void counter_hart(unsigned int start) {
-    for (unsigned int i = start; i < start + 5; i++) {
-        raven_print_uint(i);
-        raven_print_newline();
-    }
+static void worker(unsigned int arg) {
+    raven_print_str("worker says: ");
+    raven_print_uint(arg);
+    raven_println();
 }
 
-void _start(void) {
-    print_str("Enter start value: ");
-    unsigned int n = read_uint();
+int main(void) {
+    /* heap */
+    int *buf = (int *)raven_malloc(16 * sizeof(int));
+    if (!buf) raven_panic("out of memory");
+    for (int i = 0; i < 16; i++) buf[i] = i * i;
 
-    raven_spawn_hart_array(counter_hart, hart_stack, n);
+    /* measured block */
+    RAVEN_MEASURE("square-sum", {
+        int s = 0;
+        for (int i = 0; i < 16; i++) s += buf[i];
+        raven_print_str("sum = ");
+        raven_print_int(s);
+        raven_println();
+    });
 
-    // While the hart counts, do something in main
-    unsigned int before = raven_get_instr_count32();
-    int result = ipow(2, 10);
-    unsigned int cost = raven_get_instr_count32() - before;
+    /* spawn a hart */
+    RAVEN_HART_STACK(stk, 1024);
+    RavenHart h = RAVEN_HART_SPAWN(worker, stk, 99);
+    raven_hart_join(&h);
 
-    print_str("2^10 = ");
-    print_int(result);
-    print_str(" (");
-    print_uint(cost);
-    print_str(" instructions)\n");
+    /* pause for inspection */
+    raven_unsafe_breakpoint();
 
-    raven_pause();   // inspect both harts here
-    __sys_exit(0);
+    raven_free(buf);
+    return 0;
 }
 ```
