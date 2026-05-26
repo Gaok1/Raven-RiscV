@@ -2,27 +2,28 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 
-use crate::raven_api::atomic::{Arc, AtomicU32, Ordering};
-use crate::raven_api::{HartTask, exit};
+use crate::raven_api::{Coroutine, exit};
 
 mod raven_api;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    let instructions: [u32; 2] = [
-        0x00b50533, // add a0, a0, a1
-        0x00008067, // ret
-    ];
+    // Coroutine demo: a generator that yields 1..=5.
+    //
+    // The closure runs on its own stack. `y.suspend(i)` hands `i` back to the
+    // resumer and pauses; the next `resume` continues right after it, with the
+    // stack intact. It's a pure user-space context switch — no ecall, no extra
+    // hart.
+    let mut counter = Coroutine::new(4096, |y| {
+        for i in 1..=5usize {
+            y.suspend(i);
+        }
+    });
 
-    let sum: fn(i32, i32) -> i32 = unsafe { //inseguro
-        raven_api::syscall::map_exec(
-            instructions.as_ptr() as usize,
-            instructions.len() * core::mem::size_of::<u32>(),
-        );
-        core::mem::transmute(instructions.as_ptr())
-    };
-
-    println!("Hello, world! 2 + 3 = {}", sum(2, 3));
+    while let Some(v) = counter.resume(0) {
+        println!("coroutine yielded {v}");
+    }
+    println!("coroutine done");
 
     exit(0)
 }

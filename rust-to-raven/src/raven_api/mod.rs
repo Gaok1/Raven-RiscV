@@ -4,11 +4,13 @@ pub mod syscall;
 pub mod random;
 pub mod hardware_thread;
 pub mod atomic;
+pub mod coroutine;
 
 pub static mut ENABLED_DEBUG_MESSAGES : bool = false;
 
 pub use syscall::{exit, exit_group, getrandom, map_exec, pause_sim, RavenFD};
 pub use hardware_thread::hart::{HartHandle, HartTask, alloc_hart_stack, spawn_hart, spawn_hart_fn};
+pub use coroutine::{Coroutine, Yielder};
 pub use random::{rand_u32, rand_u8, rand_i32, rand_range, rand_bool};
 
 use crate::eprintln;

@@ -1,7 +1,7 @@
 # rust-to-raven — API Reference
 
 `rust-to-raven` is a `no_std` Rust crate that lets you write programs targeting the Raven RISC-V simulator without any OS or libc dependency.
-It provides I/O macros, syscall wrappers, a heap allocator, random utilities, and multi-hart support.
+It provides I/O macros, syscall wrappers, a heap allocator, random utilities, multi-hart support, and cooperative coroutines.
 
 ---
 
@@ -257,6 +257,43 @@ handle.join();
 `HartTask` allocates and owns its own stack internally.
 Closure-backed tasks automatically mark themselves finished when the closure returns;
 `join()` spins until that internal completion flag is observed.
+
+---
+
+## Coroutines
+
+Stackful **cooperative** coroutines (`raven_api::coroutine`). A closure runs on
+its own stack and can suspend itself, keeping its stack and registers live so
+the next resume continues where it left off. Unlike harts, exactly one coroutine
+runs at a time and control only moves on an explicit resume/suspend — the switch
+is a pure user-space register/stack swap (no `ecall`).
+
+```rust
+use crate::raven_api::Coroutine;
+
+let mut counter = Coroutine::new(4096, |y| {
+    for i in 1..=5usize {
+        y.suspend(i);
+    }
+});
+
+while let Some(v) = counter.resume(0) {
+    println!("yielded {}", v);
+}
+println!("done");
+```
+
+| Item | Description |
+|---|---|
+| `Coroutine::new(stack_size, closure) -> Coroutine` | Allocate a `stack_size`-byte stack (rounded up to 16) and prepare `closure: FnMut(&mut Yielder)`. Does not start it |
+| `Coroutine::resume(&mut self, send: usize) -> Option<usize>` | Run/continue; `send` becomes the return of the paused `suspend`. `Some(v)` is the yielded value, `None` once finished |
+| `Coroutine::done(&self) -> bool` | `true` once the closure returned |
+| `Yielder::suspend(&mut self, value: usize) -> usize` | Suspend, hand `value` to the resumer; returns the next `send` |
+
+`resume`/`suspend` exchange one `usize` in each direction (cast pointers through
+it for richer payloads). The `Coroutine` owns its stack and frees it on drop.
+
+> Keep stacks modest — the default RAM is 128 KB with no stack-overflow guard.
 
 ---
 

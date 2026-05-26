@@ -1,2 +1,5 @@
 *.elf
+*.o
+*.a
 .vscode/
+target/
