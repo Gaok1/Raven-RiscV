@@ -1,4 +1,4 @@
-use crate::ui::app::{App, Tab};
+use crate::ui::app::{App, EditorMode, Tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::paste::{paste_imem_search, paste_mem_search};
@@ -305,7 +305,7 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
         }
     }
 
-    if matches!(key.code, KeyCode::Char('?') | KeyCode::Char('h')) {
+    if app.mode == EditorMode::Command && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('h')) {
         if !matches!(app.tab, Tab::Docs) && !crate::ui::tutorial::get_steps(app.tab).is_empty() {
             crate::ui::tutorial::start_tutorial(app);
         } else {

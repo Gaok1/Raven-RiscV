@@ -262,38 +262,48 @@ Closure-backed tasks automatically mark themselves finished when the closure ret
 
 ## Coroutines
 
-Stackful **cooperative** coroutines (`raven_api::coroutine`). A closure runs on
-its own stack and can suspend itself, keeping its stack and registers live so
-the next resume continues where it left off. Unlike harts, exactly one coroutine
-runs at a time and control only moves on an explicit resume/suspend — the switch
-is a pure user-space register/stack swap (no `ecall`).
+Stackful **cooperative** coroutines (`raven_api::coroutine`), generic over the
+value type `T`. A closure runs on its own stack and can suspend itself, keeping
+its stack and registers live so the next resume continues where it left off.
+Unlike harts, exactly one coroutine runs at a time and control only moves on an
+explicit resume/suspend — the switch is a pure user-space register/stack swap
+(no `ecall`).
 
 ```rust
 use crate::raven_api::Coroutine;
 
-let mut counter = Coroutine::new(4096, |y| {
-    for i in 1..=5usize {
-        y.suspend(i);
+// generic over the value type — here u64, which would not fit a 32-bit usize
+let mut fib = Coroutine::new(4096, |y| {
+    let (mut a, mut b): (u64, u64) = (0, 1);
+    for _ in 0..10 {
+        y.suspend(a);
+        let next = a + b;
+        a = b;
+        b = next;
     }
 });
 
-while let Some(v) = counter.resume(0) {
-    println!("yielded {}", v);
+while let Some(v) = fib.resume(0) {
+    println!("fib = {}", v);
 }
 println!("done");
 ```
 
 | Item | Description |
 |---|---|
-| `Coroutine::new(stack_size, closure) -> Coroutine` | Allocate a `stack_size`-byte stack (rounded up to 16) and prepare `closure: FnMut(&mut Yielder)`. Does not start it |
-| `Coroutine::resume(&mut self, send: usize) -> Option<usize>` | Run/continue; `send` becomes the return of the paused `suspend`. `Some(v)` is the yielded value, `None` once finished |
+| `Coroutine::<T>::new(stack_size, closure) -> Coroutine<T>` | Allocate a `stack_size`-byte stack (rounded up to 16) and prepare `closure: FnMut(&mut Yielder<T>)`. Does not start it |
+| `Coroutine::resume(&mut self, send: T) -> Option<T>` | Run/continue; `send` becomes the return of the paused `suspend`. `Some(v)` is the yielded value, `None` once finished |
 | `Coroutine::done(&self) -> bool` | `true` once the closure returned |
-| `Yielder::suspend(&mut self, value: usize) -> usize` | Suspend, hand `value` to the resumer; returns the next `send` |
+| `Yielder::suspend(&mut self, value: T) -> T` | Suspend, hand `value` to the resumer; returns the next `send` |
 
-`resume`/`suspend` exchange one `usize` in each direction (cast pointers through
-it for richer payloads). The `Coroutine` owns its stack and frees it on drop.
+`resume`/`suspend` exchange a value of **any type `T`** in each direction. The
+in-flight value travels as a `Box<T>` — a fixed-size pointer to whatever `T` is
+— so the machinery is uniform while the API stays in plain `T` values. The
+`Coroutine` owns its stack and frees it on drop.
 
 > Keep stacks modest — the default RAM is 128 KB with no stack-overflow guard.
+> The first `resume`'s argument is discarded (standard generator protocol): the
+> closure only sees sent values as the return of `suspend`.
 
 ---
 
