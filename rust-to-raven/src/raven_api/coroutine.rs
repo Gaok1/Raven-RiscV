@@ -1,7 +1,7 @@
-//! Stackful cooperative coroutines for Raven.
+//! Stackful cooperative coroutines for Raven, generic over the value type.
 //!
-//! A [`Coroutine`] runs a closure on its own stack. The closure receives a
-//! [`Yielder`]; calling [`Yielder::suspend`] hands control back to whoever
+//! A [`Coroutine<T>`] runs a closure on its own stack. The closure receives a
+//! [`Yielder<T>`]; calling [`Yielder::suspend`] hands a `T` back to whoever
 //! called [`Coroutine::resume`], keeping the coroutine's stack and registers
 //! alive so the next `resume` continues exactly where it left off.
 //!
@@ -10,20 +10,34 @@
 //! [`hart`](crate::raven_api::hardware_thread::hart) machinery — a coroutine
 //! switch is a pure user-space register/stack swap, no `ecall` involved.
 //!
-//! `resume`/`suspend` exchange one `usize` in each direction (cast pointers
-//! through it for richer payloads), which is all the generator pattern needs.
+//! `resume(send)` and `suspend(value)` exchange a value of any type `T` in each
+//! direction. The in-flight value is carried as a `Box<T>` — a fixed-size
+//! pointer to whatever `T` happens to be — so the machinery stays uniform while
+//! the public API still deals in plain `T` values. That makes the coroutine a
+//! generator over arbitrary types:
 //!
 //! ```no_run
-//! let mut co = Coroutine::new(4096, |y| {
-//!     for i in 1..=5 { y.suspend(i); }
+//! // generic over the value type — here u64, which would not fit the old usize
+//! let mut fib = Coroutine::new(4096, |y| {
+//!     let (mut a, mut b): (u64, u64) = (0, 1);
+//!     for _ in 0..10 {
+//!         y.suspend(a);
+//!         let next = a + b;
+//!         a = b;
+//!         b = next;
+//!     }
 //! });
-//! while let Some(v) = co.resume(0) {
-//!     println!("yielded {v}");
+//! while let Some(v) = fib.resume(0) {
+//!     println!("fib = {v}");
 //! }
 //! ```
 //!
-//! Unlike the hart API, the stack is owned by the `Coroutine` and freed on
-//! drop — the caller does not manage a buffer.
+//! The `Coroutine` owns its stack and frees it on drop.
+//!
+//! Note: the value passed to the *first* `resume` is discarded — the closure
+//! only observes sent values as the return of `suspend`, and the first
+//! `suspend` returns the value from the *second* `resume`. This matches the
+//! usual generator protocol.
 
 extern crate alloc;
 
@@ -117,41 +131,45 @@ enum State {
 
 // Heap-pinned coroutine state. Lives behind a `Box` so its address is stable
 // for the duration of the coroutine (the switch and `CURRENT` hold raw pointers
-// into it).
-struct CoroInner {
+// into it). `transfer` is the single slot the in-flight value occupies between
+// resume and suspend; it is a `Box<T>` so the slot is a fixed-size pointer
+// regardless of how big `T` is.
+struct CoroInner<T> {
     ctx: Ctx,
     caller: Ctx,
     state: State,
-    transfer: usize,
-    entry: Option<Box<dyn FnMut(&mut Yielder)>>,
+    transfer: Option<Box<T>>,
+    entry: Option<Box<dyn FnMut(&mut Yielder<T>)>>,
     stack_ptr: *mut u8,
     stack_layout: Layout,
 }
 
-// The coroutine currently being resumed. Cooperative + single-hart, so a plain
-// cell is enough: only the trampoline reads it, between the resume that set it
-// and the body's first suspend.
-struct CurrentCell(UnsafeCell<*mut CoroInner>);
+// The coroutine currently being resumed, type-erased. A `static` can't be
+// generic, so we store an untyped pointer; the matching `coro_trampoline::<T>`
+// (set up by `resume::<T>` immediately before switching in) casts it back.
+// Cooperative + single-hart, so a plain cell is enough: only the trampoline
+// reads it, synchronously right after the resume that wrote it.
+struct CurrentCell(UnsafeCell<*mut ()>);
 unsafe impl Sync for CurrentCell {}
 static CURRENT: CurrentCell = CurrentCell(UnsafeCell::new(core::ptr::null_mut()));
 
 /// Entered via `ret` from the first switch into a fresh coroutine: `sp` is the
-/// coroutine's stack top and the body has never run. `extern "C"` so it is a
-/// plain address we can stuff into `ctx.ra`.
-extern "C" fn coro_trampoline() {
-    // SAFETY: `resume` stores a live `Box<CoroInner>` pointer into CURRENT
-    // immediately before switching here.
-    let inner = unsafe { *CURRENT.0.get() };
+/// coroutine's stack top and the body has never run. Monomorphized per `T` so
+/// the type-erased `CURRENT` pointer can be recovered.
+extern "C" fn coro_trampoline<T>() {
+    // SAFETY: `resume::<T>` stores a live `Box<CoroInner<T>>` pointer into
+    // CURRENT immediately before switching here.
+    let inner = unsafe { *CURRENT.0.get() } as *mut CoroInner<T>;
     let mut entry = unsafe { (*inner).entry.take() }.expect("coroutine entry missing");
 
     let mut y = Yielder { inner };
     entry(&mut y);
 
-    // Body returned: mark done and hand control back. The coroutine is Done, so
-    // `resume` will never switch back into here.
+    // Body returned: mark done and drop any pending value. The coroutine is
+    // Done, so `resume` will never switch back into here.
     unsafe {
         (*inner).state = State::Done;
-        (*inner).transfer = 0;
+        (*inner).transfer = None;
         _raven_coro_switch(&mut (*inner).ctx, &mut (*inner).caller);
     }
     loop {} // unreachable
@@ -160,33 +178,37 @@ extern "C" fn coro_trampoline() {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Handed to the coroutine body; the only way to suspend.
-pub struct Yielder {
-    inner: *mut CoroInner,
+pub struct Yielder<T> {
+    inner: *mut CoroInner<T>,
 }
 
-impl Yielder {
+impl<T> Yielder<T> {
     /// Suspend the running coroutine, handing `value` back to the resumer (it
     /// becomes the return of [`Coroutine::resume`]). Returns the value passed to
     /// the next `resume`.
-    pub fn suspend(&mut self, value: usize) -> usize {
-        // SAFETY: `inner` points at the live, heap-pinned CoroInner that is
-        // currently running on this stack. No `&mut` to it is held across the
-        // switch, so the raw accesses do not alias.
+    pub fn suspend(&mut self, value: T) -> T {
+        // SAFETY: `inner` points at the live, heap-pinned CoroInner currently
+        // running on this stack. No `&mut` to it is held across the switch, so
+        // the raw accesses do not alias.
         unsafe {
-            (*self.inner).transfer = value;
+            (*self.inner).transfer = Some(Box::new(value));
             (*self.inner).state = State::Suspended;
             _raven_coro_switch(&mut (*self.inner).ctx, &mut (*self.inner).caller);
-            (*self.inner).transfer
+            *(*self.inner)
+                .transfer
+                .take()
+                .expect("coroutine resumed without a value")
         }
     }
 }
 
-/// A stackful coroutine. Owns its stack (freed on drop).
-pub struct Coroutine {
-    inner: Box<CoroInner>,
+/// A stackful coroutine, generic over the value type `T` exchanged with the
+/// body. Owns its stack (freed on drop).
+pub struct Coroutine<T> {
+    inner: Box<CoroInner<T>>,
 }
 
-impl Coroutine {
+impl<T: 'static> Coroutine<T> {
     /// Create a coroutine that runs `f` on a fresh `stack_size`-byte stack
     /// (rounded up to a multiple of 16). The coroutine does not start until the
     /// first [`resume`](Coroutine::resume).
@@ -195,7 +217,7 @@ impl Coroutine {
     /// Panics if the stack allocation fails (OOM).
     pub fn new<F>(stack_size: usize, f: F) -> Self
     where
-        F: FnMut(&mut Yielder) + 'static,
+        F: FnMut(&mut Yielder<T>) + 'static,
     {
         let size = stack_size.next_multiple_of(16);
         let layout = Layout::from_size_align(size, 16).expect("Coroutine::new: invalid layout");
@@ -207,8 +229,8 @@ impl Coroutine {
             ctx: Ctx::zeroed(),
             caller: Ctx::zeroed(),
             state: State::Ready,
-            transfer: 0,
-            entry: Some(Box::new(f)),
+            transfer: None,
+            entry: Some(Box::new(f) as Box<dyn FnMut(&mut Yielder<T>)>),
             stack_ptr,
             stack_layout: layout,
         });
@@ -217,7 +239,7 @@ impl Coroutine {
         // sp at the 16-byte-aligned stack top.
         let top = (stack_ptr as usize + size) & !0xf;
         inner.ctx.sp = top as u32;
-        inner.ctx.ra = coro_trampoline as *const () as u32;
+        inner.ctx.ra = coro_trampoline::<T> as *const () as u32;
 
         Coroutine { inner }
     }
@@ -226,26 +248,26 @@ impl Coroutine {
     /// `suspend` that paused it). Returns `Some(value)` for the value yielded
     /// back, or `None` once the body has finished. Resuming a finished
     /// coroutine returns `None`.
-    pub fn resume(&mut self, send: usize) -> Option<usize> {
+    ///
+    /// The `send` of the very first `resume` is discarded (see the module note).
+    pub fn resume(&mut self, send: T) -> Option<T> {
         if self.inner.state == State::Done {
             return None;
         }
-        self.inner.transfer = send;
+        self.inner.transfer = Some(Box::new(send));
         self.inner.state = State::Running;
 
-        let inner_ptr: *mut CoroInner = &mut *self.inner;
-        // SAFETY: single-hart cooperative model; only the trampoline reads this.
-        unsafe { *CURRENT.0.get() = inner_ptr };
+        let inner_ptr: *mut CoroInner<T> = &mut *self.inner;
+        // SAFETY: single-hart cooperative model; only coro_trampoline::<T> reads
+        // this, and only on the coroutine's first start (right after this).
+        unsafe { *CURRENT.0.get() = inner_ptr as *mut () };
 
         // SAFETY: both contexts live inside the boxed CoroInner; the switch saves
         // our context into `caller` and enters the coroutine.
         unsafe { _raven_coro_switch(&mut self.inner.caller, &mut self.inner.ctx) };
 
-        if self.inner.state == State::Done {
-            None
-        } else {
-            Some(self.inner.transfer)
-        }
+        // `transfer` now holds the yielded value, or None if the body finished.
+        self.inner.transfer.take().map(|boxed| *boxed)
     }
 
     /// `true` once the coroutine body has returned.
@@ -254,10 +276,10 @@ impl Coroutine {
     }
 }
 
-impl Drop for Coroutine {
+impl<T> Drop for Coroutine<T> {
     fn drop(&mut self) {
         // SAFETY: allocated in `new` with this exact layout and never freed
-        // elsewhere. The Box<CoroInner> frees the rest of the state.
+        // elsewhere. The Box<CoroInner<T>> frees the rest of the state.
         unsafe { dealloc(self.inner.stack_ptr, self.inner.stack_layout) };
     }
 }

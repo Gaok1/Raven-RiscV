@@ -6,9 +6,9 @@ Minimal `no_std` support crate and examples for code that runs inside Raven.
 
 Stackful **cooperative** coroutines live in
 [src/raven_api/coroutine.rs](/home/gaok1/rust/Raven/rust-to-raven/src/raven_api/coroutine.rs).
-A `Coroutine` runs a closure on its own stack; the closure receives a `Yielder`
-whose `suspend` hands control back to `resume`, keeping the stack alive so the
-next `resume` continues exactly where it left off.
+A `Coroutine<T>` runs a closure on its own stack; the closure receives a
+`Yielder<T>` whose `suspend` hands control back to `resume`, keeping the stack
+alive so the next `resume` continues exactly where it left off.
 
 These are **single-hart** (one runs at a time) — distinct from the parallel hart
 API. The switch is a pure user-space register/stack swap, no `ecall`. Unlike the
@@ -17,21 +17,27 @@ C SDK, the `Coroutine` allocates and owns its stack, freeing it on drop.
 ```rust
 use crate::raven_api::Coroutine;
 
-let mut counter = Coroutine::new(4096, |y| {
-    for i in 1..=5usize {
-        y.suspend(i);          // hand `i` back to resume; continues here next time
+// generic over the value type — here u64, which would not fit a 32-bit usize
+let mut fib = Coroutine::new(4096, |y| {
+    let (mut a, mut b): (u64, u64) = (0, 1);
+    for _ in 0..10 {
+        y.suspend(a);          // hand `a` back to resume; continues here next time
+        let next = a + b;
+        a = b;
+        b = next;
     }
 });
 
-while let Some(v) = counter.resume(0) {
-    println!("yielded {v}");
+while let Some(v) = fib.resume(0) {
+    println!("fib = {v}");
 }
-// → yielded 1 .. yielded 5
 ```
 
-`resume(send)` / `suspend(value)` exchange one `usize` in each direction (cast
-pointers through it for richer payloads). Keep stacks modest — the default RAM
-is 128 KB with no stack-overflow guard.
+`resume(send: T)` / `suspend(value: T)` exchange a value of **any type `T`** in
+each direction. The in-flight value is carried internally as a `Box<T>` — a
+fixed-size pointer to whatever `T` is — so the machinery stays uniform while the
+API still deals in plain `T` values. Keep stacks modest — the default RAM is
+128 KB with no stack-overflow guard.
 
 ## Atomic wrappers
 
