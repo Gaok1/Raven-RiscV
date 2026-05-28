@@ -548,53 +548,54 @@ impl CacheController {
         Ok(())
     }
 
-    fn measure_cache_latency<T, F>(&mut self, access: F) -> (Result<T, FalconError>, u64)
+    fn measure_access_latency<T, F>(&mut self, access: F) -> (Result<T, FalconError>, u64)
     where
         F: FnOnce(&mut Self) -> Result<T, FalconError>,
     {
-        let before = self.total_cache_cycles();
+        let before = self.total_program_cycles();
         let result = access(self);
-        let after = self.total_cache_cycles();
+        let after = self.total_program_cycles();
         (result, after.saturating_sub(before))
     }
 
     pub fn fetch32_timed(&mut self, addr: u32) -> (Result<u32, FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::fetch32(mem, addr))
+        self.measure_access_latency(|mem| <Self as Bus>::fetch32(mem, addr))
     }
 
     pub fn fetch32_timed_no_count(&mut self, addr: u32) -> (Result<u32, FalconError>, u64) {
         let before_instr = self.instruction_count;
-        let (result, latency) = self.measure_cache_latency(|mem| <Self as Bus>::fetch32(mem, addr));
+        let (result, latency) =
+            self.measure_access_latency(|mem| <Self as Bus>::fetch32(mem, addr));
         self.instruction_count = before_instr;
         (result, latency)
     }
 
     pub fn dcache_read8_timed(&mut self, addr: u32) -> (Result<u8, FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::dcache_read8(mem, addr))
+        self.measure_access_latency(|mem| <Self as Bus>::dcache_read8(mem, addr))
     }
 
     pub fn dcache_read16_timed(&mut self, addr: u32) -> (Result<u16, FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::dcache_read16(mem, addr))
+        self.measure_access_latency(|mem| <Self as Bus>::dcache_read16(mem, addr))
     }
 
     pub fn dcache_read32_timed(&mut self, addr: u32) -> (Result<u32, FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::dcache_read32(mem, addr))
+        self.measure_access_latency(|mem| <Self as Bus>::dcache_read32(mem, addr))
     }
 
     pub fn store8_timed(&mut self, addr: u32, val: u8) -> (Result<(), FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::store8(mem, addr, val))
+        self.measure_access_latency(|mem| <Self as Bus>::store8(mem, addr, val))
     }
 
     pub fn store16_timed(&mut self, addr: u32, val: u16) -> (Result<(), FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::store16(mem, addr, val))
+        self.measure_access_latency(|mem| <Self as Bus>::store16(mem, addr, val))
     }
 
     pub fn store32_timed(&mut self, addr: u32, val: u32) -> (Result<(), FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::store32(mem, addr, val))
+        self.measure_access_latency(|mem| <Self as Bus>::store32(mem, addr, val))
     }
 
     pub fn lr_w_timed(&mut self, hart_id: u32, addr: u32) -> (Result<u32, FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::lr_w(mem, hart_id, addr))
+        self.measure_access_latency(|mem| <Self as Bus>::lr_w(mem, hart_id, addr))
     }
 
     pub fn sc_w_timed(
@@ -603,7 +604,7 @@ impl CacheController {
         addr: u32,
         val: u32,
     ) -> (Result<bool, FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::sc_w(mem, hart_id, addr, val))
+        self.measure_access_latency(|mem| <Self as Bus>::sc_w(mem, hart_id, addr, val))
     }
 
     pub fn amo_w_timed(
@@ -613,7 +614,7 @@ impl CacheController {
         op: AmoOp,
         operand: u32,
     ) -> (Result<u32, FalconError>, u64) {
-        self.measure_cache_latency(|mem| <Self as Bus>::amo_w(mem, hart_id, addr, op, operand))
+        self.measure_access_latency(|mem| <Self as Bus>::amo_w(mem, hart_id, addr, op, operand))
     }
 
     pub fn extra_level_name(n: usize) -> String {
