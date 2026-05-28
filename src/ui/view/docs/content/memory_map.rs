@@ -14,7 +14,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         h1("RAVEN — Memory Map"),
         blank(),
         note(
-            "Default RAM = 16 MB · addresses 0x00000000 .. RAM_SIZE-1 · no MMU, no virtual memory",
+            "Default RAM = 16 MB · addresses 0x00000000 .. RAM_SIZE-1 · Sv32 MMU available via Settings → Virtual Memory",
         ),
         note("RAM size is configurable in the Config tab (accepts e.g. 16mb, 8192kb, 4096)."),
         blank(),
@@ -149,7 +149,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         h1("RAVEN — Mapa de Memória"),
         blank(),
         note(
-            "RAM padrão = 16 MB · endereços 0x00000000 .. RAM_SIZE-1 · sem MMU, sem memória virtual",
+            "RAM padrão = 16 MB · endereços 0x00000000 .. RAM_SIZE-1 · MMU Sv32 opcional via Settings → Virtual Memory",
         ),
         note("Tamanho configurável na aba Config (aceita ex.: 16mb, 8192kb, 4096)."),
         blank(),
