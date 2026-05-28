@@ -216,6 +216,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         cpi_config,
         cache_enabled,
         _pipeline_enabled,
+        vm_enabled,
         _trace_syscalls,
         _run_scope,
         settings_max_cores,
@@ -229,6 +230,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
             default_cpi_config(),
             true,
             true,
+            false,
             false,
             "focus".to_string(),
             DEFAULT_MAX_CORES,
@@ -250,6 +252,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(icfg, dcfg, extra_cfgs, mem_size);
     mem.bypass = !cache_enabled;
+    mem.mmu.enabled = vm_enabled;
     let mut console = Console::default();
     let mut captured_stdout: Vec<u8> = Vec::new();
 
@@ -404,7 +407,7 @@ pub fn export_default_config(output: Option<&str>) -> Result<(), String> {
 /// Default `.rcfg` content (same defaults as the TUI).
 fn default_rcfg_text() -> String {
     let mut s = String::from(
-        "# Raven Sim Config v2\ncache_enabled=true\npipeline_enabled=true\ntrace_syscalls=false\nmem_kb=16384\nmax_cores=1\nrun_scope=focus\n\n# CPI (cycles per instruction)\n",
+        "# Raven Sim Config v2\ncache_enabled=true\npipeline_enabled=true\nvm_enabled=false\ntrace_syscalls=false\nmem_kb=16384\nmax_cores=1\nrun_scope=focus\n\n# CPI (cycles per instruction)\n",
     );
     s.push_str("cpi.alu=1\ncpi.mul=3\ncpi.div=20\ncpi.load=0\ncpi.store=0\n");
     s.push_str("cpi.branch_taken=3\ncpi.branch_not_taken=1\ncpi.jump=2\ncpi.system=10\ncpi.fp=5\n");
@@ -430,7 +433,7 @@ pub fn export_sim_settings(output: Option<&str>) -> Result<(), String> {
 pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
     // Reuse the same strict parser as `run --sim-settings`
-    let (cpi, cache_enabled, pipeline_enabled, trace_syscalls, run_scope, max_cores, mem_size) =
+    let (cpi, cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, run_scope, max_cores, mem_size) =
         parse_rcfg_cli_full(&text)?;
     let mem_kb = mem_size / 1024;
     let cpi_keys = [
@@ -460,6 +463,7 @@ pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), Strin
     eprintln!("{}: valid", file);
     eprintln!("  cache_enabled = {}", cache_enabled);
     eprintln!("  pipeline_enabled = {}", pipeline_enabled);
+    eprintln!("  vm_enabled = {}", vm_enabled);
     eprintln!("  trace_syscalls = {}", trace_syscalls);
     eprintln!("  run_scope     = {}", run_scope);
     eprintln!("  mem_kb        = {}", mem_kb);
@@ -470,8 +474,8 @@ pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), Strin
     if let Some(out) = output {
         let mut out_text = String::from("# Raven Sim Config v2\n");
         out_text.push_str(&format!(
-            "cache_enabled={}\npipeline_enabled={}\ntrace_syscalls={}\nmem_kb={}\nmax_cores={}\nrun_scope={}\n\n# CPI (cycles per instruction)\n",
-            cache_enabled, pipeline_enabled, trace_syscalls, mem_kb, max_cores, run_scope
+            "cache_enabled={}\npipeline_enabled={}\nvm_enabled={}\ntrace_syscalls={}\nmem_kb={}\nmax_cores={}\nrun_scope={}\n\n# CPI (cycles per instruction)\n",
+            cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, mem_kb, max_cores, run_scope
         ));
         for (key, val) in cpi_keys.iter().zip(cpi_vals.iter()) {
             out_text.push_str(&format!("cpi.{}={}\n", key, val));
@@ -501,7 +505,7 @@ fn default_cpi_config() -> CpiConfig {
 
 fn parse_rcfg_cli_full(
     text: &str,
-) -> Result<(CpiConfig, bool, bool, bool, String, usize, usize), String> {
+) -> Result<(CpiConfig, bool, bool, bool, bool, String, usize, usize), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -544,6 +548,10 @@ fn parse_rcfg_cli_full(
         .get("pipeline_enabled")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
         .unwrap_or(true);
+    let vm_enabled = map
+        .get("vm_enabled")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+        .unwrap_or(false);
     let trace_syscalls = map
         .get("trace_syscalls")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
@@ -587,6 +595,7 @@ fn parse_rcfg_cli_full(
         cpi,
         cache_enabled,
         pipeline_enabled,
+        vm_enabled,
         trace_syscalls,
         run_scope,
         max_cores,

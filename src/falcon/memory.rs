@@ -1,5 +1,6 @@
 // falcon/memory.rs
 use crate::falcon::errors::FalconError;
+use crate::falcon::mmu::{AccessType, PageFault};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +120,23 @@ pub trait Bus {
         op: AmoOp,
         operand: u32,
     ) -> Result<u32, FalconError>;
+
+    /// Translate a virtual address to a physical address.
+    ///
+    /// Returns `(paddr, extra_stall_cycles)`. The default impl is identity with
+    /// zero stall — the no-MMU path used by `Ram` and by `CacheController`
+    /// when `vm_enabled` is off. The MMU-aware impl on `CacheController`
+    /// overrides this once Phase 2 wires the Sv32 walker.
+    fn translate(
+        &mut self,
+        vaddr: u32,
+        _access: AccessType,
+    ) -> Result<(u32, u8), PageFault> {
+        Ok((vaddr, 0))
+    }
+
+    /// Flush every TLB entry (invoked on `satp` write and `sfence.vma`).
+    fn tlb_flush(&mut self) {}
 }
 
 pub struct Ram {

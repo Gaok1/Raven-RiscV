@@ -15,7 +15,8 @@ use crate::ui::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
         EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED,
         SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
-        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, Tab,
+        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS,
+        SETTINGS_ROW_VM_ENABLED, Tab,
     },
     editor::Editor,
 };
@@ -2341,6 +2342,8 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     } else if me.row == btn_y.saturating_add(4) {
         app.settings.hover_row = Some(SETTINGS_ROW_PIPELINE_ENABLED);
     } else if me.row == btn_y.saturating_add(5) {
+        app.settings.hover_row = Some(SETTINGS_ROW_VM_ENABLED);
+    } else if me.row == btn_y.saturating_add(7) {
         app.settings.hover_row = Some(SETTINGS_ROW_TRACE_SYSCALLS);
     }
     if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
@@ -2355,6 +2358,10 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     let (pipe_y, pipe_x0, pipe_x1) = app.settings.bool_btn_pipeline_rect.get();
     if me.row == pipe_y && me.column >= pipe_x0 && me.column < pipe_x1 {
         app.settings.hover_pipeline_enabled = true;
+    }
+    let (vm_y, vm_x0, vm_x1) = app.settings.bool_btn_vm_rect.get();
+    if me.row == vm_y && me.column >= vm_x0 && me.column < vm_x1 {
+        app.settings.hover_vm_enabled = true;
     }
     let (trace_y, trace_x0, trace_x1) = app.settings.bool_btn_trace_syscalls_rect.get();
     if me.row == trace_y && me.column >= trace_x0 && me.column < trace_x1 {
@@ -2419,6 +2426,13 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     if me.row == pipe_y {
         app.set_pipeline_enabled(!app.pipeline.enabled);
         app.settings.selected = SETTINGS_ROW_PIPELINE_ENABLED;
+        return;
+    }
+
+    let (vm_y, _, _) = app.settings.bool_btn_vm_rect.get();
+    if me.row == vm_y {
+        app.set_vm_enabled(!app.run.vm_enabled);
+        app.settings.selected = SETTINGS_ROW_VM_ENABLED;
         return;
     }
 

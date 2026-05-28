@@ -262,6 +262,9 @@ pub(crate) struct RunState {
     pub(crate) mem_access_log: Vec<(u32, u32, u8)>,
     /// When false, cache simulation is fully bypassed (direct RAM access, no latency).
     pub(crate) cache_enabled: bool,
+    /// When true, the MMU translates virtual → physical via the TLB / Sv32
+    /// page-table walker. When false, addresses are passed through identity.
+    pub(crate) vm_enabled: bool,
     /// When true, non-I/O syscalls are mirrored to the debug console.
     pub(crate) trace_syscalls: bool,
     /// Which JIT mode is currently active.
