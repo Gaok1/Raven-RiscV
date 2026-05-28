@@ -17,7 +17,7 @@ use self::formatting::{classify_mem_access, word_at};
 pub(crate) use self::cache_state::{
     CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheResultsSnapshot,
     CacheScope, CacheState, CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot,
-    PipelineResultsSnapshot,
+    PipelineResultsSnapshot, TlbConfigField, TlbSubview,
 };
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
@@ -467,6 +467,7 @@ impl App {
                 subtab_stats_btn: std::cell::Cell::new((0, 0, 0)),
                 subtab_view_btn: std::cell::Cell::new((0, 0, 0)),
                 subtab_config_btn: std::cell::Cell::new((0, 0, 0)),
+                subtab_tlb_btn: std::cell::Cell::new((0, 0, 0)),
                 level_btns: std::cell::RefCell::new(Vec::new()),
                 add_level_btn: std::cell::Cell::new((0, 0, 0)),
                 remove_level_btn: std::cell::Cell::new((0, 0, 0)),
@@ -518,6 +519,20 @@ impl App {
                 view_visible_sets_d: std::cell::Cell::new(0),
                 view_scroll_max: std::cell::Cell::new(0),
                 view_scroll_max_d: std::cell::Cell::new(0),
+                tlb_subview: TlbSubview::Stats,
+                tlb_subview_stats_btn: std::cell::Cell::new((0, 0, 0)),
+                tlb_subview_config_btn: std::cell::Cell::new((0, 0, 0)),
+                tlb_subview_entries_btn: std::cell::Cell::new((0, 0, 0)),
+                pending_tlb: crate::falcon::mmu::TlbConfig::default(),
+                tlb_config_hitboxes: std::cell::Cell::new([(0, 0, 0); 5]),
+                tlb_preset_btns: std::cell::Cell::new([(0, 0, 0); 3]),
+                tlb_apply_btn: std::cell::Cell::new((0, 0, 0)),
+                tlb_flush_btn: std::cell::Cell::new((0, 0, 0)),
+                tlb_edit_field: None,
+                tlb_edit_buf: String::new(),
+                tlb_config_error: None,
+                tlb_config_status: None,
+                tlb_entries_scroll: 0,
             },
             show_exit_popup: false,
             should_quit: false,
@@ -1251,6 +1266,103 @@ impl App {
         self.run.mem.add_extra_level(cfg);
         // Select the newly added level
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
+    }
+
+    // ── TLB config editing helpers ─────────────────────────────────────────
+
+    pub(crate) fn commit_tlb_edit(&mut self) {
+        if let Some(field) = self.cache.tlb_edit_field {
+            self.cache.tlb_config_error = None;
+            self.cache.tlb_config_status = None;
+            if field.is_numeric() {
+                let s = self.cache.tlb_edit_buf.trim();
+                let cfg = &mut self.cache.pending_tlb;
+                match field {
+                    TlbConfigField::EntryCount => {
+                        if let Ok(v) = s.parse::<u16>() {
+                            cfg.entry_count = v.clamp(1, 4096);
+                        }
+                    }
+                    TlbConfigField::Associativity => {
+                        if let Ok(v) = s.parse::<u8>() {
+                            cfg.associativity = v.clamp(1, 64);
+                        }
+                    }
+                    TlbConfigField::HitLatency => {
+                        if let Ok(v) = s.parse::<u8>() {
+                            cfg.hit_latency = v.clamp(0, 255);
+                        }
+                    }
+                    TlbConfigField::MissPenalty => {
+                        if let Ok(v) = s.parse::<u8>() {
+                            cfg.miss_penalty = v;
+                        }
+                    }
+                    TlbConfigField::Replacement => {}
+                }
+            }
+        }
+        self.cache.tlb_edit_field = None;
+        self.cache.tlb_edit_buf.clear();
+    }
+
+    pub(crate) fn cycle_tlb_field(&mut self, field: TlbConfigField, forward: bool) {
+        use crate::falcon::cache::ReplacementPolicy;
+        self.cache.tlb_config_error = None;
+        self.cache.tlb_config_status = None;
+        let cfg = &mut self.cache.pending_tlb;
+        if let TlbConfigField::Replacement = field {
+            cfg.replacement = if forward {
+                match cfg.replacement {
+                    ReplacementPolicy::Lru => ReplacementPolicy::Mru,
+                    ReplacementPolicy::Mru => ReplacementPolicy::Fifo,
+                    ReplacementPolicy::Fifo => ReplacementPolicy::Random,
+                    ReplacementPolicy::Random => ReplacementPolicy::Lfu,
+                    ReplacementPolicy::Lfu => ReplacementPolicy::Clock,
+                    ReplacementPolicy::Clock => ReplacementPolicy::Lru,
+                }
+            } else {
+                match cfg.replacement {
+                    ReplacementPolicy::Lru => ReplacementPolicy::Clock,
+                    ReplacementPolicy::Mru => ReplacementPolicy::Lru,
+                    ReplacementPolicy::Fifo => ReplacementPolicy::Mru,
+                    ReplacementPolicy::Random => ReplacementPolicy::Fifo,
+                    ReplacementPolicy::Lfu => ReplacementPolicy::Random,
+                    ReplacementPolicy::Clock => ReplacementPolicy::Lfu,
+                }
+            };
+        }
+    }
+
+    pub(crate) fn tlb_field_value_str(&self, field: TlbConfigField) -> String {
+        let cfg = &self.cache.pending_tlb;
+        match field {
+            TlbConfigField::EntryCount => cfg.entry_count.to_string(),
+            TlbConfigField::Associativity => cfg.associativity.to_string(),
+            TlbConfigField::HitLatency => cfg.hit_latency.to_string(),
+            TlbConfigField::MissPenalty => cfg.miss_penalty.to_string(),
+            TlbConfigField::Replacement => String::new(),
+        }
+    }
+
+    pub(crate) fn apply_tlb_config(&mut self) {
+        let cfg = self.cache.pending_tlb.clone();
+        if cfg.entry_count == 0 {
+            self.cache.tlb_config_error = Some("entry count must be ≥ 1".into());
+            return;
+        }
+        if cfg.associativity == 0 {
+            self.cache.tlb_config_error = Some("associativity must be ≥ 1".into());
+            return;
+        }
+        if cfg.entry_count < cfg.associativity as u16 {
+            self.cache.tlb_config_error =
+                Some("entry count must be ≥ associativity".into());
+            return;
+        }
+        self.run.mem.mmu_mut().tlb.reconfigure(cfg);
+        self.cache.tlb_config_error = None;
+        self.cache.tlb_config_status = Some("Applied (TLB reset)".into());
     }
 
     /// Remove the last extra cache level.

@@ -1,4 +1,4 @@
-use crate::ui::app::{App, CacheDataFmt, CacheScope, CacheSubtab, CacheViewFocus};
+use crate::ui::app::{App, CacheDataFmt, CacheScope, CacheSubtab, CacheViewFocus, TlbSubview};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::run_keys::cycle_memory_region;
@@ -8,13 +8,20 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
     if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.edit_field.is_some() {
         return handle_config_field_edit(app, key.code);
     }
+    if matches!(app.cache.subtab, CacheSubtab::Tlb)
+        && matches!(app.cache.tlb_subview, TlbSubview::Config)
+        && app.cache.tlb_edit_field.is_some()
+    {
+        return handle_tlb_field_edit(app, key.code);
+    }
 
     match key.code {
         KeyCode::Tab => {
             app.cache.subtab = match app.cache.subtab {
                 CacheSubtab::Stats => CacheSubtab::View,
                 CacheSubtab::View => CacheSubtab::Config,
-                CacheSubtab::Config => CacheSubtab::Stats,
+                CacheSubtab::Config => CacheSubtab::Tlb,
+                CacheSubtab::Tlb => CacheSubtab::Stats,
             };
             true
         }
@@ -182,6 +189,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                     }
                 }
                 CacheSubtab::Config => {}
+                CacheSubtab::Tlb => handle_tlb_arrow(app, true),
             }
             true
         }
@@ -243,6 +251,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                     }
                 }
                 CacheSubtab::Config => {}
+                CacheSubtab::Tlb => handle_tlb_arrow(app, false),
             }
             true
         }
@@ -355,5 +364,85 @@ fn handle_config_field_edit(app: &mut App, code: KeyCode) -> bool {
         _ => {}
     }
 
+    true
+}
+
+
+fn handle_tlb_arrow(app: &mut App, up: bool) {
+    // In Stats: cycle subview. In Entries: scroll. In Config: move selection.
+    match app.cache.tlb_subview {
+        TlbSubview::Entries => {
+            if up {
+                app.cache.tlb_entries_scroll =
+                    app.cache.tlb_entries_scroll.saturating_sub(1);
+            } else {
+                app.cache.tlb_entries_scroll = app.cache.tlb_entries_scroll.saturating_add(1);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_tlb_field_edit(app: &mut App, key: KeyCode) -> bool {
+    let field = match app.cache.tlb_edit_field {
+        Some(f) => f,
+        None => return false,
+    };
+    match key {
+        KeyCode::Esc => {
+            app.cache.tlb_edit_field = None;
+            app.cache.tlb_edit_buf.clear();
+        }
+        KeyCode::Enter => {
+            app.commit_tlb_edit();
+        }
+        KeyCode::Tab => {
+            app.commit_tlb_edit();
+            let next = field.next();
+            app.cache.tlb_edit_field = Some(next);
+            app.cache.tlb_edit_buf = if next.is_numeric() {
+                app.tlb_field_value_str(next)
+            } else {
+                String::new()
+            };
+        }
+        KeyCode::Up => {
+            app.commit_tlb_edit();
+            let prev = field.prev();
+            app.cache.tlb_edit_field = Some(prev);
+            app.cache.tlb_edit_buf = if prev.is_numeric() {
+                app.tlb_field_value_str(prev)
+            } else {
+                String::new()
+            };
+        }
+        KeyCode::Down => {
+            app.commit_tlb_edit();
+            let next = field.next();
+            app.cache.tlb_edit_field = Some(next);
+            app.cache.tlb_edit_buf = if next.is_numeric() {
+                app.tlb_field_value_str(next)
+            } else {
+                String::new()
+            };
+        }
+        KeyCode::Left if !field.is_numeric() => {
+            app.cycle_tlb_field(field, false);
+        }
+        KeyCode::Right if !field.is_numeric() => {
+            app.cycle_tlb_field(field, true);
+        }
+        KeyCode::Char(c) if field.is_numeric() && c.is_ascii_digit() => {
+            app.cache.tlb_edit_buf.push(c);
+            app.cache.tlb_config_error = None;
+            app.cache.tlb_config_status = None;
+        }
+        KeyCode::Backspace if field.is_numeric() => {
+            app.cache.tlb_edit_buf.pop();
+            app.cache.tlb_config_error = None;
+            app.cache.tlb_config_status = None;
+        }
+        _ => {}
+    }
     true
 }

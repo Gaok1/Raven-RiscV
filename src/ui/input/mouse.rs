@@ -1899,6 +1899,38 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         app.cache.hover = Some(CacheHoverTarget::SubtabView);
     } else if point_in_btn(me, app.cache.subtab_config_btn.get()) {
         app.cache.hover = Some(CacheHoverTarget::SubtabConfig);
+    } else if point_in_btn(me, app.cache.subtab_tlb_btn.get()) {
+        app.cache.hover = Some(CacheHoverTarget::SubtabTlb);
+    }
+
+    // TLB subview header (only visible while in Tlb subtab, but hitboxes are
+    // zeroed by the renderer otherwise so it's safe to always test).
+    if matches!(app.cache.subtab, CacheSubtab::Tlb) {
+        if point_in_btn(me, app.cache.tlb_subview_stats_btn.get()) {
+            app.cache.hover = Some(CacheHoverTarget::TlbSubviewStats);
+        } else if point_in_btn(me, app.cache.tlb_subview_config_btn.get()) {
+            app.cache.hover = Some(CacheHoverTarget::TlbSubviewConfig);
+        } else if point_in_btn(me, app.cache.tlb_subview_entries_btn.get()) {
+            app.cache.hover = Some(CacheHoverTarget::TlbSubviewEntries);
+        }
+        if matches!(app.cache.tlb_subview, crate::ui::app::TlbSubview::Config) {
+            let hitboxes = app.cache.tlb_config_hitboxes.get();
+            for &field in crate::ui::app::TlbConfigField::all_editable() {
+                let hb = hitboxes[field.hitbox_index()];
+                if point_in_btn(me, hb) {
+                    app.cache.hover = Some(CacheHoverTarget::TlbConfigField(field));
+                }
+            }
+            let presets = app.cache.tlb_preset_btns.get();
+            if let Some(i) = point_in_any_btn(me, &presets) {
+                app.cache.hover = Some(CacheHoverTarget::TlbPreset(i));
+            }
+            if point_in_btn(me, app.cache.tlb_apply_btn.get()) {
+                app.cache.hover = Some(CacheHoverTarget::TlbApply);
+            } else if point_in_btn(me, app.cache.tlb_flush_btn.get()) {
+                app.cache.hover = Some(CacheHoverTarget::TlbFlush);
+            }
+        }
     }
 
     if point_in_btn(me, app.cache.ctrl_results_btn.get()) {
@@ -2033,7 +2065,7 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
-    // Subtab header clicks — Stats | View | Config
+    // Subtab header clicks — Stats | View | Config | TLB
     if point_in_btn(me, app.cache.subtab_stats_btn.get()) {
         app.cache.subtab = CacheSubtab::Stats;
         return;
@@ -2045,6 +2077,64 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     if point_in_btn(me, app.cache.subtab_config_btn.get()) {
         app.cache.subtab = CacheSubtab::Config;
         return;
+    }
+    if point_in_btn(me, app.cache.subtab_tlb_btn.get()) {
+        app.cache.subtab = CacheSubtab::Tlb;
+        // Sync pending config from the live TLB when first opening.
+        app.cache.pending_tlb = app.run.mem.mmu().tlb.config.clone();
+        return;
+    }
+
+    // TLB subview header + buttons
+    if matches!(app.cache.subtab, CacheSubtab::Tlb) {
+        if point_in_btn(me, app.cache.tlb_subview_stats_btn.get()) {
+            app.cache.tlb_subview = crate::ui::app::TlbSubview::Stats;
+            return;
+        }
+        if point_in_btn(me, app.cache.tlb_subview_config_btn.get()) {
+            app.cache.tlb_subview = crate::ui::app::TlbSubview::Config;
+            app.cache.pending_tlb = app.run.mem.mmu().tlb.config.clone();
+            return;
+        }
+        if point_in_btn(me, app.cache.tlb_subview_entries_btn.get()) {
+            app.cache.tlb_subview = crate::ui::app::TlbSubview::Entries;
+            return;
+        }
+        if matches!(app.cache.tlb_subview, crate::ui::app::TlbSubview::Config) {
+            // Field click → start editing.
+            let hitboxes = app.cache.tlb_config_hitboxes.get();
+            for &field in crate::ui::app::TlbConfigField::all_editable() {
+                let hb = hitboxes[field.hitbox_index()];
+                if point_in_btn(me, hb) {
+                    app.commit_tlb_edit();
+                    app.cache.tlb_edit_field = Some(field);
+                    app.cache.tlb_edit_buf = if field.is_numeric() {
+                        app.tlb_field_value_str(field)
+                    } else {
+                        String::new()
+                    };
+                    return;
+                }
+            }
+            // Preset clicks: small=16, med=32, large=64.
+            let presets = app.cache.tlb_preset_btns.get();
+            if let Some(i) = point_in_any_btn(me, &presets) {
+                let entries = [16u16, 32, 64][i];
+                app.cache.pending_tlb.entry_count = entries;
+                app.cache.tlb_config_error = None;
+                app.cache.tlb_config_status = None;
+                return;
+            }
+            if point_in_btn(me, app.cache.tlb_apply_btn.get()) {
+                app.apply_tlb_config();
+                return;
+            }
+            if point_in_btn(me, app.cache.tlb_flush_btn.get()) {
+                app.run.mem.mmu_mut().flush();
+                app.cache.tlb_config_status = Some("TLB flushed".into());
+                return;
+            }
+        }
     }
 
     // Shared controls bar — available in all subtabs

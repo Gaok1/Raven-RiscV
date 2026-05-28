@@ -12,6 +12,7 @@ use crate::ui::view::components::{dense_action, dense_value, push_dense_pair};
 
 mod config;
 mod stats;
+mod tlb;
 mod view;
 
 pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
@@ -59,6 +60,7 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
         CacheSubtab::Stats => stats::render_stats(f, layout[3], app),
         CacheSubtab::View => view::render_view(f, layout[3], app),
         CacheSubtab::Config => config::render_config(f, layout[3], app),
+        CacheSubtab::Tlb => tlb::render_tlb(f, layout[3], app),
     }
 
     render_controls_bar(f, layout[4], app);
@@ -261,6 +263,13 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
             Some(crate::ui::app::CacheHoverTarget::SubtabConfig)
         ),
     );
+    let tlb_style = subtab_style(
+        matches!(app.cache.subtab, CacheSubtab::Tlb),
+        matches!(
+            app.cache.hover,
+            Some(crate::ui::app::CacheHoverTarget::SubtabTlb)
+        ),
+    );
 
     let level_label = if app.cache.selected_level == 0 {
         "L1 Split I/D".to_string()
@@ -294,11 +303,16 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let config_x0 = x;
     x += "config".len() as u16;
     let config_x1 = x;
+    x += 3; // separator
+    let tlb_x0 = x;
+    x += "tlb".len() as u16;
+    let tlb_x1 = x;
     app.cache.subtab_stats_btn.set((row_y, stats_x0, stats_x1));
     app.cache.subtab_view_btn.set((row_y, view_x0, view_x1));
     app.cache
         .subtab_config_btn
         .set((row_y, config_x0, config_x1));
+    app.cache.subtab_tlb_btn.set((row_y, tlb_x0, tlb_x1));
 
     let line1 = Line::from(vec![
         Span::raw(" "),
@@ -307,6 +321,8 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("view", view_style),
         Span::raw("   "),
         Span::styled("config", config_style),
+        Span::raw("   "),
+        Span::styled("tlb", tlb_style),
     ]);
     let line2 = Line::from(vec![
         Span::raw(" "),
