@@ -174,6 +174,16 @@ impl App {
         self.ensure_visible_tab();
     }
 
+    pub(in crate::ui) fn set_vm_enabled(&mut self, enabled: bool) {
+        self.run.vm_enabled = enabled;
+        self.run.mem.mmu.enabled = enabled;
+        if !enabled {
+            // Drop all cached translations so re-enabling starts from a clean
+            // slate (no stale PA mappings).
+            self.run.mem.mmu.flush();
+        }
+    }
+
     pub(in crate::ui) fn set_trace_syscalls(&mut self, enabled: bool) {
         self.run.trace_syscalls = enabled;
         self.console.trace_syscalls = enabled;

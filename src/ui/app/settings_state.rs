@@ -27,13 +27,15 @@ pub(crate) const SETTINGS_ROW_MEM_SIZE: usize = 2;
 pub(crate) const SETTINGS_ROW_RUN_SCOPE: usize = 3;
 /// Row index of the pipeline_enabled toggle.
 pub(crate) const SETTINGS_ROW_PIPELINE_ENABLED: usize = 4;
+/// Row index of the vm_enabled (Sv32 + TLB) toggle.
+pub(crate) const SETTINGS_ROW_VM_ENABLED: usize = 5;
 /// Row index of the JIT mode selector (none / hot / full).
-pub(crate) const SETTINGS_ROW_JIT_MODE: usize = 5;
+pub(crate) const SETTINGS_ROW_JIT_MODE: usize = 6;
 /// Row index of the syscall tracing toggle.
-pub(crate) const SETTINGS_ROW_TRACE_SYSCALLS: usize = 6;
-/// First CPI row index in the settings list (7 rows + 1 blank separator).
-pub(crate) const SETTINGS_ROW_CPI_START: usize = 8;
-/// Total number of settings rows (7 rows + 1 blank + 11 CPI fields).
+pub(crate) const SETTINGS_ROW_TRACE_SYSCALLS: usize = 7;
+/// First CPI row index in the settings list (8 rows + 1 blank separator).
+pub(crate) const SETTINGS_ROW_CPI_START: usize = 9;
+/// Total number of settings rows (8 rows + 1 blank + 11 CPI fields).
 pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_CPI_START + 11;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
@@ -73,6 +75,8 @@ pub(crate) struct SettingsState {
     pub(crate) hover_cache_enabled: bool,
     /// Mouse hover over the pipeline_enabled bool button
     pub(crate) hover_pipeline_enabled: bool,
+    /// Mouse hover over the vm_enabled bool button
+    pub(crate) hover_vm_enabled: bool,
     /// Mouse hover over the JIT mode selector button
     pub(crate) hover_jit_mode: bool,
     /// Mouse hover over the syscall tracing bool button
@@ -87,6 +91,8 @@ pub(crate) struct SettingsState {
     pub(crate) bool_btn_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the pipeline bool button (y, x_start, x_end)
     pub(crate) bool_btn_pipeline_rect: std::cell::Cell<(u16, u16, u16)>,
+    /// Geometry of the vm_enabled bool button (y, x_start, x_end)
+    pub(crate) bool_btn_vm_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the JIT mode selector button (y, x_start, x_end)
     pub(crate) jit_mode_btn_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the syscall tracing bool button (y, x_start, x_end)
@@ -113,6 +119,7 @@ impl Default for SettingsState {
             hover_cpi_field: None,
             hover_cache_enabled: false,
             hover_pipeline_enabled: false,
+            hover_vm_enabled: false,
             hover_jit_mode: false,
             hover_trace_syscalls: false,
             hover_run_scope: false,
@@ -120,6 +127,7 @@ impl Default for SettingsState {
             hover_export_rcfg: false,
             bool_btn_rect: std::cell::Cell::new((0, 0, 0)),
             bool_btn_pipeline_rect: std::cell::Cell::new((0, 0, 0)),
+            bool_btn_vm_rect: std::cell::Cell::new((0, 0, 0)),
             jit_mode_btn_rect: std::cell::Cell::new((0, 0, 0)),
             bool_btn_trace_syscalls_rect: std::cell::Cell::new((0, 0, 0)),
             run_scope_rect: std::cell::Cell::new((0, 0, 0)),

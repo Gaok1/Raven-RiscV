@@ -4,6 +4,7 @@ use super::{Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy
 use crate::falcon::{
     errors::FalconError,
     memory::{AmoOp, Bus, Ram},
+    mmu::{AccessType, Mmu, PageFault, TlbConfig},
 };
 use std::collections::HashMap;
 
@@ -37,6 +38,9 @@ pub struct CacheController {
     /// When true, all cache lookups are skipped and RAM is accessed directly (no stats, no latency).
     pub(crate) bypass: bool,
     reservations: HashMap<u32, Reservation>,
+    /// MMU / TLB. When `mmu.enabled == false` (default), translation is pure
+    /// identity and zero-overhead. See `falcon::mmu`.
+    pub(crate) mmu: Mmu,
 }
 
 #[derive(Clone, Copy)]
@@ -62,6 +66,29 @@ impl CacheController {
             step_count: 0,
             bypass: false,
             reservations: HashMap::new(),
+            mmu: Mmu::new(TlbConfig::default()),
+        }
+    }
+
+    /// Internal helper: translate a virtual address using the MMU and add the
+    /// reported stall cycles to `extra_cycles`. Page faults are surfaced as
+    /// `FalconError::Bus` for now; Phase 2 will route them through a real trap
+    /// handler (mtvec / mepc / mcause).
+    pub(crate) fn translate_for_access(
+        &mut self,
+        vaddr: u32,
+        access: AccessType,
+    ) -> Result<u32, FalconError> {
+        match self.mmu.translate(vaddr, access) {
+            Ok((paddr, stall)) => {
+                if stall != 0 {
+                    self.extra_cycles = self.extra_cycles.saturating_add(stall as u64);
+                }
+                Ok(paddr)
+            }
+            Err(PageFault { cause, vaddr }) => Err(FalconError::Bus(format!(
+                "page fault cause={cause} vaddr=0x{vaddr:08X}"
+            ))),
         }
     }
 
@@ -945,17 +972,21 @@ impl Bus for CacheController {
 
     // store* = D-cache tracked writes (bypasses L2+ — write-through-to-RAM for evictions)
     fn store8(&mut self, addr: u32, val: u8) -> Result<(), FalconError> {
+        let addr = self.translate_for_access(addr, AccessType::Store)?;
         self.dcache_store_bytes(addr, &[val])
     }
     fn store16(&mut self, addr: u32, val: u16) -> Result<(), FalconError> {
+        let addr = self.translate_for_access(addr, AccessType::Store)?;
         self.dcache_store_bytes(addr, &val.to_le_bytes())
     }
     fn store32(&mut self, addr: u32, val: u32) -> Result<(), FalconError> {
+        let addr = self.translate_for_access(addr, AccessType::Store)?;
         self.dcache_store_bytes(addr, &val.to_le_bytes())
     }
 
     // I-cache tracked fetch — hierarchical: L1 hit → return; miss → L2+/RAM fill
     fn fetch32(&mut self, addr: u32) -> Result<u32, FalconError> {
+        let addr = self.translate_for_access(addr, AccessType::Fetch)?;
         if self.bypass {
             self.instruction_count += 1;
             return self.ram.load32(addr);
@@ -988,6 +1019,7 @@ impl Bus for CacheController {
 
     // D-cache tracked reads — hierarchical: L1 hit → return; miss → L2+/RAM fill
     fn dcache_read8(&mut self, addr: u32) -> Result<u8, FalconError> {
+        let addr = self.translate_for_access(addr, AccessType::Load)?;
         if self.bypass {
             return self.ram.load8(addr);
         }
@@ -1000,6 +1032,7 @@ impl Bus for CacheController {
     }
 
     fn dcache_read16(&mut self, addr: u32) -> Result<u16, FalconError> {
+        let addr = self.translate_for_access(addr, AccessType::Load)?;
         if self.bypass {
             return self.ram.load16(addr);
         }
@@ -1021,6 +1054,7 @@ impl Bus for CacheController {
     }
 
     fn dcache_read32(&mut self, addr: u32) -> Result<u32, FalconError> {
+        let addr = self.translate_for_access(addr, AccessType::Load)?;
         if self.bypass {
             return self.ram.load32(addr);
         }
@@ -1054,6 +1088,18 @@ impl Bus for CacheController {
     fn fence_i(&mut self) -> Result<(), FalconError> {
         self.icache.invalidate();
         Ok(())
+    }
+
+    fn translate(
+        &mut self,
+        vaddr: u32,
+        access: AccessType,
+    ) -> Result<(u32, u8), PageFault> {
+        self.mmu.translate(vaddr, access)
+    }
+
+    fn tlb_flush(&mut self) {
+        self.mmu.flush();
     }
 
     fn lr_w(&mut self, hart_id: u32, addr: u32) -> Result<u32, FalconError> {

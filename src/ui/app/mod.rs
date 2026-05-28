@@ -31,8 +31,8 @@ pub(crate) use self::run_state::{
 pub(crate) use self::settings_state::{
     RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState,
-    nearest_pow2_clamp,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
+    SettingsState, nearest_pow2_clamp,
 };
 
 use super::{
@@ -431,6 +431,7 @@ impl App {
                 show_instr_type: true,
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
+                vm_enabled: false,
                 trace_syscalls: false,
                 jit_kind: crate::falcon::jit::BackendKind::None,
                 backend: crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None)

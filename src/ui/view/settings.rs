@@ -8,7 +8,7 @@ use ratatui::{
 use crate::ui::app::{
     App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crate::ui::theme;
 use crate::ui::view::components::{dense_action, dense_value};
@@ -189,7 +189,24 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     ]));
     items.push(pipe_item);
 
-    // Row 5: JIT mode selector
+    // Row 5: VM Enabled toggle (Sv32 + TLB)
+    let is_sel_vm = sel == SETTINGS_ROW_VM_ENABLED;
+    let is_hov_vm = app.settings.hover_row == Some(SETTINGS_ROW_VM_ENABLED);
+    let label_style_vm = if is_sel_vm {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_vm {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let vm_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Virtual Memory"), label_style_vm),
+        Span::raw("  "),
+        bool_button(app.run.vm_enabled, app.settings.hover_vm_enabled),
+    ]));
+    items.push(vm_item);
+
+    // Row 6: JIT mode selector
     let is_sel_jit = sel == SETTINGS_ROW_JIT_MODE;
     let is_hov_jit = app.settings.hover_row == Some(SETTINGS_ROW_JIT_MODE);
     let label_style_jit = if is_sel_jit {
@@ -309,8 +326,13 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         bool_btn_x,
         bool_btn_x + bool_btn_label_w,
     ));
-    app.settings.bool_btn_trace_syscalls_rect.set((
+    app.settings.bool_btn_vm_rect.set((
         area.y + 5,
+        bool_btn_x,
+        bool_btn_x + bool_btn_label_w,
+    ));
+    app.settings.bool_btn_trace_syscalls_rect.set((
+        area.y + 7,
         bool_btn_x,
         bool_btn_x + bool_btn_label_w,
     ));
