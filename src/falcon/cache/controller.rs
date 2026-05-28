@@ -130,6 +130,16 @@ impl CacheController {
             }
             level.stats.history.push_back((step, rate));
         }
+
+        // TLB hit-rate history (only meaningful when VM is on).
+        if self.mmu.enabled {
+            let tlb_rate = self.mmu.tlb.stats.hit_rate();
+            let hist = &mut self.mmu.tlb.stats.history;
+            if hist.len() >= MAX_HISTORY {
+                hist.pop_front();
+            }
+            hist.push_back((step, tlb_rate));
+        }
     }
 
     /// Mutable access to the MMU — exposed for headless tests / harnesses

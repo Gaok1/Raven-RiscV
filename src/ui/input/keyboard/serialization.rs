@@ -2,6 +2,7 @@ use crate::falcon::cache::{
     Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets,
 };
 use crate::falcon::jit::BackendKind;
+use crate::falcon::mmu::TlbConfig;
 use crate::ui::app::{
     App, CacheResultsSnapshot, CpiConfig, LevelSnapshot, PathInput, PathInputAction,
     PipelineResultsSnapshot, RunScope,
@@ -29,6 +30,7 @@ pub(super) fn serialize_cache_configs(
     icfg: &CacheConfig,
     dcfg: &CacheConfig,
     extra: &[CacheConfig],
+    tlb: &TlbConfig,
 ) -> String {
     let mut s = String::from("# Raven Cache Config v2\n");
     s.push_str(&format!("levels={}\n", extra.len()));
@@ -38,7 +40,56 @@ pub(super) fn serialize_cache_configs(
         let prefix = level_prefix(i);
         serialize_one_config(&mut s, &prefix, cfg);
     }
+    serialize_tlb_config(&mut s, tlb);
     s
+}
+
+pub(super) fn serialize_tlb_config(s: &mut String, cfg: &TlbConfig) {
+    s.push_str("\n# Unified TLB\n");
+    s.push_str(&format!("tlb.entry_count={}\n", cfg.entry_count));
+    s.push_str(&format!("tlb.associativity={}\n", cfg.associativity));
+    s.push_str(&format!("tlb.replacement={:?}\n", cfg.replacement));
+    s.push_str(&format!("tlb.hit_latency={}\n", cfg.hit_latency));
+    s.push_str(&format!("tlb.miss_penalty={}\n", cfg.miss_penalty));
+}
+
+pub(super) fn parse_tlb_config(map: &HashMap<String, String>) -> TlbConfig {
+    let default = TlbConfig::default();
+    let entry_count = map
+        .get("tlb.entry_count")
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(default.entry_count);
+    let associativity = map
+        .get("tlb.associativity")
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(default.associativity);
+    let replacement = match map
+        .get("tlb.replacement")
+        .map(String::as_str)
+        .unwrap_or("lru")
+    {
+        "mru" => ReplacementPolicy::Mru,
+        "fifo" => ReplacementPolicy::Fifo,
+        "random" => ReplacementPolicy::Random,
+        "lfu" => ReplacementPolicy::Lfu,
+        "clock" => ReplacementPolicy::Clock,
+        _ => ReplacementPolicy::Lru,
+    };
+    let hit_latency = map
+        .get("tlb.hit_latency")
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(default.hit_latency);
+    let miss_penalty = map
+        .get("tlb.miss_penalty")
+        .and_then(|v| v.parse::<u8>().ok())
+        .unwrap_or(default.miss_penalty);
+    TlbConfig {
+        entry_count,
+        associativity,
+        replacement,
+        hit_latency,
+        miss_penalty,
+    }
 }
 
 pub(super) fn serialize_rcfg(
@@ -251,7 +302,7 @@ pub(super) fn level_prefix(i: usize) -> String {
 
 pub(super) fn parse_cache_configs(
     text: &str,
-) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>), String> {
+) -> Result<(CacheConfig, CacheConfig, Vec<CacheConfig>, TlbConfig), String> {
     let mut map: HashMap<String, String> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
@@ -277,7 +328,8 @@ pub(super) fn parse_cache_configs(
         }
     }
 
-    Ok((icfg, dcfg, extra))
+    let tlb = parse_tlb_config(&map);
+    Ok((icfg, dcfg, extra, tlb))
 }
 
 pub(super) fn parse_single_config(
@@ -524,7 +576,7 @@ pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
 
 /// Apply a raw .fcache text to the app (parse + apply, no file I/O).
 pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String> {
-    let (icfg, dcfg, extra) = parse_cache_configs(text)?;
+    let (icfg, dcfg, extra, tlb) = parse_cache_configs(text)?;
     app.cache.pending_icache = icfg;
     app.cache.pending_dcache = dcfg;
     let n_extra = extra.len();
@@ -539,6 +591,8 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
     if app.cache.selected_level > n_extra {
         app.cache.selected_level = n_extra;
     }
+    app.cache.pending_tlb = tlb.clone();
+    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
     Ok(())
 }
 
@@ -547,6 +601,7 @@ pub(crate) fn do_export_cfg(app: &mut App) {
         &app.cache.pending_icache,
         &app.cache.pending_dcache,
         &app.cache.extra_pending,
+        &app.cache.pending_tlb,
     );
     if let Some(path) = OSFileDialog::new()
         .add_filter("Cache Config", &["fcache"])
@@ -578,7 +633,7 @@ pub(crate) fn do_import_cfg(app: &mut App) {
     {
         match std::fs::read_to_string(&path) {
             Ok(text) => match parse_cache_configs(&text) {
-                Ok((icfg, dcfg, extra)) => {
+                Ok((icfg, dcfg, extra, tlb)) => {
                     app.cache.pending_icache = icfg;
                     app.cache.pending_dcache = dcfg;
                     let n_extra = extra.len();
@@ -593,6 +648,8 @@ pub(crate) fn do_import_cfg(app: &mut App) {
                     if app.cache.selected_level > n_extra {
                         app.cache.selected_level = n_extra;
                     }
+                    app.cache.pending_tlb = tlb.clone();
+                    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",
@@ -1480,7 +1537,7 @@ pub(super) fn dispatch_path_input(
         }
         PathInputAction::OpenFcache => match std::fs::read_to_string(&path) {
             Ok(text) => match parse_cache_configs(&text) {
-                Ok((icfg, dcfg, extra)) => {
+                Ok((icfg, dcfg, extra, tlb)) => {
                     let n_extra = extra.len();
                     app.cache.pending_icache = icfg;
                     app.cache.pending_dcache = dcfg;
@@ -1495,6 +1552,8 @@ pub(super) fn dispatch_path_input(
                     if app.cache.selected_level > n_extra {
                         app.cache.selected_level = n_extra;
                     }
+                    app.cache.pending_tlb = tlb.clone();
+                    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",
@@ -1516,6 +1575,7 @@ pub(super) fn dispatch_path_input(
                 &app.cache.pending_icache,
                 &app.cache.pending_dcache,
                 &app.cache.extra_pending,
+                &app.cache.pending_tlb,
             );
             match std::fs::write(&path, &text) {
                 Ok(()) => {
