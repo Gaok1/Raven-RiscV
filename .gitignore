@@ -1,6 +1,7 @@
 
 /target
 /.claude
+/.vscode
 # Ignore generated distribution artifacts
 /dist/
 /claudeProblems

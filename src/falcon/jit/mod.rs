@@ -8,8 +8,8 @@
 //! | Fase | O que adiciona                                      | Status |
 //! |------|-----------------------------------------------------|--------|
 //! | A    | Scaffolding: trait, factory, backends stub, flag CLI | ✓      |
-//! | B    | `scan_block`, `CompiledBlockCache`, codegen dynasm  | 🔧     |
-//! | C    | Backends `hot` e `full` em produção                 | ⏳     |
+//! | B    | `scan_block`, `CompiledBlockCache`, codegen dynasm  | ✓      |
+//! | C    | Backends `hot` e `full` em produção                 | ✓      |
 //!
 //! # Organização dos módulos
 //!

@@ -2153,12 +2153,14 @@ impl App {
                     crate::falcon::jit::InterpreterBackend::default().run_until_yield(&mut ctx)
                 }
             }));
-            let alive = match res {
-                Ok(Ok(crate::falcon::jit::ExecOutcome::Stepped { .. })) => true,
+            let (alive, jit_instr_count) = match res {
+                Ok(Ok(crate::falcon::jit::ExecOutcome::Stepped { instructions })) => {
+                    (true, instructions)
+                }
                 Ok(Ok(
                     crate::falcon::jit::ExecOutcome::Halted
                     | crate::falcon::jit::ExecOutcome::AwaitingInput,
-                )) => false,
+                )) => (false, 1),
                 Ok(Err(e)) => {
                     use crate::falcon::errors::FalconError;
                     let msg = if matches!(&e, FalconError::Bus(_)) {
@@ -2176,17 +2178,22 @@ impl App {
                     };
                     self.console.push_error(msg);
                     self.run.faulted = true;
-                    false
+                    (false, 1)
                 }
                 Err(_) => {
                     self.run.faulted = true;
-                    false
+                    (false, 1)
                 }
             };
             self.run.mem.add_instruction_cycles(cpi_cycles);
             self.run.mem.snapshot_stats();
 
-            *self.run.exec_counts.entry(step_pc).or_insert(0) += 1;
+            // Track every instruction the JIT block executed (not just block entry).
+            // For the interpreter jit_instr_count == 1, so this is equivalent.
+            for i in 0..jit_instr_count {
+                let instr_pc = step_pc.wrapping_add(i * 4);
+                *self.run.exec_counts.entry(instr_pc).or_insert(0) += 1;
+            }
 
             if !go_mode {
                 let disasm = match falcon::decoder::decode(word) {
