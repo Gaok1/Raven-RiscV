@@ -70,13 +70,40 @@ pub(super) fn decode_auipc(word: u32) -> Result<Instruction, FalconError> {
 }
 
 pub(super) fn decode_system(word: u32) -> Result<Instruction, FalconError> {
+    // Fixed encodings first.
     match word {
-        0x0000_0073 => Ok(Instruction::Ecall),
-        0x0010_0073 => Ok(Instruction::Ebreak),
-        0x0020_0073 => Ok(Instruction::Halt),
+        0x0000_0073 => return Ok(Instruction::Ecall),
+        0x0010_0073 => return Ok(Instruction::Ebreak),
+        0x0020_0073 => return Ok(Instruction::Halt),
+        0x3020_0073 => return Ok(Instruction::Mret),
         // Common `unimp` trap word seen in debug flows. Treat it as a
         // side-effect-free barrier so execution can fall through.
-        0xC000_1073 => Ok(Instruction::Fence),
-        _ => Err(FalconError::Decode("Unknown system instruction")),
+        0xC000_1073 => return Ok(Instruction::Fence),
+        _ => {}
     }
+
+    let funct3 = bits(word, 14, 12) as u8;
+    let rd = bits(word, 11, 7) as u8;
+    let rs1 = bits(word, 19, 15) as u8;
+    let csr = bits(word, 31, 20) as u16;
+
+    // CSR instructions (Zicsr): funct3 1..3 = register form, 5..7 = immediate.
+    match funct3 {
+        0b001 => return Ok(Instruction::Csrrw { rd, rs1, csr }),
+        0b010 => return Ok(Instruction::Csrrs { rd, rs1, csr }),
+        0b011 => return Ok(Instruction::Csrrc { rd, rs1, csr }),
+        0b101 => return Ok(Instruction::Csrrwi { rd, uimm: rs1, csr }),
+        0b110 => return Ok(Instruction::Csrrsi { rd, uimm: rs1, csr }),
+        0b111 => return Ok(Instruction::Csrrci { rd, uimm: rs1, csr }),
+        0 => {
+            // funct3 = 0 → PRIV. SFENCE.VMA encoded as funct7=0x09.
+            let funct7 = bits(word, 31, 25);
+            let rs2 = bits(word, 24, 20) as u8;
+            if funct7 == 0b0001001 && rd == 0 {
+                return Ok(Instruction::SfenceVma { rs1, rs2 });
+            }
+        }
+        _ => {}
+    }
+    Err(FalconError::Decode("Unknown system instruction"))
 }

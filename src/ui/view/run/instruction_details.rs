@@ -768,6 +768,16 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         Ebreak => "ebreak".into(),
         Halt => "halt".into(),
         Fence => "fence".into(),
+        Csrrw { rd, rs1, csr } => format!("csrrw {}, 0x{csr:03x}, {}", reg_name(rd), reg_name(rs1)),
+        Csrrs { rd, rs1, csr } => format!("csrrs {}, 0x{csr:03x}, {}", reg_name(rd), reg_name(rs1)),
+        Csrrc { rd, rs1, csr } => format!("csrrc {}, 0x{csr:03x}, {}", reg_name(rd), reg_name(rs1)),
+        Csrrwi { rd, uimm, csr } => format!("csrrwi {}, 0x{csr:03x}, {uimm}", reg_name(rd)),
+        Csrrsi { rd, uimm, csr } => format!("csrrsi {}, 0x{csr:03x}, {uimm}", reg_name(rd)),
+        Csrrci { rd, uimm, csr } => format!("csrrci {}, 0x{csr:03x}, {uimm}", reg_name(rd)),
+        Mret => "mret".into(),
+        SfenceVma { rs1, rs2 } => {
+            format!("sfence.vma {}, {}", reg_name(rs1), reg_name(rs2))
+        }
         // RV32F
         Flw { rd, rs1, imm } => format!("{:<9} {}, {imm}({})", "flw", freg_name(rd), reg_name(rs1)),
         Fsw { rs2, rs1, imm } => {

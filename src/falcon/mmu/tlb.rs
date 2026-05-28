@@ -1,8 +1,8 @@
 // falcon/mmu/tlb.rs — unified TLB shared by I- and D-side translations.
 //
-// Phase 1 carries the full Phase 2/3 struct shapes so downstream code (cache
-// controller, settings, UI) can be wired without churn. A handful of fields
-// are unread until the walker arrives — `#[allow(dead_code)]` reflects that.
+// N-way set-associative. Index by `(vpn % num_sets)`; linear search the `A`
+// entries in the set. Megapages match only the high 10 bits of the VPN; the
+// `global` bit lets entries match across ASIDs.
 
 #![allow(dead_code)]
 
@@ -87,7 +87,11 @@ pub struct Tlb {
 
 impl Tlb {
     pub fn new(config: TlbConfig) -> Self {
-        let n = (config.entry_count.max(1) as usize).next_power_of_two();
+        let assoc = config.associativity.max(1) as usize;
+        let raw = (config.entry_count.max(1) as usize).next_power_of_two();
+        // Pad up so total entries is a multiple of associativity (≥ assoc).
+        let n = raw.max(assoc);
+        let n = ((n + assoc - 1) / assoc) * assoc;
         Self {
             entries: vec![TlbEntry::default(); n],
             stats: TlbStats::default(),
@@ -102,11 +106,252 @@ impl Tlb {
         }
     }
 
-    /// Reconfigure the TLB. Resets entries; preserves stats unless `reset_stats`.
-    pub fn reconfigure(&mut self, cfg: TlbConfig, reset_stats: bool) {
+    /// Reconfigure the TLB. Resets entries; also resets stats.
+    pub fn reconfigure(&mut self, cfg: TlbConfig) {
         *self = Self::new(cfg);
-        if !reset_stats {
-            // Caller can swap stats back in if they want; current API resets.
+    }
+
+    pub fn num_sets(&self) -> usize {
+        let assoc = self.config.associativity.max(1) as usize;
+        (self.entries.len() / assoc).max(1)
+    }
+
+    fn set_range(&self, set_idx: usize) -> std::ops::Range<usize> {
+        let assoc = self.config.associativity.max(1) as usize;
+        let start = set_idx * assoc;
+        let end = (start + assoc).min(self.entries.len());
+        start..end
+    }
+
+    fn vpn_set(&self, vpn: u32) -> usize {
+        // Index by vpn[1] (high 10 bits) so a megapage and every 4 KiB page it
+        // covers share the same set — without this, a megapage installed at
+        // vpn1:0 could never be probed via a different vpn0.
+        let n = self.num_sets();
+        ((vpn >> 10) as usize) % n
+    }
+
+    fn matches(entry: &TlbEntry, vpn: u32, asid: u16) -> bool {
+        if !entry.valid {
+            return false;
         }
+        if !entry.global && entry.asid != asid {
+            return false;
+        }
+        if entry.megapage {
+            (entry.vpn >> 10) == (vpn >> 10)
+        } else {
+            entry.vpn == vpn
+        }
+    }
+
+    /// Look up an entry for `vpn`/`asid`. Bumps age on LRU/MRU; returns a copy
+    /// on hit so callers don't fight the borrow checker against `self.stats`.
+    pub fn probe(&mut self, vpn: u32, asid: u16) -> Option<TlbEntry> {
+        let set_idx = self.vpn_set(vpn);
+        let range = self.set_range(set_idx);
+        for i in range {
+            if Self::matches(&self.entries[i], vpn, asid) {
+                self.age_counter = self.age_counter.wrapping_add(1);
+                if matches!(
+                    self.config.replacement,
+                    ReplacementPolicy::Lru
+                        | ReplacementPolicy::Mru
+                        | ReplacementPolicy::Lfu
+                        | ReplacementPolicy::Clock
+                ) {
+                    self.entries[i].age = self.age_counter;
+                }
+                return Some(self.entries[i]);
+            }
+        }
+        None
+    }
+
+    /// Install `entry`. If an existing entry already maps this VPN+ASID, that
+    /// slot is reused (so a re-walk that updates A/D doesn't leave a stale
+    /// duplicate behind). Otherwise picks a victim per replacement policy and
+    /// counts the eviction.
+    pub fn install(&mut self, mut entry: TlbEntry) {
+        let set_idx = self.vpn_set(entry.vpn);
+        let range = self.set_range(set_idx);
+        let existing = range
+            .clone()
+            .find(|&i| Self::matches(&self.entries[i], entry.vpn, entry.asid));
+        let target = match existing {
+            Some(i) => i,
+            None => {
+                let v = self.find_victim(range);
+                if self.entries[v].valid {
+                    self.stats.evictions += 1;
+                }
+                v
+            }
+        };
+        self.age_counter = self.age_counter.wrapping_add(1);
+        entry.valid = true;
+        entry.age = self.age_counter;
+        self.entries[target] = entry;
+    }
+
+    fn find_victim(&mut self, range: std::ops::Range<usize>) -> usize {
+        // Prefer invalid slots.
+        for i in range.clone() {
+            if !self.entries[i].valid {
+                return i;
+            }
+        }
+        match self.config.replacement {
+            ReplacementPolicy::Lru | ReplacementPolicy::Fifo | ReplacementPolicy::Lfu => range
+                .clone()
+                .min_by_key(|&i| self.entries[i].age)
+                .unwrap_or(range.start),
+            ReplacementPolicy::Mru => range
+                .clone()
+                .max_by_key(|&i| self.entries[i].age)
+                .unwrap_or(range.start),
+            ReplacementPolicy::Random => {
+                let n = range.end - range.start;
+                range.start + (self.age_counter as usize % n.max(1))
+            }
+            ReplacementPolicy::Clock => range
+                .clone()
+                .min_by_key(|&i| self.entries[i].age)
+                .unwrap_or(range.start),
+        }
+    }
+
+    /// Invalidate every entry whose VPN matches `vaddr` (for `sfence.vma`
+    /// with a non-zero rs1).
+    pub fn flush_vaddr(&mut self, vaddr: u32) {
+        let vpn = vaddr >> 12;
+        let set_idx = self.vpn_set(vpn);
+        for i in self.set_range(set_idx) {
+            if Self::matches(&self.entries[i], vpn, self.entries[i].asid) {
+                self.entries[i].valid = false;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(entries: u16, assoc: u8, policy: ReplacementPolicy) -> TlbConfig {
+        TlbConfig {
+            entry_count: entries,
+            associativity: assoc,
+            replacement: policy,
+            hit_latency: 1,
+            miss_penalty: 20,
+        }
+    }
+
+    fn mk_entry(vpn: u32, ppn: u32, asid: u16) -> TlbEntry {
+        TlbEntry {
+            valid: true,
+            vpn,
+            ppn,
+            asid,
+            perms: PtePerms {
+                r: true,
+                w: true,
+                x: true,
+                u: true,
+            },
+            global: false,
+            accessed: true,
+            dirty: false,
+            megapage: false,
+            age: 0,
+        }
+    }
+
+    #[test]
+    fn install_then_probe_hits() {
+        let mut tlb = Tlb::new(cfg(8, 2, ReplacementPolicy::Lru));
+        tlb.install(mk_entry(0x10, 0x100, 1));
+        let e = tlb.probe(0x10, 1).expect("hit");
+        assert_eq!(e.ppn, 0x100);
+    }
+
+    #[test]
+    fn probe_miss_on_wrong_asid() {
+        let mut tlb = Tlb::new(cfg(8, 2, ReplacementPolicy::Lru));
+        tlb.install(mk_entry(0x10, 0x100, 1));
+        assert!(tlb.probe(0x10, 2).is_none());
+    }
+
+    #[test]
+    fn global_entry_matches_any_asid() {
+        let mut tlb = Tlb::new(cfg(8, 2, ReplacementPolicy::Lru));
+        let mut e = mk_entry(0x10, 0x100, 1);
+        e.global = true;
+        tlb.install(e);
+        assert!(tlb.probe(0x10, 2).is_some());
+        assert!(tlb.probe(0x10, 99).is_some());
+    }
+
+    #[test]
+    fn megapage_matches_any_vpn0() {
+        let mut tlb = Tlb::new(cfg(8, 2, ReplacementPolicy::Lru));
+        let mut e = mk_entry(0x4000, 0x4000, 1); // vpn1=16, vpn0=0
+        e.megapage = true;
+        tlb.install(e);
+        // Different vpn0 within same vpn1 must hit.
+        assert!(tlb.probe(0x4000 | 0x123, 1).is_some());
+        // Different vpn1 must miss.
+        assert!(tlb.probe(0x8000, 1).is_none());
+    }
+
+    #[test]
+    fn flush_invalidates_all() {
+        let mut tlb = Tlb::new(cfg(8, 2, ReplacementPolicy::Lru));
+        tlb.install(mk_entry(0x10, 0x100, 1));
+        tlb.install(mk_entry(0x11, 0x101, 1));
+        tlb.flush();
+        assert!(tlb.probe(0x10, 1).is_none());
+        assert!(tlb.probe(0x11, 1).is_none());
+    }
+
+    #[test]
+    fn flush_vaddr_targets_one_entry() {
+        let mut tlb = Tlb::new(cfg(8, 2, ReplacementPolicy::Lru));
+        tlb.install(mk_entry(0x10, 0x100, 1));
+        tlb.install(mk_entry(0x11, 0x101, 1));
+        tlb.flush_vaddr(0x10 << 12);
+        assert!(tlb.probe(0x10, 1).is_none());
+        assert!(tlb.probe(0x11, 1).is_some());
+    }
+
+    #[test]
+    fn lru_evicts_least_recently_used() {
+        // 2 entries, fully-associative → 1 set, 2 ways.
+        let mut tlb = Tlb::new(cfg(2, 2, ReplacementPolicy::Lru));
+        // All three VPNs hash to set 0 (only 1 set).
+        tlb.install(mk_entry(0x10, 0xA, 1));
+        tlb.install(mk_entry(0x11, 0xB, 1));
+        // Touch 0x10 so 0x11 becomes the LRU.
+        tlb.probe(0x10, 1).unwrap();
+        tlb.install(mk_entry(0x12, 0xC, 1));
+        // 0x11 should have been evicted.
+        assert!(tlb.probe(0x11, 1).is_none());
+        assert!(tlb.probe(0x10, 1).is_some());
+        assert!(tlb.probe(0x12, 1).is_some());
+        assert_eq!(tlb.stats.evictions, 1);
+    }
+
+    #[test]
+    fn fifo_evicts_oldest_install_regardless_of_touch() {
+        let mut tlb = Tlb::new(cfg(2, 2, ReplacementPolicy::Fifo));
+        tlb.install(mk_entry(0x10, 0xA, 1));
+        tlb.install(mk_entry(0x11, 0xB, 1));
+        // Touching 0x10 in FIFO must NOT save it from eviction.
+        tlb.probe(0x10, 1).unwrap();
+        tlb.install(mk_entry(0x12, 0xC, 1));
+        assert!(tlb.probe(0x10, 1).is_none(), "0x10 should be evicted");
+        assert!(tlb.probe(0x11, 1).is_some());
+        assert!(tlb.probe(0x12, 1).is_some());
     }
 }

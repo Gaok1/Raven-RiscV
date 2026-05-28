@@ -1,6 +1,6 @@
 // falcon/memory.rs
 use crate::falcon::errors::FalconError;
-use crate::falcon::mmu::{AccessType, PageFault};
+use crate::falcon::mmu::{AccessType, PageFault, PrivMode};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,6 +137,13 @@ pub trait Bus {
 
     /// Flush every TLB entry (invoked on `satp` write and `sfence.vma`).
     fn tlb_flush(&mut self) {}
+
+    /// Push a new `satp` value to the MMU. Default no-op for buses without a
+    /// real MMU. Implementations should also flush the TLB.
+    fn set_satp(&mut self, _val: u32) {}
+
+    /// Update the hart's current privilege level (used by `mret`/trap entry).
+    fn set_priv_mode(&mut self, _mode: PrivMode) {}
 }
 
 pub struct Ram {
