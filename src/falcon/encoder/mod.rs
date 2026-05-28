@@ -14,6 +14,11 @@ fn i(imm12: i32, rs1: u32, f3: u32, rd: u32, opc: u32) -> u32 {
 }
 
 #[inline]
+fn csr_encode(csr: u16, src: u32, f3: u32, rd: u32) -> u32 {
+    ((csr as u32 & 0xFFF) << 20) | ((src & 0x1F) << 15) | (f3 << 12) | (rd << 7) | 0b1110011
+}
+
+#[inline]
 fn s(imm12: i32, rs2: u32, rs1: u32, f3: u32, opc: u32) -> u32 {
     let imm = (imm12 as i32) & 0xFFF;
     let imm_lo = (imm & 0x1F) as u32;
@@ -267,6 +272,19 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
         Halt => 0x0020_0073,   // Raven HALT  — permanent single-hart stop
         Fence => 0x0FF0_000F,  // MISC-MEM/FENCE with pred=iorw, succ=iorw
         FenceI => 0x0000_100F,
+
+        // Zicsr — funct3 1..3 = reg form; rs1 holds the source register.
+        Csrrw { rd, rs1, csr } => csr_encode(csr, rs1 as u32, 0b001, rd as u32),
+        Csrrs { rd, rs1, csr } => csr_encode(csr, rs1 as u32, 0b010, rd as u32),
+        Csrrc { rd, rs1, csr } => csr_encode(csr, rs1 as u32, 0b011, rd as u32),
+        Csrrwi { rd, uimm, csr } => csr_encode(csr, uimm as u32, 0b101, rd as u32),
+        Csrrsi { rd, uimm, csr } => csr_encode(csr, uimm as u32, 0b110, rd as u32),
+        Csrrci { rd, uimm, csr } => csr_encode(csr, uimm as u32, 0b111, rd as u32),
+
+        Mret => 0x3020_0073,
+        SfenceVma { rs1, rs2 } => {
+            (0b0001001u32 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | 0b1110011
+        }
 
         // RV32F — LOAD-FP / STORE-FP
         Flw { rd, rs1, imm } => i(imm, rs1 as u32, 0x2, rd as u32, OPC_FLW as u32),

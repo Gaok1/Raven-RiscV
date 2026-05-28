@@ -8,7 +8,7 @@ use super::{
 use crate::falcon::Cpu;
 use crate::falcon::cache::CacheController;
 use crate::falcon::instruction::Instruction;
-use crate::falcon::memory::AmoOp;
+use crate::falcon::memory::{AmoOp, Bus};
 use crate::ui::app::CpiConfig;
 use crate::ui::console::Console;
 use std::collections::VecDeque;
@@ -1428,6 +1428,84 @@ fn stage_wb(
         }
 
         Instruction::Fence | Instruction::FenceI => {} // ordering handled by shared memory backend
+
+        Instruction::Csrrw { rd, rs1, csr } => {
+            let src = cpu.read(rs1);
+            let old = crate::falcon::exec::apply_csr_op(
+                cpu,
+                mem,
+                csr,
+                src,
+                crate::falcon::exec::CsrOp::Rw,
+                true,
+            );
+            cpu.write(rd, old);
+        }
+        Instruction::Csrrs { rd, rs1, csr } => {
+            let src = cpu.read(rs1);
+            let old = crate::falcon::exec::apply_csr_op(
+                cpu,
+                mem,
+                csr,
+                src,
+                crate::falcon::exec::CsrOp::Rs,
+                rs1 != 0,
+            );
+            cpu.write(rd, old);
+        }
+        Instruction::Csrrc { rd, rs1, csr } => {
+            let src = cpu.read(rs1);
+            let old = crate::falcon::exec::apply_csr_op(
+                cpu,
+                mem,
+                csr,
+                src,
+                crate::falcon::exec::CsrOp::Rc,
+                rs1 != 0,
+            );
+            cpu.write(rd, old);
+        }
+        Instruction::Csrrwi { rd, uimm, csr } => {
+            let old = crate::falcon::exec::apply_csr_op(
+                cpu,
+                mem,
+                csr,
+                uimm as u32,
+                crate::falcon::exec::CsrOp::Rw,
+                true,
+            );
+            cpu.write(rd, old);
+        }
+        Instruction::Csrrsi { rd, uimm, csr } => {
+            let old = crate::falcon::exec::apply_csr_op(
+                cpu,
+                mem,
+                csr,
+                uimm as u32,
+                crate::falcon::exec::CsrOp::Rs,
+                uimm != 0,
+            );
+            cpu.write(rd, old);
+        }
+        Instruction::Csrrci { rd, uimm, csr } => {
+            let old = crate::falcon::exec::apply_csr_op(
+                cpu,
+                mem,
+                csr,
+                uimm as u32,
+                crate::falcon::exec::CsrOp::Rc,
+                uimm != 0,
+            );
+            cpu.write(rd, old);
+        }
+        Instruction::Mret => {
+            crate::falcon::exec::apply_mret(cpu, mem);
+            cpu.instr_count += 1;
+            return true;
+        }
+        Instruction::SfenceVma { .. } => {
+            mem.tlb_flush();
+        }
     }
 
     cpu.instr_count += 1;

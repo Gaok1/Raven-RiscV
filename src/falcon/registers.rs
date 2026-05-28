@@ -1,4 +1,6 @@
 // falcon/registers.rs
+use crate::falcon::mmu::PrivMode;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HartStartRequest {
     pub entry_pc: u32,
@@ -53,6 +55,18 @@ pub struct Cpu {
     pub pending_exec_map: Option<ExecRegion>,
     /// Set by FALCON_HART_EXIT (1101): exit only this hart, not the whole program.
     pub local_exit: bool,
+
+    // ── Machine-mode CSRs (Phase 2 subset) ──
+    // satp lives on the MMU side of the bus; the Cpu mirror is convenient for
+    // CSR reads but writes must also go through `mem.set_satp` so the MMU
+    // updates its Satp and flushes the TLB.
+    pub satp: u32,
+    pub mstatus: u32,
+    pub mtvec: u32,
+    pub mepc: u32,
+    pub mcause: u32,
+    pub mtval: u32,
+    pub priv_mode: PrivMode,
 }
 
 impl Cpu {

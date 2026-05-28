@@ -290,15 +290,27 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     mem.invalidate_all();
     mem.reset_stats();
 
+    // The JIT does not yet invalidate translations on `satp` writes or
+    // `sfence.vma`, so any virtual-memory mapping change would silently keep
+    // stale cached blocks. Force the interpreter backend whenever VM is on.
+    let effective_jit_mode = if vm_enabled && args.jit_mode != jit::BackendKind::None {
+        eprintln!(
+            "warning: --jit={} ignored because vm_enabled=true (JIT is not yet TLB-aware)",
+            args.jit_mode.as_str()
+        );
+        jit::BackendKind::None
+    } else {
+        args.jit_mode
+    };
     let mut backend: Box<dyn jit::ExecutionBackend<_>> =
-        if args.jit_mode == jit::BackendKind::Full {
+        if effective_jit_mode == jit::BackendKind::Full {
             #[cfg(feature = "jit")]
             { jit::make_full_backend(&cpu, &mem) }
             #[cfg(not(feature = "jit"))]
             { return Err("--jit=full requires the 'jit' cargo feature. Rebuild with --features jit.".to_string()); }
         } else {
-            jit::make_backend(args.jit_mode)
-                .map_err(|e| format!("--jit={}: {e}", args.jit_mode.as_str()))?
+            jit::make_backend(effective_jit_mode)
+                .map_err(|e| format!("--jit={}: {e}", effective_jit_mode.as_str()))?
         };
 
     if args.pipeline && max_cores > 1 {

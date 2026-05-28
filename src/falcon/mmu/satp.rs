@@ -7,8 +7,9 @@
 
 #![allow(dead_code)]
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PrivMode {
+    #[default]
     M,
     S,
     U,

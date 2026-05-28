@@ -181,6 +181,12 @@ impl App {
             // Drop all cached translations so re-enabling starts from a clean
             // slate (no stale PA mappings).
             self.run.mem.mmu.flush();
+        } else if self.run.jit_kind != crate::falcon::jit::BackendKind::None {
+            // The JIT does not yet invalidate translations on satp/sfence.vma,
+            // so keeping it on with VM would silently run stale code. Demote to
+            // the interpreter and rebuild the backend.
+            self.run.jit_kind = crate::falcon::jit::BackendKind::None;
+            self.rebuild_backend();
         }
     }
 
@@ -190,7 +196,14 @@ impl App {
     }
 
     pub(in crate::ui) fn set_jit_mode(&mut self, kind: crate::falcon::jit::BackendKind) {
-        self.run.jit_kind = kind;
+        // Refuse to enable JIT while VM is on — the JIT does not invalidate
+        // its translation cache on satp/sfence.vma. The user can disable VM
+        // first to flip the JIT on.
+        if self.run.vm_enabled && kind != crate::falcon::jit::BackendKind::None {
+            self.run.jit_kind = crate::falcon::jit::BackendKind::None;
+        } else {
+            self.run.jit_kind = kind;
+        }
         self.rebuild_backend();
     }
 

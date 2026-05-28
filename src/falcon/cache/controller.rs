@@ -79,16 +79,18 @@ impl CacheController {
         vaddr: u32,
         access: AccessType,
     ) -> Result<u32, FalconError> {
-        match self.mmu.translate(vaddr, access) {
+        match self.mmu.translate(vaddr, access, &mut self.ram) {
             Ok((paddr, stall)) => {
                 if stall != 0 {
                     self.extra_cycles = self.extra_cycles.saturating_add(stall as u64);
                 }
                 Ok(paddr)
             }
-            Err(PageFault { cause, vaddr }) => Err(FalconError::Bus(format!(
-                "page fault cause={cause} vaddr=0x{vaddr:08X}"
-            ))),
+            Err(PageFault { cause, vaddr }) => Err(FalconError::Trap {
+                cause,
+                tval: vaddr,
+                vaddr,
+            }),
         }
     }
 
@@ -128,6 +130,22 @@ impl CacheController {
             }
             level.stats.history.push_back((step, rate));
         }
+    }
+
+    /// Mutable access to the MMU — exposed for headless tests / harnesses
+    /// that need to flip `enabled`, inspect TLB stats, or read `satp`. Runtime
+    /// callers should prefer the `Bus::set_satp` / `Bus::tlb_flush` helpers.
+    pub fn mmu(&self) -> &crate::falcon::mmu::Mmu {
+        &self.mmu
+    }
+    pub fn mmu_mut(&mut self) -> &mut crate::falcon::mmu::Mmu {
+        &mut self.mmu
+    }
+
+    /// Mutable access to the underlying RAM. Tests use this to preload page
+    /// tables before flipping `vm_enabled`.
+    pub fn ram_mut(&mut self) -> &mut Ram {
+        &mut self.ram
     }
 
     pub fn reset_stats(&mut self) {
@@ -1095,11 +1113,20 @@ impl Bus for CacheController {
         vaddr: u32,
         access: AccessType,
     ) -> Result<(u32, u8), PageFault> {
-        self.mmu.translate(vaddr, access)
+        self.mmu.translate(vaddr, access, &mut self.ram)
     }
 
     fn tlb_flush(&mut self) {
         self.mmu.flush();
+    }
+
+    fn set_satp(&mut self, val: u32) {
+        self.mmu.satp = crate::falcon::mmu::Satp::new(val);
+        self.mmu.flush();
+    }
+
+    fn set_priv_mode(&mut self, mode: crate::falcon::mmu::PrivMode) {
+        self.mmu.priv_mode = mode;
     }
 
     fn lr_w(&mut self, hart_id: u32, addr: u32) -> Result<u32, FalconError> {
