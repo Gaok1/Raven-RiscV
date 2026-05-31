@@ -54,12 +54,13 @@ Translation walks two levels of PTEs starting at `satp.PPN << 12`:
 
 | Mode | Notation | Behavior under `satp.MODE = Sv32` |
 |------|----------|-----------------------------------|
-| Machine | M | Physical by default; translated in standard mode (didactic override) |
-| User    | U | Always goes through translation; `U=0` PTEs fault |
+| Machine    | M | Physical by default; translated in didactic mode (override) |
+| Supervisor | S | Always translated; cannot touch `U=1` pages (`sstatus.SUM` is not modeled) |
+| User       | U | Always goes through translation; `U=0` PTEs fault |
 
-> **Standard mode note:** In real RISC-V hardware, M-mode always uses physical addresses and ignores `satp`. Raven's standard VM mode deliberately overrides this so that programs written in M-mode (the default) also produce TLB activity — which is the common case for didactic examples. When you write your own page tables and drop into U-mode via `mret`, the behavior matches hardware exactly.
+> **Didactic mode note:** In real RISC-V hardware, M-mode always uses physical addresses and ignores `satp`. Raven's didactic VM mode deliberately overrides this so that programs written in M-mode (the default) also produce TLB activity — which is the common case for didactic examples. When you write your own page tables and drop into U-mode via `mret` (Manual mode), the behavior matches hardware exactly.
 
-A trap (page fault, ecall, ebreak) switches the CPU to M-mode and saves the previous mode in `mstatus.MPP`. `mret` restores the saved mode and resumes at `mepc`.
+A trap (page fault, ecall, ebreak) switches the CPU to M-mode and saves the previous mode in `mstatus.MPP`. `mret` restores the saved mode and resumes at `mepc`. A fault taken in S- or U-mode can instead be **delegated** to a supervisor handler — see [Trap delegation & demand paging](#trap-delegation--demand-paging) below; `sret` is the S-mode counterpart of `mret`.
 
 ---
 
@@ -75,6 +76,8 @@ When translation fails, the CPU raises one of:
 
 The trap fills `mcause`, `mtval` (faulting virtual address), `mepc` (faulting PC), sets `mstatus.MPP` to the previous mode, switches to M-mode, and jumps to `mtvec & ~3`. With `mtvec = 0`, Raven prints the fault to the console and halts — handy when you forget to install a handler.
 
+Unless the cause is **delegated** to supervisor mode (see below), in which case the trap fills the `s*` CSRs and vectors through `stvec` instead, staying in S-mode.
+
 ---
 
 ## CSRs and system instructions
@@ -85,12 +88,22 @@ Raven implements just enough Zicsr + privileged ops to drive Sv32:
 |--------|--------|-----|
 | `satp` | `0x180` | Root page-table PPN + ASID + MODE (1 = Sv32, 0 = Bare) |
 | `mstatus` | `0x300` | Saved privilege bits (`MPP`) on trap entry/exit |
-| `mtvec` | `0x305` | Trap-vector base address |
-| `mepc`  | `0x341` | PC saved on trap |
-| `mcause`| `0x342` | Trap cause |
-| `mtval` | `0x343` | Trap-specific value (faulting vaddr for page faults) |
+| `medeleg` | `0x302` | Machine exception delegation — bit `c` set ⇒ cause `c` is handled in S-mode |
+| `mideleg` | `0x303` | Machine interrupt delegation (stored; no async interrupts yet) |
+| `mtvec` | `0x305` | Trap-vector base address (M-mode) |
+| `mepc`  | `0x341` | PC saved on M-mode trap |
+| `mcause`| `0x342` | M-mode trap cause |
+| `mtval` | `0x343` | M-mode trap value (faulting vaddr for page faults) |
+| `sstatus` | `0x100` | Supervisor status — `SPP` (bit 8), `SPIE` (bit 5), `SIE` (bit 1) |
+| `stvec` | `0x105` | Trap-vector base address (S-mode) |
+| `sscratch` | `0x140` | Scratch register for the supervisor handler |
+| `sepc`  | `0x141` | PC saved on delegated trap |
+| `scause`| `0x142` | Delegated trap cause |
+| `stval` | `0x143` | Delegated trap value (faulting vaddr) |
 
-Instructions: `csrrw / csrrs / csrrc` (and the `i` immediate variants), `mret`, `sfence.vma`. Writing `satp` flushes the TLB; `sfence.vma` also flushes (ignoring its `rs1`/`rs2` filters in this release).
+> Raven models `sstatus` as its own register rather than the hardware-accurate masked alias of `mstatus`. This is a deliberate pedagogical simplification: it keeps the delegation path easy to read at the cost of the shared-bit aliasing real hardware performs.
+
+Instructions: `csrrw / csrrs / csrrc` (and the `i` immediate variants), `mret`, `sret`, `sfence.vma`. Writing `satp` flushes the TLB; `sfence.vma` also flushes (ignoring its `rs1`/`rs2` filters in this release).
 
 ---
 
@@ -222,6 +235,53 @@ user_entry:
 ```
 
 The end-to-end shape — PTE layout, fault routing through `mtvec`, `mret` back to U-mode — is exercised in `tests/mmu_traps.rs`.
+
+---
+
+## Trap delegation & demand paging
+
+So far every fault has gone to M-mode through `mtvec`. Real operating systems run their fault handler in **supervisor** mode and reserve machine mode for firmware. Raven models this with **trap delegation**: set bit `c` of `medeleg` and a fault with cause `c`, taken in S- or U-mode, is routed to the supervisor handler at `stvec` instead — filling `sepc` / `scause` / `stval` and recording the previous mode in `sstatus.SPP`. `sret` is the return instruction, mirroring `mret` over `sstatus`.
+
+This unlocks the classic **demand-paging** pattern:
+
+1. User code touches a page that isn't mapped yet → **load/store page fault** (cause 13 / 15).
+2. Because the cause is delegated (`medeleg`), the CPU vectors to the supervisor handler in S-mode.
+3. The handler reads `stval` (the faulting address), installs the missing PTE, and runs `sfence.vma` to drop any stale TLB entry.
+4. `sret` returns to `sepc` — the faulting instruction re-executes and now **succeeds**.
+
+> **⚠ Walker / cache coherence.** Raven's page-table walker reads PTEs **directly from RAM** and is *not* coherent with the write-back D-cache. A handler that writes a PTE with a normal `sw` leaves it sitting in the cache, so the retried walk still sees the old (empty) entry and faults forever. For demand-paging programs, **disable the cache** (Cache tab) or switch the D-cache to **write-through** so the handler's store reaches RAM before the walk re-runs. (The `tests/mmu_traps.rs` demand-paging test uses a write-through D-cache for exactly this reason.)
+
+### Setup (in the M-mode boot code)
+
+```asm
+    # Delegate load (cause 13) and store (cause 15) page faults to S-mode.
+    li   t0, (1 << 13) | (1 << 15)
+    csrw medeleg, t0
+
+    # Point the supervisor trap vector at the handler.
+    la   t0, page_fault_handler
+    csrw stvec, t0
+    # ... build the initial page tables, csrw satp, then mret into U-mode ...
+```
+
+### The supervisor handler
+
+```asm
+page_fault_handler:
+    # stval holds the faulting virtual address. Compute its leaf-PTE slot,
+    # write a fresh mapping (PPN of a free frame | R | U | V), then:
+    csrr t0, stval              # faulting VA
+    # ... derive leaf slot, store the new PTE into the (kernel-mapped) leaf table ...
+    sfence.vma                  # drop stale TLB entries
+    sret                        # return to sepc — the faulting access retries
+```
+
+A complete, runnable round trip — boot maps the code/handler/page-table pages, drops into U-mode, faults on an unmapped page, the handler maps it, `sfence.vma`, `sret`, and the retried load reads the freshly mapped data — is in `tests/mmu_traps.rs::demand_paging_end_to_end`. Two layout rules from that test are worth repeating:
+
+- The **handler's code and the page-table pages must be mapped non-`U`** (kernel-only), because S-mode cannot touch `U=1` pages (`SUM` is not modeled).
+- The handler edits the page table *under translation*, so the leaf-table page needs its own identity (`VA = PA`) mapping — the simulator stand-in for a kernel direct map.
+
+To watch it live: set **Settings → Virtual Memory → Manual**, disable the cache, assemble, and open the **TLB → tree** subview to see PTEs appear as the handler installs them.
 
 ---
 

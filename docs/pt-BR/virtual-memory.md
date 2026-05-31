@@ -29,7 +29,8 @@ Você não precisa abrir nenhum código pra ler este texto. Tudo é apresentado 
 17. [A aba TLB do simulador](#17-a-aba-tlb-do-simulador)
 18. [Exemplo mínimo — modo padrão](#18-exemplo-mínimo--modo-padrão)
 19. [Exemplo avançado — tabela customizada](#19-exemplo-avançado--tabela-customizada)
-20. [Veja também](#20-veja-também)
+20. [Delegação de traps e demand paging](#20-delegação-de-traps-e-demand-paging)
+21. [Veja também](#21-veja-também)
 
 ---
 
@@ -470,6 +471,8 @@ Quando a tradução falha — PTE inválido, permissão errada, privilégio insu
 4. Seu handler decide o que fazer e retorna com `mret`.
 5. Se `mtvec = 0` (você esqueceu de configurar), o Raven imprime a falha no console e para — pra você não ficar caçando bug.
 
+A menos que a causa esteja **delegada** ao modo supervisor (`medeleg`): nesse caso o trap preenche os CSRs `s*` e vetoriza por `stvec`, permanecendo em S-mode. Veja a [§20](#20-delegação-de-traps-e-demand-paging).
+
 ### 14.3 O que um SO real faria
 
 Um SO real normalmente trata o fault assim:
@@ -628,7 +631,67 @@ Variações pra experimentar:
 
 ---
 
-## 20. Veja também
+## 20. Delegação de traps e demand paging
+
+Até aqui todo fault foi parar em M-mode via `mtvec`. Sistemas operacionais reais rodam o handler de fault em modo **supervisor** e reservam o modo machine pro firmware. O Raven modela isso com **delegação de traps**: setando o bit `c` de `medeleg`, um fault com causa `c` ocorrido em S- ou U-mode é roteado pro handler supervisor em `stvec` — preenchendo `sepc` / `scause` / `stval` e gravando o modo anterior em `sstatus.SPP`. O retorno é feito com `sret`, espelhando `mret` sobre o `sstatus`.
+
+### 20.1 Os CSRs e a instrução
+
+| CSR | Número | Uso |
+|-----|--------|-----|
+| `medeleg` | `0x302` | Delegação de exceções — bit `c` setado ⇒ causa `c` tratada em S-mode |
+| `mideleg` | `0x303` | Delegação de interrupções (armazenado; ainda não há interrupções assíncronas) |
+| `sstatus` | `0x100` | Status supervisor — `SPP` (bit 8), `SPIE` (bit 5), `SIE` (bit 1) |
+| `stvec` | `0x105` | Endereço-base do vetor de trap (S-mode) |
+| `sscratch` | `0x140` | Registrador de scratch do handler supervisor |
+| `sepc` | `0x141` | PC salvo no trap delegado |
+| `scause` | `0x142` | Causa do trap delegado |
+| `stval` | `0x143` | Valor do trap delegado (vaddr que falhou) |
+
+> O Raven modela `sstatus` como um registrador próprio, e não como a view mascarada de `mstatus` que o hardware real implementa. É uma simplificação pedagógica deliberada: deixa o caminho de delegação fácil de ler, ao custo do aliasing de bits compartilhados que o hardware faz.
+
+### 20.2 O padrão de demand paging
+
+1. O código de usuário toca uma página ainda não mapeada → **load/store page fault** (causa 13 / 15).
+2. Como a causa está delegada (`medeleg`), a CPU vetoriza pro handler supervisor em S-mode.
+3. O handler lê `stval` (o endereço que falhou), instala a PTE faltante e roda `sfence.vma` pra descartar entradas obsoletas da TLB.
+4. `sret` retorna pra `sepc` — a instrução que falhou re-executa e agora **funciona**.
+
+> **⚠ Coerência walker / cache.** O walker de tabela de páginas do Raven lê PTEs **direto da RAM** e *não* é coerente com o D-cache write-back. Um handler que escreve uma PTE com um `sw` normal deixa ela parada no cache, então o walk repetido continua vendo a entrada antiga (vazia) e falha pra sempre. Pra programas de demand paging, **desligue o cache** (aba Cache) ou troque o D-cache pra **write-through**, de modo que o store do handler chegue à RAM antes do walk re-rodar. (O teste de demand paging em `tests/mmu_traps.rs` usa um D-cache write-through exatamente por isso.)
+
+### 20.3 Configuração (no boot em M-mode)
+
+```asm
+    # Delega page faults de load (causa 13) e store (causa 15) pra S-mode.
+    li   t0, (1 << 13) | (1 << 15)
+    csrw medeleg, t0
+
+    # Aponta o vetor de trap supervisor pro handler.
+    la   t0, page_fault_handler
+    csrw stvec, t0
+    # ... monta as tabelas iniciais, csrw satp, e mret pra U-mode ...
+```
+
+### 20.4 O handler supervisor
+
+```asm
+page_fault_handler:
+    csrr t0, stval              # endereço virtual que falhou
+    # ... deriva o slot da PTE leaf, escreve a nova PTE na leaf table (mapeada no kernel) ...
+    sfence.vma                  # descarta entradas obsoletas da TLB
+    sret                        # retorna pra sepc — o acesso que falhou repete
+```
+
+Uma viagem de ida e volta completa e executável — boot mapeia as páginas de código/handler/tabela, cai em U-mode, falha numa página não-mapeada, o handler a mapeia, `sfence.vma`, `sret`, e o load repetido lê o dado recém-mapeado — está em `tests/mmu_traps.rs::demand_paging_end_to_end`. Duas regras de layout daquele teste valem repetir:
+
+- O **código do handler e as páginas de tabela precisam ser mapeados como não-`U`** (só kernel), porque S-mode não pode tocar páginas `U=1` (`SUM` não é modelado).
+- O handler edita a tabela *sob tradução*, então a página da leaf table precisa do próprio mapeamento de identidade (`VA = PA`) — o equivalente do simulador a um direct map de kernel.
+
+Pra ver ao vivo: selecione **Settings → Virtual Memory → Manual**, desligue o cache, monte e abra a subaba **TLB → tree** pra ver as PTEs surgindo conforme o handler as instala.
+
+---
+
+## 21. Veja também
 
 - [Mapa de memória](memory-allocation.md) — layout de endereços físicos que serve de backing store.
 - [Config de cache](cache-config.md) — campos do `.fcache` / `.rcfg` incluindo o bloco `[tlb]`.
