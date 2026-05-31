@@ -320,20 +320,20 @@ pub static STEPS: &[TutorialStep] = &[
         setup: Some(setup_view),
     },
     TutorialStep {
-        title_en: "Config Subtab — overview",
-        title_pt: "Subtab Config — visão geral",
-        body_en: "The Config subtab lets you configure the parameters of each cache level before starting simulation.\
+        title_en: "Settings Subtab — overview",
+        title_pt: "Subtab Settings — visão geral",
+        body_en: "The Settings subtab lets you configure the parameters of each cache level before starting simulation.\
 \n\nOn L1 you edit I-Cache and D-Cache side by side. On unified levels (L2+) the editor collapses to a single centered column.\
 \n\nAfter editing, use the apply actions at the bottom to commit the changes.",
-        body_pt: "A subtab Config permite configurar os parâmetros de cada nível de cache antes de iniciar a simulação.\
+        body_pt: "A subtab Settings permite configurar os parâmetros de cada nível de cache antes de iniciar a simulação.\
 \n\nNo L1 você edita I-Cache e D-Cache lado a lado. Em níveis unificados (L2+) o editor vira uma única coluna centralizada.\
 \n\nApós editar, use as ações de apply na parte inferior para confirmar as mudanças.",
         target: target_subtab_and_content,
         setup: Some(setup_config),
     },
     TutorialStep {
-        title_en: "Config — I-Cache",
-        title_pt: "Config — I-Cache",
+        title_en: "Settings — I-Cache",
+        title_pt: "Settings — I-Cache",
         body_en: "Instruction cache (I-Cache) parameters: total size, line size (block size), associativity, replacement policy (LRU/FIFO/Random) and hit latency.\
 \n\nClick a field or use ↑/↓ to navigate and Enter to edit.",
         body_pt: "Parâmetros da cache de instruções (I-Cache): tamanho total, tamanho da linha (block size), associatividade, política de substituição (LRU/FIFO/Random) e latência de hit.\
@@ -342,8 +342,8 @@ pub static STEPS: &[TutorialStep] = &[
         setup: Some(setup_config),
     },
     TutorialStep {
-        title_en: "Config — D-Cache",
-        title_pt: "Config — D-Cache",
+        title_en: "Settings — D-Cache",
+        title_pt: "Settings — D-Cache",
         body_en: "Data cache (D-Cache) parameters: same fields as I-Cache, plus write policy (Write-Back / Write-Through) and write allocate (Yes/No).\
 \n\nIn unified caches (L2+), I and D parameters are shared.",
         body_pt: "Parâmetros da cache de dados (D-Cache): mesmos campos do I-Cache, mais write policy (Write-Back / Write-Through) e write allocate (Yes/No).\
@@ -352,8 +352,8 @@ pub static STEPS: &[TutorialStep] = &[
         setup: Some(setup_config),
     },
     TutorialStep {
-        title_en: "Config — Presets & Apply",
-        title_pt: "Config — Presets e Apply",
+        title_en: "Settings — Presets & Apply",
+        title_pt: "Settings — Presets e Apply",
         body_en: "The lower rows provide quick presets and the apply actions.\
 \n\nUse presets to jump to small, medium or large cache profiles, then choose whether applying the config should reset statistics or keep history.\
 \n\nPreset and apply buttons can be clicked directly on their rendered labels.",

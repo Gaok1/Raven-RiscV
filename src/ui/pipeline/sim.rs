@@ -97,6 +97,20 @@ pub fn pipeline_tick(
     // ── 5. Detect WAW/WAR (informational) ────────────────────────────────
     detect_name_hazards(state);
 
+    // Drain any IF-stage page fault recorded during fetch_into_if. We do it
+    // here, after advance/stall, so the trap handler observes a consistent
+    // state. The faulting fetch slot is discarded by pipeline_enter_trap.
+    if let Some((entry_pc, cause, tval, vaddr)) = state.pending_fetch_trap.take() {
+        pipeline_enter_trap(
+            state,
+            cpu,
+            mem,
+            console,
+            entry_pc,
+            MemTrap { cause, tval, vaddr },
+        );
+    }
+
     // ── 6. Update Gantt ──────────────────────────────────────────────────
     update_gantt(state);
 
@@ -953,30 +967,42 @@ fn resolve_control_in_id(slot: &mut PipeSlot) {
 
 // Branch prediction lives in predictor.rs.
 
+/// Page-fault info captured during the MEM stage. When `Some`, the caller
+/// must vector through `mtvec` via [`pipeline_enter_trap`]; the pipeline is
+/// *not* fatally faulted in that case — execution continues from the handler.
+#[derive(Clone, Copy)]
+pub(crate) struct MemTrap {
+    pub cause: u32,
+    pub tval: u32,
+    pub vaddr: u32,
+}
+
 /// **MEM stage** — Memory access (loads/stores/atomics).
-/// Returns `(latency, faulted)`.  On a bus fault, the error is logged and
-/// `faulted=true` is returned so the caller can stop the pipeline.
+/// Returns `(latency, faulted, trap)`.  `faulted=true` means a fatal bus
+/// error; `trap=Some(_)` means a page fault that should be routed through
+/// the trap handler. The two are mutually exclusive at any given call.
 fn stage_mem(
     slot: &mut PipeSlot,
     cpu: &mut Cpu,
     mem: &mut CacheController,
     console: &mut Console,
-) -> (u64, bool) {
+) -> (u64, bool, Option<MemTrap>) {
     if slot.is_bubble {
-        return (0, false);
+        return (0, false, None);
     }
     let instr = match slot.instr {
         Some(i) => i,
-        None => return (0, false),
+        None => return (0, false, None),
     };
 
     let addr = match slot.mem_addr {
         Some(a) => a,
-        None => return (0, false), // no memory op for this instruction
+        None => return (0, false, None), // no memory op for this instruction
     };
 
     let mut latency = 0u64;
     let mut faulted = false;
+    let mut trap: Option<MemTrap> = None;
 
     match instr {
         // ── Integer loads ────────────────────────────────────────────────
@@ -986,8 +1012,7 @@ fn stage_mem(
             match result {
                 Ok(v) => slot.mem_result = Some((v as i8 as i32) as u32),
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
         }
@@ -997,8 +1022,7 @@ fn stage_mem(
             match result {
                 Ok(v) => slot.mem_result = Some((v as i16 as i32) as u32),
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
         }
@@ -1008,8 +1032,7 @@ fn stage_mem(
             match result {
                 Ok(v) => slot.mem_result = Some(v),
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
         }
@@ -1019,8 +1042,7 @@ fn stage_mem(
             match result {
                 Ok(v) => slot.mem_result = Some(v as u32),
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
         }
@@ -1030,8 +1052,7 @@ fn stage_mem(
             match result {
                 Ok(v) => slot.mem_result = Some(v as u32),
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
         }
@@ -1042,8 +1063,7 @@ fn stage_mem(
             match result {
                 Ok(v) => slot.mem_result = Some(v),
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
         }
@@ -1053,24 +1073,21 @@ fn stage_mem(
             let (result, access_latency) = mem.store8_timed(addr, slot.rs2_val as u8);
             latency += access_latency;
             if let Err(e) = result {
-                console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                faulted = true;
+                classify_mem_err(e, addr, console, &mut faulted, &mut trap);
             }
         }
         Instruction::Sh { .. } => {
             let (result, access_latency) = mem.store16_timed(addr, slot.rs2_val as u16);
             latency += access_latency;
             if let Err(e) = result {
-                console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                faulted = true;
+                classify_mem_err(e, addr, console, &mut faulted, &mut trap);
             }
         }
         Instruction::Sw { .. } => {
             let (result, access_latency) = mem.store32_timed(addr, slot.rs2_val);
             latency += access_latency;
             if let Err(e) = result {
-                console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                faulted = true;
+                classify_mem_err(e, addr, console, &mut faulted, &mut trap);
             }
         }
         // ── FP store ────────────────────────────────────────────────────
@@ -1078,8 +1095,7 @@ fn stage_mem(
             let (result, access_latency) = mem.store32_timed(addr, slot.rs2_val);
             latency += access_latency;
             if let Err(e) = result {
-                console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                faulted = true;
+                classify_mem_err(e, addr, console, &mut faulted, &mut trap);
             }
         }
 
@@ -1093,8 +1109,7 @@ fn stage_mem(
                     cpu.lr_reservation = Some(addr & !0x3);
                 }
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
         }
@@ -1105,8 +1120,7 @@ fn stage_mem(
                 Ok(true) => slot.alu_result = 0,
                 Ok(false) => slot.alu_result = 1,
                 Err(e) => {
-                    console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-                    faulted = true;
+                    classify_mem_err(e, addr, console, &mut faulted, &mut trap);
                 }
             }
             cpu.lr_reservation = None;
@@ -1121,6 +1135,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmoaddW { .. } => stage_mem_amo(
             mem,
@@ -1132,6 +1147,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmoxorW { .. } => stage_mem_amo(
             mem,
@@ -1143,6 +1159,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmoandW { .. } => stage_mem_amo(
             mem,
@@ -1154,6 +1171,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmoorW { .. } => stage_mem_amo(
             mem,
@@ -1165,6 +1183,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmomaxW { .. } => stage_mem_amo(
             mem,
@@ -1176,6 +1195,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmominW { .. } => stage_mem_amo(
             mem,
@@ -1187,6 +1207,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmomaxuW { .. } => stage_mem_amo(
             mem,
@@ -1198,6 +1219,7 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
         Instruction::AmominuW { .. } => stage_mem_amo(
             mem,
@@ -1209,12 +1231,13 @@ fn stage_mem(
             &mut slot.alu_result,
             console,
             &mut faulted,
+            &mut trap,
         ),
 
         _ => {} // non-memory instructions
     }
 
-    (latency, faulted)
+    (latency, faulted, trap)
 }
 
 /// **WB stage** — Write result to destination register, handle system instructions.
@@ -1503,8 +1526,12 @@ fn stage_wb(
             cpu.instr_count += 1;
             return true;
         }
-        Instruction::SfenceVma { .. } => {
-            mem.tlb_flush();
+        Instruction::SfenceVma { rs1, .. } => {
+            if rs1 == 0 {
+                mem.tlb_flush();
+            } else {
+                mem.tlb_flush_vaddr(cpu.read(rs1));
+            }
         }
     }
 
@@ -1522,14 +1549,76 @@ fn stage_mem_amo(
     alu_result: &mut u32,
     console: &mut Console,
     faulted: &mut bool,
+    trap: &mut Option<MemTrap>,
 ) {
     let (result, access_latency) = mem.amo_w_timed(hart_id, addr, op, operand);
     *latency += access_latency;
     match result {
         Ok(old) => *alu_result = old,
         Err(e) => {
-            console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
-            *faulted = true;
+            classify_mem_err(e, addr, console, faulted, trap);
+        }
+    }
+}
+
+/// Sort a memory-stage error: page-faults route to the trap handler; every
+/// other error category (bus addressing, decode, etc.) is fatal.
+fn classify_mem_err(
+    e: crate::falcon::errors::FalconError,
+    addr: u32,
+    console: &mut Console,
+    faulted: &mut bool,
+    trap: &mut Option<MemTrap>,
+) {
+    use crate::falcon::errors::FalconError;
+    if let FalconError::Trap { cause, tval, vaddr } = e {
+        *trap = Some(MemTrap { cause, tval, vaddr });
+    } else {
+        console.push_error(format!("MEM fault at 0x{addr:08X}: {e}"));
+        *faulted = true;
+    }
+}
+
+/// Vector a MEM-stage page fault through the M-mode trap handler:
+/// drain every stage, push cause/tval/mepc via the same helper used in
+/// sequential mode, and resume fetch at `mtvec`. With no installed handler
+/// (`mtvec == 0`), the pipeline is marked faulted instead.
+fn pipeline_enter_trap(
+    state: &mut PipelineSimState,
+    cpu: &mut Cpu,
+    mem: &mut CacheController,
+    console: &mut Console,
+    entry_pc: u32,
+    trap: MemTrap,
+) {
+    // Flush the in-flight pipeline so speculative work behind the faulting
+    // instruction does not retire after the trap.
+    for stage in state.stages.iter_mut() {
+        *stage = None;
+    }
+    for group in state.fu_bank.iter_mut() {
+        for fu in group.iter_mut() {
+            fu.slot = None;
+            fu.busy_cycles_left = 0;
+        }
+    }
+    match crate::falcon::exec::handle_trap(
+        cpu,
+        mem,
+        console,
+        entry_pc,
+        trap.cause,
+        trap.tval,
+        trap.vaddr,
+    ) {
+        Ok(true) => {
+            // Handler entered — resume fetching from cpu.pc (= mtvec & !3).
+            state.fetch_pc = cpu.pc;
+            state.flush_count = state.flush_count.saturating_add(1);
+        }
+        _ => {
+            // No mtvec installed — treat the trap as fatal.
+            state.faulted = true;
         }
     }
 }
@@ -2519,13 +2608,19 @@ fn advance_stages(
         advance_parallel_fu_banks(state);
         let lsu_promoted = promote_ready_lsu_to_mem(state);
         if lsu_promoted {
+            let mut pending: Option<(u32, bool, Option<MemTrap>)> = None;
             if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
                 if !s.is_bubble {
-                    let (latency, fault) = stage_mem(s, cpu, mem, console);
+                    let (latency, fault, trap) = stage_mem(s, cpu, mem, console);
                     s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
-                    if fault {
-                        state.faulted = true;
-                    }
+                    pending = Some((s.pc, fault, trap));
+                }
+            }
+            if let Some((slot_pc, fault, trap)) = pending {
+                if let Some(t) = trap {
+                    pipeline_enter_trap(state, cpu, mem, console, slot_pc, t);
+                } else if fault {
+                    state.faulted = true;
                 }
             }
         }
@@ -2542,13 +2637,19 @@ fn advance_stages(
         advance_parallel_fu_banks(state);
         let lsu_promoted = promote_ready_lsu_to_mem(state);
         if lsu_promoted {
+            let mut pending: Option<(u32, bool, Option<MemTrap>)> = None;
             if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
                 if !s.is_bubble {
-                    let (latency, fault) = stage_mem(s, cpu, mem, console);
+                    let (latency, fault, trap) = stage_mem(s, cpu, mem, console);
                     s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
-                    if fault {
-                        state.faulted = true;
-                    }
+                    pending = Some((s.pc, fault, trap));
+                }
+            }
+            if let Some((slot_pc, fault, trap)) = pending {
+                if let Some(t) = trap {
+                    pipeline_enter_trap(state, cpu, mem, console, slot_pc, t);
+                } else if fault {
+                    state.faulted = true;
                 }
             }
         }
@@ -2655,18 +2756,22 @@ fn advance_stages(
         // This is already handled in stage_id via special code below
     }
     let mut mem_faulted = false;
+    let mut pending_mem_trap: Option<(u32, MemTrap)> = None;
     let mut store_load_trace: Option<(usize, String, String)> = None;
     if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
         if let Some(committed) = wb_before_commit.as_ref().filter(|slot| !slot.is_bubble) {
             apply_just_committed_visibility_to_mem(s, committed);
         }
         let store_to_load = forwarding::try_store_to_load_forward(s, state.bypass, &wb_producer);
-        let (latency, fault) = stage_mem(s, cpu, mem, console);
+        let (latency, fault, trap) = stage_mem(s, cpu, mem, console);
         if let Some(forwarded) = store_to_load {
             s.mem_result = Some(forwarded);
         }
         s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
         mem_faulted = fault;
+        if let Some(t) = trap {
+            pending_mem_trap = Some((s.pc, t));
+        }
         if store_to_load.is_some() {
             if let Some(prod) = wb_producer.as_ref().filter(|prod| !prod.is_bubble) {
                 let prod_name = prod.disasm.split_whitespace().next().unwrap_or("?");
@@ -2696,7 +2801,9 @@ fn advance_stages(
         );
         state.hazard_msgs.push((HazardType::Raw, msg));
     }
-    if mem_faulted {
+    if let Some((slot_pc, t)) = pending_mem_trap {
+        pipeline_enter_trap(state, cpu, mem, console, slot_pc, t);
+    } else if mem_faulted {
         state.faulted = true;
     }
 
@@ -3143,10 +3250,23 @@ fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, consol
     let branch_in_flight = branch_in_flight(state);
 
     if pc_in_program_range(state, state.fetch_pc) {
-        let (fetched, fetch_error) = fetch_slot(state.fetch_pc, mem);
-        if let Some(msg) = fetch_error {
-            console.push_error(msg);
-            state.faulted = true;
+        let entry_pc = state.fetch_pc;
+        let (fetched, fetch_error) = fetch_slot(entry_pc, mem);
+        if let Some(err) = fetch_error {
+            match err {
+                Ok(trap) => {
+                    // Page-fault on fetch — route through mtvec. fetch_into_if
+                    // does not receive &mut Cpu, so we stash the trap on the
+                    // state and pipeline_tick consumes it once it owns the
+                    // CPU borrow again.
+                    state.pending_fetch_trap =
+                        Some((entry_pc, trap.cause, trap.tval, trap.vaddr));
+                }
+                Err(msg) => {
+                    console.push_error(msg);
+                    state.faulted = true;
+                }
+            }
         }
         state.stages[0] = fetched;
         if let Some(ref mut slot) = state.stages[0] {
@@ -3253,26 +3373,38 @@ fn insert_stall(
         s.hazard = Some(hazard);
     }
     let mut mem_faulted2 = false;
+    let mut pending_trap2: Option<(u32, MemTrap)> = None;
     if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
         if !s.is_bubble {
-            let (latency, fault) = stage_mem(s, cpu, mem, console);
+            let (latency, fault, trap) = stage_mem(s, cpu, mem, console);
             s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
             mem_faulted2 = fault;
+            if let Some(t) = trap {
+                pending_trap2 = Some((s.pc, t));
+            }
         }
     }
-    if mem_faulted2 {
+    if let Some((slot_pc, t)) = pending_trap2 {
+        pipeline_enter_trap(state, cpu, mem, console, slot_pc, t);
+    } else if mem_faulted2 {
         state.faulted = true;
     }
     advance_parallel_fu_banks(state);
     let lsu_promoted = promote_ready_lsu_to_mem(state);
     if lsu_promoted {
+        let mut pending: Option<(u32, bool, Option<MemTrap>)> = None;
         if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
             if !s.is_bubble {
-                let (latency, fault) = stage_mem(s, cpu, mem, console);
+                let (latency, fault, trap) = stage_mem(s, cpu, mem, console);
                 s.mem_stall_cycles = latency.saturating_sub(1).min(255) as u8;
-                if fault {
-                    state.faulted = true;
-                }
+                pending = Some((s.pc, fault, trap));
+            }
+        }
+        if let Some((slot_pc, fault, trap)) = pending {
+            if let Some(t) = trap {
+                pipeline_enter_trap(state, cpu, mem, console, slot_pc, t);
+            } else if fault {
+                state.faulted = true;
             }
         }
     }
@@ -3295,18 +3427,22 @@ fn insert_stall(
 // ── Fetch ────────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Returns `(slot, faulted)`.  A fetch bus error yields `(None, true)`;
-/// a normal empty cycle yields `(None, false)`.
-fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, Option<String>) {
+/// Returned by [`fetch_slot`] alongside the slot:
+/// - `None`: normal empty cycle or successful fetch.
+/// - `Some(Err(msg))`: fatal bus / decode error, stop the pipeline.
+/// - `Some(Ok(trap))`: instruction-fetch page fault — route via `mtvec`.
+type FetchError = Option<Result<MemTrap, String>>;
+
+fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, FetchError) {
     let (result, latency) = mem.fetch32_timed_no_count(pc);
     match result {
         Ok(word) => {
             if let Err(e) = crate::falcon::decoder::decode(word) {
                 return (
                     None,
-                    Some(format!(
+                    Some(Err(format!(
                         "Invalid instruction 0x{word:08X} at 0x{pc:08X}: {e}"
-                    )),
+                    ))),
                 );
             }
             let mut slot = PipeSlot::from_word(pc, word);
@@ -3314,7 +3450,11 @@ fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, Option<S
             slot.if_stall_cycles = latency.saturating_sub(1).min(255) as u8;
             (Some(slot), None)
         }
-        Err(e) => (None, Some(format!("IF fault at 0x{pc:08X}: {e}"))),
+        Err(crate::falcon::errors::FalconError::Trap { cause, tval, vaddr }) => (
+            None,
+            Some(Ok(MemTrap { cause, tval, vaddr })),
+        ),
+        Err(e) => (None, Some(Err(format!("IF fault at 0x{pc:08X}: {e}")))),
     }
 }
 

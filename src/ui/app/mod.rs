@@ -7,6 +7,7 @@ mod run_loop;
 mod run_state;
 mod runtime;
 mod settings_state;
+mod tlb_state;
 
 use self::cpi::classify_cpi_cycles;
 pub(crate) use self::cpi::{classify_cpi_for_display, cpi_class_label};
@@ -17,8 +18,9 @@ use self::formatting::{classify_mem_access, word_at};
 pub(crate) use self::cache_state::{
     CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheResultsSnapshot,
     CacheScope, CacheState, CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot,
-    PipelineResultsSnapshot, TlbConfigField, TlbSubview,
+    PipelineResultsSnapshot,
 };
+pub(crate) use self::tlb_state::{TlbConfigField, TlbHoverTarget, TlbState, TlbSubtab};
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
 };
@@ -174,9 +176,10 @@ pub(crate) enum Tab {
     Editor,
     Run,
     Cache,
+    Tlb,
     Pipeline,
     Docs,
-    Config,
+    Settings,
     Activity,
 }
 
@@ -186,9 +189,10 @@ impl Tab {
             Tab::Editor,
             Tab::Run,
             Tab::Cache,
+            Tab::Tlb,
             Tab::Pipeline,
             Tab::Docs,
-            Tab::Config,
+            Tab::Settings,
             Tab::Activity,
         ]
     }
@@ -198,9 +202,10 @@ impl Tab {
             Tab::Editor => "Editor",
             Tab::Run => "Run",
             Tab::Cache => "Cache",
+            Tab::Tlb => "TLB",
             Tab::Pipeline => "Pipeline",
             Tab::Docs => "Docs",
-            Tab::Config => "Config",
+            Tab::Settings => "Settings",
             Tab::Activity => "Activity",
         }
     }
@@ -220,6 +225,7 @@ pub struct App {
     pub(super) run: RunState,
     pub(super) docs: DocsState,
     pub(super) cache: CacheState,
+    pub(super) tlb: TlbState,
     pub(super) settings: SettingsState,
     pub(super) pipeline: crate::ui::pipeline::PipelineSimState,
     pub(crate) max_cores: usize,
@@ -467,7 +473,6 @@ impl App {
                 subtab_stats_btn: std::cell::Cell::new((0, 0, 0)),
                 subtab_view_btn: std::cell::Cell::new((0, 0, 0)),
                 subtab_config_btn: std::cell::Cell::new((0, 0, 0)),
-                subtab_tlb_btn: std::cell::Cell::new((0, 0, 0)),
                 level_btns: std::cell::RefCell::new(Vec::new()),
                 add_level_btn: std::cell::Cell::new((0, 0, 0)),
                 remove_level_btn: std::cell::Cell::new((0, 0, 0)),
@@ -519,21 +524,8 @@ impl App {
                 view_visible_sets_d: std::cell::Cell::new(0),
                 view_scroll_max: std::cell::Cell::new(0),
                 view_scroll_max_d: std::cell::Cell::new(0),
-                tlb_subview: TlbSubview::Stats,
-                tlb_subview_stats_btn: std::cell::Cell::new((0, 0, 0)),
-                tlb_subview_config_btn: std::cell::Cell::new((0, 0, 0)),
-                tlb_subview_entries_btn: std::cell::Cell::new((0, 0, 0)),
-                pending_tlb: crate::falcon::mmu::TlbConfig::default(),
-                tlb_config_hitboxes: std::cell::Cell::new([(0, 0, 0); 5]),
-                tlb_preset_btns: std::cell::Cell::new([(0, 0, 0); 3]),
-                tlb_apply_btn: std::cell::Cell::new((0, 0, 0)),
-                tlb_flush_btn: std::cell::Cell::new((0, 0, 0)),
-                tlb_edit_field: None,
-                tlb_edit_buf: String::new(),
-                tlb_config_error: None,
-                tlb_config_status: None,
-                tlb_entries_scroll: 0,
             },
+            tlb: TlbState::default(),
             show_exit_popup: false,
             should_quit: false,
             help_open: false,
@@ -607,6 +599,9 @@ impl App {
             self.run.mem_size,
         );
         self.run.mem.bypass = !self.run.cache_enabled;
+        self.run.mem.mmu_mut().enabled = self.run.vm_enabled;
+        self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
+        self.run.mem.mmu_mut().force_translate = self.run.vm_enabled;
         self.run.faulted = false;
 
         match assemble(&self.editor.buf.text(), self.run.base_pc) {
@@ -665,6 +660,21 @@ impl App {
                 self.run.hover_imem_addr = None;
                 self.reset_exec_regions_to_loaded_text();
                 self.sync_pipeline_program_range();
+
+                // Standard VM mode: auto-install identity megapage map so any
+                // program sees TLB activity without manual PT setup.
+                if self.run.vm_enabled {
+                    let root_pa = (self.run.mem_size as u32).saturating_sub(4096);
+                    crate::falcon::mmu::Mmu::install_identity_megapages(
+                        &mut self.run.mem.ram,
+                        root_pa,
+                    );
+                    let satp_val = (1u32 << 31) | (root_pa >> 12);
+                    self.run.cpu.satp = satp_val;
+                    let mmu = self.run.mem.mmu_mut();
+                    mmu.satp = crate::falcon::mmu::Satp::new(satp_val);
+                    mmu.force_translate = true;
+                }
 
                 // Reset pipeline stages (shares cpu/mem with RunState)
                 self.pipeline.reset_stages(self.run.cpu.pc);
@@ -776,6 +786,8 @@ impl App {
                 self.run.mem_size,
             );
             self.run.mem.bypass = !self.run.cache_enabled;
+            self.run.mem.mmu_mut().enabled = self.run.vm_enabled;
+            self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
             self.run.faulted = false;
 
             // Write directly to RAM (bypass cache) so invalidate() won't discard data
@@ -879,6 +891,8 @@ impl App {
             self.run.mem_size,
         );
         self.run.mem.bypass = !self.run.cache_enabled;
+        self.run.mem.mmu_mut().enabled = self.run.vm_enabled;
+        self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
         self.run.faulted = false;
 
         // ── Detect format and load ───────────────────────────────────────
@@ -1271,46 +1285,66 @@ impl App {
     // ── TLB config editing helpers ─────────────────────────────────────────
 
     pub(crate) fn commit_tlb_edit(&mut self) {
-        if let Some(field) = self.cache.tlb_edit_field {
-            self.cache.tlb_config_error = None;
-            self.cache.tlb_config_status = None;
-            if field.is_numeric() {
-                let s = self.cache.tlb_edit_buf.trim();
-                let cfg = &mut self.cache.pending_tlb;
-                match field {
-                    TlbConfigField::EntryCount => {
-                        if let Ok(v) = s.parse::<u16>() {
-                            cfg.entry_count = v.clamp(1, 4096);
-                        }
-                    }
-                    TlbConfigField::Associativity => {
-                        if let Ok(v) = s.parse::<u8>() {
-                            cfg.associativity = v.clamp(1, 64);
-                        }
-                    }
-                    TlbConfigField::HitLatency => {
-                        if let Ok(v) = s.parse::<u8>() {
-                            cfg.hit_latency = v.clamp(0, 255);
-                        }
-                    }
-                    TlbConfigField::MissPenalty => {
-                        if let Ok(v) = s.parse::<u8>() {
-                            cfg.miss_penalty = v;
-                        }
-                    }
-                    TlbConfigField::Replacement => {}
+        let Some(field) = self.tlb.edit_field else {
+            return;
+        };
+        self.tlb.config_error = None;
+        self.tlb.config_status = None;
+        if !field.is_numeric() {
+            self.tlb.edit_field = None;
+            self.tlb.edit_buf.clear();
+            return;
+        }
+        let s = self.tlb.edit_buf.trim().to_string();
+        let cfg = &mut self.tlb.pending;
+        let parse_result: Result<(), String> = match field {
+            TlbConfigField::EntryCount => match s.parse::<u16>() {
+                Ok(v) => {
+                    cfg.entry_count = v.clamp(1, 4096);
+                    Ok(())
                 }
+                Err(_) => Err(format!("expected number 1..=4096, got {s:?}")),
+            },
+            TlbConfigField::Associativity => match s.parse::<u8>() {
+                Ok(v) => {
+                    cfg.associativity = v.clamp(1, 64);
+                    Ok(())
+                }
+                Err(_) => Err(format!("expected number 1..=64, got {s:?}")),
+            },
+            TlbConfigField::HitLatency => match s.parse::<u8>() {
+                Ok(v) => {
+                    cfg.hit_latency = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("expected number 0..=255, got {s:?}")),
+            },
+            TlbConfigField::MissPenalty => match s.parse::<u8>() {
+                Ok(v) => {
+                    cfg.miss_penalty = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("expected number 0..=255, got {s:?}")),
+            },
+            TlbConfigField::Replacement => Ok(()),
+        };
+        match parse_result {
+            Ok(()) => {
+                self.tlb.edit_field = None;
+                self.tlb.edit_buf.clear();
+            }
+            Err(msg) => {
+                // Keep editor open so the user can correct the value.
+                self.tlb.config_error = Some(msg);
             }
         }
-        self.cache.tlb_edit_field = None;
-        self.cache.tlb_edit_buf.clear();
     }
 
     pub(crate) fn cycle_tlb_field(&mut self, field: TlbConfigField, forward: bool) {
         use crate::falcon::cache::ReplacementPolicy;
-        self.cache.tlb_config_error = None;
-        self.cache.tlb_config_status = None;
-        let cfg = &mut self.cache.pending_tlb;
+        self.tlb.config_error = None;
+        self.tlb.config_status = None;
+        let cfg = &mut self.tlb.pending;
         if let TlbConfigField::Replacement = field {
             cfg.replacement = if forward {
                 match cfg.replacement {
@@ -1335,7 +1369,7 @@ impl App {
     }
 
     pub(crate) fn tlb_field_value_str(&self, field: TlbConfigField) -> String {
-        let cfg = &self.cache.pending_tlb;
+        let cfg = &self.tlb.pending;
         match field {
             TlbConfigField::EntryCount => cfg.entry_count.to_string(),
             TlbConfigField::Associativity => cfg.associativity.to_string(),
@@ -1346,23 +1380,40 @@ impl App {
     }
 
     pub(crate) fn apply_tlb_config(&mut self) {
-        let cfg = self.cache.pending_tlb.clone();
+        let cfg = self.tlb.pending.clone();
         if cfg.entry_count == 0 {
-            self.cache.tlb_config_error = Some("entry count must be ≥ 1".into());
+            self.tlb.config_error = Some("entry count must be ≥ 1".into());
             return;
         }
         if cfg.associativity == 0 {
-            self.cache.tlb_config_error = Some("associativity must be ≥ 1".into());
+            self.tlb.config_error = Some("associativity must be ≥ 1".into());
             return;
         }
         if cfg.entry_count < cfg.associativity as u16 {
-            self.cache.tlb_config_error =
-                Some("entry count must be ≥ associativity".into());
+            self.tlb.config_error = Some("entry count must be ≥ associativity".into());
             return;
         }
         self.run.mem.mmu_mut().tlb.reconfigure(cfg);
-        self.cache.tlb_config_error = None;
-        self.cache.tlb_config_status = Some("Applied (TLB reset)".into());
+        self.tlb.config_error = None;
+        self.tlb.config_status = Some("Applied (TLB reset)".into());
+    }
+
+    pub(crate) fn flush_tlb(&mut self) {
+        self.run.mem.mmu_mut().tlb.flush();
+        self.tlb.config_status = Some("TLB flushed".into());
+        self.tlb.config_error = None;
+    }
+
+    pub(crate) fn apply_tlb_preset(&mut self, idx: usize) {
+        use crate::falcon::cache::ReplacementPolicy;
+        let (entries, assoc) = match idx {
+            0 => (16u16, 4u8),
+            1 => (32u16, 4u8),
+            _ => (64u16, 8u8),
+        };
+        self.tlb.pending.entry_count = entries;
+        self.tlb.pending.associativity = assoc;
+        self.tlb.pending.replacement = ReplacementPolicy::Lru;
     }
 
     /// Remove the last extra cache level.
@@ -1926,6 +1977,10 @@ impl App {
             return false;
         }
 
+        // Restore the selected hart's satp/priv_mode into the shared MMU
+        // before stepping its pipeline. See B18 in the bug audit.
+        crate::ui::app::hart::sync_mmu_to_cpu(&mut self.run.mem, &self.run.cpu);
+
         self.run.prev_x = self.run.cpu.x;
         self.run.prev_f = self.run.cpu.f;
         self.run.prev_pc = self.run.cpu.pc;
@@ -2223,6 +2278,9 @@ impl App {
     }
 
     fn single_step_selected_sequential(&mut self) {
+        // Restore the selected hart's satp/priv_mode into the shared MMU —
+        // a background hart may have just run with different page tables.
+        crate::ui::app::hart::sync_mmu_to_cpu(&mut self.run.mem, &self.run.cpu);
         let go_mode = matches!(self.run.speed, RunSpeed::Instant);
         for _ in 0..16 {
             // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.

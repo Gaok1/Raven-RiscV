@@ -13,10 +13,6 @@ struct Reservation {
     addr: u32,
 }
 
-fn reservation_addr(addr: u32) -> u32 {
-    addr & !0x3
-}
-
 fn overlaps_reserved_word(addr: u32, size: usize, reserved_addr: u32) -> bool {
     let start = addr as u64;
     let end = start.saturating_add(size as u64);
@@ -912,6 +908,40 @@ impl CacheController {
         let _ = self.load_icache_line(addr);
     }
 
+    /// Word-sized D-cache read at an already-translated physical address. Used
+    /// internally by `lr_w` / `amo_w` to avoid translating twice.
+    pub(crate) fn dcache_read_pa32(&mut self, paddr: u32) -> Result<u32, FalconError> {
+        if self.bypass {
+            return self.ram.load32(paddr);
+        }
+        if !self.dcache.config.is_valid_config() {
+            return self.ram.load32(paddr);
+        }
+        let line_size = self.dcache.config.line_size;
+        let offset = self.dcache.config.addr_offset(paddr);
+        let first_line = self.load_dcache_line(paddr)?;
+        if offset + 3 < line_size {
+            return Ok(u32::from_le_bytes([
+                first_line[offset],
+                first_line[offset + 1],
+                first_line[offset + 2],
+                first_line[offset + 3],
+            ]));
+        }
+        let split = line_size - offset;
+        let second_line = self.load_dcache_line(paddr.wrapping_add(split as u32))?;
+        let mut bytes = [0u8; 4];
+        bytes[..split].copy_from_slice(&first_line[offset..]);
+        bytes[split..].copy_from_slice(&second_line[..4 - split]);
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    /// Word-sized D-cache store at an already-translated physical address.
+    /// Counterpart to `dcache_read_pa32` for `sc_w` / `amo_w`.
+    pub(crate) fn store_pa32(&mut self, paddr: u32, val: u32) -> Result<(), FalconError> {
+        self.dcache_store_bytes(paddr, &val.to_le_bytes())
+    }
+
     /// Effective read: returns the most-recent dirty byte from the cache hierarchy,
     /// falling back to RAM. Checks L1 D-cache first, then extra_levels in order.
     /// No stats side-effects. Use for syscalls and the Run-tab memory view.
@@ -1131,6 +1161,10 @@ impl Bus for CacheController {
         self.mmu.flush();
     }
 
+    fn tlb_flush_vaddr(&mut self, vaddr: u32) {
+        self.mmu.tlb.flush_vaddr(vaddr);
+    }
+
     fn set_satp(&mut self, val: u32) {
         self.mmu.satp = crate::falcon::mmu::Satp::new(val);
         self.mmu.flush();
@@ -1141,22 +1175,30 @@ impl Bus for CacheController {
     }
 
     fn lr_w(&mut self, hart_id: u32, addr: u32) -> Result<u32, FalconError> {
-        let aligned = reservation_addr(addr);
-        let val = self.dcache_read32(aligned)?;
+        // Translate the load early — page faults must surface before the
+        // cache is touched. Reservation is keyed on the *physical* aligned
+        // address so a later satp/sfence.vma remap can't accidentally make
+        // a later SC succeed against the wrong page.
+        let paddr = self.translate_for_access(addr, AccessType::Load)?;
+        let aligned = paddr & !0x3;
+        let val = self.dcache_read_pa32(aligned)?;
         self.reservations
             .insert(hart_id, Reservation { addr: aligned });
         Ok(val)
     }
 
     fn sc_w(&mut self, hart_id: u32, addr: u32, val: u32) -> Result<bool, FalconError> {
-        let aligned = reservation_addr(addr);
+        // Translate as a Store first — the W permission check happens before
+        // we consult the reservation (matches real LR/SC semantics).
+        let paddr = self.translate_for_access(addr, AccessType::Store)?;
+        let aligned = paddr & !0x3;
         let success = self
             .reservations
             .get(&hart_id)
             .is_some_and(|res| res.addr == aligned);
         self.reservations.remove(&hart_id);
         if success {
-            self.store32(aligned, val)?;
+            self.store_pa32(aligned, val)?;
         }
         Ok(success)
     }
@@ -1168,8 +1210,12 @@ impl Bus for CacheController {
         op: AmoOp,
         operand: u32,
     ) -> Result<u32, FalconError> {
-        let aligned = reservation_addr(addr);
-        let old = self.dcache_read32(aligned)?;
+        // Single Store-mode translation up front so the W check faults before
+        // the cache read commits side-effects (hits/misses). Both halves of
+        // the AMO then operate on the resolved paddr.
+        let paddr = self.translate_for_access(addr, AccessType::Store)?;
+        let aligned = paddr & !0x3;
+        let old = self.dcache_read_pa32(aligned)?;
         let new = match op {
             AmoOp::Swap => operand,
             AmoOp::Add => old.wrapping_add(operand),
@@ -1181,7 +1227,7 @@ impl Bus for CacheController {
             AmoOp::MaxU => old.max(operand),
             AmoOp::MinU => old.min(operand),
         };
-        self.store32(aligned, new)?;
+        self.store_pa32(aligned, new)?;
         Ok(old)
     }
 }

@@ -1,7 +1,20 @@
 use super::{CpiConfig, classify_cpi_cycles};
 use crate::falcon::jit::{ExecCtx, ExecOutcome, ExecutionBackend};
+use crate::falcon::memory::Bus;
+use crate::falcon::mmu::AccessType;
 use crate::falcon::{self, CacheController, Cpu, Instruction, registers::ExecRegion};
 use crate::ui::console::Console;
+
+/// Push this hart's `satp` and `priv_mode` into the shared MMU so the next
+/// translation uses the per-hart CSRs. Required before any step on a hart
+/// other than the one whose CSRs the MMU currently mirrors. Does NOT flush
+/// the TLB — translations are tagged by ASID, so cross-hart sharing is fine
+/// as long as the OS uses distinct ASIDs (or sfence.vma is issued).
+pub(crate) fn sync_mmu_to_cpu(mem: &mut CacheController, cpu: &Cpu) {
+    let mmu = mem.mmu_mut();
+    mmu.satp = crate::falcon::mmu::Satp::new(cpu.satp);
+    mmu.priv_mode = cpu.priv_mode;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HartLifecycle {
@@ -95,6 +108,10 @@ pub(crate) fn step_hart_bg_inner(
     pipeline_enabled: bool,
     backend: &mut dyn ExecutionBackend<CacheController>,
 ) -> bool {
+    // Ensure the shared MMU reflects *this* hart's satp/priv_mode before any
+    // translation. Otherwise round-robin scheduling lets the previous hart's
+    // page table leak into this hart's loads/stores.
+    sync_mmu_to_cpu(mem, &hart.cpu);
     for _ in 0..16 {
         hart.prev_pc = hart.cpu.pc;
 
@@ -133,7 +150,15 @@ pub(crate) fn step_hart_bg_inner(
             return true;
         }
 
-        let word = mem.peek32(step_pc).unwrap_or(0);
+        // Translate via the MMU so CPI classification reads the correct
+        // opcode under VM. Failure falls back to identity to avoid charging
+        // extra cycles for what would have been a fetch-side page fault
+        // (the real fault is raised by the backend a few lines below).
+        let fetch_pa = match mem.translate(step_pc, AccessType::Fetch) {
+            Ok((pa, _stall)) => pa,
+            Err(_) => step_pc,
+        };
+        let word = mem.peek32(fetch_pa).unwrap_or(0);
         let cpi_cycles = classify_cpi_cycles(word, &hart.cpu, cpi);
 
         let outcome = {

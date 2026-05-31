@@ -571,12 +571,13 @@ fn cmd_debug_help_layout(args: &[String]) -> Result<(), String> {
         Some("editor") | None => ui::debug_hitboxes::DebugUiTab::Editor,
         Some("run") => ui::debug_hitboxes::DebugUiTab::Run,
         Some("cache") => ui::debug_hitboxes::DebugUiTab::Cache,
+        Some("tlb") => ui::debug_hitboxes::DebugUiTab::Tlb,
         Some("pipeline") => ui::debug_hitboxes::DebugUiTab::Pipeline,
         Some("docs") => ui::debug_hitboxes::DebugUiTab::Docs,
-        Some("config") => ui::debug_hitboxes::DebugUiTab::Config,
+        Some("settings") | Some("config") => ui::debug_hitboxes::DebugUiTab::Settings,
         Some(other) => {
             return Err(format!(
-                "unknown --tab '{other}' (use editor, run, cache, pipeline, docs, config)"
+                "unknown --tab '{other}' (use editor, run, cache, tlb, pipeline, docs, settings)"
             ));
         }
     };

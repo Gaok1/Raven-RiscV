@@ -1,4 +1,4 @@
-// ui/view/cache/config.rs — Cache configuration subtab
+// ui/view/cache/config.rs — Cache settings subtab
 use ratatui::{
     Frame,
     prelude::*,
@@ -42,9 +42,9 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         &app.cache.pending_dcache
     };
     let label = if icache {
-        "I-Cache Config"
+        "I-Cache Settings"
     } else {
-        "D-Cache Config"
+        "D-Cache Settings"
     };
     let current = if icache {
         &app.run.mem.icache.config
@@ -107,7 +107,7 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
 
 fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
     let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
-    let label = format!("{level_name} Config (Unified)");
+    let label = format!("{level_name} Settings (Unified)");
 
     let pending = if extra_idx < app.cache.extra_pending.len() {
         &app.cache.extra_pending[extra_idx]

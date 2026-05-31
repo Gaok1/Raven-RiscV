@@ -110,7 +110,10 @@ pub fn step<B: Bus>(
 /// `mepc`, `cause`/`tval` in their CSRs, swaps `mstatus.MPP` ← prior priv,
 /// switches to M-mode, and sets `pc = mtvec & ~3`. With `mtvec == 0` we have
 /// no handler to dispatch to — surface a fatal error so the harness halts.
-fn handle_trap<B: Bus>(
+///
+/// Public so the pipeline simulator can route memory-stage page faults
+/// through the same handler that sequential execution uses.
+pub fn handle_trap<B: Bus>(
     cpu: &mut Cpu,
     mem: &mut B,
     console: &mut Console,
@@ -119,15 +122,17 @@ fn handle_trap<B: Bus>(
     tval: u32,
     vaddr: u32,
 ) -> Result<bool, FalconError> {
+    // Always record the trap CSRs — even when there is no installed handler,
+    // a debugger or post-mortem read of mepc/mcause/mtval must see the cause.
+    cpu.mepc = entry_pc;
+    cpu.mcause = cause;
+    cpu.mtval = tval;
     if cpu.mtvec == 0 {
         console.push_error(format!(
             "trap (no mtvec handler): cause={cause} tval=0x{tval:08X} vaddr=0x{vaddr:08X} pc=0x{entry_pc:08X}"
         ));
         return Ok(false);
     }
-    cpu.mepc = entry_pc;
-    cpu.mcause = cause;
-    cpu.mtval = tval;
     let mpp = match cpu.priv_mode {
         PrivMode::M => 3,
         PrivMode::S => 1,
@@ -329,8 +334,14 @@ fn step_inner<B: Bus>(
             apply_mret(cpu, mem);
             return Ok(true);
         }
-        Instruction::SfenceVma { .. } => {
-            mem.tlb_flush();
+        Instruction::SfenceVma { rs1, .. } => {
+            // rs1=0 → full flush; rs1≠0 → flush only the page containing the
+            // vaddr in rs1. ASID (rs2) ignored in Phase 2.
+            if rs1 == 0 {
+                mem.tlb_flush();
+            } else {
+                mem.tlb_flush_vaddr(cpu.read(rs1));
+            }
         }
 
         // RV32A

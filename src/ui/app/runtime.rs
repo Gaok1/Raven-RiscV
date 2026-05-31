@@ -177,6 +177,7 @@ impl App {
     pub(in crate::ui) fn set_vm_enabled(&mut self, enabled: bool) {
         self.run.vm_enabled = enabled;
         self.run.mem.mmu.enabled = enabled;
+        self.run.mem.mmu.force_translate = enabled;
         if !enabled {
             // Drop all cached translations so re-enabling starts from a clean
             // slate (no stale PA mappings).

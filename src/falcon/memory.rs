@@ -37,6 +37,23 @@ fn invalidate_reservations(reservations: &mut HashMap<u32, Reservation>, addr: u
     reservations.retain(|_, res| !overlaps_reserved_word(addr, size, res.addr));
 }
 
+/// Shared helper for `Bus::user_load*` / `Bus::user_store*` default impls:
+/// translate or convert a `PageFault` into the matching `FalconError::Trap`.
+fn translate_or_trap<B: Bus + ?Sized>(
+    bus: &mut B,
+    vaddr: u32,
+    access: AccessType,
+) -> Result<u32, FalconError> {
+    match bus.translate(vaddr, access) {
+        Ok((pa, _stall)) => Ok(pa),
+        Err(pf) => Err(FalconError::Trap {
+            cause: pf.cause,
+            tval: pf.vaddr,
+            vaddr: pf.vaddr,
+        }),
+    }
+}
+
 fn amo_apply(op: AmoOp, old: u32, operand: u32) -> u32 {
     match op {
         AmoOp::Swap => operand,
@@ -76,6 +93,24 @@ pub trait Bus {
     fn load8(&self, addr: u32) -> Result<u8, FalconError>;
     fn load16(&self, addr: u32) -> Result<u16, FalconError>;
     fn load32(&self, addr: u32) -> Result<u32, FalconError>;
+
+    /// Translating cache-aware read. Used by syscalls and other "user space"
+    /// code paths that receive a virtual address from the guest and must
+    /// honour the MMU (when enabled). The default impl translates via the
+    /// `translate()` hook then forwards to `load*`, which makes it a no-op for
+    /// buses without an MMU (the trait's default `translate` is identity).
+    fn user_load8(&mut self, vaddr: u32) -> Result<u8, FalconError> {
+        let pa = translate_or_trap(self, vaddr, AccessType::Load)?;
+        self.load8(pa)
+    }
+    fn user_load16(&mut self, vaddr: u32) -> Result<u16, FalconError> {
+        let pa = translate_or_trap(self, vaddr, AccessType::Load)?;
+        self.load16(pa)
+    }
+    fn user_load32(&mut self, vaddr: u32) -> Result<u32, FalconError> {
+        let pa = translate_or_trap(self, vaddr, AccessType::Load)?;
+        self.load32(pa)
+    }
 
     fn store8(&mut self, addr: u32, val: u8) -> Result<(), FalconError>;
     fn store16(&mut self, addr: u32, val: u16) -> Result<(), FalconError>;
@@ -137,6 +172,10 @@ pub trait Bus {
 
     /// Flush every TLB entry (invoked on `satp` write and `sfence.vma`).
     fn tlb_flush(&mut self) {}
+
+    /// Flush the TLB entry that maps `vaddr` (invoked on `sfence.vma rs1, _`
+    /// with a non-zero `rs1`). Default no-op for buses without a real MMU.
+    fn tlb_flush_vaddr(&mut self, _vaddr: u32) {}
 
     /// Push a new `satp` value to the MMU. Default no-op for buses without a
     /// real MMU. Implementations should also flush the TLB.

@@ -16,7 +16,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         note(
             "Default RAM = 16 MB · addresses 0x00000000 .. RAM_SIZE-1 · Sv32 MMU available via Settings → Virtual Memory",
         ),
-        note("RAM size is configurable in the Config tab (accepts e.g. 16mb, 8192kb, 4096)."),
+        note("RAM size is configurable in the Settings tab (accepts e.g. 16mb, 8192kb, 4096)."),
         blank(),
         h2("Layout"),
         blank(),
@@ -128,7 +128,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
             "Toggle breakpoint at the hovered instruction or current PC.",
         ),
         blank(),
-        h2("Keyboard Shortcuts — Config tab"),
+        h2("Keyboard Shortcuts — Settings tab"),
         blank(),
         kv(
             "Mem Size",
@@ -139,7 +139,7 @@ fn memory_map_lines_en() -> Vec<Line<'static>> {
         kv("↑ / ↓", "Navigate between fields."),
         kv(
             "Ctrl+e / Ctrl+l",
-            "Export / import the full Config tab as .rcfg.",
+            "Export / import the full Settings tab as .rcfg.",
         ),
     ]
 }
@@ -151,7 +151,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         note(
             "RAM padrão = 16 MB · endereços 0x00000000 .. RAM_SIZE-1 · MMU Sv32 opcional via Settings → Virtual Memory",
         ),
-        note("Tamanho configurável na aba Config (aceita ex.: 16mb, 8192kb, 4096)."),
+        note("Tamanho configurável na aba Settings (aceita ex.: 16mb, 8192kb, 4096)."),
         blank(),
         h2("Layout"),
         blank(),
@@ -269,7 +269,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
             "Alterna breakpoint na instrução sob o cursor ou no PC atual.",
         ),
         blank(),
-        h2("Atalhos de Teclado — aba Config"),
+        h2("Atalhos de Teclado — aba Settings"),
         blank(),
         kv("Mem Size", "Aceita número em KB, ou sufixo: 16mb / 8192kb."),
         kv(
@@ -280,7 +280,7 @@ fn memory_map_lines_ptbr() -> Vec<Line<'static>> {
         kv("↑ / ↓", "Navega entre os campos."),
         kv(
             "Ctrl+e / Ctrl+l",
-            "Exporta / importa a aba Config completa como .rcfg.",
+            "Exporta / importa a aba Settings completa como .rcfg.",
         ),
     ]
 }

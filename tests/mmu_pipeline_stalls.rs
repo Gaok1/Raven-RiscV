@@ -117,26 +117,28 @@ fn fetch32_timed_includes_tlb_miss_penalty() {
 fn alternating_two_pages_force_repeated_tlb_misses() {
     // One-entry direct-mapped TLB → two VPNs that collide on the same set
     // alternate-evict each other, so every other access is a miss.
+    //
+    // With the post-B5 indexing (`vpn_set = vpn % num_sets`), 4 KiB pages
+    // distribute by the *low* VPN bits. With 2 sets, we need two VPNs that
+    // share the same low bit. 0x10_0000 (vpn=0x100, vpn%2=0) and 0x10_2000
+    // (vpn=0x102, vpn%2=0) both land in set 0 and thrash each other.
     let mut mem = build_controller(small_tlb(10, 1));
     let satp_a = install_one_page(&mut mem, 0x10_0000, 0x8_0000, 0x2 | 0x4 | 0x10);
-    // VA 0x10_1000 shares vpn[1]=0 with 0x10_0000 → also goes through the same
-    // leaf table that install_one_page just wrote. Add the second leaf entry.
-    let vpn0_b = (0x10_1000u32 >> 12) & 0x3FF;
+    // VA 0x10_2000 shares vpn[1]=0x40 with 0x10_0000, so it lives in the same
+    // leaf table that install_one_page just wrote. Add the second leaf entry
+    // for vpn0=2.
+    let vpn0_b = (0x10_2000u32 >> 12) & 0x3FF;
     let pte0_b = ((0x9_0000u32 >> 12) << 10) | 0x2 | 0x4 | 0x10 | 0x1;
     mem.ram_mut()
         .store32(0x2000 + vpn0_b * 4, pte0_b)
         .unwrap();
     mem.set_satp(satp_a);
 
-    // Both pages must hash to the same TLB set. With entry_count=2, assoc=1
-    // → 2 sets; `vpn >> 10` is what indexes a set, and 0x10_0000 and 0x10_1000
-    // differ only in vpn[0]=0 vs 1, so vpn >> 10 is identical → same set,
-    // perfect collision.
     mem.tlb_flush();
     mem.mmu_mut().tlb.stats.hits = 0;
     mem.mmu_mut().tlb.stats.misses = 0;
 
-    let addrs = [0x10_0000u32, 0x10_1000];
+    let addrs = [0x10_0000u32, 0x10_2000];
     let mut total_latency = 0u64;
     for round in 0..8 {
         let (_r, lat) = mem.dcache_read32_timed(addrs[round & 1]);
