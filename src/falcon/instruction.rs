@@ -273,6 +273,9 @@ pub enum Instruction {
     // Privilege return (M-mode only for Phase 2).
     Mret,
 
+    // Supervisor-mode trap return (Phase C). Restores pc=sepc and priv=sstatus.SPP.
+    Sret,
+
     // Sv32 TLB invalidate. rs1=0 → full flush; rs2 (ASID) ignored in Phase 2.
     SfenceVma {
         rs1: u8,

@@ -67,6 +67,25 @@ pub struct Cpu {
     pub mcause: u32,
     pub mtval: u32,
     pub priv_mode: PrivMode,
+
+    // ── Supervisor-mode CSRs (Phase C — trap delegation) ──
+    // `sstatus` is modelled as its own register rather than a masked view of
+    // `mstatus`. Real hardware aliases the shared bits (SIE/SPIE/SPP) into
+    // `mstatus`; we keep them separate as a pedagogical simplification so the
+    // delegation path is easy to read. The supervisor trap handler uses SPP
+    // (bit 8), SPIE (bit 5) and SIE (bit 1) exactly like mstatus's M-mode bits.
+    pub sstatus: u32,
+    pub stvec: u32,
+    pub sepc: u32,
+    pub scause: u32,
+    pub stval: u32,
+    pub sscratch: u32,
+    /// Machine exception delegation: bit `c` set ⇒ exceptions with cause `c`
+    /// taken in S/U mode are delegated to the supervisor handler (`stvec`).
+    pub medeleg: u32,
+    /// Machine interrupt delegation (stored for completeness; the simulator
+    /// has no asynchronous interrupts yet, so this is observable but unused).
+    pub mideleg: u32,
 }
 
 impl Cpu {

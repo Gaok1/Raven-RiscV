@@ -1452,6 +1452,12 @@ fn parse_instr(
             }
             Ok(Mret)
         }
+        "sret" => {
+            if !ops.is_empty() {
+                return Err("sret takes no operands".into());
+            }
+            Ok(Sret)
+        }
         "sfence.vma" => {
             let (rs1, rs2) = match ops.len() {
                 0 => (0u8, 0u8),

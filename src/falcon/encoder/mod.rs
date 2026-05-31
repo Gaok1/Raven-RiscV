@@ -282,6 +282,7 @@ pub fn encode(inst: Instruction) -> Result<u32, &'static str> {
         Csrrci { rd, uimm, csr } => csr_encode(csr, uimm as u32, 0b111, rd as u32),
 
         Mret => 0x3020_0073,
+        Sret => 0x1020_0073,
         SfenceVma { rs1, rs2 } => {
             (0b0001001u32 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | 0b1110011
         }

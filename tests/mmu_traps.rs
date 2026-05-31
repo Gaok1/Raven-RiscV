@@ -187,6 +187,176 @@ fn satp_bare_with_vm_on_is_identity_equivalent_to_vm_off() {
 }
 
 #[test]
+fn u_mode_fault_with_medeleg_vectors_to_stvec_in_supervisor() {
+    let (mut cpu, mut mem, mut console) = fresh_setup();
+    mem.mmu_mut().enabled = true;
+
+    // Map VA 0 → PA 0 RX+U so the faulting instruction can be fetched.
+    let satp = install_one_page(&mut mem, 0, 0, 0x2 | 0x8 | 0x10);
+    cpu.satp = satp;
+    mem.set_satp(satp);
+
+    // Delegate load page faults (cause 13) to supervisor mode.
+    cpu.medeleg = 1 << 13;
+    cpu.stvec = 0x3000;
+    cpu.mtvec = 0x7000; // distinct, so we can tell which path was taken
+    write_instr(&mut mem, 0x3000, encode(Instruction::Halt).unwrap());
+
+    // U-mode load from an unmapped page.
+    let load = encode(Instruction::Lw { rd: 5, rs1: 6, imm: 0 }).unwrap();
+    write_instr(&mut mem, 0, load);
+    cpu.write(6, 0x5000);
+    cpu.pc = 0;
+    cpu.priv_mode = PrivMode::U;
+    mem.set_priv_mode(PrivMode::U);
+
+    let cont = step(&mut cpu, &mut mem, &mut console).unwrap();
+    assert!(cont);
+    assert_eq!(cpu.pc, 0x3000, "delegated trap vectors through stvec");
+    assert_eq!(cpu.priv_mode, PrivMode::S, "delegated trap enters S-mode");
+    assert_eq!(cpu.scause, 13, "load page fault cause in scause");
+    assert_eq!(cpu.stval, 0x5000, "stval == faulting vaddr");
+    assert_eq!(cpu.sepc, 0, "sepc == faulting PC");
+    assert_eq!((cpu.sstatus >> 8) & 1, 0, "SPP records prior U-mode (0)");
+    // The M-mode CSRs must be untouched on the delegated path.
+    assert_eq!(cpu.mcause, 0, "mcause untouched when delegated");
+}
+
+#[test]
+fn u_mode_fault_without_medeleg_still_traps_to_machine() {
+    let (mut cpu, mut mem, mut console) = fresh_setup();
+    mem.mmu_mut().enabled = true;
+
+    let satp = install_one_page(&mut mem, 0, 0, 0x2 | 0x8 | 0x10);
+    cpu.satp = satp;
+    mem.set_satp(satp);
+
+    // medeleg = 0 → no delegation; stvec set but should be ignored.
+    cpu.medeleg = 0;
+    cpu.stvec = 0x3000;
+    cpu.mtvec = 0x7000;
+    write_instr(&mut mem, 0x7000, encode(Instruction::Halt).unwrap());
+
+    let load = encode(Instruction::Lw { rd: 5, rs1: 6, imm: 0 }).unwrap();
+    write_instr(&mut mem, 0, load);
+    cpu.write(6, 0x5000);
+    cpu.pc = 0;
+    cpu.priv_mode = PrivMode::U;
+    mem.set_priv_mode(PrivMode::U);
+
+    step(&mut cpu, &mut mem, &mut console).unwrap();
+    assert_eq!(cpu.pc, 0x7000, "non-delegated trap vectors through mtvec");
+    assert_eq!(cpu.priv_mode, PrivMode::M, "non-delegated trap enters M-mode");
+    assert_eq!(cpu.mcause, 13);
+    assert_eq!(cpu.scause, 0, "scause untouched on machine path");
+}
+
+#[test]
+fn sret_returns_to_user_mode_and_resumes_at_sepc() {
+    let (mut cpu, mut mem, mut console) = fresh_setup();
+    cpu.priv_mode = PrivMode::S;
+    cpu.sepc = 0x200;
+    cpu.sstatus = 0; // SPP = 0 → U
+    let sret = encode(Instruction::Sret).unwrap();
+    write_instr(&mut mem, 0, sret);
+    cpu.pc = 0;
+    step(&mut cpu, &mut mem, &mut console).unwrap();
+    assert_eq!(cpu.pc, 0x200);
+    assert_eq!(cpu.priv_mode, PrivMode::U);
+}
+
+#[test]
+fn sret_returns_to_supervisor_when_spp_set() {
+    let (mut cpu, mut mem, mut console) = fresh_setup();
+    cpu.priv_mode = PrivMode::S;
+    cpu.sepc = 0x200;
+    cpu.sstatus = 1 << 8; // SPP = 1 → S
+    let sret = encode(Instruction::Sret).unwrap();
+    write_instr(&mut mem, 0, sret);
+    cpu.pc = 0;
+    step(&mut cpu, &mut mem, &mut console).unwrap();
+    assert_eq!(cpu.pc, 0x200);
+    assert_eq!(cpu.priv_mode, PrivMode::S);
+}
+
+#[test]
+fn demand_paging_end_to_end() {
+    // A U-mode load to an unmapped page is delegated to a supervisor handler
+    // which installs the missing mapping, flushes the TLB and returns via sret;
+    // the retried load then succeeds.
+    // Write-through dcache: the Sv32 walker reads PTEs straight from RAM and is
+    // not coherent with the write-back dcache, so the handler's page-table store
+    // must reach RAM immediately for the retried walk to see the new mapping.
+    let icfg = CacheConfig::default();
+    let mut dcfg = CacheConfig::default();
+    dcfg.write_policy = raven::falcon::cache::WritePolicy::WriteThrough;
+    let mut mem = CacheController::new(icfg, dcfg, vec![], RAM_SIZE);
+    let mut cpu = Cpu::default();
+    let mut console = Console::default();
+    mem.mmu_mut().enabled = true;
+
+    // Map the U-mode code page (VA 0 → PA 0, RX+U) and the S-mode handler page
+    // (VA 0x3000 → PA 0x3000, RX) so both can be fetched under translation.
+    let satp = install_one_page(&mut mem, 0, 0, 0x2 | 0x8 | 0x10);
+    let _ = install_one_page(&mut mem, 0x3000, 0x3000, 0x2 | 0x8);
+    // The supervisor handler edits the page table under translation, so the
+    // leaf table page must itself be reachable. Identity-map it RW, S-only
+    // (no U bit) — this is the simulator stand-in for a kernel direct map.
+    let _ = install_one_page(&mut mem, 0x2000, 0x2000, 0x2 | 0x4);
+    cpu.satp = satp;
+    mem.set_satp(satp);
+
+    cpu.medeleg = 1 << 13; // delegate load page faults
+    cpu.stvec = 0x3000;
+
+    // U-mode program at VA 0: lw x5, 0(x6) with x6 = 0x6000 (initially unmapped),
+    // then halt once the retry succeeds.
+    write_instr(&mut mem, 0, encode(Instruction::Lw { rd: 5, rs1: 6, imm: 0 }).unwrap());
+    write_instr(&mut mem, 4, encode(Instruction::Halt).unwrap());
+
+    // The data the handler will map at PA 0x8000 (leaf table sits at 0x2000, so
+    // a fresh page frame at 0x8000 is free).
+    mem.ram_mut().store32(0x8000, 0xDEAD_BEEF).unwrap();
+
+    // Supervisor handler at VA/PA 0x3000:
+    //   1. add the missing VA 0x6000 → PA 0x8000 R+U mapping into the leaf table
+    //   2. sfence.vma (full flush)
+    //   3. sret back to sepc (the faulting lw)
+    // We pre-bake the leaf PTE for VA 0x6000 into a register and store it.
+    let vpn0_6000 = (0x6000u32 >> 12) & 0x3FF;
+    let leaf_slot = 0x2000 + vpn0_6000 * 4;
+    let pte = ((0x8000u32 >> 12) << 10) | 0x2 | 0x10 | 0x1; // R + U + V
+    // x7 = leaf_slot, x8 = pte, sw x8, 0(x7); sfence.vma; sret
+    let handler = [
+        encode(Instruction::Lui { rd: 7, imm: (leaf_slot & 0xFFFF_F000) as i32 }).unwrap(),
+        encode(Instruction::Addi { rd: 7, rs1: 7, imm: (leaf_slot & 0xFFF) as i32 }).unwrap(),
+        encode(Instruction::Lui { rd: 8, imm: (pte & 0xFFFF_F000) as i32 }).unwrap(),
+        encode(Instruction::Addi { rd: 8, rs1: 8, imm: (pte & 0xFFF) as i32 }).unwrap(),
+        encode(Instruction::Sw { rs2: 8, rs1: 7, imm: 0 }).unwrap(),
+        encode(Instruction::SfenceVma { rs1: 0, rs2: 0 }).unwrap(),
+        encode(Instruction::Sret).unwrap(),
+    ];
+    for (i, w) in handler.iter().enumerate() {
+        write_instr(&mut mem, 0x3000 + (i as u32) * 4, *w);
+    }
+
+    cpu.write(6, 0x6000);
+    cpu.pc = 0;
+    cpu.priv_mode = PrivMode::U;
+    mem.set_priv_mode(PrivMode::U);
+
+    // Run to completion. The first lw faults → handler runs → sret → lw retries.
+    let mut guard = 0;
+    while step(&mut cpu, &mut mem, &mut console).unwrap() {
+        guard += 1;
+        assert!(guard < 100, "demand-paging loop did not converge");
+    }
+
+    assert_eq!(cpu.read(5), 0xDEAD_BEEF, "retried load reads mapped data");
+    assert_eq!(cpu.priv_mode, PrivMode::U, "returned to user mode via sret");
+}
+
+#[test]
 fn sfence_vma_flushes_tlb() {
     let (mut cpu, mut mem, mut console) = fresh_setup();
     mem.mmu_mut().enabled = true;
