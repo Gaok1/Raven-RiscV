@@ -208,7 +208,7 @@ Para observar a expansão final em execução, rode `cargo run`, monte o program
 
 ## Syscalls disponíveis
 
-O Falcon suporta um ABI estilo Linux (mínimo) e algumas extensões didáticas do próprio Falcon.
+O Raven suporta um ABI estilo Linux (mínimo) e algumas extensões didáticas do próprio Raven.
 
 ### ABI (estilo Linux)
 
@@ -223,13 +223,13 @@ O Falcon suporta um ABI estilo Linux (mínimo) e algumas extensões didáticas d
 3) Execute `ecall`.
 4) Leia o retorno em `a0`.
 
-O Falcon implementa só um subconjunto pequeno. Quando um syscall não existe, o Falcon para a execução e mostra uma mensagem no
+O Raven implementa só um subconjunto pequeno. Quando um syscall não existe, o Raven para a execução e mostra uma mensagem no
 console (isso ajuda no ensino, porque o erro fica explícito).
 
 #### Retornos e erros
 
 - Em sucesso, o syscall retorna um valor **não-negativo** em `a0` (por exemplo, quantos bytes foram lidos/escritos).
-- Em erro, o Falcon usa o padrão Linux de `-errno` em `a0`. Internamente isso fica em `u32` (porque os registradores são `u32`):
+- Em erro, o Raven usa o padrão Linux de `-errno` em `a0`. Internamente isso fica em `u32` (porque os registradores são `u32`):
   `a0 = (-(errno as i32)) as u32`.
 
 ### Syscalls Linux (subset suportado)
@@ -245,7 +245,7 @@ console (isso ajuda no ensino, porque o erro fica explícito).
 
 Argumentos:
 
-- `a0 = fd` (Falcon suporta `1` (stdout) e `2` (stderr); por enquanto ambos aparecem no console)
+- `a0 = fd` (Raven suporta `1` (stdout) e `2` (stderr); por enquanto ambos aparecem no console)
 - `a1 = buf` (ponteiro para bytes na memória)
 - `a2 = count` (quantidade de bytes para escrever)
 
@@ -258,7 +258,7 @@ Exemplo curto (imprime "Hello!\\n" e sai):
 ```asm
 .data
 msg: .ascii "Hello!"
-.byte 10          # '\n' (o Falcon não interpreta escapes dentro de .ascii/.asciz)
+.byte 10          # '\n' (o Raven não interpreta escapes dentro de .ascii/.asciz)
 
 .text
     li a0, 1       # fd=stdout
@@ -276,7 +276,7 @@ msg: .ascii "Hello!"
 
 Argumentos:
 
-- `a0 = fd` (Falcon suporta apenas `0`: stdin)
+- `a0 = fd` (Raven suporta apenas `0`: stdin)
 - `a1 = buf` (ponteiro onde os bytes serão gravados)
 - `a2 = count` (máximo de bytes para ler)
 
@@ -286,8 +286,8 @@ Retorno:
 
 Notas importantes (simplificações didáticas):
 
-- A entrada vem do console da UI e é por linha. Quando há uma linha disponível, o Falcon adiciona `\n` ao final e entrega como bytes.
-- Se não há entrada, o Falcon pausa a execução (PC não avança) e fica aguardando o usuário digitar algo na UI.
+- A entrada vem do console da UI e é por linha. Quando há uma linha disponível, o Raven adiciona `\n` ao final e entrega como bytes.
+- Se não há entrada, o Raven pausa a execução (PC não avança) e fica aguardando o usuário digitar algo na UI.
 
 Exemplo curto (lê e faz echo):
 
@@ -324,19 +324,19 @@ Efeito:
 
 - Encerra a VM “normalmente” (isso não é fault na UI).
 
-### Extensões Falcon (usadas pelas pseudos)
+### Extensões Raven (usadas pelas pseudos)
 
 | `a7` | Nome | Usado por |
 | --- | --- | --- |
-| `1000` | `falcon_print_int` | `print rd` |
-| `1001` | `falcon_print_zstr` | `printStr` / `printString` |
-| `1002` | `falcon_print_zstr_ln` | `printStrLn` |
-| `1003` | `falcon_read_line_z` | `read label` |
-| `1010` | `falcon_read_u8` | `readByte label` |
-| `1011` | `falcon_read_u16` | `readHalf label` |
-| `1012` | `falcon_read_u32` | `readWord label` |
+| `1000` | `raven_print_int` | `print rd` |
+| `1001` | `raven_print_zstr` | `printStr` / `printString` |
+| `1002` | `raven_print_zstr_ln` | `printStrLn` |
+| `1003` | `raven_read_line_z` | `read label` |
+| `1010` | `raven_read_u8` | `readByte label` |
+| `1011` | `raven_read_u16` | `readHalf label` |
+| `1012` | `raven_read_u32` | `readWord label` |
 
-Nas extensões `read*` do Falcon, ele insiste até receber um valor válido para o tamanho pedido. Entradas inválidas geram uma mensagem
+Nas extensões `read*` do Raven, ele insiste até receber um valor válido para o tamanho pedido. Entradas inválidas geram uma mensagem
 amigável e o PC **não** avança, destacando que a execução está em pausa.
 
 Pronto para ir além? Abra o tutorial interativo `[?]` no Raven para ver exemplos guiados ou explore `Program Examples/` e enxergue

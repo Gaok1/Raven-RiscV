@@ -648,7 +648,7 @@ Até aqui todo fault foi parar em M-mode via `mtvec`. Sistemas operacionais reai
 | `scause` | `0x142` | Causa do trap delegado |
 | `stval` | `0x143` | Valor do trap delegado (vaddr que falhou) |
 
-> O Raven modela `sstatus` como um registrador próprio, e não como a view mascarada de `mstatus` que o hardware real implementa. É uma simplificação pedagógica deliberada: deixa o caminho de delegação fácil de ler, ao custo do aliasing de bits compartilhados que o hardware faz.
+> No hardware RISC-V real, `sstatus` é uma *view* restrita de `mstatus` — os dois nomes leem e escrevem os mesmos bits compartilhados. Aqui ele se comporta como um registrador independente. É uma simplificação pedagógica deliberada: deixa o caminho de delegação fácil de seguir, sem o aliasing de bits compartilhados que o hardware faz.
 
 ### 20.2 O padrão de demand paging
 
@@ -657,7 +657,7 @@ Até aqui todo fault foi parar em M-mode via `mtvec`. Sistemas operacionais reai
 3. O handler lê `stval` (o endereço que falhou), instala a PTE faltante e roda `sfence.vma` pra descartar entradas obsoletas da TLB.
 4. `sret` retorna pra `sepc` — a instrução que falhou re-executa e agora **funciona**.
 
-> **⚠ Coerência walker / cache.** O walker de tabela de páginas do Raven lê PTEs **direto da RAM** e *não* é coerente com o D-cache write-back. Um handler que escreve uma PTE com um `sw` normal deixa ela parada no cache, então o walk repetido continua vendo a entrada antiga (vazia) e falha pra sempre. Pra programas de demand paging, **desligue o cache** (aba Cache) ou troque o D-cache pra **write-through**, de modo que o store do handler chegue à RAM antes do walk re-rodar. (O teste de demand paging em `tests/mmu_traps.rs` usa um D-cache write-through exatamente por isso.)
+> **⚠ Coerência walker / cache.** O walk da tabela de páginas lê PTEs **direto da RAM**, enquanto um D-cache write-back pode segurar um valor recém-escrito sem ainda tê-lo enviado de volta. Então um handler que escreve uma PTE com um `sw` normal pode deixar essa PTE parada no cache: o walk repetido continua lendo a entrada antiga (vazia) da RAM e falha pra sempre. Pra programas de demand paging, **desligue o cache** (aba Cache) ou troque o D-cache pra **write-through**, de modo que o store do handler chegue à RAM antes do walk re-rodar.
 
 ### 20.3 Configuração (no boot em M-mode)
 
@@ -682,7 +682,7 @@ page_fault_handler:
     sret                        # retorna pra sepc — o acesso que falhou repete
 ```
 
-Uma viagem de ida e volta completa e executável — boot mapeia as páginas de código/handler/tabela, cai em U-mode, falha numa página não-mapeada, o handler a mapeia, `sfence.vma`, `sret`, e o load repetido lê o dado recém-mapeado — está em `tests/mmu_traps.rs::demand_paging_end_to_end`. Duas regras de layout daquele teste valem repetir:
+Uma viagem de ida e volta completa fica assim: boot mapeia as páginas de código/handler/tabela, cai em U-mode, falha numa página não-mapeada, o handler a mapeia, roda `sfence.vma`, `sret`, e o load repetido lê o dado recém-mapeado. Duas regras de layout desse padrão valem repetir:
 
 - O **código do handler e as páginas de tabela precisam ser mapeados como não-`U`** (só kernel), porque S-mode não pode tocar páginas `U=1` (`SUM` não é modelado).
 - O handler edita a tabela *sob tradução*, então a página da leaf table precisa do próprio mapeamento de identidade (`VA = PA`) — o equivalente do simulador a um direct map de kernel.

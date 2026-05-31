@@ -1,6 +1,6 @@
 # Pipeline simulation
 
-Raven includes a cycle-by-cycle educational pipeline simulator for RV32I/M plus the Falcon extensions already supported by the project. The goal is not just to execute code, but to make visible why an instruction advanced, stalled, flushed, or received a forwarded value.
+Raven includes a cycle-by-cycle educational pipeline simulator for RV32I/M plus the teaching extensions Raven supports. The goal is not just to execute code, but to make visible why an instruction advanced, stalled, flushed, or received a forwarded value.
 
 This document describes the current model implemented in the TUI pipeline tab.
 

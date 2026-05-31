@@ -195,7 +195,7 @@ rng_buf: .space 4
 
 ---
 
-## Extensões de ensino Falcon (syscall 1000+)
+## Extensões de ensino Raven (syscall 1000+)
 
 Estas são syscalls exclusivas do RAVEN, projetadas para uso em sala de aula. São
 mais simples que os equivalentes Linux ABI e não precisam de loop strlen nem

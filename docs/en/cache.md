@@ -1,6 +1,6 @@
 # Cache simulation
 
-Falcon includes a built-in **I-cache + D-cache** simulator. As your program runs, you can watch the cache fill up, observe hits and misses in real time, and experiment with different configurations to understand their trade-offs.
+Raven includes a built-in **I-cache + D-cache** simulator. As your program runs, you can watch the cache fill up, observe hits and misses in real time, and experiment with different configurations to understand their trade-offs.
 
 Open the **Cache** tab for three subtabs:
 

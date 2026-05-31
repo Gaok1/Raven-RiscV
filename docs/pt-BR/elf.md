@@ -1,4 +1,4 @@
-# Como o Falcon carrega um arquivo ELF
+# Como o Raven carrega um arquivo ELF
 
 > Documento didático — assume que você não sabe nada sobre ELF. :)
 
@@ -27,7 +27,7 @@ Pense num arquivo ELF como um baú com gavetas:
 └─────────────────────────────────┘
 ```
 
-O **Falcon** (o núcleo de simulação do Raven) só precisa de duas coisas para executar um programa:
+Para executar um programa, o Raven só precisa de duas coisas:
 
 1. Copiar os bytes certos para os endereços certos na RAM simulada.
 2. Saber em qual endereço começar a executar (o *entry point*).
@@ -38,7 +38,7 @@ As seções (`Section Headers`) são informação extra — úteis para debugger
 
 ## 2. O ELF Header — os primeiros 52 bytes
 
-Todo arquivo ELF começa com um header de tamanho fixo. No ELF32 (32 bits) ele tem **52 bytes**. O Falcon lê assim:
+Todo arquivo ELF começa com um header de tamanho fixo. No ELF32 (32 bits) ele tem **52 bytes**. O Raven lê estes campos dele:
 
 ```
 Offset  Tamanho  Campo           Valor esperado / uso
@@ -57,21 +57,9 @@ Offset  Tamanho  Campo           Valor esperado / uso
 50      2        e_shstrndx      índice da seção com os nomes das seções
 ```
 
-No código (`src/falcon/program/elf.rs`):
+O header é o que diz ao loader onde tudo o mais está: `e_entry` é onde a execução começa, `e_phoff` aponta para a tabela de segmentos a carregar, e `e_shoff` aponta para os metadados das seções. Todo valor de múltiplos bytes aqui é little-endian.
 
-```rust
-let e_entry     = u32le(24);   // onde começar a executar
-let e_phoff     = u32le(28);   // onde no arquivo ficam os Program Headers
-let e_phentsize = u16le(42);   // tamanho de cada entrada
-let e_phnum     = u16le(44);   // quantas entradas
-
-let e_shoff     = u32le(32);   // onde ficam os Section Headers
-let e_shentsize = u16le(46);
-let e_shnum     = u16le(48);
-let e_shstrndx  = u16le(50);   // qual seção contém os nomes
-```
-
-Se o magic for errado, a classe não for 1 (ELF32), ou a máquina não for `0xF3` (RISC-V), o Falcon rejeita o arquivo com erro.
+Se o magic for errado, a classe não for 1 (ELF32), ou a máquina não for `0xF3` (RISC-V), o Raven rejeita o arquivo com erro.
 
 ---
 
@@ -90,19 +78,10 @@ Offset  Tamanho  Campo      Significado
 24      4        p_flags    permissões: bit 0 = executável (X), bit 1 = W, bit 2 = R
 ```
 
-O Falcon só se importa com segmentos do tipo **PT_LOAD** (tipo 1). Para cada um:
+Só os segmentos do tipo **PT_LOAD** (tipo 1) importam para a execução; outros tipos (`PT_DYNAMIC`, `PT_NOTE`, …) são ignorados. Para cada segmento PT_LOAD, o loader faz duas coisas:
 
-```rust
-if p_type != PT_LOAD { continue; }  // ignora PT_DYNAMIC, PT_NOTE, etc.
-
-// 1. Copia p_filesz bytes do arquivo para p_vaddr na RAM
-load_bytes(mem, p_vaddr, &bytes[p_offset .. p_offset + p_filesz]);
-
-// 2. Se p_memsz > p_filesz, zera o resto (isso é o BSS!)
-if p_memsz > p_filesz {
-    zero_bytes(mem, p_vaddr + p_filesz, p_memsz - p_filesz);
-}
-```
+1. **Copia** `p_filesz` bytes do arquivo (a partir de `p_offset`) para o endereço `p_vaddr` na RAM.
+2. **Zera o resto:** se `p_memsz > p_filesz`, preenche os `p_memsz − p_filesz` bytes extras com zero. Essa diferença é o BSS.
 
 ### O BSS na prática
 
@@ -110,16 +89,10 @@ O BSS são variáveis globais inicializadas com zero. Como "zero" não precisa s
 
 ### Identificando .text vs .data
 
-```rust
-if p_flags & PF_X != 0 {
-    // tem bit executável → é o segmento de código (.text)
-    text_bytes = ...;
-    text_base  = p_vaddr;
-} else {
-    // não executável → é o segmento de dados (.data/.bss)
-    data_base = p_vaddr;
-}
-```
+Os bits de permissão em `p_flags` dizem o que um segmento é:
+
+- Se o bit **executável** (`PF_X`) está ligado, o segmento contém código → é o `.text` (mais o `.rodata`).
+- Se **não** é executável, o segmento contém dados → é o `.data` / `.bss`.
 
 Um ELF RISC-V típico tem dois PT_LOAD:
 
@@ -130,23 +103,13 @@ PT_LOAD #2  flags=R+W  → .data + .bss     (variáveis)
 
 ### Heap start
 
-Depois de carregar todos os segmentos, o Falcon calcula onde a heap começa:
-
-```rust
-let end = p_vaddr + p_memsz;   // fim deste segmento na memória
-if end > seg_end_max { seg_end_max = end; }
-
-// depois do loop:
-let heap_start = (seg_end_max + 15) & !15;  // alinha pra cima em 16 bytes
-```
-
-Esse valor é guardado em `cpu.heap_break` e é o que o syscall `brk` retorna na primeira chamada.
+Depois de carregar todos os segmentos, o simulador olha o maior endereço de memória que algum segmento alcançou (`p_vaddr + p_memsz` do último), arredonda para cima até um limite de 16 bytes, e usa isso como o **início da heap**. É o endereço que o syscall `brk` retorna na primeira chamada, e onde a alocação dinâmica começa a crescer para cima.
 
 ---
 
 ## 4. Section Headers — metadados
 
-Os **Section Headers** não são necessários para executar, mas contêm informações valiosas. O Falcon os lê para extrair a tabela de símbolos.
+Os **Section Headers** não são necessários para executar, mas contêm informações valiosas. O Raven os lê para extrair a tabela de símbolos.
 
 Cada Section Header tem **40 bytes**:
 
@@ -189,16 +152,13 @@ Offset  Tamanho  Campo     Significado
 14      2        st_shndx  em qual seção o símbolo vive
 ```
 
-O Falcon filtra os símbolos que importam:
+Nem todo símbolo é útil para o disassembly, então o loader guarda só os que nomeiam código ou dados reais. Um símbolo é mantido quando:
 
-```rust
-let sym_type = st_info & 0x0F;
-if sym_type != STT_FUNC && sym_type != STT_OBJECT { continue; }  // só funções e variáveis
-if st_value == 0 { continue; }             // símbolo sem endereço (externo/undef)
-if name.is_empty() || name.starts_with('$') { continue; }  // nomes internos do linker
-```
+- seu tipo é uma **função** (`STT_FUNC`) ou uma **variável/objeto** (`STT_OBJECT`), e
+- ele tem um endereço real (`st_value ≠ 0`), e
+- seu nome não é vazio e não é um nome interno do linker (esses começam com `$`).
 
-O resultado vai para `run.labels: HashMap<u32, Vec<String>>` — o mesmo mapa que o assembler popula quando você escreve um label em ASM. Por isso o disassembly mostra `<main>:`, `<factorial>:` etc. ao carregar um ELF compilado.
+Os símbolos mantidos viram uma tabela que mapeia cada endereço para um nome — o mesmo tipo de tabela que o assembler constrói quando você escreve um label em ASM. Por isso o disassembly mostra `<main>:`, `<factorial>:` etc. ao carregar um ELF compilado.
 
 ---
 
@@ -212,8 +172,8 @@ Endereço        Conteúdo
 0x00000000      (vazio — trap se executar)
 ...
 0x00010000      .rodata + .data  (PT_LOAD #1, flags=R)
-                .bss             (zeroed por p_memsz > p_filesz)
-── heap_break ──────────────────────────────────────────────────── ← cpu.heap_break
+                .bss             (zerado por p_memsz > p_filesz)
+── início heap ────────────────────────────────────────────────────
                 heap (cresce para cima via brk)
 ...             (espaço livre)
 ...
@@ -231,7 +191,7 @@ O segmento de código `.text` vai para um endereço separado porque o linker def
 arquivo ELF
     │
     ▼
-load_elf(bytes, mem)
+Carregar
     │
     ├─ valida magic, class, data, machine
     │
@@ -241,29 +201,29 @@ load_elf(bytes, mem)
     │       ├─ copia p_filesz bytes → mem[p_vaddr]
     │       ├─ zera (p_memsz - p_filesz) bytes → BSS
     │       ├─ identifica .text (PF_X) e .data
-    │       └─ atualiza seg_end_max
+    │       └─ guarda o maior endereço final
     │
-    ├─ heap_start = align16(seg_end_max)
+    ├─ início heap = align16(maior endereço final)
     │
-    ├─ parse_sections() ─────────────────────────────────────┐
+    ├─ ler seções ───────────────────────────────────────────┐
     │       ├─ lê todos Section Headers                      │
     │       ├─ acha shstrtab (nomes das seções)              │
     │       ├─ acha .symtab → itera símbolos                 │
-    │       │       └─ filtra FUNC/OBJECT → symbols HashMap  │
-    │       └─ coleta .data/.rodata/.bss → sections Vec      │
+    │       │       └─ filtra FUNC/OBJECT → tabela símbolos  │
+    │       └─ coleta .data/.rodata/.bss → lista de seções   │
     │                                                         │
-    └─ retorna ElfInfo ◄──────────────────────────────────────┘
-            ├─ entry, text_base, text_bytes, data_base
-            ├─ total_bytes, heap_start
-            ├─ symbols  → run.labels (aparecem no disassembly)
-            └─ sections → run.elf_sections (painel lateral)
+    └─ pronto para executar ◄─────────────────────────────────┘
+            ├─ entry, base do código, bytes do código, base dos dados
+            ├─ tamanho total, início da heap
+            ├─ símbolos → labels (aparecem no disassembly)
+            └─ seções  → lista de seções (painel lateral)
 ```
 
 ---
 
 ## 8. Como inspecionar um ELF você mesmo
 
-Você tem o binário do `hello-raven` em `hello-raven/target/riscv32im-unknown-none-elf/release/hello-raven`. Para ver o que o Falcon vai ler:
+Você tem o binário do `hello-raven` em `hello-raven/target/riscv32im-unknown-none-elf/release/hello-raven`. Para ver o que o loader vai ler:
 
 ```bash
 # ELF header completo
@@ -295,7 +255,7 @@ Program Headers:
                                                          E=execução
 ```
 
-O segundo segmento tem `FileSiz == MemSiz` (sem BSS), flags `R E` (leitura + execução) → esse é o `.text` que o Falcon identifica como código.
+O segundo segmento tem `FileSiz == MemSiz` (sem BSS), flags `R E` (leitura + execução) → esse é o `.text` identificado como código.
 
 ---
 
