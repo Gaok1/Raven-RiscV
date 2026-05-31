@@ -49,7 +49,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             } else if app.settings.selected == SETTINGS_ROW_PIPELINE_ENABLED {
                 app.set_pipeline_enabled(!app.pipeline.enabled);
             } else if app.settings.selected == SETTINGS_ROW_VM_ENABLED {
-                app.set_vm_enabled(!app.run.vm_enabled);
+                app.set_vm_mode(app.vm_mode().cycle());
             } else if app.settings.selected == SETTINGS_ROW_JIT_MODE {
                 let next = match app.run.jit_kind {
                     BackendKind::None => BackendKind::Hot,

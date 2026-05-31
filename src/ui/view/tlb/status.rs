@@ -67,7 +67,7 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
     let root_pt = (mmu.satp.ppn() as u64) << 12;
 
     let mut lines: Vec<Line<'static>> = vec![
-        kv(" VM enabled (Settings toggle): ", on_off(app.run.vm_enabled), vm_color),
+        kv(" VM mode (Settings):           ", app.vm_mode().as_str().to_string(), vm_color),
         kv(" satp.mode:                    ", satp_mode_label.to_string(), satp_color),
         kv(
             " satp.asid:                    ",
@@ -149,8 +149,4 @@ fn kv(label: &'static str, value: String, value_color: Color) -> Line<'static> {
         Span::styled(label, Style::default().fg(theme::LABEL)),
         Span::styled(value, Style::default().fg(value_color).add_modifier(Modifier::BOLD)),
     ])
-}
-
-fn on_off(b: bool) -> String {
-    if b { "on" } else { "off" }.to_string()
 }

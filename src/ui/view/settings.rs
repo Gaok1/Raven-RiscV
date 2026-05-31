@@ -202,7 +202,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let vm_item = ListItem::new(Line::from(vec![
         Span::styled(format!("{:<20}", "  Virtual Memory"), label_style_vm),
         Span::raw("  "),
-        bool_button(app.run.vm_enabled, app.settings.hover_vm_enabled),
+        dense_value(app.vm_mode().as_str(), app.settings.hover_vm_enabled, true, theme::LABEL_Y),
     ]));
     items.push(vm_item);
 

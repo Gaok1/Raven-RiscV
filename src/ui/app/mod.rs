@@ -438,6 +438,7 @@ impl App {
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
                 vm_enabled: false,
+                vm_manual: false,
                 trace_syscalls: false,
                 jit_kind: crate::falcon::jit::BackendKind::None,
                 backend: crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None)

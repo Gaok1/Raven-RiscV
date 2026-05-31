@@ -265,6 +265,10 @@ pub(crate) struct RunState {
     /// When true, the MMU translates virtual → physical via the TLB / Sv32
     /// page-table walker. When false, addresses are passed through identity.
     pub(crate) vm_enabled: bool,
+    /// Flavor of VM when enabled: false = Didactic (M-mode also translates),
+    /// true = Manual (real RISC-V semantics; program drives satp + page tables).
+    /// Together with `vm_enabled` this encodes [`crate::falcon::mmu::VmMode`].
+    pub(crate) vm_manual: bool,
     /// When true, non-I/O syscalls are mirrored to the debug console.
     pub(crate) trace_syscalls: bool,
     /// Which JIT mode is currently active.

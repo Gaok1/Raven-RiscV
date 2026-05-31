@@ -89,6 +89,7 @@ pub(super) fn serialize_rcfg(
     cache_enabled: bool,
     pipeline_enabled: bool,
     vm_enabled: bool,
+    vm_manual: bool,
     trace_syscalls: bool,
     run_scope: RunScope,
     mem_kb: usize,
@@ -99,6 +100,7 @@ pub(super) fn serialize_rcfg(
     s.push_str(&format!("cache_enabled={}\n", cache_enabled));
     s.push_str(&format!("pipeline_enabled={}\n", pipeline_enabled));
     s.push_str(&format!("vm_enabled={}\n", vm_enabled));
+    s.push_str(&format!("vm_manual={}\n", vm_manual));
     s.push_str(&format!("trace_syscalls={}\n", trace_syscalls));
     s.push_str(&format!("jit_mode={}\n", jit_kind.as_str()));
     s.push_str(&format!("mem_kb={}\n", mem_kb));
@@ -140,6 +142,7 @@ pub(super) struct RcfgSettings {
     pub(super) cache_enabled: bool,
     pub(super) pipeline_enabled: Option<bool>,
     pub(super) vm_enabled: bool,
+    pub(super) vm_manual: bool,
     pub(super) trace_syscalls: bool,
     pub(super) run_scope: RunScope,
     pub(super) mem_bytes: Option<usize>,
@@ -204,6 +207,10 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         .get("vm_enabled")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
         .unwrap_or(false);
+    let vm_manual = map
+        .get("vm_manual")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+        .unwrap_or(false);
     let trace_syscalls = map
         .get("trace_syscalls")
         .map(|v| v != "false")
@@ -248,6 +255,7 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         cache_enabled,
         pipeline_enabled,
         vm_enabled,
+        vm_manual,
         trace_syscalls,
         run_scope,
         mem_bytes,
@@ -262,7 +270,10 @@ fn apply_rcfg(app: &mut App, cfg: RcfgSettings) {
     if let Some(enabled) = cfg.pipeline_enabled {
         app.set_pipeline_enabled(enabled);
     }
-    app.set_vm_enabled(cfg.vm_enabled);
+    app.set_vm_mode(crate::falcon::mmu::VmMode::from_user(
+        cfg.vm_enabled,
+        cfg.vm_manual,
+    ));
     app.set_trace_syscalls(cfg.trace_syscalls);
     app.run_scope = cfg.run_scope;
     if let Some(kind) = cfg.jit_kind {
@@ -669,6 +680,7 @@ pub(crate) fn do_export_rcfg(app: &mut App) {
         app.run.cache_enabled,
         app.pipeline.enabled,
         app.run.vm_enabled,
+        app.run.vm_manual,
         app.run.trace_syscalls,
         app.run_scope,
         app.run.mem_size / 1024,
@@ -1609,6 +1621,7 @@ pub(super) fn dispatch_path_input(
                 app.run.cache_enabled,
                 app.pipeline.enabled,
                 app.run.vm_enabled,
+                app.run.vm_manual,
                 app.run.trace_syscalls,
                 app.run_scope,
                 app.run.mem_size / 1024,
@@ -1744,6 +1757,7 @@ mod tests {
             true,
             false,
             false,
+            false,
             true,
             RunScope::FocusedHart,
             4096,
@@ -1774,6 +1788,7 @@ mod tests {
                 &CpiConfig::default(),
                 true,
                 true,
+                false,
                 false,
                 false,
                 RunScope::AllHarts,
