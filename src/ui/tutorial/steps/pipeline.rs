@@ -144,7 +144,7 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Pipeline Hotkeys",
         title_pt: "Hotkeys do Pipeline",
         body_en: "General:\
-\n[Tab] :: switch Main / Config\
+\n[Tab] :: switch Main / Settings\
 \n[[ / ]] :: switch selected core / hart\
 \n[s] :: step one cycle\
 \n[p] / [Space] :: toggle run / pause on Main\
@@ -157,14 +157,14 @@ pub static STEPS: &[TutorialStep] = &[
 \n[↑/↓] :: scroll gantt and history\
 \n[PageUp/PageDown] :: page through gantt and history\
 \n\
-\nConfig and files:\
-\n[↑/↓] :: move the config cursor\
+\nSettings and files:\
+\n[↑/↓] :: move the settings cursor\
 \n[Enter] :: toggle or cycle the selected option\
-\n[Ctrl+e] :: export config\
-\n[Ctrl+l] :: import config\
+\n[Ctrl+e] :: export settings\
+\n[Ctrl+l] :: import settings\
 \n[Ctrl+r] :: export results",
         body_pt: "Geral:\
-\n[Tab] :: alterna entre Main / Config\
+\n[Tab] :: alterna entre Main / Settings\
 \n[[ / ]] :: trocam o core / hart selecionado\
 \n[s] :: passo único de ciclo\
 \n[p] / [Espaço] :: alterna executar / pausar na Main\
@@ -177,7 +177,7 @@ pub static STEPS: &[TutorialStep] = &[
 \n[↑/↓] :: rolam o gantt e o histórico\
 \n[PageUp/PageDown] :: avançam páginas no gantt e histórico\
 \n\
-\nConfig e arquivos:\
+\nSettings e arquivos:\
 \n[↑/↓] :: movem o cursor de configuração\
 \n[Enter] :: alterna ou cicla a opção selecionada\
 \n[Ctrl+e] :: exporta a config\
@@ -189,9 +189,9 @@ pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
         title_en: "Pipeline Tabs & Core",
         title_pt: "Pipeline Tabs & Core",
-        body_en: "The top bar switches between Main and Config. The Core selector lets you inspect the pipeline of a specific core/hart pair.\
+        body_en: "The top bar switches between Main and Settings. The Core selector lets you inspect the pipeline of a specific core/hart pair.\
 \n\nRun and Pipeline share the same selected core, so changing it here also changes the observed runtime core.",
-        body_pt: "A barra superior alterna entre Main e Config. O seletor de core permite inspecionar o pipeline de um par específico de core/hart.\
+        body_pt: "A barra superior alterna entre Main e Settings. O seletor de core permite inspecionar o pipeline de um par específico de core/hart.\
 \n\nRun e Pipeline compartilham o mesmo core selecionado, então mudar aqui também muda o core observado em execução.",
         target: target_subtab,
         setup: Some(setup_main),
@@ -239,14 +239,14 @@ pub static STEPS: &[TutorialStep] = &[
         setup: Some(setup_main),
     },
     TutorialStep {
-        title_en: "Pipeline Config",
-        title_pt: "Pipeline Config",
-        body_en: "The Config subtab changes the simulator model itself: EX->EX, MEM->EX, WB->ID and Store->Load bypass paths, the execution model, branch resolution stage and prediction policy.\
+        title_en: "Pipeline Settings",
+        title_pt: "Pipeline Settings",
+        body_en: "The Settings subtab changes the simulator model itself: EX->EX, MEM->EX, WB->ID and Store->Load bypass paths, the execution model, branch resolution stage and prediction policy.\
 \n\nThe execution model controls whether Raven serializes execution or allows parallel work across UFs when hazards permit it. Prediction includes static and dynamic modes — wrong-path work and flush rate change visibly as you compare Not-Taken, Always-Taken, BTFNT and 2-bit Dynamic.\
-\n\nPress [b] anywhere in the Pipeline tab to quickly cycle the branch resolve stage: ID → EX → MEM, without opening Config.",
-        body_pt: "A subtab Config altera o próprio modelo do simulador: caminhos de bypass EX->EX, MEM->EX, WB->ID e Store->Load, o modelo de execução, o estágio de resolução de branch e a política de predição.\
+\n\nPress [b] anywhere in the Pipeline tab to quickly cycle the branch resolve stage: ID → EX → MEM, without opening Settings.",
+        body_pt: "A subtab Settings altera o próprio modelo do simulador: caminhos de bypass EX->EX, MEM->EX, WB->ID e Store->Load, o modelo de execução, o estágio de resolução de branch e a política de predição.\
 \n\nO modelo de execução controla se o Raven serializa a execução ou permite trabalho paralelo entre UFs quando os hazards permitem. A predição inclui modos estáticos e dinâmicos — trabalho em caminho errado e taxa de flush mudam visivelmente ao comparar Not-Taken, Always-Taken, BTFNT e 2-bit Dynamic.\
-\n\nPressione [b] em qualquer lugar na aba Pipeline para ciclar rapidamente o estágio de resolução de branch: ID → EX → MEM, sem abrir a Config.",
+\n\nPressione [b] em qualquer lugar na aba Pipeline para ciclar rapidamente o estágio de resolução de branch: ID → EX → MEM, sem abrir a Settings.",
         target: target_config,
         setup: Some(setup_config),
     },

@@ -48,7 +48,7 @@ pub(super) fn serialize_tlb_config(s: &mut String, cfg: &TlbConfig) {
     s.push_str("\n# Unified TLB\n");
     s.push_str(&format!("tlb.entry_count={}\n", cfg.entry_count));
     s.push_str(&format!("tlb.associativity={}\n", cfg.associativity));
-    s.push_str(&format!("tlb.replacement={:?}\n", cfg.replacement));
+    s.push_str(&format!("tlb.replacement={}\n", cfg.replacement.as_str()));
     s.push_str(&format!("tlb.hit_latency={}\n", cfg.hit_latency));
     s.push_str(&format!("tlb.miss_penalty={}\n", cfg.miss_penalty));
 }
@@ -63,18 +63,10 @@ pub(super) fn parse_tlb_config(map: &HashMap<String, String>) -> TlbConfig {
         .get("tlb.associativity")
         .and_then(|v| v.parse::<u8>().ok())
         .unwrap_or(default.associativity);
-    let replacement = match map
+    let replacement = map
         .get("tlb.replacement")
-        .map(String::as_str)
-        .unwrap_or("lru")
-    {
-        "mru" => ReplacementPolicy::Mru,
-        "fifo" => ReplacementPolicy::Fifo,
-        "random" => ReplacementPolicy::Random,
-        "lfu" => ReplacementPolicy::Lfu,
-        "clock" => ReplacementPolicy::Clock,
-        _ => ReplacementPolicy::Lru,
-    };
+        .and_then(|v| ReplacementPolicy::from_str(v))
+        .unwrap_or(default.replacement);
     let hit_latency = map
         .get("tlb.hit_latency")
         .and_then(|v| v.parse::<u8>().ok())
@@ -591,7 +583,7 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
     if app.cache.selected_level > n_extra {
         app.cache.selected_level = n_extra;
     }
-    app.cache.pending_tlb = tlb.clone();
+    app.tlb.pending = tlb.clone();
     app.run.mem.mmu_mut().tlb.reconfigure(tlb);
     Ok(())
 }
@@ -601,7 +593,7 @@ pub(crate) fn do_export_cfg(app: &mut App) {
         &app.cache.pending_icache,
         &app.cache.pending_dcache,
         &app.cache.extra_pending,
-        &app.cache.pending_tlb,
+        &app.tlb.pending,
     );
     if let Some(path) = OSFileDialog::new()
         .add_filter("Cache Config", &["fcache"])
@@ -648,7 +640,7 @@ pub(crate) fn do_import_cfg(app: &mut App) {
                     if app.cache.selected_level > n_extra {
                         app.cache.selected_level = n_extra;
                     }
-                    app.cache.pending_tlb = tlb.clone();
+                    app.tlb.pending = tlb.clone();
                     app.run.mem.mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
@@ -1552,7 +1544,7 @@ pub(super) fn dispatch_path_input(
                     if app.cache.selected_level > n_extra {
                         app.cache.selected_level = n_extra;
                     }
-                    app.cache.pending_tlb = tlb.clone();
+                    app.tlb.pending = tlb.clone();
                     app.run.mem.mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
@@ -1575,7 +1567,7 @@ pub(super) fn dispatch_path_input(
                 &app.cache.pending_icache,
                 &app.cache.pending_dcache,
                 &app.cache.extra_pending,
-                &app.cache.pending_tlb,
+                &app.tlb.pending,
             );
             match std::fs::write(&path, &text) {
                 Ok(()) => {

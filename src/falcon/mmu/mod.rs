@@ -13,7 +13,7 @@ pub mod walker;
 pub use satp::{PrivMode, Satp, SatpMode};
 pub use tlb::{PtePerms, Tlb, TlbConfig, TlbEntry, TlbStats};
 
-use crate::falcon::memory::Ram;
+use crate::falcon::memory::{Bus, Ram};
 
 /// What kind of access is being translated. Determines which permission bit is
 /// checked and which fault code is raised on failure.
@@ -48,6 +48,10 @@ pub struct Mmu {
     /// Mirror of `vm_enabled`. When false, `translate()` is pure identity and
     /// no TLB state is touched (zero overhead path).
     pub enabled: bool,
+    /// When true, translation is applied even in M-mode. Used by the
+    /// didactic standard mode so any program sees TLB activity without
+    /// needing explicit page-table setup code.
+    pub force_translate: bool,
 }
 
 impl Default for Mmu {
@@ -63,6 +67,18 @@ impl Mmu {
             satp: Satp::default(),
             priv_mode: PrivMode::M,
             enabled: false,
+            force_translate: false,
+        }
+    }
+
+    /// Write 1024 Sv32 megapage PTEs at `root_pa`, creating an identity map
+    /// that covers the full 4 GiB address space (VA == PA, RWX+U+Valid).
+    /// Used by the standard VM mode so programs see TLB activity without
+    /// manual page-table setup.
+    pub fn install_identity_megapages(ram: &mut Ram, root_pa: u32) {
+        for i in 0u32..1024 {
+            let pte = (i << 10) | 0x1F; // PPN=i, R|W|X|U|V
+            let _ = ram.store32(root_pa + i * 4, pte);
         }
     }
 
@@ -77,8 +93,14 @@ impl Mmu {
         access: AccessType,
         ram: &mut Ram,
     ) -> Result<(u32, u8), PageFault> {
-        // Short-circuit: VM off, Bare, or M-mode → identity (no TLB touch).
-        if !self.enabled || self.satp.mode() == SatpMode::Bare || self.priv_mode == PrivMode::M {
+        // Short-circuit: VM off or satp=Bare → identity (no TLB touch).
+        if !self.enabled || self.satp.mode() == SatpMode::Bare {
+            return Ok((vaddr, 0));
+        }
+        // M-mode bypasses the MMU on real hardware. In the didactic standard
+        // mode (force_translate), we skip this bypass so TLB activity is
+        // visible for any program without privilege-level boilerplate.
+        if self.priv_mode == PrivMode::M && !self.force_translate {
             return Ok((vaddr, 0));
         }
 
@@ -125,6 +147,7 @@ impl Mmu {
             dirty: matches!(access, AccessType::Store),
             megapage: res.megapage,
             age: 0,
+            ref_bit: false,
         };
         self.tlb.install(entry);
 

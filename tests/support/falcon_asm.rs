@@ -388,3 +388,36 @@ fn char_literal_non_ascii_error() {
         err.msg
     );
 }
+
+#[test]
+fn li_high_bit_u32_immediate() {
+    // 0x80000001 sets bit 31, which is > i32::MAX but a valid u32 / i32 bit pattern.
+    let prog = assemble(".text\nli t0, 0x80000001", 0).expect("assemble");
+    // Must decode back to the same bit pattern when loaded into a register.
+    // li emits lui + addi; executing them reconstructs the bit pattern.
+    assert_eq!(prog.text.len(), 2, "li should emit 2 instructions for this value");
+}
+
+#[test]
+fn csr_instructions_assemble() {
+    let src = "
+.text
+    csrw satp, t0
+    csrr t1, mstatus
+    mret
+";
+    let prog = assemble(src, 0).expect("assemble CSR + mret");
+    assert_eq!(prog.text.len(), 3);
+    // csrw satp, t0 → csrrw x0, 0x180, t0 → funct3=001, opcode=0x73
+    assert_eq!(prog.text[0] & 0x7F, 0x73, "CSR opcode");
+    // mret encoding
+    assert_eq!(prog.text[2], 0x3020_0073);
+}
+
+#[test]
+fn sfence_vma_assembles() {
+    let prog = assemble(".text\nsfence.vma", 0).expect("sfence.vma no args");
+    assert_eq!(prog.text.len(), 1);
+    // rs1=0, rs2=0, funct7=0b0001001
+    assert_eq!(prog.text[0], (0b0001001u32 << 25) | 0b1110011);
+}

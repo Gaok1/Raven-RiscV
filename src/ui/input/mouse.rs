@@ -141,7 +141,13 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.docs.scroll = app.docs.scroll.saturating_sub(1);
                 clamp_docs_scroll(app, area);
             }
-            Tab::Config | Tab::Activity => {}
+            Tab::Tlb => {
+                use crate::ui::app::TlbSubtab;
+                if matches!(app.tlb.subtab, TlbSubtab::Entries) {
+                    app.tlb.entries_scroll = app.tlb.entries_scroll.saturating_sub(1);
+                }
+            }
+            Tab::Settings | Tab::Activity => {}
         },
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.buf.move_down(),
@@ -185,7 +191,15 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.docs.scroll = app.docs.scroll.saturating_add(1);
                 clamp_docs_scroll(app, area);
             }
-            Tab::Config | Tab::Activity => {}
+            Tab::Tlb => {
+                use crate::ui::app::TlbSubtab;
+                if matches!(app.tlb.subtab, TlbSubtab::Entries) {
+                    let total = app.run.mem.mmu().tlb.entries.len();
+                    let next = app.tlb.entries_scroll.saturating_add(1);
+                    app.tlb.entries_scroll = next.min(total.saturating_sub(1));
+                }
+            }
+            Tab::Settings | Tab::Activity => {}
         },
         MouseEventKind::ScrollLeft => {
             if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {
@@ -287,6 +301,13 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 
+    if let Tab::Tlb = app.tab {
+        update_tlb_hover(app, me);
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            handle_tlb_click(app, me);
+        }
+    }
+
     if let Tab::Docs = app.tab {
         update_docs_hover(app, me);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -294,8 +315,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 
-    // Config tab interactions
-    if let Tab::Config = app.tab {
+    // Settings tab interactions
+    if let Tab::Settings = app.tab {
         update_settings_hover(app, me);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_settings_click(app, me);
@@ -1899,38 +1920,6 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         app.cache.hover = Some(CacheHoverTarget::SubtabView);
     } else if point_in_btn(me, app.cache.subtab_config_btn.get()) {
         app.cache.hover = Some(CacheHoverTarget::SubtabConfig);
-    } else if point_in_btn(me, app.cache.subtab_tlb_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::SubtabTlb);
-    }
-
-    // TLB subview header (only visible while in Tlb subtab, but hitboxes are
-    // zeroed by the renderer otherwise so it's safe to always test).
-    if matches!(app.cache.subtab, CacheSubtab::Tlb) {
-        if point_in_btn(me, app.cache.tlb_subview_stats_btn.get()) {
-            app.cache.hover = Some(CacheHoverTarget::TlbSubviewStats);
-        } else if point_in_btn(me, app.cache.tlb_subview_config_btn.get()) {
-            app.cache.hover = Some(CacheHoverTarget::TlbSubviewConfig);
-        } else if point_in_btn(me, app.cache.tlb_subview_entries_btn.get()) {
-            app.cache.hover = Some(CacheHoverTarget::TlbSubviewEntries);
-        }
-        if matches!(app.cache.tlb_subview, crate::ui::app::TlbSubview::Config) {
-            let hitboxes = app.cache.tlb_config_hitboxes.get();
-            for &field in crate::ui::app::TlbConfigField::all_editable() {
-                let hb = hitboxes[field.hitbox_index()];
-                if point_in_btn(me, hb) {
-                    app.cache.hover = Some(CacheHoverTarget::TlbConfigField(field));
-                }
-            }
-            let presets = app.cache.tlb_preset_btns.get();
-            if let Some(i) = point_in_any_btn(me, &presets) {
-                app.cache.hover = Some(CacheHoverTarget::TlbPreset(i));
-            }
-            if point_in_btn(me, app.cache.tlb_apply_btn.get()) {
-                app.cache.hover = Some(CacheHoverTarget::TlbApply);
-            } else if point_in_btn(me, app.cache.tlb_flush_btn.get()) {
-                app.cache.hover = Some(CacheHoverTarget::TlbFlush);
-            }
-        }
     }
 
     if point_in_btn(me, app.cache.ctrl_results_btn.get()) {
@@ -2065,7 +2054,7 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
-    // Subtab header clicks — Stats | View | Config | TLB
+    // Subtab header clicks — Stats | View | Config
     if point_in_btn(me, app.cache.subtab_stats_btn.get()) {
         app.cache.subtab = CacheSubtab::Stats;
         return;
@@ -2077,64 +2066,6 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     if point_in_btn(me, app.cache.subtab_config_btn.get()) {
         app.cache.subtab = CacheSubtab::Config;
         return;
-    }
-    if point_in_btn(me, app.cache.subtab_tlb_btn.get()) {
-        app.cache.subtab = CacheSubtab::Tlb;
-        // Sync pending config from the live TLB when first opening.
-        app.cache.pending_tlb = app.run.mem.mmu().tlb.config.clone();
-        return;
-    }
-
-    // TLB subview header + buttons
-    if matches!(app.cache.subtab, CacheSubtab::Tlb) {
-        if point_in_btn(me, app.cache.tlb_subview_stats_btn.get()) {
-            app.cache.tlb_subview = crate::ui::app::TlbSubview::Stats;
-            return;
-        }
-        if point_in_btn(me, app.cache.tlb_subview_config_btn.get()) {
-            app.cache.tlb_subview = crate::ui::app::TlbSubview::Config;
-            app.cache.pending_tlb = app.run.mem.mmu().tlb.config.clone();
-            return;
-        }
-        if point_in_btn(me, app.cache.tlb_subview_entries_btn.get()) {
-            app.cache.tlb_subview = crate::ui::app::TlbSubview::Entries;
-            return;
-        }
-        if matches!(app.cache.tlb_subview, crate::ui::app::TlbSubview::Config) {
-            // Field click → start editing.
-            let hitboxes = app.cache.tlb_config_hitboxes.get();
-            for &field in crate::ui::app::TlbConfigField::all_editable() {
-                let hb = hitboxes[field.hitbox_index()];
-                if point_in_btn(me, hb) {
-                    app.commit_tlb_edit();
-                    app.cache.tlb_edit_field = Some(field);
-                    app.cache.tlb_edit_buf = if field.is_numeric() {
-                        app.tlb_field_value_str(field)
-                    } else {
-                        String::new()
-                    };
-                    return;
-                }
-            }
-            // Preset clicks: small=16, med=32, large=64.
-            let presets = app.cache.tlb_preset_btns.get();
-            if let Some(i) = point_in_any_btn(me, &presets) {
-                let entries = [16u16, 32, 64][i];
-                app.cache.pending_tlb.entry_count = entries;
-                app.cache.tlb_config_error = None;
-                app.cache.tlb_config_status = None;
-                return;
-            }
-            if point_in_btn(me, app.cache.tlb_apply_btn.get()) {
-                app.apply_tlb_config();
-                return;
-            }
-            if point_in_btn(me, app.cache.tlb_flush_btn.get()) {
-                app.run.mem.mmu_mut().flush();
-                app.cache.tlb_config_status = Some("TLB flushed".into());
-                return;
-            }
-        }
     }
 
     // Shared controls bar — available in all subtabs
@@ -2290,14 +2221,14 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
     app.cache.config_error = None;
     let extra = app.cache.extra_pending.clone();
     if keep_history {
-        app.cache.config_status = Some("Config applied (history kept).".to_string());
+        app.cache.config_status = Some("Settings applied (history kept).".to_string());
         let old_istats = std::mem::take(&mut app.run.mem.icache.stats);
         let old_dstats = std::mem::take(&mut app.run.mem.dcache.stats);
         app.run.mem.apply_config(icfg, dcfg, extra);
         app.run.mem.icache.stats.history = old_istats.history;
         app.run.mem.dcache.stats.history = old_dstats.history;
     } else {
-        app.cache.config_status = Some("Config applied (stats reset).".to_string());
+        app.cache.config_status = Some("Settings applied (stats reset).".to_string());
         app.run.mem.apply_config(icfg, dcfg, extra);
     }
     app.run.mem.bypass = !app.run.cache_enabled;
@@ -2365,7 +2296,7 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
     }
     app.cache.config_error = None;
     if keep_history {
-        app.cache.config_status = Some("Config applied (history kept).".to_string());
+        app.cache.config_status = Some("Settings applied (history kept).".to_string());
         let old_stats = if extra_idx < app.run.mem.extra_levels.len() {
             Some(std::mem::take(
                 &mut app.run.mem.extra_levels[extra_idx].stats,
@@ -2380,7 +2311,7 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
             }
         }
     } else {
-        app.cache.config_status = Some("Config applied (stats reset).".to_string());
+        app.cache.config_status = Some("Settings applied (stats reset).".to_string());
         if extra_idx < app.run.mem.extra_levels.len() {
             app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
         }
@@ -2390,11 +2321,12 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
     app.cache.stats_scroll = 0;
 }
 
-// ── Config tab mouse ─────────────────────────────────────────────────────────
+// ── Settings tab mouse ───────────────────────────────────────────────────────
 
 fn update_settings_hover(app: &mut App, me: MouseEvent) {
     app.settings.hover_cache_enabled = false;
     app.settings.hover_pipeline_enabled = false;
+    app.settings.hover_vm_enabled = false;
     app.settings.hover_trace_syscalls = false;
     app.settings.hover_run_scope = false;
     app.settings.hover_import_rcfg = false;
@@ -2786,6 +2718,98 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                 app.pipeline.config_cursor = i;
                 return;
             }
+        }
+    }
+}
+
+// ── TLB tab mouse ────────────────────────────────────────────────────────────
+
+fn update_tlb_hover(app: &mut App, me: MouseEvent) {
+    use crate::ui::app::{TlbConfigField, TlbHoverTarget, TlbSubtab};
+
+    app.tlb.hover = None;
+
+    if point_in_btn(me, app.tlb.subtab_stats_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::SubtabStats);
+    } else if point_in_btn(me, app.tlb.subtab_config_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::SubtabConfig);
+    } else if point_in_btn(me, app.tlb.subtab_entries_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::SubtabEntries);
+    } else if point_in_btn(me, app.tlb.subtab_status_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::SubtabStatus);
+    }
+
+    if matches!(app.tlb.subtab, TlbSubtab::Config) {
+        let hitboxes = app.tlb.config_hitboxes.get();
+        for &field in TlbConfigField::all_editable() {
+            let hb = hitboxes[field.hitbox_index()];
+            if point_in_btn(me, hb) {
+                app.tlb.hover = Some(TlbHoverTarget::ConfigField(field));
+            }
+        }
+        let presets = app.tlb.preset_btns.get();
+        if let Some(i) = point_in_any_btn(me, &presets) {
+            app.tlb.hover = Some(TlbHoverTarget::Preset(i));
+        }
+        if point_in_btn(me, app.tlb.apply_btn.get()) {
+            app.tlb.hover = Some(TlbHoverTarget::Apply);
+        } else if point_in_btn(me, app.tlb.flush_btn.get()) {
+            app.tlb.hover = Some(TlbHoverTarget::Flush);
+        }
+    }
+}
+
+fn handle_tlb_click(app: &mut App, me: MouseEvent) {
+    use crate::ui::app::{TlbConfigField, TlbSubtab};
+
+    if point_in_btn(me, app.tlb.subtab_stats_btn.get()) {
+        app.tlb.subtab = TlbSubtab::Stats;
+        return;
+    }
+    if point_in_btn(me, app.tlb.subtab_config_btn.get()) {
+        app.tlb.subtab = TlbSubtab::Config;
+        // Snapshot the live TLB config when entering the editor.
+        app.tlb.pending = app.run.mem.mmu().tlb.config.clone();
+        return;
+    }
+    if point_in_btn(me, app.tlb.subtab_entries_btn.get()) {
+        app.tlb.subtab = TlbSubtab::Entries;
+        return;
+    }
+    if point_in_btn(me, app.tlb.subtab_status_btn.get()) {
+        app.tlb.subtab = TlbSubtab::Status;
+        return;
+    }
+
+    if matches!(app.tlb.subtab, TlbSubtab::Config) {
+        let hitboxes = app.tlb.config_hitboxes.get();
+        for &field in TlbConfigField::all_editable() {
+            let hb = hitboxes[field.hitbox_index()];
+            if point_in_btn(me, hb) {
+                app.commit_tlb_edit();
+                app.tlb.edit_field = Some(field);
+                app.tlb.edit_buf = if field.is_numeric() {
+                    app.tlb_field_value_str(field)
+                } else {
+                    String::new()
+                };
+                return;
+            }
+        }
+        let presets = app.tlb.preset_btns.get();
+        if let Some(i) = point_in_any_btn(me, &presets) {
+            app.apply_tlb_preset(i);
+            app.tlb.config_error = None;
+            app.tlb.config_status = None;
+            return;
+        }
+        if point_in_btn(me, app.tlb.apply_btn.get()) {
+            app.apply_tlb_config();
+            return;
+        }
+        if point_in_btn(me, app.tlb.flush_btn.get()) {
+            app.flush_tlb();
+            return;
         }
     }
 }

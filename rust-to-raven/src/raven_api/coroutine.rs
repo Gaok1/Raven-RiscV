@@ -5,10 +5,11 @@
 //! called [`Coroutine::resume`], keeping the coroutine's stack and registers
 //! alive so the next `resume` continues exactly where it left off.
 //!
-//! Coroutines are cooperative and single-hart: exactly one runs at a time and
+//! Coroutines are cooperative: exactly one runs per resume/suspend chain and
 //! control only moves on an explicit resume/suspend. This is *not* the parallel
 //! [`hart`](crate::raven_api::hardware_thread::hart) machinery — a coroutine
 //! switch is a pure user-space register/stack swap, no `ecall` involved.
+//! Different harts may still drive independent coroutines concurrently.
 //!
 //! `resume(send)` and `suspend(value)` exchange a value of any type `T` in each
 //! direction. The in-flight value is carried as a `Box<T>` — a fixed-size
@@ -44,7 +45,6 @@ extern crate alloc;
 use alloc::alloc::{alloc_zeroed, dealloc};
 use alloc::boxed::Box;
 use core::alloc::Layout;
-use core::cell::UnsafeCell;
 
 // ── Context switch ────────────────────────────────────────────────────────────
 
@@ -130,10 +130,10 @@ enum State {
 }
 
 // Heap-pinned coroutine state. Lives behind a `Box` so its address is stable
-// for the duration of the coroutine (the switch and `CURRENT` hold raw pointers
-// into it). `transfer` is the single slot the in-flight value occupies between
-// resume and suspend; it is a `Box<T>` so the slot is a fixed-size pointer
-// regardless of how big `T` is.
+// for the duration of the coroutine (the switch and initial trampoline hold raw
+// pointers into it). `transfer` is the single slot the in-flight value occupies
+// between resume and suspend; it is a `Box<T>` so the slot is a fixed-size
+// pointer regardless of how big `T` is.
 struct CoroInner<T> {
     ctx: Ctx,
     caller: Ctx,
@@ -144,22 +144,17 @@ struct CoroInner<T> {
     stack_layout: Layout,
 }
 
-// The coroutine currently being resumed, type-erased. A `static` can't be
-// generic, so we store an untyped pointer; the matching `coro_trampoline::<T>`
-// (set up by `resume::<T>` immediately before switching in) casts it back.
-// Cooperative + single-hart, so a plain cell is enough: only the trampoline
-// reads it, synchronously right after the resume that wrote it.
-struct CurrentCell(UnsafeCell<*mut ()>);
-unsafe impl Sync for CurrentCell {}
-static CURRENT: CurrentCell = CurrentCell(UnsafeCell::new(core::ptr::null_mut()));
-
 /// Entered via `ret` from the first switch into a fresh coroutine: `sp` is the
-/// coroutine's stack top and the body has never run. Monomorphized per `T` so
-/// the type-erased `CURRENT` pointer can be recovered.
+/// coroutine's stack top and the body has never run. `resume` primes `s11`
+/// with the heap-pinned `CoroInner<T>` pointer before the first switch; the
+/// trampoline reads it back from that callee-saved register so no global
+/// single-hart slot is needed.
 extern "C" fn coro_trampoline<T>() {
-    // SAFETY: `resume::<T>` stores a live `Box<CoroInner<T>>` pointer into
-    // CURRENT immediately before switching here.
-    let inner = unsafe { *CURRENT.0.get() } as *mut CoroInner<T>;
+    let inner: *mut CoroInner<T>;
+    // SAFETY: `Coroutine::new` stores the `CoroInner<T>` pointer in `s11` for
+    // the first entry, and `_raven_coro_switch` restores that saved register
+    // block before returning here.
+    unsafe { core::arch::asm!("mv {}, s11", out(reg) inner) };
     let mut entry = unsafe { (*inner).entry.take() }.expect("coroutine entry missing");
 
     let mut y = Yielder { inner };
@@ -240,6 +235,7 @@ impl<T: 'static> Coroutine<T> {
         let top = (stack_ptr as usize + size) & !0xf;
         inner.ctx.sp = top as u32;
         inner.ctx.ra = coro_trampoline::<T> as *const () as u32;
+        inner.ctx.s[11] = (&mut *inner as *mut CoroInner<T>) as u32;
 
         Coroutine { inner }
     }
@@ -256,11 +252,6 @@ impl<T: 'static> Coroutine<T> {
         }
         self.inner.transfer = Some(Box::new(send));
         self.inner.state = State::Running;
-
-        let inner_ptr: *mut CoroInner<T> = &mut *self.inner;
-        // SAFETY: single-hart cooperative model; only coro_trampoline::<T> reads
-        // this, and only on the coroutine's first start (right after this).
-        unsafe { *CURRENT.0.get() = inner_ptr as *mut () };
 
         // SAFETY: both contexts live inside the boxed CoroInner; the switch saves
         // our context into `caller` and enters the coroutine.

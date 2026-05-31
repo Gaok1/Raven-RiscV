@@ -302,7 +302,7 @@ pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
             let src = cpu.read(11);
             let len = cpu.read(12) as usize;
             for i in 0..len {
-                let b = mem.load8(src.wrapping_add(i as u32))?;
+                let b = mem.user_load8(src.wrapping_add(i as u32))?;
                 mem.store8(dst.wrapping_add(i as u32), b)?;
             }
             Ok(true)
@@ -311,7 +311,7 @@ pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
             let mut addr = cpu.read(10);
             let mut len: u32 = 0;
             loop {
-                let b = mem.load8(addr)?;
+                let b = mem.user_load8(addr)?;
                 if b == 0 {
                     break;
                 }
@@ -325,8 +325,8 @@ pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
             let mut a = cpu.read(10);
             let mut b = cpu.read(11);
             loop {
-                let ca = mem.load8(a)?;
-                let cb = mem.load8(b)?;
+                let ca = mem.user_load8(a)?;
+                let cb = mem.user_load8(b)?;
                 if ca != cb {
                     cpu.write(10, if ca < cb { (-1i32) as u32 } else { 1 });
                     return Ok(true);
@@ -365,7 +365,7 @@ pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
                 cpu.write(10, LINUX_EINVAL);
                 return Ok(true);
             };
-            if mem.load8(start).is_err() || mem.load8(end - 1).is_err() {
+            if mem.user_load8(start).is_err() || mem.user_load8(end - 1).is_err() {
                 cpu.write(10, LINUX_EFAULT);
                 return Ok(true);
             }
@@ -453,7 +453,7 @@ fn linux_write<B: Bus>(
     let mut bytes = Vec::with_capacity(count);
     for i in 0..count {
         let addr = buf.wrapping_add(i as u32);
-        match mem.load8(addr) {
+        match mem.user_load8(addr) {
             Ok(b) => bytes.push(b),
             Err(e) => {
                 cpu.write(10, LINUX_EFAULT);
@@ -522,10 +522,10 @@ fn linux_getrandom<B: Bus>(
     Ok(true)
 }
 
-fn read_zstr(mem: &impl Bus, mut addr: u32) -> Result<Vec<u8>, FalconError> {
+fn read_zstr<B: Bus>(mem: &mut B, mut addr: u32) -> Result<Vec<u8>, FalconError> {
     let mut bytes = Vec::new();
     loop {
-        let b = mem.load8(addr)?;
+        let b = mem.user_load8(addr)?;
         if b == 0 {
             break;
         }
@@ -739,14 +739,14 @@ fn linux_writev<B: Bus>(
     let mut total: u32 = 0;
     for i in 0..iovcnt {
         let entry = iov_ptr.wrapping_add((i * 8) as u32);
-        let base = match mem.load32(entry) {
+        let base = match mem.user_load32(entry) {
             Ok(v) => v,
             Err(_) => {
                 cpu.write(10, LINUX_EFAULT);
                 return Ok(true);
             }
         };
-        let len = match mem.load32(entry.wrapping_add(4)) {
+        let len = match mem.user_load32(entry.wrapping_add(4)) {
             Ok(v) => v as usize,
             Err(_) => {
                 cpu.write(10, LINUX_EFAULT);
@@ -759,7 +759,7 @@ fn linux_writev<B: Bus>(
 
         let mut bytes = Vec::with_capacity(len);
         for j in 0..len {
-            match mem.load8(base.wrapping_add(j as u32)) {
+            match mem.user_load8(base.wrapping_add(j as u32)) {
                 Ok(b) => bytes.push(b),
                 Err(_) => {
                     cpu.write(10, LINUX_EFAULT);

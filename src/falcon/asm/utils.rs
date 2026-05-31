@@ -161,7 +161,12 @@ pub(crate) fn parse_imm(s: &str) -> Option<i32> {
     if s.starts_with('\'') {
         parse_char_lit(s).ok()
     } else {
-        parse_signed_prefixed_i64(s).and_then(|v| i32::try_from(v).ok())
+        parse_signed_prefixed_i64(s).and_then(|v| {
+            // Accept signed i32 range OR unsigned u32 bit-pattern (e.g. 0x80000001).
+            i32::try_from(v)
+                .ok()
+                .or_else(|| u32::try_from(v).ok().map(|u| u as i32))
+        })
     }
 }
 

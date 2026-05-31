@@ -32,6 +32,9 @@ pub struct TlbEntry {
     pub megapage: bool,
     /// LRU/FIFO age counter — bumped on access (LRU) or install (FIFO).
     pub age: u32,
+    /// Reference bit for the Clock replacement policy. Set on every probe
+    /// hit; cleared by the clock hand as it scans for a victim.
+    pub ref_bit: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +86,10 @@ pub struct Tlb {
     pub entries: Vec<TlbEntry>,
     pub stats: TlbStats,
     age_counter: u32,
+    /// Per-set position of the Clock policy's "hand". Indexed by set index.
+    /// Each entry is `0..associativity` (offset within the set). Resized on
+    /// `reconfigure` so it always matches `num_sets()`.
+    clock_hands: Vec<usize>,
 }
 
 impl Tlb {
@@ -92,11 +99,13 @@ impl Tlb {
         // Pad up so total entries is a multiple of associativity (≥ assoc).
         let n = raw.max(assoc);
         let n = ((n + assoc - 1) / assoc) * assoc;
+        let num_sets = (n / assoc).max(1);
         Self {
             entries: vec![TlbEntry::default(); n],
             stats: TlbStats::default(),
             age_counter: 0,
             config,
+            clock_hands: vec![0; num_sets],
         }
     }
 
@@ -124,9 +133,15 @@ impl Tlb {
     }
 
     fn vpn_set(&self, vpn: u32) -> usize {
-        // Index by vpn[1] (high 10 bits) so a megapage and every 4 KiB page it
-        // covers share the same set — without this, a megapage installed at
-        // vpn1:0 could never be probed via a different vpn0.
+        // Standard 4 KiB indexing: hash the full VPN so 1024 consecutive pages
+        // distribute evenly across sets. Megapages are probed/installed via
+        // [`megapage_vpn_set`] so a single megapage shares a set with the 1 K
+        // 4 KiB pages it covers in the *megapage* direction (vpn>>10).
+        let n = self.num_sets();
+        (vpn as usize) % n
+    }
+
+    fn megapage_vpn_set(&self, vpn: u32) -> usize {
         let n = self.num_sets();
         ((vpn >> 10) as usize) % n
     }
@@ -147,20 +162,42 @@ impl Tlb {
 
     /// Look up an entry for `vpn`/`asid`. Bumps age on LRU/MRU; returns a copy
     /// on hit so callers don't fight the borrow checker against `self.stats`.
+    ///
+    /// Two sets are probed: the 4 KiB-indexed set (`vpn_set`) and the megapage
+    /// set (`megapage_vpn_set`). Real hardware splits these into two arrays;
+    /// we share storage but probe both indices so a 4 KiB hit isn't aliased
+    /// against megapages and vice-versa.
     pub fn probe(&mut self, vpn: u32, asid: u16) -> Option<TlbEntry> {
-        let set_idx = self.vpn_set(vpn);
+        let s4k = self.vpn_set(vpn);
+        if let Some(hit) = self.probe_in_set(s4k, vpn, asid) {
+            return Some(hit);
+        }
+        let smega = self.megapage_vpn_set(vpn);
+        if smega != s4k {
+            if let Some(hit) = self.probe_in_set(smega, vpn, asid) {
+                return Some(hit);
+            }
+        }
+        None
+    }
+
+    fn probe_in_set(&mut self, set_idx: usize, vpn: u32, asid: u16) -> Option<TlbEntry> {
         let range = self.set_range(set_idx);
         for i in range {
             if Self::matches(&self.entries[i], vpn, asid) {
                 self.age_counter = self.age_counter.wrapping_add(1);
-                if matches!(
-                    self.config.replacement,
+                match self.config.replacement {
                     ReplacementPolicy::Lru
-                        | ReplacementPolicy::Mru
-                        | ReplacementPolicy::Lfu
-                        | ReplacementPolicy::Clock
-                ) {
-                    self.entries[i].age = self.age_counter;
+                    | ReplacementPolicy::Mru
+                    | ReplacementPolicy::Lfu => {
+                        self.entries[i].age = self.age_counter;
+                    }
+                    ReplacementPolicy::Clock => {
+                        // Clock: a hit just sets the reference bit. Eviction
+                        // scan will clear it later.
+                        self.entries[i].ref_bit = true;
+                    }
+                    _ => {}
                 }
                 return Some(self.entries[i]);
             }
@@ -173,7 +210,11 @@ impl Tlb {
     /// duplicate behind). Otherwise picks a victim per replacement policy and
     /// counts the eviction.
     pub fn install(&mut self, mut entry: TlbEntry) {
-        let set_idx = self.vpn_set(entry.vpn);
+        let set_idx = if entry.megapage {
+            self.megapage_vpn_set(entry.vpn)
+        } else {
+            self.vpn_set(entry.vpn)
+        };
         let range = self.set_range(set_idx);
         let existing = range
             .clone()
@@ -181,7 +222,7 @@ impl Tlb {
         let target = match existing {
             Some(i) => i,
             None => {
-                let v = self.find_victim(range);
+                let v = self.find_victim(set_idx, range);
                 if self.entries[v].valid {
                     self.stats.evictions += 1;
                 }
@@ -191,10 +232,15 @@ impl Tlb {
         self.age_counter = self.age_counter.wrapping_add(1);
         entry.valid = true;
         entry.age = self.age_counter;
+        // Newly installed entries start with the ref bit set (one free pass
+        // before Clock can evict them).
+        if matches!(self.config.replacement, ReplacementPolicy::Clock) {
+            entry.ref_bit = true;
+        }
         self.entries[target] = entry;
     }
 
-    fn find_victim(&mut self, range: std::ops::Range<usize>) -> usize {
+    fn find_victim(&mut self, set_idx: usize, range: std::ops::Range<usize>) -> usize {
         // Prefer invalid slots.
         for i in range.clone() {
             if !self.entries[i].valid {
@@ -214,21 +260,54 @@ impl Tlb {
                 let n = range.end - range.start;
                 range.start + (self.age_counter as usize % n.max(1))
             }
-            ReplacementPolicy::Clock => range
-                .clone()
-                .min_by_key(|&i| self.entries[i].age)
-                .unwrap_or(range.start),
+            ReplacementPolicy::Clock => {
+                // Second-chance algorithm: walk from the clock hand, skipping
+                // entries with ref_bit=true (clearing it as we go). The first
+                // entry with ref_bit=false is the victim; the hand resumes
+                // just past it next time.
+                let n = (range.end - range.start).max(1);
+                if set_idx >= self.clock_hands.len() {
+                    self.clock_hands.resize(set_idx + 1, 0);
+                }
+                let mut hand = self.clock_hands[set_idx] % n;
+                // At most 2*n steps: one to clear all ref_bits, one to find
+                // a victim. Guaranteed to terminate.
+                for _ in 0..(2 * n) {
+                    let idx = range.start + hand;
+                    if !self.entries[idx].ref_bit {
+                        // Advance hand past the victim for the next call.
+                        self.clock_hands[set_idx] = (hand + 1) % n;
+                        return idx;
+                    }
+                    self.entries[idx].ref_bit = false;
+                    hand = (hand + 1) % n;
+                }
+                // Fallback (should be unreachable): take the slot under the
+                // hand and bump.
+                let idx = range.start + hand;
+                self.clock_hands[set_idx] = (hand + 1) % n;
+                idx
+            }
         }
     }
 
     /// Invalidate every entry whose VPN matches `vaddr` (for `sfence.vma`
-    /// with a non-zero rs1).
+    /// with a non-zero rs1). Checks both the 4 KiB set and the megapage set,
+    /// since a hardware sfence.vma must invalidate either representation.
     pub fn flush_vaddr(&mut self, vaddr: u32) {
         let vpn = vaddr >> 12;
-        let set_idx = self.vpn_set(vpn);
-        for i in self.set_range(set_idx) {
+        let s4k = self.vpn_set(vpn);
+        for i in self.set_range(s4k) {
             if Self::matches(&self.entries[i], vpn, self.entries[i].asid) {
                 self.entries[i].valid = false;
+            }
+        }
+        let smega = self.megapage_vpn_set(vpn);
+        if smega != s4k {
+            for i in self.set_range(smega) {
+                if Self::matches(&self.entries[i], vpn, self.entries[i].asid) {
+                    self.entries[i].valid = false;
+                }
             }
         }
     }
@@ -265,6 +344,7 @@ mod tests {
             dirty: false,
             megapage: false,
             age: 0,
+            ref_bit: false,
         }
     }
 

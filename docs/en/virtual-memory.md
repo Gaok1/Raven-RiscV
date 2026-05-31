@@ -2,9 +2,11 @@
 
 > [Leia em Português](../pt-BR/virtual-memory.md)
 
-Raven implements the RISC-V **Sv32** virtual memory scheme: a 2-level page table walked in software by the CPU's MMU, fronted by a configurable TLB. Translation is **off by default** so legacy programs run unchanged; turn it on from **Settings → Virtual Memory** (also persisted in `.rcfg`).
+Raven implements the RISC-V **Sv32** virtual memory scheme: a 2-level page table walked in software by the CPU's MMU, fronted by a configurable TLB. Translation is **off by default** so programs run unchanged; turn it on from **Settings → Virtual Memory** (also persisted in `.rcfg`).
 
-When enabled, every fetch and every load/store goes through the MMU. M-mode keeps physical addressing always; U-mode goes through translation as soon as `satp.MODE = Sv32`. The TLB has its own subtab inside the **Cache** tab where you can configure size, associativity, replacement policy, hit latency, and miss penalty — and watch hits/misses live.
+When enabled, the simulator enters **standard VM mode**: it automatically installs an identity page map (VA = PA for the full address space) and activates the TLB — so any program, even a simple loop, immediately shows TLB hits and misses with **no setup code required**. The TLB has its own subtab inside the **Cache** tab where you can configure size, associativity, replacement policy, hit latency, and miss penalty — and watch hits/misses live.
+
+If you want to study custom address layouts, page faults, or OS-style privilege transitions, you can still write your own page tables and `csrw satp` — your mapping will replace the auto-installed one automatically.
 
 ---
 
@@ -13,11 +15,18 @@ When enabled, every fetch and every load/store goes through the MMU. M-mode keep
 | Use case | VM on? |
 |----------|--------|
 | Plain RV32IMAF program, single flat memory | off — same behavior as before |
+| Observing TLB activity on any program (standard mode) | **on** |
 | Studying page-table walks, A/D bits, page faults | **on** |
 | Comparing TLB hit/miss penalties across replacement policies | **on** |
 | Running an OS-style kernel (M-mode setup + U-mode user code) | **on** |
 
 The toggle is in `Settings → Virtual Memory`. Default is **off**. With VM off, the MMU is bypassed entirely — no TLB lookups, no walker, no extra cycles.
+
+### Standard mode (auto identity map)
+
+Turning on VM is enough. On every assembly, Raven writes a 1024-entry root page table at the last 4 KiB of RAM where each entry is a **megapage** (4 MiB) with identity mapping and full R/W/X/U permissions. The `satp` CSR is set to Sv32 pointing at that table. From that point every fetch and load/store goes through the TLB.
+
+You can still override any part: write a custom `csrw satp` to switch to your own page table; the auto-installed one is just the starting point.
 
 ---
 
@@ -45,8 +54,10 @@ Translation walks two levels of PTEs starting at `satp.PPN << 12`:
 
 | Mode | Notation | Behavior under `satp.MODE = Sv32` |
 |------|----------|-----------------------------------|
-| Machine | M | Always physical, MMU bypassed |
+| Machine | M | Physical by default; translated in standard mode (didactic override) |
 | User    | U | Always goes through translation; `U=0` PTEs fault |
+
+> **Standard mode note:** In real RISC-V hardware, M-mode always uses physical addresses and ignores `satp`. Raven's standard VM mode deliberately overrides this so that programs written in M-mode (the default) also produce TLB activity — which is the common case for didactic examples. When you write your own page tables and drop into U-mode via `mret`, the behavior matches hardware exactly.
 
 A trap (page fault, ecall, ebreak) switches the CPU to M-mode and saves the previous mode in `mstatus.MPP`. `mret` restores the saved mode and resumes at `mepc`.
 
@@ -106,27 +117,108 @@ In **pipeline mode** the MMU stall lands in `if_stall_cycles` or `mem_stall_cycl
 
 ---
 
-## A minimal U-mode boot sequence
+## PTE format
+
+Each 32-bit PTE stores the **Physical Page Number** in the upper bits and flags in the lower bits:
+
+```
+ 31                  10  9  8  7  6  5  4  3  2  1  0
+┌───────────────────────┬────┬──┬──┬──┬──┬──┬──┬──┬──┐
+│        PPN (22 b)     │RSW │ D│ A│ G│ U│ X│ W│ R│ V│
+└───────────────────────┴────┴──┴──┴──┴──┴──┴──┴──┴──┘
+```
+
+**Encoding formula:**
+
+```
+PTE value = (ppn << 10) | flags
+```
+
+Where `ppn = physical_address >> 12` (physical page number of the target page).
+
+| PTE type | R W X | Meaning |
+|----------|-------|---------|
+| Pointer (non-leaf) | 0 0 0 | Points to the next-level table |
+| Leaf | at least one set | Maps a page; subject to permission checks |
+
+**Common flag combinations:**
+
+| Hex | Bits set | Typical use |
+|-----|----------|-------------|
+| `0x01` | V | Non-leaf pointer to next-level table |
+| `0x0F` | R\|W\|X\|V | Kernel code+data page (no U) |
+| `0x1F` | R\|W\|X\|U\|V | User code+data page |
+| `0x17` | R\|X\|U\|V | User read-execute (no W) |
+
+> **Common mistake:** do not confuse the physical *address* of a table with the PTE *value* that points to it.
+> A leaf PT at physical address `0x2000` has `ppn = 0x2000 >> 12 = 2`, so the non-leaf PTE value is
+> `(2 << 10) | 0x1 = 0x801` — **not** `0x2001`.
+
+---
+
+## Standard mode — minimal observable example
+
+With VM enabled, **no setup code is needed**. This is enough to see TLB activity:
 
 ```asm
-# Build a single 4 KiB mapping VA 0x10_0000 → PA 0x8_0000 (R|W|U), then drop
-# into U-mode at the freshly-mapped page.
+.text
+    li   t0, 0
+    li   t1, 100
+loop:
+    addi t0, t0, 1
+    blt  t0, t1, loop   # every load/store and fetch hits the TLB
+    li   a0, 0
+    li   a7, 93
+    ecall               # exit
+```
+
+Enable **Settings → Virtual Memory** before assembling and watch the TLB Stats subtab fill up.
+
+---
+
+## Custom page tables (advanced)
+
+If you want to study custom address layouts, page faults, or a real OS-style privilege transition, you can set up your own page tables. Write `csrw satp` to install them; the TLB is flushed automatically and your mapping takes over.
+
+```asm
+# Maps VA 0x0000 → PA 0x0000 (R|W|X|U, 4 KiB), then drops into U-mode.
+#
+# Memory layout (chosen to avoid overlap with code at 0x0000):
+#   0x1000 — root page table   (root PT: PPN = 1)
+#   0x2000 — leaf page table   (leaf PT: PPN = 2)
 
 .text
 boot:
-    # ... build root + leaf PTEs in RAM (see tests/mmu_traps.rs for the layout)
+    # ── 1. Write root PTE ──────────────────────────────────────────────
+    # Non-leaf pointer: PPN=2 (leaf PT @ 0x2000), V=1
+    # Value = (2 << 10) | 0x1 = 0x801
+    li   t0, 0x801
+    li   t1, 0x1000          # root PT lives at PA 0x1000
+    sw   t0, 0(t1)           # root_pt[VPN1=0] = 0x801
 
-    li   t0, 0x80000000     # satp.MODE = Sv32 (bit 31) | PPN of root PT
-    la   t1, root_pt
-    srli t1, t1, 12
-    or   t0, t0, t1
-    csrw satp, t0           # writes here flush the TLB
+    # ── 2. Write leaf PTE ──────────────────────────────────────────────
+    # Leaf: PPN=0 (PA 0x0000), R|W|X|U|V = 0x1F
+    # Value = (0 << 10) | 0x1F = 0x1F
+    li   t2, 0x1F
+    li   t3, 0x2000          # leaf PT lives at PA 0x2000
+    sw   t2, 0(t3)           # leaf_pt[VPN0=0] = 0x1F
 
+    # ── 3. Install satp: Sv32 (bit 31), ASID=0, root PPN=1 ────────────
+    li   t0, 0x80000001      # bit31=Sv32 | PPN=1
+    csrw satp, t0            # writing satp flushes the TLB
+
+    # ── 4. Set up mret to drop into U-mode ────────────────────────────
     la   t0, user_entry
     csrw mepc, t0
-    li   t0, 0              # mstatus.MPP = U
+    li   t0, 0               # mstatus.MPP = 0b00 = U
     csrw mstatus, t0
-    mret                    # drop to U-mode at user_entry
+    mret                     # privilege → U, pc → user_entry
+
+user_entry:
+    # Translation active (satp=Sv32, priv=U) — hardware-accurate behavior.
+    # Every fetch and load/store goes through the TLB.
+    nop
+    halt
 ```
 
 The end-to-end shape — PTE layout, fault routing through `mtvec`, `mret` back to U-mode — is exercised in `tests/mmu_traps.rs`.

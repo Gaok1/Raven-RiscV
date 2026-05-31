@@ -12,17 +12,19 @@ use super::{AccessType, PageFault, PrivMode};
 use crate::falcon::memory::Ram;
 
 /// Sv32 PTE bit layout (32 bits):
-///   bit 0 : V (valid)
-///   bit 1 : R
-///   bit 2 : W
-///   bit 3 : X
-///   bit 4 : U
-///   bit 5 : G (global)
-///   bit 6 : A (accessed)
+///   bits 31-10: PPN (22 bits, combined PPN[1]:PPN[0])  ← `paddr >> 12`
+///   bits  9- 8: RSW (software reserved)
 ///   bit 7 : D (dirty)
-///   bits 9-8  : RSW (software reserved)
-///   bits 19-10: PPN[0]
-///   bits 31-20: PPN[1]
+///   bit 6 : A (accessed)
+///   bit 5 : G (global)
+///   bit 4 : U (user-accessible)
+///   bit 3 : X (execute)
+///   bit 2 : W (write)
+///   bit 1 : R (read)
+///   bit 0 : V (valid)
+///
+/// Encoding: `PTE = (ppn << 10) | flags`, where `ppn = physical_address >> 12`.
+/// A non-leaf (pointer) PTE has R=W=X=0 and V=1; a leaf has at least one of R/W/X set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pte {
     pub raw: u32,

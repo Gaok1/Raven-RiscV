@@ -56,7 +56,7 @@ CORO_OBJ_IM  = lib/coro_switch.im.o
 CORO_OBJ_IMF = lib/coro_switch.imf.o
 
 # ─── Examples ────────────────────────────────────────────────────────────────
-EXAMPLES = $(TARGET_DIR)/array_bench.elf $(TARGET_DIR)/jit_demo.elf $(TARGET_DIR)/float-demo.elf $(TARGET_DIR)/fmt_demo.elf $(TARGET_DIR)/coro_demo.elf
+EXAMPLES = $(TARGET_DIR)/array_bench.elf $(TARGET_DIR)/jit_demo.elf $(TARGET_DIR)/float-demo.elf $(TARGET_DIR)/fmt_demo.elf $(TARGET_DIR)/coro_demo.elf $(TARGET_DIR)/coro_hart_demo.elf
 
 .PHONY: all examples lib clean
 .SECONDARY:                # don't delete intermediate .o files
@@ -109,6 +109,9 @@ $(TARGET_DIR)/fmt_demo.elf: examples/fmt_demo.c $(LIB_IM) $(CRT0_OBJ_IM) | $(TAR
 	$(CC) $(CFLAGS_IM) $(LFLAGS) -o $@ $< $(CRT0_OBJ_IM) -Llib -lraven
 
 $(TARGET_DIR)/coro_demo.elf: examples/coro_demo.c $(LIB_IM) $(CRT0_OBJ_IM) | $(TARGET_DIR)
+	$(CC) $(CFLAGS_IM) $(LFLAGS) -o $@ $< $(CRT0_OBJ_IM) -Llib -lraven
+
+$(TARGET_DIR)/coro_hart_demo.elf: examples/coro_hart_demo.c $(LIB_IM) $(CRT0_OBJ_IM) | $(TARGET_DIR)
 	$(CC) $(CFLAGS_IM) $(LFLAGS) -o $@ $< $(CRT0_OBJ_IM) -Llib -lraven
 
 # ─── User programs: rv32imf (ilp32f, hardware float) ─────────────────────────

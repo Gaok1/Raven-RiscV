@@ -253,6 +253,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     let mut mem = CacheController::new(icfg, dcfg, extra_cfgs, mem_size);
     mem.bypass = !cache_enabled;
     mem.mmu.enabled = vm_enabled;
+    mem.mmu.force_translate = vm_enabled;
     let mut console = Console::default();
     let mut captured_stdout: Vec<u8> = Vec::new();
 
@@ -289,6 +290,16 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
 
     mem.invalidate_all();
     mem.reset_stats();
+
+    // Standard VM mode: auto-install identity megapage map so programs see
+    // TLB activity without needing manual page-table setup code.
+    if vm_enabled {
+        let root_pa = (mem_size as u32).saturating_sub(4096);
+        crate::falcon::mmu::Mmu::install_identity_megapages(&mut mem.ram, root_pa);
+        let satp_val = (1u32 << 31) | (root_pa >> 12);
+        cpu.satp = satp_val;
+        mem.mmu.satp = crate::falcon::mmu::Satp::new(satp_val);
+    }
 
     // The JIT does not yet invalidate translations on `satp` writes or
     // `sfence.vma`, so any virtual-memory mapping change would silently keep

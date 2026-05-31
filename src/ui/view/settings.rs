@@ -1,4 +1,4 @@
-// ui/view/settings.rs — Config tab renderer
+// ui/view/settings.rs — Settings tab renderer
 use ratatui::{
     Frame,
     prelude::*,
@@ -19,7 +19,7 @@ pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
         .title(Span::styled(
-            " Config ",
+            " Settings ",
             Style::default().fg(theme::ACCENT).bold(),
         ));
 
