@@ -76,6 +76,7 @@ pub(super) fn decode_system(word: u32) -> Result<Instruction, FalconError> {
         0x0010_0073 => return Ok(Instruction::Ebreak),
         0x0020_0073 => return Ok(Instruction::Halt),
         0x3020_0073 => return Ok(Instruction::Mret),
+        0x1020_0073 => return Ok(Instruction::Sret),
         // Common `unimp` trap word seen in debug flows. Treat it as a
         // side-effect-free barrier so execution can fall through.
         0xC000_1073 => return Ok(Instruction::Fence),

@@ -1526,6 +1526,11 @@ fn stage_wb(
             cpu.instr_count += 1;
             return true;
         }
+        Instruction::Sret => {
+            crate::falcon::exec::apply_sret(cpu, mem);
+            cpu.instr_count += 1;
+            return true;
+        }
         Instruction::SfenceVma { rs1, .. } => {
             if rs1 == 0 {
                 mem.tlb_flush();

@@ -775,6 +775,7 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         Csrrsi { rd, uimm, csr } => format!("csrrsi {}, 0x{csr:03x}, {uimm}", reg_name(rd)),
         Csrrci { rd, uimm, csr } => format!("csrrci {}, 0x{csr:03x}, {uimm}", reg_name(rd)),
         Mret => "mret".into(),
+        Sret => "sret".into(),
         SfenceVma { rs1, rs2 } => {
             format!("sfence.vma {}, {}", reg_name(rs1), reg_name(rs2))
         }

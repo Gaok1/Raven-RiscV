@@ -13,8 +13,16 @@ use crate::ui::Console;
 /// Read a CSR by number. Unknown CSRs read as zero — pragmatic for Phase 2.
 pub fn csr_read(cpu: &Cpu, csr: u16) -> u32 {
     match csr {
+        0x100 => cpu.sstatus,
+        0x105 => cpu.stvec,
+        0x140 => cpu.sscratch,
+        0x141 => cpu.sepc,
+        0x142 => cpu.scause,
+        0x143 => cpu.stval,
         0x180 => cpu.satp,
         0x300 => cpu.mstatus,
+        0x302 => cpu.medeleg,
+        0x303 => cpu.mideleg,
         0x305 => cpu.mtvec,
         0x341 => cpu.mepc,
         0x342 => cpu.mcause,
@@ -31,7 +39,15 @@ pub fn csr_write<B: Bus>(cpu: &mut Cpu, mem: &mut B, csr: u16, val: u32) {
             cpu.satp = val;
             mem.set_satp(val);
         }
+        0x100 => cpu.sstatus = val,
+        0x105 => cpu.stvec = val,
+        0x140 => cpu.sscratch = val,
+        0x141 => cpu.sepc = val,
+        0x142 => cpu.scause = val,
+        0x143 => cpu.stval = val,
         0x300 => cpu.mstatus = val,
+        0x302 => cpu.medeleg = val,
+        0x303 => cpu.mideleg = val,
         0x305 => cpu.mtvec = val,
         0x341 => cpu.mepc = val,
         0x342 => cpu.mcause = val,
@@ -92,6 +108,22 @@ pub fn apply_mret<B: Bus>(cpu: &mut Cpu, mem: &mut B) {
         | (1 << 7);
 }
 
+/// Execute `sret`: restore `pc = sepc` and `priv_mode = sstatus.SPP`.
+/// SPP is a single bit (8): 1 → S, 0 → U (supervisor cannot return to M).
+/// Per the privileged spec we also set SIE←SPIE, SPIE←1, SPP←U(=0).
+pub fn apply_sret<B: Bus>(cpu: &mut Cpu, mem: &mut B) {
+    let spp = (cpu.sstatus >> 8) & 0x1;
+    let new_mode = if spp == 1 { PrivMode::S } else { PrivMode::U };
+    cpu.priv_mode = new_mode;
+    mem.set_priv_mode(new_mode);
+    cpu.pc = cpu.sepc;
+    // sstatus: SIE ← SPIE; SPIE ← 1; SPP ← U(=0).
+    let spie = (cpu.sstatus >> 5) & 0x1;
+    cpu.sstatus = (cpu.sstatus & !((1 << 1) | (1 << 5) | (1 << 8)))
+        | (spie << 1)
+        | (1 << 5);
+}
+
 pub fn step<B: Bus>(
     cpu: &mut Cpu,
     mem: &mut B,
@@ -122,6 +154,32 @@ pub fn handle_trap<B: Bus>(
     tval: u32,
     vaddr: u32,
 ) -> Result<bool, FalconError> {
+    // Trap delegation (Phase C): a trap taken in S- or U-mode whose cause bit is
+    // set in `medeleg` is handled by the supervisor instead of machine mode.
+    // M-mode traps are never delegated (it is the highest privilege). When the
+    // cause is delegated we vector through `stvec` and save into the s* CSRs.
+    if cpu.priv_mode != PrivMode::M && cause < 32 && (cpu.medeleg >> cause) & 1 == 1 {
+        cpu.sepc = entry_pc;
+        cpu.scause = cause;
+        cpu.stval = tval;
+        if cpu.stvec == 0 {
+            console.push_error(format!(
+                "delegated trap (no stvec handler): cause={cause} tval=0x{tval:08X} vaddr=0x{vaddr:08X} pc=0x{entry_pc:08X}"
+            ));
+            return Ok(false);
+        }
+        // sstatus: SPP ← prior priv (S=1, U=0); SPIE ← SIE; SIE ← 0.
+        let spp = if cpu.priv_mode == PrivMode::S { 1 } else { 0 };
+        let sie = (cpu.sstatus >> 1) & 1;
+        cpu.sstatus = (cpu.sstatus & !((1 << 1) | (1 << 5) | (1 << 8)))
+            | (spp << 8)
+            | (sie << 5);
+        cpu.priv_mode = PrivMode::S;
+        mem.set_priv_mode(PrivMode::S);
+        cpu.pc = cpu.stvec & !0x3;
+        return Ok(true);
+    }
+
     // Always record the trap CSRs — even when there is no installed handler,
     // a debugger or post-mortem read of mepc/mcause/mtval must see the cause.
     cpu.mepc = entry_pc;
@@ -332,6 +390,10 @@ fn step_inner<B: Bus>(
         }
         Instruction::Mret => {
             apply_mret(cpu, mem);
+            return Ok(true);
+        }
+        Instruction::Sret => {
+            apply_sret(cpu, mem);
             return Ok(true);
         }
         Instruction::SfenceVma { rs1, .. } => {

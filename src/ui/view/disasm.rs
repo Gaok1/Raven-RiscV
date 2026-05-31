@@ -192,6 +192,7 @@ fn pretty_instr(i: &falcon::instruction::Instruction) -> String {
             format!("csrrci {}, {}, {uimm}", reg_name(rd), csr_name(csr))
         }
         Mret => "mret".to_string(),
+        Sret => "sret".to_string(),
         SfenceVma { rs1, rs2 } => {
             format!("sfence.vma {}, {}", reg_name(rs1), reg_name(rs2))
         }
