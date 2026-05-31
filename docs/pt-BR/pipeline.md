@@ -1,6 +1,6 @@
 # Simulação de pipeline
 
-O Raven inclui um simulador de pipeline educacional ciclo a ciclo para RV32I/M mais as extensões Falcon já suportadas pelo projeto. O objetivo não é apenas executar código, mas tornar visível *por que* uma instrução avançou, parou, foi descartada ou recebeu um valor encaminhado.
+O Raven inclui um simulador de pipeline educacional ciclo a ciclo para RV32I/M mais as extensões de ensino do Raven. O objetivo não é apenas executar código, mas tornar visível *por que* uma instrução avançou, parou, foi descartada ou recebeu um valor encaminhado.
 
 Este documento descreve o modelo atual implementado na aba Pipeline da TUI.
 

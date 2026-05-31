@@ -101,7 +101,7 @@ Raven implements just enough Zicsr + privileged ops to drive Sv32:
 | `scause`| `0x142` | Delegated trap cause |
 | `stval` | `0x143` | Delegated trap value (faulting vaddr) |
 
-> Raven models `sstatus` as its own register rather than the hardware-accurate masked alias of `mstatus`. This is a deliberate pedagogical simplification: it keeps the delegation path easy to read at the cost of the shared-bit aliasing real hardware performs.
+> On real RISC-V hardware, `sstatus` is a restricted *view* of `mstatus` — both names read and write the same shared bits. Here it behaves as an independent register instead. This is a deliberate pedagogical simplification: it keeps the delegation path easy to follow, without the shared-bit aliasing real hardware performs.
 
 Instructions: `csrrw / csrrs / csrrc` (and the `i` immediate variants), `mret`, `sret`, `sfence.vma`. Writing `satp` flushes the TLB; `sfence.vma` also flushes (ignoring its `rs1`/`rs2` filters in this release).
 
@@ -234,7 +234,7 @@ user_entry:
     halt
 ```
 
-The end-to-end shape — PTE layout, fault routing through `mtvec`, `mret` back to U-mode — is exercised in `tests/mmu_traps.rs`.
+The end-to-end shape — PTE layout, fault routing through `mtvec`, `mret` back to U-mode — all fits together exactly as laid out above: build the tables, point `satp` at the root, then drop into U-mode where every fetch and load/store is translated.
 
 ---
 
@@ -249,7 +249,7 @@ This unlocks the classic **demand-paging** pattern:
 3. The handler reads `stval` (the faulting address), installs the missing PTE, and runs `sfence.vma` to drop any stale TLB entry.
 4. `sret` returns to `sepc` — the faulting instruction re-executes and now **succeeds**.
 
-> **⚠ Walker / cache coherence.** Raven's page-table walker reads PTEs **directly from RAM** and is *not* coherent with the write-back D-cache. A handler that writes a PTE with a normal `sw` leaves it sitting in the cache, so the retried walk still sees the old (empty) entry and faults forever. For demand-paging programs, **disable the cache** (Cache tab) or switch the D-cache to **write-through** so the handler's store reaches RAM before the walk re-runs. (The `tests/mmu_traps.rs` demand-paging test uses a write-through D-cache for exactly this reason.)
+> **⚠ Walker / cache coherence.** The page-table walk reads PTEs **directly from RAM**, while a write-back D-cache may hold a freshly stored value without having written it out yet. So a handler that writes a PTE with a normal `sw` can leave that PTE sitting in the cache: the retried walk still reads the old (empty) entry from RAM and faults forever. For demand-paging programs, **disable the cache** (Cache tab) or switch the D-cache to **write-through** so the handler's store reaches RAM before the walk re-runs.
 
 ### Setup (in the M-mode boot code)
 
@@ -276,7 +276,7 @@ page_fault_handler:
     sret                        # return to sepc — the faulting access retries
 ```
 
-A complete, runnable round trip — boot maps the code/handler/page-table pages, drops into U-mode, faults on an unmapped page, the handler maps it, `sfence.vma`, `sret`, and the retried load reads the freshly mapped data — is in `tests/mmu_traps.rs::demand_paging_end_to_end`. Two layout rules from that test are worth repeating:
+A complete round trip looks like this: boot maps the code/handler/page-table pages, drops into U-mode, faults on an unmapped page, the handler maps it, runs `sfence.vma`, `sret`, and the retried load reads the freshly mapped data. Two layout rules from this pattern are worth repeating:
 
 - The **handler's code and the page-table pages must be mapped non-`U`** (kernel-only), because S-mode cannot touch `U=1` pages (`SUM` is not modeled).
 - The handler edits the page table *under translation*, so the leaf-table page needs its own identity (`VA = PA`) mapping — the simulator stand-in for a kernel direct map.

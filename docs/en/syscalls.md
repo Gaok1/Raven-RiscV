@@ -293,7 +293,7 @@ Time is approximated at 10 ns per instruction (100 MHz equivalent).
 
 ---
 
-## Falcon teaching extensions (syscall 1000+)
+## Raven teaching extensions (syscall 1000+)
 
 These are RAVEN-specific syscalls designed for classroom use. They are higher
 level than the Linux ABI equivalents and need no strlen loop or fd argument.
