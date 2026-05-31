@@ -41,6 +41,63 @@ pub struct PageFault {
     pub vaddr: u32,
 }
 
+/// How virtual memory behaves, as chosen by the user.
+///
+/// The MMU itself only knows two booleans (`enabled`, `force_translate`); this
+/// enum is the human-facing selector that maps onto them:
+///   - `Off`      → `enabled=false`                  (pure identity, TLB untouched)
+///   - `Didactic` → `enabled=true,  force_translate=true`  (M-mode also translates,
+///                                                    so any program shows TLB activity)
+///   - `Manual`   → `enabled=true,  force_translate=false` (real RISC-V semantics:
+///                                                    M-mode bypasses; the program
+///                                                    drives `satp` + page tables —
+///                                                    required for demand paging)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum VmMode {
+    #[default]
+    Off,
+    Didactic,
+    Manual,
+}
+
+impl VmMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VmMode::Off => "OFF",
+            VmMode::Didactic => "DIDACTIC",
+            VmMode::Manual => "MANUAL",
+        }
+    }
+
+    /// Cycle for the Settings selector: Off → Didactic → Manual → Off.
+    pub fn cycle(self) -> Self {
+        match self {
+            VmMode::Off => VmMode::Didactic,
+            VmMode::Didactic => VmMode::Manual,
+            VmMode::Manual => VmMode::Off,
+        }
+    }
+
+    /// Reconstruct the mode from the run-state booleans (`enabled`, `manual`),
+    /// where `manual` is the inverse of `force_translate`.
+    pub fn from_user(enabled: bool, manual: bool) -> Self {
+        match (enabled, manual) {
+            (false, _) => VmMode::Off,
+            (true, false) => VmMode::Didactic,
+            (true, true) => VmMode::Manual,
+        }
+    }
+
+    /// `(enabled, force_translate)` engine flags for this mode.
+    pub fn flags(self) -> (bool, bool) {
+        match self {
+            VmMode::Off => (false, false),
+            VmMode::Didactic => (true, true),
+            VmMode::Manual => (true, false),
+        }
+    }
+}
+
 pub struct Mmu {
     pub tlb: Tlb,
     pub satp: Satp,

@@ -16,6 +16,7 @@ use crate::ui::theme;
 
 mod config;
 mod entries;
+mod page_tree;
 mod stats;
 mod status;
 
@@ -31,6 +32,7 @@ pub(super) fn render_tlb_tab(f: &mut Frame, area: Rect, app: &App) {
         TlbSubtab::Config => config::render_config(f, layout[1], app),
         TlbSubtab::Entries => entries::render_entries(f, layout[1], app),
         TlbSubtab::Status => status::render_status(f, layout[1], app),
+        TlbSubtab::PageTree => page_tree::render_page_tree(f, layout[1], app),
     }
 }
 
@@ -50,6 +52,10 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let status_style = btn_style(
         matches!(app.tlb.subtab, TlbSubtab::Status),
         matches!(app.tlb.hover, Some(TlbHoverTarget::SubtabStatus)),
+    );
+    let tree_style = btn_style(
+        matches!(app.tlb.subtab, TlbSubtab::PageTree),
+        matches!(app.tlb.hover, Some(TlbHoverTarget::SubtabPageTree)),
     );
 
     let block = Block::default()
@@ -75,6 +81,10 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     x += "vm".len() as u16;
     let status_x1 = x;
     x += 3;
+    let tree_x0 = x;
+    x += "tree".len() as u16;
+    let tree_x1 = x;
+    x += 3;
     let config_x0 = x;
     x += "settings".len() as u16;
     let config_x1 = x;
@@ -86,14 +96,18 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     app.tlb
         .subtab_status_btn
         .set((row_y, status_x0, status_x1));
+    app.tlb
+        .subtab_page_tree_btn
+        .set((row_y, tree_x0, tree_x1));
 
+    use crate::falcon::mmu::VmMode;
     let active = translation_active(app);
-    let chip_text = if !app.run.vm_enabled {
-        "vm=off (toggle in Settings)"
-    } else if active {
-        "vm=on · translating"
-    } else {
-        "vm=on · inactive (satp=Bare or priv=M)"
+    let chip_text = match (app.vm_mode(), active) {
+        (VmMode::Off, _) => "vm=off (toggle in Settings)",
+        (VmMode::Didactic, true) => "vm=didactic · translating",
+        (VmMode::Didactic, false) => "vm=didactic · inactive (satp=Bare)",
+        (VmMode::Manual, true) => "vm=manual · translating",
+        (VmMode::Manual, false) => "vm=manual · inactive (satp=Bare or priv=M)",
     };
     let chip_color = if active {
         theme::RUNNING
@@ -109,6 +123,8 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("entries", entries_style),
         Span::raw("   "),
         Span::styled("vm", status_style),
+        Span::raw("   "),
+        Span::styled("tree", tree_style),
         Span::raw("   "),
         Span::styled("settings", config_style),
         Span::raw("   "),
@@ -126,7 +142,10 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 pub(super) fn translation_active(app: &App) -> bool {
     use crate::falcon::mmu::{PrivMode, SatpMode};
     let mmu = app.run.mem.mmu();
-    app.run.vm_enabled && mmu.satp.mode() == SatpMode::Sv32 && mmu.priv_mode != PrivMode::M
+    // Mirror `Mmu::translate`: in Didactic mode (force_translate) even M-mode
+    // translates, so the priv-level gate only applies otherwise.
+    let priv_ok = mmu.priv_mode != PrivMode::M || mmu.force_translate;
+    app.run.vm_enabled && mmu.satp.mode() == SatpMode::Sv32 && priv_ok
 }
 
 fn btn_style(active: bool, hovered: bool) -> Style {

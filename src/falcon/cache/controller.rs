@@ -148,6 +148,12 @@ impl CacheController {
         &mut self.mmu
     }
 
+    /// Read-only access to the underlying RAM. The page-table tree view uses
+    /// this to walk PTEs for display without mutating anything.
+    pub fn ram(&self) -> &Ram {
+        &self.ram
+    }
+
     /// Mutable access to the underlying RAM. Tests use this to preload page
     /// tables before flipping `vm_enabled`.
     pub fn ram_mut(&mut self) -> &mut Ram {

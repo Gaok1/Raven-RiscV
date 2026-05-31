@@ -174,10 +174,26 @@ impl App {
         self.ensure_visible_tab();
     }
 
+    /// The user-facing VM mode, reconstructed from the engine flags.
+    pub(in crate::ui) fn vm_mode(&self) -> crate::falcon::mmu::VmMode {
+        crate::falcon::mmu::VmMode::from_user(self.run.vm_enabled, self.run.vm_manual)
+    }
+
+    /// Backward-compatible on/off entry point. `true` selects Didactic (the
+    /// classic "VM on" flavor); `false` selects Off.
     pub(in crate::ui) fn set_vm_enabled(&mut self, enabled: bool) {
+        use crate::falcon::mmu::VmMode;
+        self.set_vm_mode(if enabled { VmMode::Didactic } else { VmMode::Off });
+    }
+
+    /// Select the VM mode (Off / Didactic / Manual) and push the derived engine
+    /// flags into the MMU.
+    pub(in crate::ui) fn set_vm_mode(&mut self, mode: crate::falcon::mmu::VmMode) {
+        let (enabled, force_translate) = mode.flags();
         self.run.vm_enabled = enabled;
+        self.run.vm_manual = matches!(mode, crate::falcon::mmu::VmMode::Manual);
         self.run.mem.mmu.enabled = enabled;
-        self.run.mem.mmu.force_translate = enabled;
+        self.run.mem.mmu.force_translate = force_translate;
         if !enabled {
             // Drop all cached translations so re-enabling starts from a clean
             // slate (no stale PA mappings).

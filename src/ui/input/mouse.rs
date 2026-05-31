@@ -2453,7 +2453,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 
     let (vm_y, _, _) = app.settings.bool_btn_vm_rect.get();
     if me.row == vm_y {
-        app.set_vm_enabled(!app.run.vm_enabled);
+        app.set_vm_mode(app.vm_mode().cycle());
         app.settings.selected = SETTINGS_ROW_VM_ENABLED;
         return;
     }
@@ -2737,6 +2737,8 @@ fn update_tlb_hover(app: &mut App, me: MouseEvent) {
         app.tlb.hover = Some(TlbHoverTarget::SubtabEntries);
     } else if point_in_btn(me, app.tlb.subtab_status_btn.get()) {
         app.tlb.hover = Some(TlbHoverTarget::SubtabStatus);
+    } else if point_in_btn(me, app.tlb.subtab_page_tree_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::SubtabPageTree);
     }
 
     if matches!(app.tlb.subtab, TlbSubtab::Config) {
@@ -2778,6 +2780,10 @@ fn handle_tlb_click(app: &mut App, me: MouseEvent) {
     }
     if point_in_btn(me, app.tlb.subtab_status_btn.get()) {
         app.tlb.subtab = TlbSubtab::Status;
+        return;
+    }
+    if point_in_btn(me, app.tlb.subtab_page_tree_btn.get()) {
+        app.tlb.subtab = TlbSubtab::PageTree;
         return;
     }
 

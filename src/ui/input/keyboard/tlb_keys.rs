@@ -14,7 +14,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             app.tlb.subtab = match app.tlb.subtab {
                 TlbSubtab::Stats => TlbSubtab::Entries,
                 TlbSubtab::Entries => TlbSubtab::Status,
-                TlbSubtab::Status => TlbSubtab::Config,
+                TlbSubtab::Status => TlbSubtab::PageTree,
+                TlbSubtab::PageTree => TlbSubtab::Config,
                 TlbSubtab::Config => TlbSubtab::Stats,
             };
             // Snapshot pending config when entering Config.
@@ -35,6 +36,22 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             let total = app.run.mem.mmu().tlb.entries.len();
             let next = app.tlb.entries_scroll.saturating_add(1);
             app.tlb.entries_scroll = next.min(total.saturating_sub(1));
+            true
+        }
+        KeyCode::Up if matches!(app.tlb.subtab, TlbSubtab::PageTree) => {
+            app.tlb.page_tree_scroll = app.tlb.page_tree_scroll.saturating_sub(1);
+            true
+        }
+        KeyCode::Down if matches!(app.tlb.subtab, TlbSubtab::PageTree) => {
+            app.tlb.page_tree_scroll = app.tlb.page_tree_scroll.saturating_add(1);
+            true
+        }
+        KeyCode::PageUp if matches!(app.tlb.subtab, TlbSubtab::PageTree) => {
+            app.tlb.page_tree_scroll = app.tlb.page_tree_scroll.saturating_sub(10);
+            true
+        }
+        KeyCode::PageDown if matches!(app.tlb.subtab, TlbSubtab::PageTree) => {
+            app.tlb.page_tree_scroll = app.tlb.page_tree_scroll.saturating_add(10);
             true
         }
         _ => false,

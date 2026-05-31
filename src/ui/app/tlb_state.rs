@@ -13,6 +13,8 @@ pub(crate) enum TlbSubtab {
     Config,
     Entries,
     Status,
+    /// Live tree of the Sv32 page table rooted at `satp.ppn`, read from RAM.
+    PageTree,
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -83,6 +85,7 @@ pub(crate) enum TlbHoverTarget {
     SubtabConfig,
     SubtabEntries,
     SubtabStatus,
+    SubtabPageTree,
     ConfigField(TlbConfigField),
     Preset(usize),
     Apply,
@@ -96,6 +99,7 @@ pub(crate) struct TlbState {
     pub(crate) subtab_config_btn: std::cell::Cell<(u16, u16, u16)>,
     pub(crate) subtab_entries_btn: std::cell::Cell<(u16, u16, u16)>,
     pub(crate) subtab_status_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) subtab_page_tree_btn: std::cell::Cell<(u16, u16, u16)>,
     pub(crate) pending: TlbConfig,
     pub(crate) config_hitboxes: std::cell::Cell<[(u16, u16, u16); 5]>,
     pub(crate) preset_btns: std::cell::Cell<[(u16, u16, u16); 3]>,
@@ -106,6 +110,7 @@ pub(crate) struct TlbState {
     pub(crate) config_error: Option<String>,
     pub(crate) config_status: Option<String>,
     pub(crate) entries_scroll: usize,
+    pub(crate) page_tree_scroll: usize,
 }
 
 impl Default for TlbState {
@@ -117,6 +122,7 @@ impl Default for TlbState {
             subtab_config_btn: std::cell::Cell::new((0, 0, 0)),
             subtab_entries_btn: std::cell::Cell::new((0, 0, 0)),
             subtab_status_btn: std::cell::Cell::new((0, 0, 0)),
+            subtab_page_tree_btn: std::cell::Cell::new((0, 0, 0)),
             pending: TlbConfig::default(),
             config_hitboxes: std::cell::Cell::new([(0, 0, 0); 5]),
             preset_btns: std::cell::Cell::new([(0, 0, 0); 3]),
@@ -127,6 +133,7 @@ impl Default for TlbState {
             config_error: None,
             config_status: None,
             entries_scroll: 0,
+            page_tree_scroll: 0,
         }
     }
 }
