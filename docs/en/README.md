@@ -53,13 +53,20 @@ Requires Rust 1.75+. No other dependencies.
 - Export results (`Ctrl+r`) to `.fstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
-### Pipeline Simulator (Tab 4)
+### Virtual Memory & TLB (Tab 4)
+- Four VM modes: **Off**, **Sv32** (auto identity map), **Custom** (a parametric paging scheme you design — levels, index bits, page size), **Manual** (program-driven `satp` + your own page tables)
+- Configurable TLB: entries, associativity, six replacement policies, hit latency, miss penalty — with live hit/miss/eviction stats and a rolling hit-rate chart
+- Live page-table tree view, per-entry TLB table, and a no-code VM control panel (scheme + page map + TLB geometry)
+- Sv32 page faults, trap delegation (`medeleg`/`stvec`), `sret`, and demand paging
+- See the **[Virtual memory & TLB guide](virtual-memory.md)** for the full walkthrough
+
+### Pipeline Simulator (Tab 5)
 - Five-stage in-order pipeline visualization with per-cycle stepping and run/pause controls
 - Main and Config subtabs for hazard/history inspection and pipeline configuration
 - Branch resolve and predictor controls, bypass toggles, and hazard map visualization
 - Export pipeline configs/results with `Ctrl+e`, `Ctrl+l`, and `Ctrl+r`
 
-### Docs Tab (Tab 5)
+### Docs Tab (Tab 6)
 - Instruction reference for all supported instructions
 - Run tab key guide
 
@@ -188,6 +195,7 @@ See the **[CLI Reference](cli.md)** for all subcommands and flags.
 - [Instruction formats (EN)](format.md) — bit layouts, encoding, pseudo-instructions
 - [Formatos (PT-BR)](../pt-BR/format.md)
 - [Cache config file reference](cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
+- [Virtual memory & TLB guide](virtual-memory.md) — Sv32, the four VM modes, the TLB, page faults, demand paging
 - `threads-plan.md` — design plan for future multi-core execution using the term `hart` ("hardware thread") to keep the model bare metal and avoid OS-thread semantics
 - `Program Examples/hart_spawn_visual_demo.fas` — multi-hart example to stress Run/Pipeline views across cores
 
