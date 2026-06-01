@@ -84,12 +84,13 @@ pub(super) fn parse_tlb_config(map: &HashMap<String, String>) -> TlbConfig {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn serialize_rcfg(
     cpi: &CpiConfig,
     cache_enabled: bool,
     pipeline_enabled: bool,
-    vm_enabled: bool,
-    vm_manual: bool,
+    vm_mode: crate::falcon::mmu::VmMode,
+    vm_scheme: &crate::falcon::mmu::PagingScheme,
     trace_syscalls: bool,
     run_scope: RunScope,
     mem_kb: usize,
@@ -99,8 +100,11 @@ pub(super) fn serialize_rcfg(
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!("cache_enabled={}\n", cache_enabled));
     s.push_str(&format!("pipeline_enabled={}\n", pipeline_enabled));
-    s.push_str(&format!("vm_enabled={}\n", vm_enabled));
-    s.push_str(&format!("vm_manual={}\n", vm_manual));
+    s.push_str(&format!("vm_mode={}\n", vm_mode.as_str().to_ascii_lowercase()));
+    // Custom paging geometry (ignored unless vm_mode=custom on load).
+    s.push_str(&format!("vm_offset_bits={}\n", vm_scheme.offset_bits));
+    let level_bits: Vec<String> = vm_scheme.level_bits.iter().map(|b| b.to_string()).collect();
+    s.push_str(&format!("vm_level_bits={}\n", level_bits.join(",")));
     s.push_str(&format!("trace_syscalls={}\n", trace_syscalls));
     s.push_str(&format!("jit_mode={}\n", jit_kind.as_str()));
     s.push_str(&format!("mem_kb={}\n", mem_kb));
@@ -141,8 +145,8 @@ pub(super) struct RcfgSettings {
     pub(super) cpi: CpiConfig,
     pub(super) cache_enabled: bool,
     pub(super) pipeline_enabled: Option<bool>,
-    pub(super) vm_enabled: bool,
-    pub(super) vm_manual: bool,
+    pub(super) vm_mode: crate::falcon::mmu::VmMode,
+    pub(super) vm_scheme: crate::falcon::mmu::PagingScheme,
     pub(super) trace_syscalls: bool,
     pub(super) run_scope: RunScope,
     pub(super) mem_bytes: Option<usize>,
@@ -203,14 +207,48 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         .map(|v| v != "false")
         .unwrap_or(true);
     let pipeline_enabled = map.get("pipeline_enabled").map(|v| v != "false");
-    let vm_enabled = map
-        .get("vm_enabled")
-        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
-        .unwrap_or(false);
-    let vm_manual = map
-        .get("vm_manual")
-        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
-        .unwrap_or(false);
+    let vm_mode = match map.get("vm_mode").map(String::as_str) {
+        Some("off") => crate::falcon::mmu::VmMode::Off,
+        Some("sv32") => crate::falcon::mmu::VmMode::Sv32,
+        Some("custom") => crate::falcon::mmu::VmMode::Custom,
+        Some("manual") => crate::falcon::mmu::VmMode::Manual,
+        Some(other) => {
+            return Err(format!("invalid vm_mode: {other} (use off, sv32, custom, manual)"));
+        }
+        None => {
+            // Legacy fallback: reconstruct from the old vm_enabled/vm_manual pair.
+            let enabled = map
+                .get("vm_enabled")
+                .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+                .unwrap_or(false);
+            let manual = map
+                .get("vm_manual")
+                .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+                .unwrap_or(false);
+            crate::falcon::mmu::VmMode::from_user(enabled, manual)
+        }
+    };
+    let vm_scheme = {
+        let offset_bits = map
+            .get("vm_offset_bits")
+            .and_then(|v| v.parse::<u8>().ok());
+        let level_bits: Option<Vec<u8>> = map.get("vm_level_bits").map(|v| {
+            v.split(',')
+                .filter_map(|p| p.trim().parse::<u8>().ok())
+                .collect()
+        });
+        match (offset_bits, level_bits) {
+            (Some(offset_bits), Some(level_bits)) if !level_bits.is_empty() => {
+                let s = crate::falcon::mmu::PagingScheme { offset_bits, level_bits };
+                if s.is_valid() {
+                    s
+                } else {
+                    crate::falcon::mmu::PagingScheme::sv32()
+                }
+            }
+            _ => crate::falcon::mmu::PagingScheme::sv32(),
+        }
+    };
     let trace_syscalls = map
         .get("trace_syscalls")
         .map(|v| v != "false")
@@ -254,8 +292,8 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         cpi,
         cache_enabled,
         pipeline_enabled,
-        vm_enabled,
-        vm_manual,
+        vm_mode,
+        vm_scheme,
         trace_syscalls,
         run_scope,
         mem_bytes,
@@ -270,10 +308,8 @@ fn apply_rcfg(app: &mut App, cfg: RcfgSettings) {
     if let Some(enabled) = cfg.pipeline_enabled {
         app.set_pipeline_enabled(enabled);
     }
-    app.set_vm_mode(crate::falcon::mmu::VmMode::from_user(
-        cfg.vm_enabled,
-        cfg.vm_manual,
-    ));
+    app.tlb.pending_scheme = cfg.vm_scheme;
+    app.set_vm_mode(cfg.vm_mode);
     app.set_trace_syscalls(cfg.trace_syscalls);
     app.run_scope = cfg.run_scope;
     if let Some(kind) = cfg.jit_kind {
@@ -679,8 +715,8 @@ pub(crate) fn do_export_rcfg(app: &mut App) {
         &app.run.cpi_config,
         app.run.cache_enabled,
         app.pipeline.enabled,
-        app.run.vm_enabled,
-        app.run.vm_manual,
+        app.vm_mode(),
+        &app.active_scheme(),
         app.run.trace_syscalls,
         app.run_scope,
         app.run.mem_size / 1024,
@@ -1620,8 +1656,8 @@ pub(super) fn dispatch_path_input(
                 &app.run.cpi_config,
                 app.run.cache_enabled,
                 app.pipeline.enabled,
-                app.run.vm_enabled,
-                app.run.vm_manual,
+                app.vm_mode(),
+                &app.active_scheme(),
                 app.run.trace_syscalls,
                 app.run_scope,
                 app.run.mem_size / 1024,
@@ -1756,8 +1792,8 @@ mod tests {
             &CpiConfig::default(),
             true,
             false,
-            false,
-            false,
+            crate::falcon::mmu::VmMode::Off,
+            &crate::falcon::mmu::PagingScheme::sv32(),
             true,
             RunScope::FocusedHart,
             4096,
@@ -1769,7 +1805,7 @@ mod tests {
 
         assert!(cfg.cache_enabled);
         assert_eq!(cfg.pipeline_enabled, Some(false));
-        assert!(!cfg.vm_enabled);
+        assert_eq!(cfg.vm_mode, crate::falcon::mmu::VmMode::Off);
         assert!(cfg.trace_syscalls);
         assert_eq!(cfg.run_scope, RunScope::FocusedHart);
         assert_eq!(cfg.mem_bytes, Some(4096 * 1024));
@@ -1788,8 +1824,8 @@ mod tests {
                 &CpiConfig::default(),
                 true,
                 true,
-                false,
-                false,
+                crate::falcon::mmu::VmMode::Off,
+                &crate::falcon::mmu::PagingScheme::sv32(),
                 false,
                 RunScope::AllHarts,
                 1024,

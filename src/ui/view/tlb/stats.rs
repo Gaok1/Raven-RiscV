@@ -117,7 +117,7 @@ fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
     if pts.is_empty() {
         let inner = block.inner(area);
         f.render_widget(block, area);
-        let msg = if !app.run.vm_enabled {
+        let msg = if !app.run.vm_enabled() {
             "  (enable Virtual Memory in Settings to populate the TLB)"
         } else if !super::translation_active(app) {
             "  (vm=on but translation inactive — see Status subview for why)"

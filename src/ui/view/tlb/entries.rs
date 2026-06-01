@@ -73,7 +73,7 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
                     Line::from(mark(e.global, "G")),
                     Line::from(mark(e.accessed, "A")),
                     Line::from(mark(e.dirty, "D")),
-                    Line::from(mark(e.megapage, "M")),
+                    Line::from(mark(e.mask_bits > 0, "M")),
                 ])
             } else {
                 Row::new(vec![

@@ -27,9 +27,11 @@ pub struct TlbEntry {
     pub global: bool,
     pub accessed: bool,
     pub dirty: bool,
-    /// L1 leaf — masks vpn[0] (10 LSB) during lookup so a single entry covers
-    /// the whole 4 MiB superpage.
-    pub megapage: bool,
+    /// Page-size class: number of low VPN bits ignored during lookup. 0 = a
+    /// base page (e.g. 4 KiB); >0 = a superpage covering 2^mask_bits base pages
+    /// (Sv32 4 MiB megapage = 10). Generalizes the old `megapage` flag for the
+    /// parametric paging scheme.
+    pub mask_bits: u8,
     /// LRU/FIFO age counter — bumped on access (LRU) or install (FIFO).
     pub age: u32,
     /// Reference bit for the Clock replacement policy. Set on every probe
@@ -90,6 +92,13 @@ pub struct Tlb {
     /// Each entry is `0..associativity` (offset within the set). Resized on
     /// `reconfigure` so it always matches `num_sets()`.
     clock_hands: Vec<usize>,
+    /// Page-offset width of the active paging scheme (VPN = vaddr >> offset_bits).
+    /// 12 for Sv32. Kept here so `flush_vaddr` derives the VPN consistently.
+    pub offset_bits: u8,
+    /// Distinct page-size classes (mask_bits) the active scheme can install,
+    /// always including 0. Used to probe one set per page size (real hardware
+    /// probes all page-size arrays in parallel). Sv32 = [0, 10].
+    pub superpage_masks: Vec<u8>,
 }
 
 impl Tlb {
@@ -106,6 +115,8 @@ impl Tlb {
             age_counter: 0,
             config,
             clock_hands: vec![0; num_sets],
+            offset_bits: 12,
+            superpage_masks: vec![0, 10],
         }
     }
 
@@ -115,9 +126,20 @@ impl Tlb {
         }
     }
 
-    /// Reconfigure the TLB. Resets entries; also resets stats.
+    /// Reconfigure the TLB. Resets entries; also resets stats. The active paging
+    /// scheme (`offset_bits` / `superpage_masks`) is preserved.
     pub fn reconfigure(&mut self, cfg: TlbConfig) {
+        let offset_bits = self.offset_bits;
+        let superpage_masks = std::mem::take(&mut self.superpage_masks);
         *self = Self::new(cfg);
+        self.offset_bits = offset_bits;
+        self.superpage_masks = superpage_masks;
+    }
+
+    /// Adopt a new paging scheme's page-offset width and page-size classes.
+    pub fn set_scheme(&mut self, offset_bits: u8, superpage_masks: Vec<u8>) {
+        self.offset_bits = offset_bits;
+        self.superpage_masks = superpage_masks;
     }
 
     pub fn num_sets(&self) -> usize {
@@ -132,18 +154,13 @@ impl Tlb {
         start..end
     }
 
-    fn vpn_set(&self, vpn: u32) -> usize {
-        // Standard 4 KiB indexing: hash the full VPN so 1024 consecutive pages
-        // distribute evenly across sets. Megapages are probed/installed via
-        // [`megapage_vpn_set`] so a single megapage shares a set with the 1 K
-        // 4 KiB pages it covers in the *megapage* direction (vpn>>10).
+    /// Set index for a VPN at a given page-size class. An entry with `mask_bits`
+    /// is indexed by its super-VPN (`vpn >> mask_bits`), so every base VPN that
+    /// the (super)page covers hashes to the same set. `mask_bits = 0` is the
+    /// plain base-page index; `= 10` reproduces the old Sv32 megapage set.
+    fn set_for(&self, vpn: u32, mask_bits: u8) -> usize {
         let n = self.num_sets();
-        (vpn as usize) % n
-    }
-
-    fn megapage_vpn_set(&self, vpn: u32) -> usize {
-        let n = self.num_sets();
-        ((vpn >> 10) as usize) % n
+        ((vpn >> mask_bits) as usize) % n
     }
 
     fn matches(entry: &TlbEntry, vpn: u32, asid: u16) -> bool {
@@ -153,11 +170,7 @@ impl Tlb {
         if !entry.global && entry.asid != asid {
             return false;
         }
-        if entry.megapage {
-            (entry.vpn >> 10) == (vpn >> 10)
-        } else {
-            entry.vpn == vpn
-        }
+        (entry.vpn >> entry.mask_bits) == (vpn >> entry.mask_bits)
     }
 
     /// Look up an entry for `vpn`/`asid`. Bumps age on LRU/MRU; returns a copy
@@ -168,13 +181,17 @@ impl Tlb {
     /// we share storage but probe both indices so a 4 KiB hit isn't aliased
     /// against megapages and vice-versa.
     pub fn probe(&mut self, vpn: u32, asid: u16) -> Option<TlbEntry> {
-        let s4k = self.vpn_set(vpn);
-        if let Some(hit) = self.probe_in_set(s4k, vpn, asid) {
-            return Some(hit);
-        }
-        let smega = self.megapage_vpn_set(vpn);
-        if smega != s4k {
-            if let Some(hit) = self.probe_in_set(smega, vpn, asid) {
+        // Probe one set per distinct page-size class (real hardware probes all
+        // page-size arrays in parallel). Skip sets already visited.
+        let masks = self.superpage_masks.clone();
+        let mut visited: Vec<usize> = Vec::with_capacity(masks.len());
+        for m in masks {
+            let set = self.set_for(vpn, m);
+            if visited.contains(&set) {
+                continue;
+            }
+            visited.push(set);
+            if let Some(hit) = self.probe_in_set(set, vpn, asid) {
                 return Some(hit);
             }
         }
@@ -210,11 +227,7 @@ impl Tlb {
     /// duplicate behind). Otherwise picks a victim per replacement policy and
     /// counts the eviction.
     pub fn install(&mut self, mut entry: TlbEntry) {
-        let set_idx = if entry.megapage {
-            self.megapage_vpn_set(entry.vpn)
-        } else {
-            self.vpn_set(entry.vpn)
-        };
+        let set_idx = self.set_for(entry.vpn, entry.mask_bits);
         let range = self.set_range(set_idx);
         let existing = range
             .clone()
@@ -292,19 +305,19 @@ impl Tlb {
     }
 
     /// Invalidate every entry whose VPN matches `vaddr` (for `sfence.vma`
-    /// with a non-zero rs1). Checks both the 4 KiB set and the megapage set,
-    /// since a hardware sfence.vma must invalidate either representation.
+    /// with a non-zero rs1). Probes one set per page-size class, since a
+    /// hardware sfence.vma must invalidate any representation.
     pub fn flush_vaddr(&mut self, vaddr: u32) {
-        let vpn = vaddr >> 12;
-        let s4k = self.vpn_set(vpn);
-        for i in self.set_range(s4k) {
-            if Self::matches(&self.entries[i], vpn, self.entries[i].asid) {
-                self.entries[i].valid = false;
+        let vpn = vaddr >> self.offset_bits;
+        let masks = self.superpage_masks.clone();
+        let mut visited: Vec<usize> = Vec::with_capacity(masks.len());
+        for m in masks {
+            let set = self.set_for(vpn, m);
+            if visited.contains(&set) {
+                continue;
             }
-        }
-        let smega = self.megapage_vpn_set(vpn);
-        if smega != s4k {
-            for i in self.set_range(smega) {
+            visited.push(set);
+            for i in self.set_range(set) {
                 if Self::matches(&self.entries[i], vpn, self.entries[i].asid) {
                     self.entries[i].valid = false;
                 }
@@ -342,7 +355,7 @@ mod tests {
             global: false,
             accessed: true,
             dirty: false,
-            megapage: false,
+            mask_bits: 0,
             age: 0,
             ref_bit: false,
         }
@@ -377,7 +390,7 @@ mod tests {
     fn megapage_matches_any_vpn0() {
         let mut tlb = Tlb::new(cfg(8, 2, ReplacementPolicy::Lru));
         let mut e = mk_entry(0x4000, 0x4000, 1); // vpn1=16, vpn0=0
-        e.megapage = true;
+        e.mask_bits = 10;
         tlb.install(e);
         // Different vpn0 within same vpn1 must hit.
         assert!(tlb.probe(0x4000 | 0x123, 1).is_some());

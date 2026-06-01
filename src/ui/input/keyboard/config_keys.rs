@@ -2,7 +2,8 @@ use crate::falcon::jit::BackendKind;
 use crate::ui::app::{
     App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
+    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -50,6 +51,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 app.set_pipeline_enabled(!app.pipeline.enabled);
             } else if app.settings.selected == SETTINGS_ROW_VM_ENABLED {
                 app.set_vm_mode(app.vm_mode().cycle());
+            } else if app.settings.selected == SETTINGS_ROW_TLB_ENABLED {
+                app.set_tlb_enabled(!app.run.tlb_enabled);
             } else if app.settings.selected == SETTINGS_ROW_JIT_MODE {
                 let next = match app.run.jit_kind {
                     BackendKind::None => BackendKind::Hot,

@@ -36,11 +36,11 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
     // Mirror Mmu::translate (falcon/mmu/mod.rs:97-104): M-mode bypass is
     // skipped when force_translate is on (didactic standard mode), so the
     // panel must consult it too or it will lie after Assemble.
-    let active = app.run.vm_enabled
+    let active = app.run.vm_enabled()
         && satp_mode == SatpMode::Sv32
         && (priv_mode != PrivMode::M || mmu.force_translate);
 
-    let vm_color = if app.run.vm_enabled {
+    let vm_color = if app.run.vm_enabled() {
         theme::RUNNING
     } else {
         theme::PAUSED
@@ -88,7 +88,7 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
         ),
     ];
 
-    if !app.run.vm_enabled {
+    if !app.run.vm_enabled() {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " VM is disabled — every access is identity-mapped.",

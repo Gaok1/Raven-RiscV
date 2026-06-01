@@ -13,6 +13,7 @@ mod serialization;
 mod tlb_keys;
 
 pub(crate) use self::paste::paste_from_terminal;
+pub(crate) use self::tlb_keys::select as tlb_select;
 #[cfg(test)]
 use self::paste::{paste_imem_search, paste_mem_search};
 pub(crate) use self::serialization::{
