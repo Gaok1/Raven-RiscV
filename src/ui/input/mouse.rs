@@ -14,9 +14,9 @@ use crate::ui::{
     app::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
         EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED,
-        SETTINGS_ROW_CPI_START, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
-        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS,
-        SETTINGS_ROW_VM_ENABLED, Tab,
+        SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
+        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED,
+        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
     },
     editor::Editor,
 };
@@ -142,9 +142,18 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 clamp_docs_scroll(app, area);
             }
             Tab::Tlb => {
-                use crate::ui::app::TlbSubtab;
-                if matches!(app.tlb.subtab, TlbSubtab::Entries) {
-                    app.tlb.entries_scroll = app.tlb.entries_scroll.saturating_sub(1);
+                use crate::ui::app::{TlbSubtab, VmSubtab};
+                match app.tlb.vm_subtab {
+                    VmSubtab::Tree => {
+                        app.tlb.page_tree_scroll = app.tlb.page_tree_scroll.saturating_sub(1);
+                    }
+                    VmSubtab::Settings => {
+                        app.tlb.vm_settings_scroll = app.tlb.vm_settings_scroll.saturating_sub(1);
+                    }
+                    VmSubtab::Tlb if matches!(app.tlb.subtab, TlbSubtab::Entries) => {
+                        app.tlb.entries_scroll = app.tlb.entries_scroll.saturating_sub(1);
+                    }
+                    _ => {}
                 }
             }
             Tab::Settings | Tab::Activity => {}
@@ -192,11 +201,24 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 clamp_docs_scroll(app, area);
             }
             Tab::Tlb => {
-                use crate::ui::app::TlbSubtab;
-                if matches!(app.tlb.subtab, TlbSubtab::Entries) {
-                    let total = app.run.mem.mmu().tlb.entries.len();
-                    let next = app.tlb.entries_scroll.saturating_add(1);
-                    app.tlb.entries_scroll = next.min(total.saturating_sub(1));
+                use crate::ui::app::{TlbSubtab, VmSubtab};
+                match app.tlb.vm_subtab {
+                    VmSubtab::Tree => {
+                        let max = app.tlb.page_tree_max_scroll.get();
+                        app.tlb.page_tree_scroll =
+                            app.tlb.page_tree_scroll.saturating_add(1).min(max);
+                    }
+                    VmSubtab::Settings => {
+                        let max = app.tlb.vm_settings_max_scroll.get();
+                        app.tlb.vm_settings_scroll =
+                            app.tlb.vm_settings_scroll.saturating_add(1).min(max);
+                    }
+                    VmSubtab::Tlb if matches!(app.tlb.subtab, TlbSubtab::Entries) => {
+                        let total = app.run.mem.mmu().tlb.entries.len();
+                        let next = app.tlb.entries_scroll.saturating_add(1);
+                        app.tlb.entries_scroll = next.min(total.saturating_sub(1));
+                    }
+                    _ => {}
                 }
             }
             Tab::Settings | Tab::Activity => {}
@@ -2327,6 +2349,7 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     app.settings.hover_cache_enabled = false;
     app.settings.hover_pipeline_enabled = false;
     app.settings.hover_vm_enabled = false;
+    app.settings.hover_tlb_enabled = false;
     app.settings.hover_trace_syscalls = false;
     app.settings.hover_run_scope = false;
     app.settings.hover_import_rcfg = false;
@@ -2365,7 +2388,11 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
         app.settings.hover_row = Some(SETTINGS_ROW_PIPELINE_ENABLED);
     } else if me.row == btn_y.saturating_add(5) {
         app.settings.hover_row = Some(SETTINGS_ROW_VM_ENABLED);
+    } else if me.row == btn_y.saturating_add(6) {
+        app.settings.hover_row = Some(SETTINGS_ROW_TLB_ENABLED);
     } else if me.row == btn_y.saturating_add(7) {
+        app.settings.hover_row = Some(SETTINGS_ROW_JIT_MODE);
+    } else if me.row == btn_y.saturating_add(8) {
         app.settings.hover_row = Some(SETTINGS_ROW_TRACE_SYSCALLS);
     }
     if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
@@ -2384,6 +2411,10 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     let (vm_y, vm_x0, vm_x1) = app.settings.bool_btn_vm_rect.get();
     if me.row == vm_y && me.column >= vm_x0 && me.column < vm_x1 {
         app.settings.hover_vm_enabled = true;
+    }
+    let (tlb_y, tlb_x0, tlb_x1) = app.settings.bool_btn_tlb_rect.get();
+    if me.row == tlb_y && me.column >= tlb_x0 && me.column < tlb_x1 {
+        app.settings.hover_tlb_enabled = true;
     }
     let (trace_y, trace_x0, trace_x1) = app.settings.bool_btn_trace_syscalls_rect.get();
     if me.row == trace_y && me.column >= trace_x0 && me.column < trace_x1 {
@@ -2455,6 +2486,13 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     if me.row == vm_y {
         app.set_vm_mode(app.vm_mode().cycle());
         app.settings.selected = SETTINGS_ROW_VM_ENABLED;
+        return;
+    }
+
+    let (tlb_y, _, _) = app.settings.bool_btn_tlb_rect.get();
+    if me.row == tlb_y {
+        app.set_tlb_enabled(!app.run.tlb_enabled);
+        app.settings.selected = SETTINGS_ROW_TLB_ENABLED;
         return;
     }
 
@@ -2725,23 +2763,32 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
 // ── TLB tab mouse ────────────────────────────────────────────────────────────
 
 fn update_tlb_hover(app: &mut App, me: MouseEvent) {
-    use crate::ui::app::{TlbConfigField, TlbHoverTarget, TlbSubtab};
+    use crate::ui::app::{TlbConfigField, TlbHoverTarget, TlbSubtab, VmSubtab};
 
     app.tlb.hover = None;
 
-    if point_in_btn(me, app.tlb.subtab_stats_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::SubtabStats);
-    } else if point_in_btn(me, app.tlb.subtab_config_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::SubtabConfig);
-    } else if point_in_btn(me, app.tlb.subtab_entries_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::SubtabEntries);
-    } else if point_in_btn(me, app.tlb.subtab_status_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::SubtabStatus);
-    } else if point_in_btn(me, app.tlb.subtab_page_tree_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::SubtabPageTree);
+    // VM-level header.
+    if point_in_btn(me, app.tlb.vm_status_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::VmStatus);
+    } else if point_in_btn(me, app.tlb.vm_tree_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::VmTree);
+    } else if point_in_btn(me, app.tlb.vm_settings_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::VmSettings);
+    } else if point_in_btn(me, app.tlb.vm_tlb_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::VmTlb);
+    // TLB-level header.
+    } else if point_in_btn(me, app.tlb.tlb_stats_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::TlbStats);
+    } else if point_in_btn(me, app.tlb.tlb_entries_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::TlbEntries);
+    } else if point_in_btn(me, app.tlb.tlb_settings_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::TlbSettings);
     }
 
-    if matches!(app.tlb.subtab, TlbSubtab::Config) {
+    // TLB Settings form.
+    if matches!(app.tlb.vm_subtab, VmSubtab::Tlb)
+        && matches!(app.tlb.subtab, TlbSubtab::Settings)
+    {
         let hitboxes = app.tlb.config_hitboxes.get();
         for &field in TlbConfigField::all_editable() {
             let hb = hitboxes[field.hitbox_index()];
@@ -2759,35 +2806,61 @@ fn update_tlb_hover(app: &mut App, me: MouseEvent) {
             app.tlb.hover = Some(TlbHoverTarget::Flush);
         }
     }
+
+    // VM Settings panel.
+    if matches!(app.tlb.vm_subtab, VmSubtab::Settings) {
+        for &(field, y, x0, x1) in app.tlb.vm_field_hitboxes.borrow().iter() {
+            if point_in_btn(me, (y, x0, x1)) {
+                app.tlb.hover = Some(TlbHoverTarget::VmField(field));
+            }
+        }
+        if point_in_btn(me, app.tlb.vm_apply_btn.get()) {
+            app.tlb.hover = Some(TlbHoverTarget::VmApply);
+        } else if point_in_btn(me, app.tlb.vm_flush_btn.get()) {
+            app.tlb.hover = Some(TlbHoverTarget::VmFlush);
+        }
+    }
 }
 
 fn handle_tlb_click(app: &mut App, me: MouseEvent) {
-    use crate::ui::app::{TlbConfigField, TlbSubtab};
+    use crate::ui::app::{TlbConfigField, TlbSubtab, VmSubtab};
+    use crate::ui::input::keyboard::tlb_select;
 
-    if point_in_btn(me, app.tlb.subtab_stats_btn.get()) {
-        app.tlb.subtab = TlbSubtab::Stats;
+    // VM-level header.
+    if point_in_btn(me, app.tlb.vm_status_btn.get()) {
+        tlb_select(app, VmSubtab::Status, None);
         return;
     }
-    if point_in_btn(me, app.tlb.subtab_config_btn.get()) {
-        app.tlb.subtab = TlbSubtab::Config;
-        // Snapshot the live TLB config when entering the editor.
-        app.tlb.pending = app.run.mem.mmu().tlb.config.clone();
+    if point_in_btn(me, app.tlb.vm_tree_btn.get()) {
+        tlb_select(app, VmSubtab::Tree, None);
         return;
     }
-    if point_in_btn(me, app.tlb.subtab_entries_btn.get()) {
-        app.tlb.subtab = TlbSubtab::Entries;
+    if point_in_btn(me, app.tlb.vm_settings_btn.get()) {
+        tlb_select(app, VmSubtab::Settings, None);
         return;
     }
-    if point_in_btn(me, app.tlb.subtab_status_btn.get()) {
-        app.tlb.subtab = TlbSubtab::Status;
+    if point_in_btn(me, app.tlb.vm_tlb_btn.get()) {
+        tlb_select(app, VmSubtab::Tlb, Some(app.tlb.subtab));
         return;
     }
-    if point_in_btn(me, app.tlb.subtab_page_tree_btn.get()) {
-        app.tlb.subtab = TlbSubtab::PageTree;
+    // TLB-level header.
+    if point_in_btn(me, app.tlb.tlb_stats_btn.get()) {
+        tlb_select(app, VmSubtab::Tlb, Some(TlbSubtab::Stats));
+        return;
+    }
+    if point_in_btn(me, app.tlb.tlb_entries_btn.get()) {
+        tlb_select(app, VmSubtab::Tlb, Some(TlbSubtab::Entries));
+        return;
+    }
+    if point_in_btn(me, app.tlb.tlb_settings_btn.get()) {
+        tlb_select(app, VmSubtab::Tlb, Some(TlbSubtab::Settings));
         return;
     }
 
-    if matches!(app.tlb.subtab, TlbSubtab::Config) {
+    // TLB Settings form.
+    if matches!(app.tlb.vm_subtab, VmSubtab::Tlb)
+        && matches!(app.tlb.subtab, TlbSubtab::Settings)
+    {
         let hitboxes = app.tlb.config_hitboxes.get();
         for &field in TlbConfigField::all_editable() {
             let hb = hitboxes[field.hitbox_index()];
@@ -2817,6 +2890,57 @@ fn handle_tlb_click(app: &mut App, me: MouseEvent) {
             app.flush_tlb();
             return;
         }
+    }
+
+    // VM Settings panel.
+    if matches!(app.tlb.vm_subtab, VmSubtab::Settings) {
+        handle_vm_settings_click(app, me);
+    }
+}
+
+/// Click handling for the comprehensive VM Settings panel. Numeric fields enter
+/// keyboard-edit mode; the rest toggle / cycle in place.
+fn handle_vm_settings_click(app: &mut App, me: MouseEvent) {
+    use crate::ui::app::VmSettingsField;
+
+    // Resolve which field (if any) was clicked.
+    let clicked: Option<VmSettingsField> = app
+        .tlb
+        .vm_field_hitboxes
+        .borrow()
+        .iter()
+        .find(|&&(_, y, x0, x1)| point_in_btn(me, (y, x0, x1)))
+        .map(|&(field, _, _, _)| field);
+
+    if let Some(field) = clicked {
+        // Leaving an in-progress numeric edit commits it first.
+        if app.tlb.vm_edit_field.is_some() && app.tlb.vm_edit_field != Some(field) {
+            app.commit_vm_edit();
+            app.tlb.vm_edit_field = None;
+            app.tlb.vm_edit_buf.clear();
+        }
+        if field.is_numeric() {
+            // Offset is only meaningful when the map kind is Offset.
+            app.tlb.vm_edit_field = Some(field);
+            app.tlb.vm_edit_buf = app.vm_field_value_str(field);
+        } else {
+            app.toggle_vm_field(field);
+        }
+        return;
+    }
+
+    if point_in_btn(me, app.tlb.vm_apply_btn.get()) {
+        if app.tlb.vm_edit_field.is_some() {
+            app.commit_vm_edit();
+            app.tlb.vm_edit_field = None;
+            app.tlb.vm_edit_buf.clear();
+        }
+        app.apply_vm_settings();
+        return;
+    }
+    if point_in_btn(me, app.tlb.vm_flush_btn.get()) {
+        app.flush_tlb();
+        app.tlb.map_status = Some("TLB flushed".into());
     }
 }
 
