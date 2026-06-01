@@ -1,6 +1,6 @@
 # Simulação de cache
 
-O Falcon inclui um simulador de **I-cache + D-cache** integrado. Enquanto seu programa roda, você pode acompanhar o cache se preenchendo, observar hits e misses em tempo real e experimentar configurações diferentes para entender seus trade-offs.
+O Raven inclui um simulador de **I-cache + D-cache** integrado. Enquanto seu programa roda, você pode acompanhar o cache se preenchendo, observar hits e misses em tempo real e experimentar configurações diferentes para entender seus trade-offs.
 
 Abra a aba **Cache** para ver três subtabs:
 

@@ -58,7 +58,7 @@ Use a syscall `1100` (`hart_start`) para criar um novo hart.
 
 O novo hart inicia com um banco de registradores limpo, exceto `sp` (definido como `a1`) e `a0` (definido como `a2`). Todos os outros registradores começam em zero.
 
-**Exemplo (Falcon assembly):**
+**Exemplo (assembly RISC-V):**
 
 ```asm
 .data
@@ -95,7 +95,7 @@ Use `hart_exit` em harts trabalhadores para que o hart principal continue. Use `
 
 ## Criando harts em C (`c-to-raven`)
 
-O cabeçalho `raven.h` fornece `falcon_hart_start` e a macro de conveniência `SPAWN_HART`.
+O cabeçalho `raven.h` fornece `raven_unsafe_hart_start` e a macro de conveniência `SPAWN_HART`.
 
 ```c
 #include "raven.h"
@@ -104,12 +104,12 @@ static char worker_stack[4096];
 
 void worker(unsigned int arg) {
     raven_print_uint(arg);
-    falcon_hart_exit();
+    raven_unsafe_hart_exit();
 }
 
 int main(void) {
     // Chamada explícita
-    falcon_hart_start(
+    raven_unsafe_hart_start(
         (unsigned int)worker,
         (unsigned int)(worker_stack + sizeof(worker_stack)),
         /*arg=*/1

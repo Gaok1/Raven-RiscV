@@ -80,7 +80,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(" "),
         Span::styled("main", main_style),
         Span::raw("   "),
-        Span::styled("config", config_style),
+        Span::styled("settings", config_style),
         Span::styled("   core ", Style::default().fg(theme::LABEL)),
         Span::styled(core_text.clone(), core_style),
         Span::styled(
@@ -112,7 +112,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 
     // Record button geometry for mouse: y=inner.y, x ranges
-    // "main" starts at x = inner.x + 1, "config" starts at +8
+    // "main" starts at x = inner.x + 1, "settings" starts at +8
     app.pipeline
         .btn_subtab_main_rect
         .set((inner.y, inner.x + 1, inner.x + 5));

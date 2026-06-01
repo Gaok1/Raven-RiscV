@@ -2,9 +2,14 @@ use crate::falcon::jit::BackendKind;
 use crate::ui::app::{
     App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
+    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crossterm::event::{KeyCode, KeyEvent};
+
+/// Row index of the blank separator that visually splits the toggle list
+/// from the CPI section. Always sits one row before the first CPI field.
+const SETTINGS_BLANK_ROW: usize = SETTINGS_ROW_CPI_START - 1;
 
 pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
     if app.settings.cpi_editing {
@@ -15,8 +20,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Up => {
             if app.settings.selected > 0 {
                 app.settings.selected -= 1;
-                // Skip blank separator row (index 7, between trace_syscalls and CPI section)
-                if app.settings.selected == 7 {
+                if app.settings.selected == SETTINGS_BLANK_ROW {
                     app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
                 }
             }
@@ -25,8 +29,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Down => {
             if app.settings.selected + 1 < SETTINGS_ROWS {
                 app.settings.selected += 1;
-                // Skip blank separator row
-                if app.settings.selected == 7 {
+                if app.settings.selected == SETTINGS_BLANK_ROW {
                     app.settings.selected = SETTINGS_ROW_CPI_START;
                 }
             }
@@ -46,6 +49,10 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 app.run_scope = app.run_scope.cycle();
             } else if app.settings.selected == SETTINGS_ROW_PIPELINE_ENABLED {
                 app.set_pipeline_enabled(!app.pipeline.enabled);
+            } else if app.settings.selected == SETTINGS_ROW_VM_ENABLED {
+                app.set_vm_mode(app.vm_mode().cycle());
+            } else if app.settings.selected == SETTINGS_ROW_TLB_ENABLED {
+                app.set_tlb_enabled(!app.run.tlb_enabled);
             } else if app.settings.selected == SETTINGS_ROW_JIT_MODE {
                 let next = match app.run.jit_kind {
                     BackendKind::None => BackendKind::Hot,
@@ -93,7 +100,7 @@ fn handle_numeric_edit(app: &mut App, code: KeyCode) -> bool {
             app.settings.cpi_edit_buf.clear();
             if app.settings.selected > 0 {
                 app.settings.selected -= 1;
-                if app.settings.selected == 7 {
+                if app.settings.selected == SETTINGS_BLANK_ROW {
                     app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
                 }
             }
@@ -104,7 +111,7 @@ fn handle_numeric_edit(app: &mut App, code: KeyCode) -> bool {
             app.settings.cpi_edit_buf.clear();
             if app.settings.selected + 1 < SETTINGS_ROWS {
                 app.settings.selected += 1;
-                if app.settings.selected == 6 {
+                if app.settings.selected == SETTINGS_BLANK_ROW {
                     app.settings.selected = SETTINGS_ROW_CPI_START;
                 }
             }

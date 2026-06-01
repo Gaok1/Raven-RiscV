@@ -276,7 +276,7 @@ You never need to call `raven_unsafe_hart_exit()` manually.
 
 Stackful, **cooperative** coroutines: a function that runs on its own stack and can suspend itself with `raven_coro_yield`, handing control back to whoever resumed it. Its stack and registers stay live across the suspension, so the next `raven_coro_resume` continues exactly where it left off.
 
-Unlike `<raven/hart.h>` (parallel execution on another hart), coroutines are single-hart — exactly one runs at a time and control only moves on an explicit resume/yield. A switch is a pure user-space register/stack swap: **no ecall is involved**.
+Unlike `<raven/hart.h>` (parallel execution on another hart), coroutines are still cooperative — control only moves on an explicit resume/yield. Distinct coroutines may run on different harts at the same time. A switch is a pure user-space register/stack swap: **no ecall is involved**.
 
 ### Types
 

@@ -36,9 +36,10 @@ pub enum DebugUiTab {
     Editor,
     Run,
     Cache,
+    Tlb,
     Pipeline,
     Docs,
-    Config,
+    Settings,
 }
 
 pub struct DebugPipelineStageOptions {
@@ -198,9 +199,10 @@ pub fn debug_help_layout_dump(opts: DebugHelpLayoutOptions) -> String {
         DebugUiTab::Editor => crate::ui::app::Tab::Editor,
         DebugUiTab::Run => crate::ui::app::Tab::Run,
         DebugUiTab::Cache => crate::ui::app::Tab::Cache,
+        DebugUiTab::Tlb => crate::ui::app::Tab::Tlb,
         DebugUiTab::Pipeline => crate::ui::app::Tab::Pipeline,
         DebugUiTab::Docs => crate::ui::app::Tab::Docs,
-        DebugUiTab::Config => crate::ui::app::Tab::Config,
+        DebugUiTab::Settings => crate::ui::app::Tab::Settings,
     };
     let root = Rect::new(0, 0, opts.width.max(40), opts.height.max(12));
     let help_btn = help_button_area(root);

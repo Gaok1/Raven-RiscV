@@ -238,6 +238,50 @@ pub enum Instruction {
     Ebreak,
     Halt,
 
+    // CSR access (Zicsr). `csr` is the 12-bit CSR number.
+    Csrrw {
+        rd: u8,
+        rs1: u8,
+        csr: u16,
+    },
+    Csrrs {
+        rd: u8,
+        rs1: u8,
+        csr: u16,
+    },
+    Csrrc {
+        rd: u8,
+        rs1: u8,
+        csr: u16,
+    },
+    Csrrwi {
+        rd: u8,
+        uimm: u8,
+        csr: u16,
+    },
+    Csrrsi {
+        rd: u8,
+        uimm: u8,
+        csr: u16,
+    },
+    Csrrci {
+        rd: u8,
+        uimm: u8,
+        csr: u16,
+    },
+
+    // Privilege return (M-mode only for Phase 2).
+    Mret,
+
+    // Supervisor-mode trap return (Phase C). Restores pc=sepc and priv=sstatus.SPP.
+    Sret,
+
+    // Sv32 TLB invalidate. rs1=0 → full flush; rs2 (ASID) ignored in Phase 2.
+    SfenceVma {
+        rs1: u8,
+        rs2: u8,
+    },
+
     // Memory ordering (RV32I base — executed as nop in single-core simulator)
     Fence,
     FenceI,

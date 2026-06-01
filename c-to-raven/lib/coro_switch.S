@@ -83,3 +83,16 @@ _raven_coro_switch:
 #endif
     ret
     .size _raven_coro_switch, .-_raven_coro_switch
+
+#
+# First entry into a fresh coroutine. raven_coro_init primes s0 with the
+# RavenCoro* and ra with this symbol, so the first `ret` after a context
+# restore lands here. Pass `self` in a0 and tail-call the C trampoline.
+#
+    .section .text._raven_coro_enter
+    .globl   _raven_coro_enter
+    .type    _raven_coro_enter, @function
+_raven_coro_enter:
+    mv   a0, s0
+    tail _raven_coro_trampoline
+    .size _raven_coro_enter, .-_raven_coro_enter

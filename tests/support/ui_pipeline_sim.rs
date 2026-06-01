@@ -2723,7 +2723,7 @@ fn scw_without_shared_reservation_fails_cleanly() {
     slot.mem_addr = Some(0x5000);
     slot.rs2_val = 0xDEAD_BEEF;
 
-    let (_latency, faulted) = stage_mem(&mut slot, &mut cpu, &mut mem, &mut console);
+    let (_latency, faulted, _trap) = stage_mem(&mut slot, &mut cpu, &mut mem, &mut console);
     assert!(
         !faulted,
         "sc.w without a shared reservation should fail cleanly"
@@ -2763,7 +2763,7 @@ fn amoswap_mem_read_fault_sets_faulted() {
     slot.mem_addr = Some(0x5000);
     slot.rs2_val = 0x1234_5678;
 
-    let (_latency, faulted) = stage_mem(&mut slot, &mut cpu, &mut mem, &mut console);
+    let (_latency, faulted, _trap) = stage_mem(&mut slot, &mut cpu, &mut mem, &mut console);
     assert!(faulted, "AMO read fault should fault the pipeline");
 }
 

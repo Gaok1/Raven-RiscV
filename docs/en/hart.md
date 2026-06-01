@@ -58,7 +58,7 @@ Use syscall `1100` (`hart_start`) to spawn a new hart.
 
 The new hart starts with a clean register file except for `sp` (set to `a1`) and `a0` (set to `a2`). All other registers begin at zero.
 
-**Example (Falcon assembly):**
+**Example (RISC-V assembly):**
 
 ```asm
 # Allocate a stack for the child hart (grows down from high address)
@@ -98,7 +98,7 @@ Use `hart_exit` from worker harts so the main hart continues. Use `exit` or `exi
 
 ## Spawning harts from C (`c-to-raven`)
 
-The `raven.h` header provides `falcon_hart_start` and the `SPAWN_HART` convenience macro.
+The `raven.h` header provides `raven_unsafe_hart_start` and the `SPAWN_HART` convenience macro.
 
 ```c
 #include "raven.h"
@@ -107,12 +107,12 @@ static char worker_stack[4096];
 
 void worker(unsigned int arg) {
     raven_print_uint(arg);
-    falcon_hart_exit();
+    raven_unsafe_hart_exit();
 }
 
 int main(void) {
     // Explicit call
-    falcon_hart_start(
+    raven_unsafe_hart_start(
         (unsigned int)worker,
         (unsigned int)(worker_stack + sizeof(worker_stack)),
         /*arg=*/1

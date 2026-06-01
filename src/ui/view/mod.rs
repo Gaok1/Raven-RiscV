@@ -18,6 +18,7 @@ mod pipeline;
 pub(crate) mod run;
 mod settings;
 mod splash;
+mod tlb;
 
 use crate::guided_learning::view::render_guided_learning;
 
@@ -29,6 +30,7 @@ use pipeline::render_pipeline;
 use run::render_run;
 use settings::render_settings;
 use splash::render_splash;
+use tlb::render_tlb_tab;
 
 pub(crate) const HELP_BTN_W: u16 = 5;
 
@@ -116,9 +118,10 @@ pub fn ui(f: &mut Frame, app: &App) {
         }
         Tab::Run => render_run(f, chunks[1], app),
         Tab::Cache => render_cache(f, chunks[1], app),
+        Tab::Tlb => render_tlb_tab(f, chunks[1], app),
         Tab::Pipeline => render_pipeline(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
-        Tab::Config => render_settings(f, chunks[1], app),
+        Tab::Settings => render_settings(f, chunks[1], app),
         Tab::Activity => render_guided_learning(f, chunks[1], app),
     }
 
@@ -141,7 +144,7 @@ pub fn ui(f: &mut Frame, app: &App) {
                 (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
             } else {
                 (
-                    "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Config  Ctrl+e/l=Config  Ctrl+r=Results  [?]=Help".to_string(),
+                    "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Settings  Ctrl+e/l=Settings  Ctrl+r=Results  [?]=Help".to_string(),
                     Style::default().fg(theme::LABEL),
                 )
             }
@@ -162,10 +165,22 @@ pub fn ui(f: &mut Frame, app: &App) {
             "Ctrl+f=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
-        Tab::Config => (
+        Tab::Settings => (
             "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field  [?]=Help".to_string(),
             Style::default().fg(theme::LABEL),
         ),
+        Tab::Tlb => {
+            if let Some(ref err) = app.tlb.config_error {
+                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+            } else if let Some(ref ok) = app.tlb.config_status {
+                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+            } else {
+                (
+                    "Tab=Subviews  Click=Edit field  f=Flush TLB  [?]=Help".to_string(),
+                    Style::default().fg(theme::LABEL),
+                )
+            }
+        }
         Tab::Activity => {
             if let Some(ref err) = app.activity.status_err {
                 (format!("✗  {err}"), Style::default().fg(theme::DANGER))
@@ -548,7 +563,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+x]", "cut selection"),
         ]],
         Tab::Cache => vec![vec![
-            ("[Tab]", "cycle subtabs: Stats → View → Config"),
+            ("[Tab]", "cycle subtabs: Stats → View → Settings"),
             ("Core [[]/]]", "select which core/hart to observe"),
             ("[r]", "restart simulation"),
             ("[p] / [Space]", "run / pause toggle"),
@@ -612,15 +627,15 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[r]", "restart simulation"),
             ("[↑/↓] Main", "scroll gantt chart"),
             ("[PgUp/PgDn] Main", "page scroll gantt chart"),
-            ("[Tab]", "switch subtab: Main ↔ Config"),
+            ("[Tab]", "switch subtab: Main ↔ Settings"),
             ("Core [[]/]]", "select which core/hart pipeline to inspect"),
             ("[e]", "toggle pipeline enabled"),
             ("[f]", "cycle speed"),
             ("[b]", "cycle branch resolve stage: ID → EX → MEM"),
-            ("[↑/↓] Config", "navigate config fields"),
-            ("[Enter] Config", "toggle the selected config row"),
+            ("[↑/↓] Settings", "navigate settings fields"),
+            ("[Enter] Settings", "toggle the selected settings row"),
             (
-                "Config",
+                "Settings",
                 "edit bypasses, mode, branch resolve stage and predictor",
             ),
             (
@@ -637,7 +652,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("Hazard Map", "shows RAW / load-use / flush / bypass traces"),
             ("History", "last cycles and per-instruction stage timeline"),
         ]],
-        Tab::Config => vec![vec![
+        Tab::Settings => vec![vec![
             ("[↑/↓]", "navigate settings"),
             ("[Enter]", "edit CPI field / toggle bool"),
             ("[Esc]", "cancel edit"),
@@ -647,8 +662,28 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 "Run Scope [ALL/FOCUS]",
                 "ALL advances all harts; FOCUS advances only observed hart in Run",
             ),
-            ("[Ctrl+e]", "export full Config tab state (.rcfg)"),
-            ("[Ctrl+l]", "import full Config tab state (.rcfg)"),
+            ("[Ctrl+e]", "export full Settings tab state (.rcfg)"),
+            ("[Ctrl+l]", "import full Settings tab state (.rcfg)"),
+        ]],
+        Tab::Tlb => vec![vec![
+            ("[Tab]", "cycle subviews: status → tree → settings → TLB(stats/entries/settings)"),
+            ("status", "live satp / privilege / VM-active banner"),
+            ("tree", "live N-level page-table tree (read-only)"),
+            ("settings", "VM mode, paging scheme, page map, root PT, TLB geometry — then apply"),
+            ("scheme", "Custom mode: edit levels + index/offset bits (Σ must = 32)"),
+            ("TLB ▸ stats", "TLB hits, misses, evictions, page faults, hit-rate chart"),
+            ("TLB ▸ entries", "installed translations (VPN→PPN, perms, A/D, asid)"),
+            ("TLB ▸ settings", "edit entries / associativity / replacement / latencies"),
+            ("[f]", "flush TLB (in TLB settings)"),
+            ("[Esc]", "cancel field edit"),
+            (
+                "TLB Enabled",
+                "toggle in settings; when off every access walks (miss + penalty, no hits)",
+            ),
+            (
+                "Translation active?",
+                "needs VM on AND satp=Sv32 AND priv∈{S,U}; otherwise identity",
+            ),
         ]],
         Tab::Activity => vec![vec![
             ("[↑/↓]", "navigate preset list"),

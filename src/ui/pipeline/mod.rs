@@ -1083,6 +1083,11 @@ pub struct PipelineSimState {
     pub hazard_traces: Vec<HazardTrace>,
     pub last_cycle_cache_only: bool,
 
+    /// Pending instruction-fetch page fault: (entry_pc, cause, tval, vaddr).
+    /// Captured by `fetch_into_if` and consumed by `pipeline_tick`, which has
+    /// the `Cpu` borrow needed to vector through `mtvec`.
+    pub pending_fetch_trap: Option<(u32, u32, u32, u32)>,
+
     // ── Hover state para botões da UI ──
     pub hover_subtab_main: bool,
     pub hover_subtab_config: bool,
@@ -1164,6 +1169,7 @@ impl PipelineSimState {
             hazard_msgs: Vec::new(),
             hazard_traces: Vec::new(),
             last_cycle_cache_only: false,
+            pending_fetch_trap: None,
             sequential_mode: false,
             hover_config_row: None,
             config_row_rects: Cell::new([(0, 0, 0); PipelineBypassConfig::CONFIG_ROWS]),

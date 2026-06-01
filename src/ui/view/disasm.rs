@@ -10,6 +10,18 @@ pub fn disasm_word(w: u32) -> String {
     }
 }
 
+fn csr_name(csr: u16) -> String {
+    match csr {
+        0x180 => "satp".to_string(),
+        0x300 => "mstatus".to_string(),
+        0x305 => "mtvec".to_string(),
+        0x341 => "mepc".to_string(),
+        0x342 => "mcause".to_string(),
+        0x343 => "mtval".to_string(),
+        _ => format!("0x{csr:03x}"),
+    }
+}
+
 fn pretty_instr(i: &falcon::instruction::Instruction) -> String {
     use falcon::instruction::Instruction::*;
     match *i {
@@ -152,6 +164,38 @@ fn pretty_instr(i: &falcon::instruction::Instruction) -> String {
         Ebreak => "ebreak".to_string(),
         Halt => "halt".to_string(),
         Fence => "fence".to_string(),
+        Csrrw { rd, rs1, csr } => format!(
+            "csrrw {}, {}, {}",
+            reg_name(rd),
+            csr_name(csr),
+            reg_name(rs1)
+        ),
+        Csrrs { rd, rs1, csr } => format!(
+            "csrrs {}, {}, {}",
+            reg_name(rd),
+            csr_name(csr),
+            reg_name(rs1)
+        ),
+        Csrrc { rd, rs1, csr } => format!(
+            "csrrc {}, {}, {}",
+            reg_name(rd),
+            csr_name(csr),
+            reg_name(rs1)
+        ),
+        Csrrwi { rd, uimm, csr } => {
+            format!("csrrwi {}, {}, {uimm}", reg_name(rd), csr_name(csr))
+        }
+        Csrrsi { rd, uimm, csr } => {
+            format!("csrrsi {}, {}, {uimm}", reg_name(rd), csr_name(csr))
+        }
+        Csrrci { rd, uimm, csr } => {
+            format!("csrrci {}, {}, {uimm}", reg_name(rd), csr_name(csr))
+        }
+        Mret => "mret".to_string(),
+        Sret => "sret".to_string(),
+        SfenceVma { rs1, rs2 } => {
+            format!("sfence.vma {}, {}", reg_name(rs1), reg_name(rs2))
+        }
         // RV32F
         Flw { rd, rs1, imm } => format!("flw   {}, {imm}({})", freg_name(rd), reg_name(rs1)),
         Fsw { rs2, rs1, imm } => format!("fsw   {}, {imm}({})", freg_name(rs2), reg_name(rs1)),

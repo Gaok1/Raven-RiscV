@@ -28,7 +28,7 @@ make clean
 
 Outputs in `c-to-raven/target/`:
 
-- `main.elf`, `array_bench.elf`, `jit_demo.elf`, `coro_demo.elf` — RV32IM, soft-float ABI
+- `main.elf`, `array_bench.elf`, `jit_demo.elf`, `coro_demo.elf`, `coro_hart_demo.elf` — RV32IM, soft-float ABI
 - `float-demo.elf` — RV32IMF, hardware-float ABI
 
 Load any of them in the Raven TUI (**Editor tab → [BIN]**) or run headless: `raven run <file>.elf --nout`.
@@ -66,7 +66,8 @@ c-to-raven/
     ├── array_bench.c     uses RAVEN_MEASURE
     ├── float_demo.c      RV32F hardware floats
     ├── jit_demo.c        uses <raven/advanced.h> for runtime code generation
-    └── coro_demo.c       cooperative coroutine generator (resume / yield)
+    ├── coro_demo.c       cooperative coroutine generator (resume / yield)
+    └── coro_hart_demo.c  coroutines running on multiple harts
 ```
 
 Your program must live in `src/main.c`. The compiler still uses `-Iinclude`, so `src/main.c` can include `<raven/raven.h>` directly. `lib/internal/` is not reachable — try `#include "lib/internal/heap_block.h"` and you'll get "file not found". That's by design.

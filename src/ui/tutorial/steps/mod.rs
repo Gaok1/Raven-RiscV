@@ -7,6 +7,7 @@ mod cache;
 mod editor;
 mod pipeline;
 mod run;
+mod tlb;
 
 pub fn get_steps(tab: Tab) -> &'static [TutorialStep] {
     match tab {
@@ -14,6 +15,7 @@ pub fn get_steps(tab: Tab) -> &'static [TutorialStep] {
         Tab::Run => run::STEPS,
         Tab::Cache => cache::STEPS,
         Tab::Pipeline => pipeline::STEPS,
-        Tab::Docs | Tab::Config | Tab::Activity => &[],
+        Tab::Tlb => tlb::STEPS,
+        Tab::Docs | Tab::Settings | Tab::Activity => &[],
     }
 }

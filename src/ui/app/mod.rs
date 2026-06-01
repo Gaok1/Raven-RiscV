@@ -7,6 +7,7 @@ mod run_loop;
 mod run_state;
 mod runtime;
 mod settings_state;
+mod tlb_state;
 
 use self::cpi::classify_cpi_cycles;
 pub(crate) use self::cpi::{classify_cpi_for_display, cpi_class_label};
@@ -18,6 +19,9 @@ pub(crate) use self::cache_state::{
     CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheResultsSnapshot,
     CacheScope, CacheState, CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot,
     PipelineResultsSnapshot,
+};
+pub(crate) use self::tlb_state::{
+    TlbConfigField, TlbHoverTarget, TlbState, TlbSubtab, VmSettingsField, VmSubtab,
 };
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
@@ -31,8 +35,8 @@ pub(crate) use self::run_state::{
 pub(crate) use self::settings_state::{
     RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS, SettingsState,
-    nearest_pow2_clamp,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
+    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState, nearest_pow2_clamp,
 };
 
 use super::{
@@ -174,9 +178,10 @@ pub(crate) enum Tab {
     Editor,
     Run,
     Cache,
+    Tlb,
     Pipeline,
     Docs,
-    Config,
+    Settings,
     Activity,
 }
 
@@ -186,9 +191,10 @@ impl Tab {
             Tab::Editor,
             Tab::Run,
             Tab::Cache,
+            Tab::Tlb,
             Tab::Pipeline,
             Tab::Docs,
-            Tab::Config,
+            Tab::Settings,
             Tab::Activity,
         ]
     }
@@ -198,9 +204,10 @@ impl Tab {
             Tab::Editor => "Editor",
             Tab::Run => "Run",
             Tab::Cache => "Cache",
+            Tab::Tlb => "Virtual Memory",
             Tab::Pipeline => "Pipeline",
             Tab::Docs => "Docs",
-            Tab::Config => "Config",
+            Tab::Settings => "Settings",
             Tab::Activity => "Activity",
         }
     }
@@ -220,6 +227,7 @@ pub struct App {
     pub(super) run: RunState,
     pub(super) docs: DocsState,
     pub(super) cache: CacheState,
+    pub(super) tlb: TlbState,
     pub(super) settings: SettingsState,
     pub(super) pipeline: crate::ui::pipeline::PipelineSimState,
     pub(crate) max_cores: usize,
@@ -431,6 +439,8 @@ impl App {
                 show_instr_type: true,
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
+                vm_mode: crate::falcon::mmu::VmMode::Off,
+                tlb_enabled: true,
                 trace_syscalls: false,
                 jit_kind: crate::falcon::jit::BackendKind::None,
                 backend: crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None)
@@ -518,6 +528,7 @@ impl App {
                 view_scroll_max: std::cell::Cell::new(0),
                 view_scroll_max_d: std::cell::Cell::new(0),
             },
+            tlb: TlbState::default(),
             show_exit_popup: false,
             should_quit: false,
             help_open: false,
@@ -591,6 +602,8 @@ impl App {
             self.run.mem_size,
         );
         self.run.mem.bypass = !self.run.cache_enabled;
+        self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
+        self.push_vm_mode_to_mmu();
         self.run.faulted = false;
 
         match assemble(&self.editor.buf.text(), self.run.base_pc) {
@@ -649,6 +662,32 @@ impl App {
                 self.run.hover_imem_addr = None;
                 self.reset_exec_regions_to_loaded_text();
                 self.sync_pipeline_program_range();
+
+                // Didactic VM modes (Sv32 / Custom): auto-install the configured
+                // page map so any program sees TLB activity without manual PT
+                // setup. The map + scheme are editable in Virtual Memory →
+                // settings. Manual mode leaves satp to the program.
+                if self.run.vm_mode.is_auto() {
+                    let scheme = self.active_scheme();
+                    let root_pa = scheme.root_pa(self.run.mem_size as u32);
+                    let window = (
+                        self.run.base_pc.min(prog.data_base),
+                        self.run.heap_start,
+                    );
+                    crate::falcon::mmu::Mmu::install_map_scheme(
+                        &mut self.run.mem.ram,
+                        root_pa,
+                        &scheme,
+                        self.tlb.page_map,
+                        window,
+                    );
+                    let satp_val =
+                        crate::falcon::mmu::Mmu::make_satp(root_pa, self.tlb.page_map.asid);
+                    self.run.cpu.satp = satp_val;
+                    let mmu = self.run.mem.mmu_mut();
+                    mmu.satp = crate::falcon::mmu::Satp::new(satp_val);
+                    mmu.force_translate = true;
+                }
 
                 // Reset pipeline stages (shares cpu/mem with RunState)
                 self.pipeline.reset_stages(self.run.cpu.pc);
@@ -760,6 +799,19 @@ impl App {
                 self.run.mem_size,
             );
             self.run.mem.bypass = !self.run.cache_enabled;
+            self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
+            // Inlined `push_vm_mode_to_mmu` (the destructuring `let` above holds
+            // an immutable borrow of `self.editor`, so we can't take `&mut self`).
+            {
+                let (enabled, force_translate) = self.run.vm_mode.flags();
+                let scheme = self.active_scheme();
+                let tlb_enabled = self.run.tlb_enabled;
+                let mmu = self.run.mem.mmu_mut();
+                mmu.set_scheme(scheme);
+                mmu.enabled = enabled;
+                mmu.force_translate = force_translate;
+                mmu.tlb_enabled = tlb_enabled;
+            }
             self.run.faulted = false;
 
             // Write directly to RAM (bypass cache) so invalidate() won't discard data
@@ -863,6 +915,8 @@ impl App {
             self.run.mem_size,
         );
         self.run.mem.bypass = !self.run.cache_enabled;
+        self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
+        self.push_vm_mode_to_mmu();
         self.run.faulted = false;
 
         // ── Detect format and load ───────────────────────────────────────
@@ -1250,6 +1304,328 @@ impl App {
         self.run.mem.add_extra_level(cfg);
         // Select the newly added level
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
+    }
+
+    // ── TLB config editing helpers ─────────────────────────────────────────
+
+    pub(crate) fn commit_tlb_edit(&mut self) {
+        let Some(field) = self.tlb.edit_field else {
+            return;
+        };
+        self.tlb.config_error = None;
+        self.tlb.config_status = None;
+        if !field.is_numeric() {
+            self.tlb.edit_field = None;
+            self.tlb.edit_buf.clear();
+            return;
+        }
+        let s = self.tlb.edit_buf.trim().to_string();
+        let cfg = &mut self.tlb.pending;
+        let parse_result: Result<(), String> = match field {
+            TlbConfigField::EntryCount => match s.parse::<u16>() {
+                Ok(v) => {
+                    cfg.entry_count = v.clamp(1, 4096);
+                    Ok(())
+                }
+                Err(_) => Err(format!("expected number 1..=4096, got {s:?}")),
+            },
+            TlbConfigField::Associativity => match s.parse::<u8>() {
+                Ok(v) => {
+                    cfg.associativity = v.clamp(1, 64);
+                    Ok(())
+                }
+                Err(_) => Err(format!("expected number 1..=64, got {s:?}")),
+            },
+            TlbConfigField::HitLatency => match s.parse::<u8>() {
+                Ok(v) => {
+                    cfg.hit_latency = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("expected number 0..=255, got {s:?}")),
+            },
+            TlbConfigField::MissPenalty => match s.parse::<u8>() {
+                Ok(v) => {
+                    cfg.miss_penalty = v;
+                    Ok(())
+                }
+                Err(_) => Err(format!("expected number 0..=255, got {s:?}")),
+            },
+            TlbConfigField::Replacement => Ok(()),
+        };
+        match parse_result {
+            Ok(()) => {
+                self.tlb.edit_field = None;
+                self.tlb.edit_buf.clear();
+            }
+            Err(msg) => {
+                // Keep editor open so the user can correct the value.
+                self.tlb.config_error = Some(msg);
+            }
+        }
+    }
+
+    pub(crate) fn cycle_tlb_field(&mut self, field: TlbConfigField, forward: bool) {
+        use crate::falcon::cache::ReplacementPolicy;
+        self.tlb.config_error = None;
+        self.tlb.config_status = None;
+        let cfg = &mut self.tlb.pending;
+        if let TlbConfigField::Replacement = field {
+            cfg.replacement = if forward {
+                match cfg.replacement {
+                    ReplacementPolicy::Lru => ReplacementPolicy::Mru,
+                    ReplacementPolicy::Mru => ReplacementPolicy::Fifo,
+                    ReplacementPolicy::Fifo => ReplacementPolicy::Random,
+                    ReplacementPolicy::Random => ReplacementPolicy::Lfu,
+                    ReplacementPolicy::Lfu => ReplacementPolicy::Clock,
+                    ReplacementPolicy::Clock => ReplacementPolicy::Lru,
+                }
+            } else {
+                match cfg.replacement {
+                    ReplacementPolicy::Lru => ReplacementPolicy::Clock,
+                    ReplacementPolicy::Mru => ReplacementPolicy::Lru,
+                    ReplacementPolicy::Fifo => ReplacementPolicy::Mru,
+                    ReplacementPolicy::Random => ReplacementPolicy::Fifo,
+                    ReplacementPolicy::Lfu => ReplacementPolicy::Random,
+                    ReplacementPolicy::Clock => ReplacementPolicy::Lfu,
+                }
+            };
+        }
+    }
+
+    pub(crate) fn tlb_field_value_str(&self, field: TlbConfigField) -> String {
+        let cfg = &self.tlb.pending;
+        match field {
+            TlbConfigField::EntryCount => cfg.entry_count.to_string(),
+            TlbConfigField::Associativity => cfg.associativity.to_string(),
+            TlbConfigField::HitLatency => cfg.hit_latency.to_string(),
+            TlbConfigField::MissPenalty => cfg.miss_penalty.to_string(),
+            TlbConfigField::Replacement => String::new(),
+        }
+    }
+
+    pub(crate) fn apply_tlb_config(&mut self) {
+        let cfg = self.tlb.pending.clone();
+        if cfg.entry_count == 0 {
+            self.tlb.config_error = Some("entry count must be ≥ 1".into());
+            return;
+        }
+        if cfg.associativity == 0 {
+            self.tlb.config_error = Some("associativity must be ≥ 1".into());
+            return;
+        }
+        if cfg.entry_count < cfg.associativity as u16 {
+            self.tlb.config_error = Some("entry count must be ≥ associativity".into());
+            return;
+        }
+        self.run.mem.mmu_mut().tlb.reconfigure(cfg);
+        self.tlb.config_error = None;
+        self.tlb.config_status = Some("Applied (TLB reset)".into());
+    }
+
+    pub(crate) fn flush_tlb(&mut self) {
+        self.run.mem.mmu_mut().tlb.flush();
+        self.tlb.config_status = Some("TLB flushed".into());
+        self.tlb.config_error = None;
+    }
+
+    // ── VM Settings panel helpers ──────────────────────────────────────────
+
+    /// The string shown when a numeric VM-settings field enters edit mode.
+    pub(crate) fn vm_field_value_str(&self, field: VmSettingsField) -> String {
+        use crate::falcon::mmu::MapKind;
+        match field {
+            VmSettingsField::Offset => match self.tlb.pending_map.kind {
+                MapKind::Offset(v) => v.to_string(),
+                _ => "0".into(),
+            },
+            VmSettingsField::OffsetBits => self.tlb.pending_scheme.offset_bits.to_string(),
+            VmSettingsField::LevelBits(i) => self
+                .tlb
+                .pending_scheme
+                .level_bits
+                .get(i)
+                .copied()
+                .unwrap_or(0)
+                .to_string(),
+            VmSettingsField::Asid => self.tlb.pending_map.asid.to_string(),
+            VmSettingsField::TlbEntries => self.tlb.pending.entry_count.to_string(),
+            VmSettingsField::TlbAssoc => self.tlb.pending.associativity.to_string(),
+            VmSettingsField::TlbHitLat => self.tlb.pending.hit_latency.to_string(),
+            VmSettingsField::TlbMissLat => self.tlb.pending.miss_penalty.to_string(),
+            _ => String::new(),
+        }
+    }
+
+    /// Commit the in-progress numeric VM-settings edit into the pending state.
+    pub(crate) fn commit_vm_edit(&mut self) {
+        use crate::falcon::mmu::MapKind;
+        let Some(field) = self.tlb.vm_edit_field else {
+            return;
+        };
+        let buf = self.tlb.vm_edit_buf.trim().to_string();
+        match field {
+            VmSettingsField::Offset => match buf.parse::<i32>() {
+                Ok(v) => {
+                    self.tlb.pending_map.kind = MapKind::Offset(v);
+                    self.tlb.map_status = None;
+                }
+                Err(_) if buf.is_empty() || buf == "-" => {
+                    self.tlb.pending_map.kind = MapKind::Offset(0);
+                }
+                Err(_) => {
+                    self.tlb.map_status = Some("offset must be an integer (MiB)".into());
+                }
+            },
+            VmSettingsField::OffsetBits => {
+                if let Ok(v) = buf.parse::<u8>() {
+                    self.tlb.pending_scheme.offset_bits = v.clamp(12, 30);
+                    self.tlb.map_status = None;
+                }
+            }
+            VmSettingsField::LevelBits(i) => {
+                if let Ok(v) = buf.parse::<u8>() {
+                    if let Some(b) = self.tlb.pending_scheme.level_bits.get_mut(i) {
+                        *b = v.clamp(1, 12);
+                    }
+                    self.tlb.map_status = None;
+                }
+            }
+            VmSettingsField::Asid => {
+                if let Ok(v) = buf.parse::<u16>() {
+                    self.tlb.pending_map.asid = v.min(511);
+                    self.tlb.map_status = None;
+                }
+            }
+            VmSettingsField::TlbEntries => {
+                if let Ok(v) = buf.parse::<u16>() {
+                    self.tlb.pending.entry_count = v.clamp(1, 4096);
+                }
+            }
+            VmSettingsField::TlbAssoc => {
+                if let Ok(v) = buf.parse::<u8>() {
+                    self.tlb.pending.associativity = v.clamp(1, 64);
+                }
+            }
+            VmSettingsField::TlbHitLat => {
+                if let Ok(v) = buf.parse::<u8>() {
+                    self.tlb.pending.hit_latency = v;
+                }
+            }
+            VmSettingsField::TlbMissLat => {
+                if let Ok(v) = buf.parse::<u8>() {
+                    self.tlb.pending.miss_penalty = v;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Toggle / cycle a non-numeric VM-settings control (click action).
+    pub(crate) fn toggle_vm_field(&mut self, field: VmSettingsField) {
+        use crate::falcon::cache::ReplacementPolicy;
+        use crate::falcon::mmu::MapKind;
+        self.tlb.map_status = None;
+        match field {
+            VmSettingsField::Mode => {
+                let next = self.vm_mode().cycle();
+                self.set_vm_mode(next);
+            }
+            VmSettingsField::TlbEnabled => {
+                self.set_tlb_enabled(!self.run.tlb_enabled);
+            }
+            VmSettingsField::Kind => {
+                self.tlb.pending_map.kind = match self.tlb.pending_map.kind {
+                    MapKind::Identity => MapKind::Offset(0),
+                    MapKind::Offset(_) => MapKind::Identity,
+                };
+            }
+            VmSettingsField::AddLevel => {
+                if self.tlb.pending_scheme.level_bits.len() < 4 {
+                    self.tlb.pending_scheme.level_bits.push(10);
+                }
+            }
+            VmSettingsField::RemoveLevel => {
+                if self.tlb.pending_scheme.level_bits.len() > 1 {
+                    self.tlb.pending_scheme.level_bits.pop();
+                }
+            }
+            VmSettingsField::PermR => self.tlb.pending_map.perms.r ^= true,
+            VmSettingsField::PermW => self.tlb.pending_map.perms.w ^= true,
+            VmSettingsField::PermX => self.tlb.pending_map.perms.x ^= true,
+            VmSettingsField::PermU => self.tlb.pending_map.perms.u ^= true,
+            VmSettingsField::Global => self.tlb.pending_map.global ^= true,
+            VmSettingsField::TlbReplacement => {
+                self.tlb.pending.replacement = match self.tlb.pending.replacement {
+                    ReplacementPolicy::Lru => ReplacementPolicy::Mru,
+                    ReplacementPolicy::Mru => ReplacementPolicy::Fifo,
+                    ReplacementPolicy::Fifo => ReplacementPolicy::Random,
+                    ReplacementPolicy::Random => ReplacementPolicy::Lfu,
+                    ReplacementPolicy::Lfu => ReplacementPolicy::Clock,
+                    ReplacementPolicy::Clock => ReplacementPolicy::Lru,
+                };
+            }
+            // Numeric fields enter edit mode via the mouse/keyboard handlers.
+            _ => {}
+        }
+    }
+
+    /// Apply the whole VM Settings panel: TLB geometry, then the page map +
+    /// paging scheme (in the didactic auto modes).
+    pub(crate) fn apply_vm_settings(&mut self) {
+        let cfg = self.tlb.pending.clone();
+        if cfg.entry_count >= cfg.associativity as u16 && cfg.associativity >= 1 {
+            self.run.mem.mmu_mut().tlb.reconfigure(cfg);
+        }
+        self.apply_page_map();
+    }
+
+    /// Apply the pending paging scheme + map: rewrite the root page table in
+    /// RAM and re-point satp. Only valid in the didactic auto modes (Sv32 /
+    /// Custom), where the simulator owns the page tables.
+    pub(crate) fn apply_page_map(&mut self) {
+        use crate::falcon::mmu::{Mmu, Satp, VmMode};
+        if !self.run.vm_mode.is_auto() {
+            self.tlb.map_status =
+                Some("set VM mode to Sv32 or Custom first".into());
+            return;
+        }
+        // In Custom mode validate the user scheme before touching RAM.
+        let scheme = if matches!(self.run.vm_mode, VmMode::Custom) {
+            if !self.tlb.pending_scheme.is_valid() {
+                self.tlb.map_status =
+                    Some("invalid scheme: index+offset bits must total 32".into());
+                return;
+            }
+            self.tlb.pending_scheme.clone()
+        } else {
+            crate::falcon::mmu::PagingScheme::sv32()
+        };
+        let root_pa = scheme.root_pa(self.run.mem_size as u32);
+        let window = (self.run.base_pc.min(self.run.data_base), self.run.heap_start);
+        let spec = self.tlb.pending_map;
+        Mmu::install_map_scheme(&mut self.run.mem.ram, root_pa, &scheme, spec, window);
+        let satp_val = Mmu::make_satp(root_pa, spec.asid);
+        self.run.cpu.satp = satp_val;
+        let mmu = self.run.mem.mmu_mut();
+        mmu.set_scheme(scheme);
+        mmu.satp = Satp::new(satp_val);
+        mmu.force_translate = true;
+        // Stale cached translations would mask the new map.
+        mmu.tlb.flush();
+        self.tlb.page_map = spec;
+        self.tlb.map_status = Some("Map applied (TLB flushed)".into());
+    }
+
+    pub(crate) fn apply_tlb_preset(&mut self, idx: usize) {
+        use crate::falcon::cache::ReplacementPolicy;
+        let (entries, assoc) = match idx {
+            0 => (16u16, 4u8),
+            1 => (32u16, 4u8),
+            _ => (64u16, 8u8),
+        };
+        self.tlb.pending.entry_count = entries;
+        self.tlb.pending.associativity = assoc;
+        self.tlb.pending.replacement = ReplacementPolicy::Lru;
     }
 
     /// Remove the last extra cache level.
@@ -1813,6 +2189,10 @@ impl App {
             return false;
         }
 
+        // Restore the selected hart's satp/priv_mode into the shared MMU
+        // before stepping its pipeline. See B18 in the bug audit.
+        crate::ui::app::hart::sync_mmu_to_cpu(&mut self.run.mem, &self.run.cpu);
+
         self.run.prev_x = self.run.cpu.x;
         self.run.prev_f = self.run.cpu.f;
         self.run.prev_pc = self.run.cpu.pc;
@@ -2110,6 +2490,9 @@ impl App {
     }
 
     fn single_step_selected_sequential(&mut self) {
+        // Restore the selected hart's satp/priv_mode into the shared MMU —
+        // a background hart may have just run with different page tables.
+        crate::ui::app::hart::sync_mmu_to_cpu(&mut self.run.mem, &self.run.cpu);
         let go_mode = matches!(self.run.speed, RunSpeed::Instant);
         for _ in 0..16 {
             // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.
