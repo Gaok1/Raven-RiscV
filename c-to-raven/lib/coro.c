@@ -4,11 +4,9 @@
 /* Defined in lib/coro_switch.S. Saves callee-saved state into *from, restores
  * it from *to, then returns into the restored ra/sp. */
 extern void _raven_coro_switch(_RavenCoroCtx *from, _RavenCoroCtx *to);
-
-/* The coroutine currently being resumed. Cooperative + single-hart, so a plain
- * file-static pointer is enough: only the trampoline reads it, and only between
- * the resume that set it and the body's first yield. */
-static RavenCoro *_raven_coro_current = NULL;
+/* First-entry bootstrap in lib/coro_switch.S. Passes the primed s0 register
+ * to _raven_coro_trampoline as the RavenCoro*. */
+extern void _raven_coro_enter(void);
 
 static void _raven_coro_zero_ctx(_RavenCoroCtx *c) {
     raven_u32   *w = (raven_u32 *)c;
@@ -18,8 +16,7 @@ static void _raven_coro_zero_ctx(_RavenCoroCtx *c) {
 
 /* Entered via `ret` from the first switch into a fresh coroutine: sp is the
  * coroutine's stack top and the body has never run yet. */
-static void _raven_coro_trampoline(void) {
-    RavenCoro *co = _raven_coro_current;
+void _raven_coro_trampoline(RavenCoro *co) {
     co->fn(co, co->arg);
     co->state    = RAVEN_CORO_DONE;
     co->transfer = NULL;
@@ -38,19 +35,19 @@ void raven_coro_init(RavenCoro *co, void *stack_base, raven_size_t stack_size,
     co->transfer = NULL;
     co->state    = RAVEN_CORO_READY;
 
-    /* sp = top of the buffer, 16-byte aligned (RISC-V ABI). ra = trampoline,
-     * so the first switch into this context `ret`s straight into the body. */
+    /* sp = top of the buffer, 16-byte aligned (RISC-V ABI). ra = first-entry
+     * bootstrap, which passes the primed s0 register as RavenCoro* to the
+     * trampoline before tail-calling into the body. */
     raven_u32 top = (raven_u32)((char *)stack_base + stack_size);
     co->ctx.sp = top & ~15u;
-    co->ctx.ra = (raven_u32)(raven_uintptr_t)&_raven_coro_trampoline;
+    co->ctx.ra = (raven_u32)(raven_uintptr_t)&_raven_coro_enter;
+    co->ctx.s[0] = (raven_u32)(raven_uintptr_t)co;
 }
 
 void *raven_coro_resume(RavenCoro *co, void *send) {
     if (co->state == RAVEN_CORO_DONE || co->state == RAVEN_CORO_RUNNING)
         return NULL;
 
-    RavenCoro *prev = _raven_coro_current;
-    _raven_coro_current = co;
     co->transfer = send;
     co->state    = RAVEN_CORO_RUNNING;
 
@@ -58,7 +55,6 @@ void *raven_coro_resume(RavenCoro *co, void *send) {
      * when the coroutine yields or its body returns. */
     _raven_coro_switch(&co->caller, &co->ctx);
 
-    _raven_coro_current = prev;
     return co->transfer;
 }
 

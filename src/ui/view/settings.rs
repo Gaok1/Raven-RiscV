@@ -1,4 +1,4 @@
-// ui/view/settings.rs — Config tab renderer
+// ui/view/settings.rs — Settings tab renderer
 use ratatui::{
     Frame,
     prelude::*,
@@ -8,7 +8,8 @@ use ratatui::{
 use crate::ui::app::{
     App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROWS,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
+    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crate::ui::theme;
 use crate::ui::view::components::{dense_action, dense_value};
@@ -19,7 +20,7 @@ pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
         .title(Span::styled(
-            " Config ",
+            " Settings ",
             Style::default().fg(theme::ACCENT).bold(),
         ));
 
@@ -189,7 +190,51 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     ]));
     items.push(pipe_item);
 
-    // Row 5: JIT mode selector
+    // Row 5: VM Enabled toggle (Sv32 + TLB)
+    let is_sel_vm = sel == SETTINGS_ROW_VM_ENABLED;
+    let is_hov_vm = app.settings.hover_row == Some(SETTINGS_ROW_VM_ENABLED);
+    let label_style_vm = if is_sel_vm {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_vm {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let vm_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Virtual Memory"), label_style_vm),
+        Span::raw("  "),
+        dense_value(app.vm_mode().as_str(), app.settings.hover_vm_enabled, true, theme::LABEL_Y),
+    ]));
+    items.push(vm_item);
+
+    // Row 6: TLB Enabled toggle (cache the page-table walks, or always walk).
+    let is_sel_tlb = sel == SETTINGS_ROW_TLB_ENABLED;
+    let is_hov_tlb = app.settings.hover_row == Some(SETTINGS_ROW_TLB_ENABLED);
+    let vm_off = !app.run.vm_enabled();
+    let label_style_tlb = if vm_off {
+        Style::default().fg(theme::BORDER)
+    } else if is_sel_tlb {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_tlb {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let mut tlb_spans = vec![
+        Span::styled(format!("{:<20}", "  TLB Enabled"), label_style_tlb),
+        Span::raw("  "),
+        bool_button(app.run.tlb_enabled, app.settings.hover_tlb_enabled),
+    ];
+    if vm_off {
+        tlb_spans.push(Span::raw("  "));
+        tlb_spans.push(Span::styled(
+            "(no effect — VM off)",
+            Style::default().fg(theme::BORDER),
+        ));
+    }
+    items.push(ListItem::new(Line::from(tlb_spans)));
+
+    // Row 7: JIT mode selector
     let is_sel_jit = sel == SETTINGS_ROW_JIT_MODE;
     let is_hov_jit = app.settings.hover_row == Some(SETTINGS_ROW_JIT_MODE);
     let label_style_jit = if is_sel_jit {
@@ -309,8 +354,18 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         bool_btn_x,
         bool_btn_x + bool_btn_label_w,
     ));
-    app.settings.bool_btn_trace_syscalls_rect.set((
+    app.settings.bool_btn_vm_rect.set((
         area.y + 5,
+        bool_btn_x,
+        bool_btn_x + bool_btn_label_w,
+    ));
+    app.settings.bool_btn_tlb_rect.set((
+        area.y + 6,
+        bool_btn_x,
+        bool_btn_x + bool_btn_label_w,
+    ));
+    app.settings.bool_btn_trace_syscalls_rect.set((
+        area.y + 8,
         bool_btn_x,
         bool_btn_x + bool_btn_label_w,
     ));
@@ -370,6 +425,41 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
             Line::from(Span::styled(
                 "the 5-stage CPU pipeline view.",
                 Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
+    } else if sel == SETTINGS_ROW_TLB_ENABLED {
+        vec![
+            Line::from(Span::styled(
+                "TLB Enabled",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "When ON, translations are cached in the",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "TLB: repeat accesses hit (1 cyc).",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "When OFF, every access walks the page",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "table — all misses, miss penalty each time.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Only matters while Virtual Memory is on.",
+                Style::default().fg(theme::LABEL),
             )),
             Line::raw(""),
             Line::from(vec![

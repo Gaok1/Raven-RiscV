@@ -11,10 +11,12 @@
  *  stack and registers stay alive across the suspension, so the next
  *  raven_coro_resume() continues exactly where it left off.
  *
- *  Coroutines are cooperative and single-hart: exactly one runs at a time and
- *  control only moves on an explicit resume/yield. This is NOT the same as
- *  <raven/hart.h>, which runs code in parallel on another hart. A coroutine
- *  switch is a pure user-space register/stack swap — no ecall is involved.
+ *  Coroutines are cooperative: exactly one coroutine runs at a time per
+ *  RavenCoro, and control only moves on an explicit resume/yield. Distinct
+ *  coroutines may run on different harts at the same time. This is NOT the
+ *  same as <raven/hart.h>, which runs code in parallel on another hart. A
+ *  coroutine switch is a pure user-space register/stack swap — no ecall is
+ *  involved.
  *
  *  resume and yield exchange one value (a void*) in each direction, which is
  *  all you need for the generator pattern. Pass NULL and ignore the result if

@@ -17,6 +17,35 @@ pub enum ReplacementPolicy {
     Mru,
 }
 
+impl ReplacementPolicy {
+    /// Stable lowercase tag used by the config serializer/parser.  Rename
+    /// variants without breaking saved `.fcache` / `.rcfg` files.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReplacementPolicy::Lru => "lru",
+            ReplacementPolicy::Fifo => "fifo",
+            ReplacementPolicy::Random => "random",
+            ReplacementPolicy::Lfu => "lfu",
+            ReplacementPolicy::Clock => "clock",
+            ReplacementPolicy::Mru => "mru",
+        }
+    }
+
+    /// Inverse of [`as_str`]. Returns `None` on unknown tags so the caller
+    /// can surface a real error instead of silently falling back to LRU.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "lru" => Some(ReplacementPolicy::Lru),
+            "fifo" => Some(ReplacementPolicy::Fifo),
+            "random" => Some(ReplacementPolicy::Random),
+            "lfu" => Some(ReplacementPolicy::Lfu),
+            "clock" => Some(ReplacementPolicy::Clock),
+            "mru" => Some(ReplacementPolicy::Mru),
+            _ => None,
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WritePolicy {

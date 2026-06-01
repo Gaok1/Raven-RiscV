@@ -10,8 +10,10 @@ mod paste;
 mod pipeline_keys;
 mod run_keys;
 mod serialization;
+mod tlb_keys;
 
 pub(crate) use self::paste::paste_from_terminal;
+pub(crate) use self::tlb_keys::select as tlb_select;
 #[cfg(test)]
 use self::paste::{paste_imem_search, paste_mem_search};
 pub(crate) use self::serialization::{
@@ -108,11 +110,11 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
                 serialization::do_import_cfg(app);
                 return true;
             }
-            (KeyCode::Char('e'), Tab::Config) => {
+            (KeyCode::Char('e'), Tab::Settings) => {
                 serialization::do_export_rcfg(app);
                 return true;
             }
-            (KeyCode::Char('l'), Tab::Config) => {
+            (KeyCode::Char('l'), Tab::Settings) => {
                 serialization::do_import_rcfg(app);
                 return true;
             }
@@ -140,9 +142,10 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
         Tab::Run => run_keys::handle(app, key, ctrl),
         Tab::Editor => editor_keys::handle(app, key, shift),
         Tab::Cache => cache_keys::handle(app, key),
+        Tab::Tlb => tlb_keys::handle(app, key),
         Tab::Pipeline => pipeline_keys::handle(app, key),
         Tab::Docs => docs_keys::handle(app, key),
-        Tab::Config => config_keys::handle(app, key),
+        Tab::Settings => config_keys::handle(app, key),
         Tab::Activity => crate::guided_learning::keys::handle(app, key.code),
     }
 }

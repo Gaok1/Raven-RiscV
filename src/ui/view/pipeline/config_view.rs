@@ -23,7 +23,7 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::BORDER))
         .title(Span::styled(
-            " Pipeline Config ",
+            " Pipeline Settings ",
             Style::default()
                 .fg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD),

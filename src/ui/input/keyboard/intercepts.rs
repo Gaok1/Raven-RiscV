@@ -159,7 +159,13 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
     if app.help_open {
         let pages_count: usize = match app.tab {
             Tab::Run => 2,
-            Tab::Editor | Tab::Cache | Tab::Pipeline | Tab::Docs | Tab::Config | Tab::Activity => 1,
+            Tab::Editor
+            | Tab::Cache
+            | Tab::Tlb
+            | Tab::Pipeline
+            | Tab::Docs
+            | Tab::Settings
+            | Tab::Activity => 1,
         };
         match key.code {
             KeyCode::Esc => {
@@ -291,7 +297,7 @@ pub(super) fn handle_post_find_intercepts(app: &mut App, key: KeyEvent) -> Optio
 }
 
 pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
-    if matches!(app.tab, Tab::Run | Tab::Pipeline | Tab::Cache) {
+    if matches!(app.tab, Tab::Run | Tab::Pipeline | Tab::Cache | Tab::Tlb) {
         match key.code {
             KeyCode::Char('[') => {
                 app.cycle_selected_core(-1);

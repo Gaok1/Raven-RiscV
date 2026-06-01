@@ -265,9 +265,9 @@ Closure-backed tasks automatically mark themselves finished when the closure ret
 Stackful **cooperative** coroutines (`raven_api::coroutine`), generic over the
 value type `T`. A closure runs on its own stack and can suspend itself, keeping
 its stack and registers live so the next resume continues where it left off.
-Unlike harts, exactly one coroutine runs at a time and control only moves on an
-explicit resume/suspend — the switch is a pure user-space register/stack swap
-(no `ecall`).
+Unlike harts, a coroutine only advances on an explicit resume/suspend — the
+switch is a pure user-space register/stack swap (no `ecall`). Independent
+harts can still drive different coroutines concurrently.
 
 ```rust
 use crate::raven_api::Coroutine;

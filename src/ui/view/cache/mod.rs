@@ -31,7 +31,7 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
             )),
             Line::raw(""),
             Line::from(Span::styled(
-                "  Enable it in the Config tab to run cache statistics.",
+                "  Enable it in the Settings tab to run cache statistics.",
                 Style::default().fg(theme::LABEL),
             )),
         ];
@@ -292,7 +292,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let view_x1 = x;
     x += 3; // separator
     let config_x0 = x;
-    x += "config".len() as u16;
+    x += "settings".len() as u16;
     let config_x1 = x;
     app.cache.subtab_stats_btn.set((row_y, stats_x0, stats_x1));
     app.cache.subtab_view_btn.set((row_y, view_x0, view_x1));
@@ -306,7 +306,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("   "),
         Span::styled("view", view_style),
         Span::raw("   "),
-        Span::styled("config", config_style),
+        Span::styled("settings", config_style),
     ]);
     let line2 = Line::from(vec![
         Span::raw(" "),

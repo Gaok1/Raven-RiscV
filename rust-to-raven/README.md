@@ -10,9 +10,11 @@ A `Coroutine<T>` runs a closure on its own stack; the closure receives a
 `Yielder<T>` whose `suspend` hands control back to `resume`, keeping the stack
 alive so the next `resume` continues exactly where it left off.
 
-These are **single-hart** (one runs at a time) — distinct from the parallel hart
-API. The switch is a pure user-space register/stack swap, no `ecall`. Unlike the
-C SDK, the `Coroutine` allocates and owns its stack, freeing it on drop.
+These are **cooperative** (control only moves on explicit `resume`/`suspend`) and
+distinct from the parallel hart API. The switch is a pure user-space
+register/stack swap, no `ecall`. Independent harts can still drive different
+coroutines concurrently. Unlike the C SDK, the `Coroutine` allocates and owns
+its stack, freeing it on drop.
 
 ```rust
 use crate::raven_api::Coroutine;

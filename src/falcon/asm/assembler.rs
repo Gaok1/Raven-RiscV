@@ -1445,6 +1445,122 @@ fn parse_instr(
             Ok(Halt)
         }
 
+        // ---------- Privileged / Zicsr ----------
+        "mret" => {
+            if !ops.is_empty() {
+                return Err("mret takes no operands".into());
+            }
+            Ok(Mret)
+        }
+        "sret" => {
+            if !ops.is_empty() {
+                return Err("sret takes no operands".into());
+            }
+            Ok(Sret)
+        }
+        "sfence.vma" => {
+            let (rs1, rs2) = match ops.len() {
+                0 => (0u8, 0u8),
+                1 => (get_reg(&ops[0])?, 0u8),
+                2 => (get_reg(&ops[0])?, get_reg(&ops[1])?),
+                _ => return Err("sfence.vma: expected 0..2 operands".into()),
+            };
+            Ok(SfenceVma { rs1, rs2 })
+        }
+
+        // CSR register form: csrrw rd, csr, rs1 (and pseudo csrw csr, rs)
+        "csrrw" => {
+            if ops.len() != 3 {
+                return Err("csrrw: expected 'rd, csr, rs1'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let csr = parse_csr_name(&ops[1])?;
+            let rs1 = get_reg(&ops[2])?;
+            Ok(Csrrw { rd, csr, rs1 })
+        }
+        "csrrs" => {
+            if ops.len() != 3 {
+                return Err("csrrs: expected 'rd, csr, rs1'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let csr = parse_csr_name(&ops[1])?;
+            let rs1 = get_reg(&ops[2])?;
+            Ok(Csrrs { rd, csr, rs1 })
+        }
+        "csrrc" => {
+            if ops.len() != 3 {
+                return Err("csrrc: expected 'rd, csr, rs1'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let csr = parse_csr_name(&ops[1])?;
+            let rs1 = get_reg(&ops[2])?;
+            Ok(Csrrc { rd, csr, rs1 })
+        }
+        // CSR immediate form
+        "csrrwi" => {
+            if ops.len() != 3 {
+                return Err("csrrwi: expected 'rd, csr, imm'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let csr = parse_csr_name(&ops[1])?;
+            let uimm = parse_uimm5(&ops[2])?;
+            Ok(Csrrwi { rd, csr, uimm })
+        }
+        "csrrsi" => {
+            if ops.len() != 3 {
+                return Err("csrrsi: expected 'rd, csr, imm'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let csr = parse_csr_name(&ops[1])?;
+            let uimm = parse_uimm5(&ops[2])?;
+            Ok(Csrrsi { rd, csr, uimm })
+        }
+        "csrrci" => {
+            if ops.len() != 3 {
+                return Err("csrrci: expected 'rd, csr, imm'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let csr = parse_csr_name(&ops[1])?;
+            let uimm = parse_uimm5(&ops[2])?;
+            Ok(Csrrci { rd, csr, uimm })
+        }
+        // Pseudo: csrw csr, rs  →  csrrw x0, csr, rs
+        "csrw" => {
+            if ops.len() != 2 {
+                return Err("csrw: expected 'csr, rs'".into());
+            }
+            let csr = parse_csr_name(&ops[0])?;
+            let rs1 = get_reg(&ops[1])?;
+            Ok(Csrrw { rd: 0, csr, rs1 })
+        }
+        // Pseudo: csrr rd, csr  →  csrrs rd, csr, x0
+        "csrr" => {
+            if ops.len() != 2 {
+                return Err("csrr: expected 'rd, csr'".into());
+            }
+            let rd = get_reg(&ops[0])?;
+            let csr = parse_csr_name(&ops[1])?;
+            Ok(Csrrs { rd, csr, rs1: 0 })
+        }
+        // Pseudo: csrs csr, rs  →  csrrs x0, csr, rs
+        "csrs" => {
+            if ops.len() != 2 {
+                return Err("csrs: expected 'csr, rs'".into());
+            }
+            let csr = parse_csr_name(&ops[0])?;
+            let rs1 = get_reg(&ops[1])?;
+            Ok(Csrrs { rd: 0, csr, rs1 })
+        }
+        // Pseudo: csrc csr, rs  →  csrrc x0, csr, rs
+        "csrc" => {
+            if ops.len() != 2 {
+                return Err("csrc: expected 'csr, rs'".into());
+            }
+            let csr = parse_csr_name(&ops[0])?;
+            let rs1 = get_reg(&ops[1])?;
+            Ok(Csrrc { rd: 0, csr, rs1 })
+        }
+
         // ────────────────── RV32F ──────────────────
 
         // Load / Store
@@ -1928,4 +2044,61 @@ fn parse_instr(
 
         _ => Err(format!("unsupported mnemonic: {mnemonic}")),
     }
+}
+
+/// Resolve a CSR name (e.g. "satp", "mstatus") or a numeric literal (decimal/hex)
+/// to a 12-bit CSR number.
+fn parse_csr_name(s: &str) -> Result<u16, String> {
+    let s = s.trim();
+    // Named CSRs (Privileged spec numbering)
+    let known: &[(&str, u16)] = &[
+        // M-mode
+        ("mstatus",  0x300),
+        ("misa",     0x301),
+        ("medeleg",  0x302),
+        ("mideleg",  0x303),
+        ("mie",      0x304),
+        ("mtvec",    0x305),
+        ("mcounteren", 0x306),
+        ("mscratch", 0x340),
+        ("mepc",     0x341),
+        ("mcause",   0x342),
+        ("mtval",    0x343),
+        ("mip",      0x344),
+        // S-mode
+        ("sstatus",  0x100),
+        ("sie",      0x104),
+        ("stvec",    0x105),
+        ("sscratch", 0x140),
+        ("sepc",     0x141),
+        ("scause",   0x142),
+        ("stval",    0x143),
+        ("sip",      0x144),
+        ("satp",     0x180),
+        // counters (read-only, but allowed in csrr)
+        ("cycle",    0xC00),
+        ("time",     0xC01),
+        ("instret",  0xC02),
+    ];
+    for &(name, num) in known {
+        if s.eq_ignore_ascii_case(name) {
+            return Ok(num);
+        }
+    }
+    // Numeric literal
+    let n = parse_imm(s)
+        .ok_or_else(|| format!("unknown CSR: '{s}' (use a name like satp/mstatus or a hex number)"))?;
+    if n < 0 || n > 0xFFF {
+        return Err(format!("CSR number 0x{n:X} out of 12-bit range"));
+    }
+    Ok(n as u16)
+}
+
+/// Parse a 5-bit unsigned immediate (0..31) for CSRRxI instructions.
+fn parse_uimm5(s: &str) -> Result<u8, String> {
+    let n = parse_imm(s).ok_or_else(|| format!("invalid immediate: '{s}'"))?;
+    if !(0..=31).contains(&n) {
+        return Err(format!("CSR immediate {n} out of range 0..31"));
+    }
+    Ok(n as u8)
 }

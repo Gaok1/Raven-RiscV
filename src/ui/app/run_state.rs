@@ -134,6 +134,13 @@ pub(crate) struct BuildStats {
     pub(crate) data_bytes: usize,
 }
 
+impl RunState {
+    /// Whether the MMU is engaged at all (any mode other than `Off`).
+    pub(crate) fn vm_enabled(&self) -> bool {
+        self.vm_mode != crate::falcon::mmu::VmMode::Off
+    }
+}
+
 pub(crate) struct RunState {
     pub(crate) cpu: Cpu,
     pub(crate) prev_x: [u32; 32],
@@ -262,6 +269,14 @@ pub(crate) struct RunState {
     pub(crate) mem_access_log: Vec<(u32, u32, u8)>,
     /// When false, cache simulation is fully bypassed (direct RAM access, no latency).
     pub(crate) cache_enabled: bool,
+    /// How virtual memory behaves (Off / Sv32 / Custom / Manual). Drives the MMU
+    /// `enabled`/`force_translate` flags and, in Custom mode, the active paging
+    /// scheme. See [`crate::falcon::mmu::VmMode`].
+    pub(crate) vm_mode: crate::falcon::mmu::VmMode,
+    /// When false, the TLB cache is bypassed in the engine: every translation
+    /// walks the page table (miss + penalty, no hits). Mirrors
+    /// `Mmu::tlb_enabled`. Independent of `vm_enabled`.
+    pub(crate) tlb_enabled: bool,
     /// When true, non-I/O syscalls are mirrored to the debug console.
     pub(crate) trace_syscalls: bool,
     /// Which JIT mode is currently active.

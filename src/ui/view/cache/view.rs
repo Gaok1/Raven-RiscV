@@ -408,7 +408,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     if !cfg.is_valid_config() {
         if inner.height > 0 {
             f.render_widget(
-                Paragraph::new("Cache disabled — configure it in the Config tab")
+                Paragraph::new("Cache disabled — configure it in the Settings tab")
                     .style(Style::default().fg(theme::LABEL))
                     .alignment(Alignment::Center),
                 inner,
@@ -636,7 +636,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     if !cfg.is_valid_config() {
         if inner.height > 0 {
             f.render_widget(
-                Paragraph::new("Cache disabled — configure it in the Config tab")
+                Paragraph::new("Cache disabled — configure it in the Settings tab")
                     .style(Style::default().fg(theme::LABEL))
                     .alignment(Alignment::Center),
                 inner,

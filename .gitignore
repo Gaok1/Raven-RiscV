@@ -17,6 +17,10 @@
 /docs/reddit_post_draft.md
 /docs/avaliacao-tcc.md
 /docs/threads-plan.md
+# Ignore internal roadmaps/release notes (not part of the product)
+/docs/jit-roadmap.md
+/docs/optimization-roadmap.md
+/docs/en/RELEASE-pipeline-hart.md
 /hello-raven/target
 /tcc-docs
 rust-to-raven/rust-to-raven.elf
