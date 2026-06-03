@@ -11,6 +11,7 @@ use crate::ui::theme;
 mod cache;
 mod components;
 pub mod disasm;
+pub(crate) mod style;
 pub mod docs;
 mod editor;
 mod path_input_overlay;
