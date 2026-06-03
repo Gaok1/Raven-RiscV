@@ -12,7 +12,7 @@ use crate::falcon::cache::{
 use crate::ui::app::{App, CacheHoverTarget, ConfigField};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::components::{dense_action, field_row};
 use crate::ui::view::style;
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
@@ -195,37 +195,18 @@ fn render_fields(
     let size_ok = pending.size > 0 && validation.is_ok();
 
     let mark = |ok: bool| if ok { "" } else { " ✗" };
-    let value_color = |same: bool| if same { theme::TEXT } else { theme::LABEL_Y };
 
     let field_item =
         |field: ConfigField, label: &'static str, value: String, same: bool| -> ListItem<'static> {
-            let label_style = if active == Some(field) {
-                Style::default().fg(theme::ACCENT).bold()
-            } else if hovered == Some(field) {
-                style::value().bold()
-            } else {
-                style::label()
-            };
-            let item = if active == Some(field) {
-                if field.is_numeric() {
-                    let display = format!("{edit_buf}█");
-                    ListItem::new(Line::from(vec![
-                        Span::styled(label, label_style),
-                        dense_value(&display, false, true, theme::ACCENT),
-                    ]))
-                } else {
-                    ListItem::new(Line::from(vec![
-                        Span::styled(label, label_style),
-                        dense_value(&format!("< {value} >"), false, true, theme::ACCENT),
-                    ]))
-                }
-            } else {
-                ListItem::new(Line::from(vec![
-                    Span::styled(label, label_style),
-                    dense_value(&value, hovered == Some(field), true, value_color(same)),
-                ]))
-            };
-            item
+            field_row(
+                label,
+                &value,
+                active == Some(field),
+                field.is_numeric(),
+                edit_buf,
+                hovered == Some(field),
+                !same,
+            )
         };
 
     // Sets row: show computed value or the specific validation error
@@ -339,19 +320,15 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         _ => None,
     };
 
-    let small_s = preset_btn_style(hovered == Some(0));
-    let med_s = preset_btn_style(hovered == Some(1));
-    let large_s = preset_btn_style(hovered == Some(2));
-
     let line = Line::from(vec![
         Span::raw(" "),
         Span::styled("presets", style::idle()),
         Span::raw(" "),
-        Span::styled("small", small_s),
+        dense_action("small", theme::ACCENT, hovered == Some(0)),
         Span::raw(" "),
-        Span::styled("medium", med_s),
+        dense_action("medium", theme::ACCENT, hovered == Some(1)),
         Span::raw(" "),
-        Span::styled("large", large_s),
+        dense_action("large", theme::ACCENT, hovered == Some(2)),
     ]);
     let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let btns = [
@@ -373,20 +350,28 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
         Some(CacheHoverTarget::PresetD(i)) => Some(i),
         _ => None,
     };
-    let small_s = preset_btn_style(hovered == Some(0));
-    let med_s = preset_btn_style(hovered == Some(1));
-    let large_s = preset_btn_style(hovered == Some(2));
-
     let presets = extra_level_presets();
     let line = Line::from(vec![
         Span::raw(" "),
         Span::styled("presets", style::idle()),
         Span::raw(" "),
-        Span::styled(format!("small {}kb", presets[0].size / 1024), small_s),
+        dense_action(
+            &format!("small {}kb", presets[0].size / 1024),
+            theme::ACCENT,
+            hovered == Some(0),
+        ),
         Span::raw(" "),
-        Span::styled(format!("med {}kb", presets[1].size / 1024), med_s),
+        dense_action(
+            &format!("med {}kb", presets[1].size / 1024),
+            theme::ACCENT,
+            hovered == Some(1),
+        ),
         Span::raw(" "),
-        Span::styled(format!("large {}kb", presets[2].size / 1024), large_s),
+        dense_action(
+            &format!("large {}kb", presets[2].size / 1024),
+            theme::ACCENT,
+            hovered == Some(2),
+        ),
     ]);
     let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let small_label = format!("small {}kb", presets[0].size / 1024);
@@ -437,14 +422,6 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
         (inner.y, inner.x + 23, inner.x + 41),
     ]);
     f.render_widget(Paragraph::new(line), inner);
-}
-
-fn preset_btn_style(hovered: bool) -> Style {
-    if hovered {
-        style::value().bold()
-    } else {
-        Style::default().fg(theme::ACCENT).bold()
-    }
 }
 
 pub fn replacement_label(r: ReplacementPolicy) -> &'static str {

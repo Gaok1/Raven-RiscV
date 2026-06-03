@@ -10,7 +10,7 @@ use ratatui::{
 use crate::ui::app::{App, TlbConfigField, TlbHoverTarget};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::components::{dense_action, field_row};
 use crate::ui::view::style;
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
@@ -66,44 +66,23 @@ fn render_fields(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let current = &app.run.mem.mmu().tlb.config;
-    let value_color = |same: bool| if same { theme::TEXT } else { theme::LABEL_Y };
 
     let entry_ok = pending.entry_count >= pending.associativity as u16;
     let assoc_ok = pending.associativity >= 1;
     let mark = |ok: bool| if ok { "" } else { " ✗" };
 
-    let field_item = |field: TlbConfigField,
-                      label: &'static str,
-                      value: String,
-                      same: bool|
-     -> ListItem<'static> {
-        let label_style = if active == Some(field) {
-            Style::default().fg(theme::ACCENT).bold()
-        } else if hovered == Some(field) {
-            style::value().bold()
-        } else {
-            style::label()
+    let field_item =
+        |field: TlbConfigField, label: &'static str, value: String, same: bool| -> ListItem<'static> {
+            field_row(
+                label,
+                &value,
+                active == Some(field),
+                field.is_numeric(),
+                edit_buf,
+                hovered == Some(field),
+                !same,
+            )
         };
-        if active == Some(field) {
-            if field.is_numeric() {
-                let display = format!("{edit_buf}█");
-                ListItem::new(Line::from(vec![
-                    Span::styled(label, label_style),
-                    dense_value(&display, false, true, theme::ACCENT),
-                ]))
-            } else {
-                ListItem::new(Line::from(vec![
-                    Span::styled(label, label_style),
-                    dense_value(&format!("< {value} >"), false, true, theme::ACCENT),
-                ]))
-            }
-        } else {
-            ListItem::new(Line::from(vec![
-                Span::styled(label, label_style),
-                dense_value(&value, hovered == Some(field), true, value_color(same)),
-            ]))
-        }
-    };
 
     let assoc = pending.associativity.max(1) as usize;
     let raw = (pending.entry_count.max(1) as usize)
@@ -165,23 +144,16 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App) {
         Some(TlbHoverTarget::Preset(i)) => Some(*i),
         _ => None,
     };
-    let style = |on: bool| {
-        if on {
-            style::value().bold()
-        } else {
-            Style::default().fg(theme::ACCENT).bold()
-        }
-    };
     let labels = ["small 16", "med 32", "large 64"];
     let line = Line::from(vec![
         Span::raw(" "),
         Span::styled("presets", style::idle()),
         Span::raw(" "),
-        Span::styled(labels[0], style(hovered == Some(0))),
+        dense_action(labels[0], theme::ACCENT, hovered == Some(0)),
         Span::raw(" "),
-        Span::styled(labels[1], style(hovered == Some(1))),
+        dense_action(labels[1], theme::ACCENT, hovered == Some(1)),
         Span::raw(" "),
-        Span::styled(labels[2], style(hovered == Some(2))),
+        dense_action(labels[2], theme::ACCENT, hovered == Some(2)),
     ]);
     let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let x0 = inner.x + 9;

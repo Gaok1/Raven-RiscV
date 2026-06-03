@@ -2,6 +2,8 @@
 /target
 /.claude
 /.vscode
+# Ignore local handoff copies of plan/memory (safety net, not part of the product)
+/.handoff/
 # Ignore generated distribution artifacts
 /dist/
 /claudeProblems

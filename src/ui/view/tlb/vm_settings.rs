@@ -12,7 +12,7 @@ use crate::falcon::mmu::{MapKind, VmMode};
 use crate::ui::app::{App, TlbHoverTarget, VmSettingsField};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind};
-use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::components::{bool_value, dense_action, dense_value, edit_value};
 use crate::ui::view::style;
 
 /// What a hitbox in the panel points at.
@@ -108,16 +108,14 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     let dim = Style::default().fg(theme::BORDER);
     let head = Style::default().fg(theme::ACCENT);
 
-    // Render a numeric field's value (edit cursor when focused).
+    // Render a numeric field's value (unified `█` edit cursor when focused).
     let num_val = |field: VmSettingsField, value: String| -> Span<'static> {
-        if editing(field) {
-            Span::styled(
-                format!("{edit_buf}█"),
-                Style::default().fg(theme::ACCENT).bold(),
-            )
-        } else {
-            dense_value(&value, hov(field), true, theme::LABEL_Y)
-        }
+        edit_value(
+            &value,
+            editing(field).then_some(edit_buf),
+            hov(field),
+            theme::LABEL_Y,
+        )
     };
 
     let mut rows: Vec<RowBuilder> = Vec::new();
@@ -140,15 +138,9 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     {
         let mut r = RowBuilder::new(x0);
         r.styled("TLB cache    ", label);
-        let on = app.run.tlb_enabled;
         r.hit(
             Hit::Field(VmSettingsField::TlbEnabled),
-            dense_value(
-                if on { "[on]" } else { "[off]" },
-                hov(VmSettingsField::TlbEnabled),
-                on,
-                theme::RUNNING,
-            ),
+            bool_value(app.run.tlb_enabled, hov(VmSettingsField::TlbEnabled)),
         );
         rows.push(r);
     }
@@ -297,12 +289,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         r.styled("  global G    ", label);
         r.hit(
             Hit::Field(VmSettingsField::Global),
-            dense_value(
-                if spec.global { "[on]" } else { "[off]" },
-                hov(VmSettingsField::Global),
-                spec.global,
-                theme::RUNNING,
-            ),
+            bool_value(spec.global, hov(VmSettingsField::Global)),
         );
         rows.push(r);
     }

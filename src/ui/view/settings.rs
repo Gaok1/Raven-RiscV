@@ -13,7 +13,7 @@ use crate::ui::app::{
 };
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::components::{ControlState, bool_value, dense_action, dense_value, label_span};
 use crate::ui::view::style;
 
 pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
@@ -42,15 +42,6 @@ pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
     render_controls_bar(f, layout[1], app);
 }
 
-fn bool_button(value: bool, hovered: bool) -> Span<'static> {
-    let (label, color) = if value {
-        ("true", theme::RUNNING)
-    } else {
-        ("false", theme::DANGER)
-    };
-    dense_value(label, hovered, true, color)
-}
-
 fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let sel = app.settings.selected;
     let names = CpiConfig::field_names();
@@ -67,62 +58,45 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     // ── Section: Simulation ──────────────────────────────────────────────
 
     // Row 0: Cache Enabled toggle
-    let is_sel_cache = sel == SETTINGS_ROW_CACHE_ENABLED;
-    let is_hov_cache = app.settings.hover_row == Some(SETTINGS_ROW_CACHE_ENABLED);
-    let label_style_cache = if is_sel_cache {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_cache {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let cache_state = ControlState::from(
+        sel == SETTINGS_ROW_CACHE_ENABLED,
+        app.settings.hover_row == Some(SETTINGS_ROW_CACHE_ENABLED),
+    );
     let cache_item = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<20}", "  Cache Enabled"), label_style_cache),
+        label_span(format!("{:<20}", "  Cache Enabled"), cache_state, theme::LABEL),
         Span::raw("  "),
-        bool_button(app.run.cache_enabled, app.settings.hover_cache_enabled),
+        bool_value(app.run.cache_enabled, app.settings.hover_cache_enabled),
     ]));
     items.push(cache_item);
 
     // Row 1: Max cores
     let is_sel_cores = sel == SETTINGS_ROW_MAX_CORES;
-    let is_hov_cores = app.settings.hover_row == Some(SETTINGS_ROW_MAX_CORES);
     let is_editing_cores = app.settings.cpi_editing && is_sel_cores;
-    let label_style_cores = if is_sel_cores {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_cores {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let cores_state = ControlState::from(
+        is_sel_cores,
+        app.settings.hover_row == Some(SETTINGS_ROW_MAX_CORES),
+    );
     let cores_item = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<20}", "  Max Cores"), label_style_cores),
+        label_span(format!("{:<20}", "  Max Cores"), cores_state, theme::LABEL),
         Span::raw("  "),
         Span::styled(
             if is_editing_cores {
-                format!("[ {:>2}_ ]", app.settings.cpi_edit_buf)
+                format!("[ {:>2}█ ]", app.settings.cpi_edit_buf)
             } else {
                 format!("[ {:>2} ]", app.max_cores)
             },
-            if is_editing_cores {
-                Style::default().fg(theme::LABEL_Y).bold()
-            } else {
-                Style::default().fg(theme::LABEL_Y).bold()
-            },
+            Style::default().fg(theme::LABEL_Y).bold(),
         ),
     ]));
     items.push(cores_item);
 
     // Row 2: Mem Size
     let is_sel_mem = sel == SETTINGS_ROW_MEM_SIZE;
-    let is_hov_mem = app.settings.hover_row == Some(SETTINGS_ROW_MEM_SIZE);
     let is_editing_mem = app.settings.cpi_editing && is_sel_mem;
-    let label_style_mem = if is_sel_mem {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_mem {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let mem_state = ControlState::from(
+        is_sel_mem,
+        app.settings.hover_row == Some(SETTINGS_ROW_MEM_SIZE),
+    );
     let mem_kb = app.run.mem_size / 1024;
     let mem_display = if mem_kb % 1024 == 0 {
         format!("{} MB", mem_kb / 1024)
@@ -130,11 +104,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         format!("{} KB", mem_kb)
     };
     let mem_item = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<20}", "  Mem Size"), label_style_mem),
+        label_span(format!("{:<20}", "  Mem Size"), mem_state, theme::LABEL),
         Span::raw("  "),
         Span::styled(
             if is_editing_mem {
-                format!("[ {}_]", app.settings.cpi_edit_buf)
+                format!("[ {}█]", app.settings.cpi_edit_buf)
             } else {
                 format!("[ {}]", mem_display)
             },
@@ -144,17 +118,12 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     items.push(mem_item);
 
     // Row 3: Run scope
-    let is_sel_scope = sel == SETTINGS_ROW_RUN_SCOPE;
-    let is_hov_scope = app.settings.hover_row == Some(SETTINGS_ROW_RUN_SCOPE);
-    let label_style_scope = if is_sel_scope {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_scope {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let scope_state = ControlState::from(
+        sel == SETTINGS_ROW_RUN_SCOPE,
+        app.settings.hover_row == Some(SETTINGS_ROW_RUN_SCOPE),
+    );
     let scope_item = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<20}", "  Run Scope"), label_style_scope),
+        label_span(format!("{:<20}", "  Run Scope"), scope_state, theme::LABEL),
         Span::raw("  "),
         dense_value(
             app.run_scope.label(),
@@ -166,34 +135,24 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     items.push(scope_item);
 
     // Row 4: Pipeline Enabled toggle
-    let is_sel_pipe = sel == SETTINGS_ROW_PIPELINE_ENABLED;
-    let is_hov_pipe = app.settings.hover_row == Some(SETTINGS_ROW_PIPELINE_ENABLED);
-    let label_style_pipe = if is_sel_pipe {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_pipe {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let pipe_state = ControlState::from(
+        sel == SETTINGS_ROW_PIPELINE_ENABLED,
+        app.settings.hover_row == Some(SETTINGS_ROW_PIPELINE_ENABLED),
+    );
     let pipe_item = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<20}", "  Pipeline Enabled"), label_style_pipe),
+        label_span(format!("{:<20}", "  Pipeline Enabled"), pipe_state, theme::LABEL),
         Span::raw("  "),
-        bool_button(app.pipeline.enabled, app.settings.hover_pipeline_enabled),
+        bool_value(app.pipeline.enabled, app.settings.hover_pipeline_enabled),
     ]));
     items.push(pipe_item);
 
     // Row 5: VM Enabled toggle (Sv32 + TLB)
-    let is_sel_vm = sel == SETTINGS_ROW_VM_ENABLED;
-    let is_hov_vm = app.settings.hover_row == Some(SETTINGS_ROW_VM_ENABLED);
-    let label_style_vm = if is_sel_vm {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_vm {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let vm_state = ControlState::from(
+        sel == SETTINGS_ROW_VM_ENABLED,
+        app.settings.hover_row == Some(SETTINGS_ROW_VM_ENABLED),
+    );
     let vm_item = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<20}", "  Virtual Memory"), label_style_vm),
+        label_span(format!("{:<20}", "  Virtual Memory"), vm_state, theme::LABEL),
         Span::raw("  "),
         dense_value(
             app.vm_mode().as_str(),
@@ -205,22 +164,16 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     items.push(vm_item);
 
     // Row 6: TLB Enabled toggle (cache the page-table walks, or always walk).
-    let is_sel_tlb = sel == SETTINGS_ROW_TLB_ENABLED;
-    let is_hov_tlb = app.settings.hover_row == Some(SETTINGS_ROW_TLB_ENABLED);
     let vm_off = !app.run.vm_enabled();
-    let label_style_tlb = if vm_off {
-        Style::default().fg(theme::BORDER)
-    } else if is_sel_tlb {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_tlb {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let tlb_state = ControlState::from(
+        sel == SETTINGS_ROW_TLB_ENABLED,
+        app.settings.hover_row == Some(SETTINGS_ROW_TLB_ENABLED),
+    )
+    .disabled_if(vm_off);
     let mut tlb_spans = vec![
-        Span::styled(format!("{:<20}", "  TLB Enabled"), label_style_tlb),
+        label_span(format!("{:<20}", "  TLB Enabled"), tlb_state, theme::LABEL),
         Span::raw("  "),
-        bool_button(app.run.tlb_enabled, app.settings.hover_tlb_enabled),
+        bool_value(app.run.tlb_enabled, app.settings.hover_tlb_enabled),
     ];
     if vm_off {
         tlb_spans.push(Span::raw("  "));
@@ -232,29 +185,19 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     items.push(ListItem::new(Line::from(tlb_spans)));
 
     // Row 7: JIT mode selector
-    let is_sel_jit = sel == SETTINGS_ROW_JIT_MODE;
-    let is_hov_jit = app.settings.hover_row == Some(SETTINGS_ROW_JIT_MODE);
-    let label_style_jit = if is_sel_jit {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_jit {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let jit_state = ControlState::from(
+        sel == SETTINGS_ROW_JIT_MODE,
+        app.settings.hover_row == Some(SETTINGS_ROW_JIT_MODE),
+    );
     let jit_label = app.run.jit_kind.as_str().to_uppercase();
     #[cfg(feature = "jit")]
     let jit_unavailable = false;
     #[cfg(not(feature = "jit"))]
     let jit_unavailable = app.run.jit_kind != crate::falcon::jit::BackendKind::None;
     let mut jit_spans = vec![
-        Span::styled(format!("{:<20}", "  JIT Mode"), label_style_jit),
+        label_span(format!("{:<20}", "  JIT Mode"), jit_state, theme::LABEL),
         Span::raw("  "),
-        dense_value(
-            &jit_label,
-            app.settings.hover_jit_mode,
-            true,
-            theme::LABEL_Y,
-        ),
+        dense_value(&jit_label, app.settings.hover_jit_mode, true, theme::LABEL_Y),
     ];
     if jit_unavailable {
         jit_spans.push(Span::raw("  "));
@@ -267,19 +210,12 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     items.push(jit_item);
 
     // Row 6: Syscall debug log toggle
-    let is_sel_trace = sel == SETTINGS_ROW_TRACE_SYSCALLS;
     let is_hov_trace = app.settings.hover_row == Some(SETTINGS_ROW_TRACE_SYSCALLS);
-    let label_style_trace = if is_sel_trace {
-        Style::default().fg(theme::ACCENT).bold()
-    } else if is_hov_trace {
-        style::value().bold()
-    } else {
-        style::label()
-    };
+    let trace_state = ControlState::from(sel == SETTINGS_ROW_TRACE_SYSCALLS, is_hov_trace);
     let trace_item = ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<20}", "  Syscall Debug Log"), label_style_trace),
+        label_span(format!("{:<20}", "  Syscall Debug Log"), trace_state, theme::LABEL),
         Span::raw("  "),
-        bool_button(app.run.trace_syscalls, app.settings.hover_trace_syscalls),
+        bool_value(app.run.trace_syscalls, app.settings.hover_trace_syscalls),
         Span::raw("  "),
         Span::styled(
             "[?]",
@@ -303,18 +239,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         let is_editing = app.settings.cpi_editing && is_sel;
 
         let val_str = if is_editing {
-            format!("{}_", app.settings.cpi_edit_buf)
+            format!("{}█", app.settings.cpi_edit_buf)
         } else {
             format!("{}", app.run.cpi_config.get(i))
         };
 
-        let name_style = if is_sel {
-            Style::default().fg(theme::CPI_PANEL).bold()
-        } else if is_hov {
-            style::value().bold()
-        } else {
-            Style::default().fg(theme::CPI_PANEL)
-        };
         let val_style = if is_sel && is_editing {
             Style::default().fg(theme::LABEL_Y).bold()
         } else if is_sel || is_hov {
@@ -330,7 +259,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         let desc = descs.get(i).copied().unwrap_or("");
 
         let line = Line::from(vec![
-            Span::styled(format!("  {name:<10}"), name_style),
+            label_span(
+                format!("  {name:<10}"),
+                ControlState::from(is_sel, is_hov),
+                theme::CPI_PANEL,
+            ),
             Span::styled(format!("{val_str:>6}  "), val_style),
             Span::styled(desc.to_string(), desc_style),
         ]);

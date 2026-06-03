@@ -28,4 +28,7 @@ pub(crate) mod panel;
 
 // Re-export selected widgets for use by sibling modules under `view`
 pub(super) use console::render_console;
-pub(crate) use controls::{dense_action, dense_value, push_dense_pair};
+pub(crate) use controls::{
+    ControlState, bool_value, dense_action, dense_value, edit_value, field_row, label_span,
+    push_dense_pair,
+};
