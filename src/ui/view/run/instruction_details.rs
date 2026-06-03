@@ -233,7 +233,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
                 Span::styled("  executions ", style::label()),
                 Span::styled(
                     format!("×{exec_count}"),
-                    Style::default().fg(theme::METRIC_CYC),
+                    style::metric(style::Metric::Cycles),
                 ),
             ]));
         }
@@ -241,7 +241,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
         if count > 0 {
             lines.push(Line::from(vec![
                 Span::styled("  executions ", style::label()),
-                Span::styled(format!("×{count}"), Style::default().fg(theme::METRIC_CYC)),
+                Span::styled(format!("×{count}"), style::metric(style::Metric::Cycles)),
             ]));
         }
     }

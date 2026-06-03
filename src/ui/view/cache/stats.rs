@@ -102,17 +102,17 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::styled(
             format!("Cycles: {total}"),
-            Style::default().fg(theme::METRIC_CYC),
+            style::metric(style::Metric::Cycles),
         ),
         Span::raw("  "),
         Span::styled(
             format!("Cycles/Instr: {cpi:.2}"),
-            Style::default().fg(theme::METRIC_CPI),
+            style::metric(style::Metric::Cpi),
         ),
         Span::raw("  "),
         Span::styled(
             format!("Instrs/Cycle: {ipc:.2}"),
-            Style::default().fg(theme::METRIC_IPC),
+            style::metric(style::Metric::Ipc),
         ),
         Span::raw("  "),
         Span::styled(format!("Instructions: {instr}"), style::label()),
@@ -255,7 +255,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         fmt_bytes(stats.ram_write_bytes)
     );
     f.render_widget(
-        Paragraph::new(Span::styled(line4, Style::default().fg(theme::METRIC_CYC))),
+        Paragraph::new(Span::styled(line4, style::metric(style::Metric::Cycles))),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
 
@@ -291,7 +291,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let line6 =
         format!("Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}");
     f.render_widget(
-        Paragraph::new(Span::styled(line6, Style::default().fg(theme::METRIC_CPI))),
+        Paragraph::new(Span::styled(line6, style::metric(style::Metric::Cpi))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
 
@@ -577,7 +577,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
                 fmt_bytes(stats.bytes_loaded),
                 fmt_bytes(stats.ram_write_bytes)
             ),
-            Style::default().fg(theme::METRIC_CYC),
+            style::metric(style::Metric::Cycles),
         )),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
@@ -601,7 +601,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
             format!(
                 "Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}"
             ),
-            Style::default().fg(theme::METRIC_CPI),
+            style::metric(style::Metric::Cpi),
         )),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
@@ -742,17 +742,17 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("Program  ", style::label()),
         Span::styled(
             format!("Cycles: {}", snap.total_cycles),
-            Style::default().fg(theme::METRIC_CYC),
+            style::metric(style::Metric::Cycles),
         ),
         Span::raw("   "),
         Span::styled(
             format!("CPI: {:.2}", snap.cpi),
-            Style::default().fg(theme::METRIC_CPI),
+            style::metric(style::Metric::Cpi),
         ),
         Span::raw("   "),
         Span::styled(
             format!("IPC: {:.2}", snap.ipc),
-            Style::default().fg(theme::METRIC_IPC),
+            style::metric(style::Metric::Ipc),
         ),
         Span::raw("   "),
         Span::styled(
@@ -799,7 +799,7 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
                 Span::raw("   "),
                 Span::styled(
                     format!("AMAT: {:.2} cyc", lvl.amat),
-                    Style::default().fg(theme::METRIC_CPI),
+                    style::metric(style::Metric::Cpi),
                 ),
             ]),
             Line::from(vec![

@@ -137,12 +137,12 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let line2 = Line::from(vec![
         Span::styled(
             format!(" Cycles:{total}"),
-            Style::default().fg(theme::METRIC_CYC),
+            style::metric(style::Metric::Cycles),
         ),
         Span::raw("  "),
         Span::styled(
             format!("CPI:{cpi:.2}"),
-            Style::default().fg(theme::METRIC_CPI),
+            style::metric(style::Metric::Cpi),
         ),
         Span::raw("  "),
         Span::styled(format!("Instrs:{instr}"), style::label()),
