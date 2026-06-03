@@ -8,15 +8,12 @@
 // translations) and Settings (edit TlbConfig + presets + apply). The TLB world
 // can be disabled in Settings, which hides its sub-header and content.
 
-use ratatui::{
-    Frame,
-    prelude::*,
-    widgets::Paragraph,
-};
+use ratatui::{Frame, prelude::*, widgets::Paragraph};
 
 use crate::ui::app::{App, TlbHoverTarget, TlbSubtab, VmSubtab};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 mod config;
 mod entries;
@@ -120,7 +117,9 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
     let tlb_x1 = x;
     app.tlb.vm_status_btn.set((row_y, status_x0, status_x1));
     app.tlb.vm_tree_btn.set((row_y, tree_x0, tree_x1));
-    app.tlb.vm_settings_btn.set((row_y, settings_x0, settings_x1));
+    app.tlb
+        .vm_settings_btn
+        .set((row_y, settings_x0, settings_x1));
     app.tlb.vm_tlb_btn.set((row_y, tlb_x0, tlb_x1));
 
     use crate::falcon::mmu::VmMode;
@@ -141,7 +140,11 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
     } else {
         theme::PAUSED
     };
-    let tlb_label = if app.run.tlb_enabled { "TLB" } else { "TLB(off)" };
+    let tlb_label = if app.run.tlb_enabled {
+        "TLB"
+    } else {
+        "TLB(off)"
+    };
     let line1 = Line::from(vec![
         Span::raw(" "),
         Span::styled("status", status_style),
@@ -156,7 +159,7 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
     ]);
     let line2 = Line::from(vec![
         Span::raw(" "),
-        Span::styled("Tab to switch", Style::default().fg(theme::LABEL)),
+        Span::styled("Tab to switch", style::label()),
     ]);
 
     f.render_widget(block, area);
@@ -217,18 +220,15 @@ fn render_tlb_disabled_notice(f: &mut Frame, area: Rect) {
     let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
     let lines = vec![
         Line::raw(""),
-        Line::from(Span::styled(
-            "  TLB is disabled.",
-            Style::default().fg(theme::PAUSED).bold(),
-        )),
+        Line::from(Span::styled("  TLB is disabled.", style::warning().bold())),
         Line::raw(""),
         Line::from(Span::styled(
             "  Every translation walks the page table (miss + penalty, no hits).",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )),
         Line::from(Span::styled(
             "  Enable \"TLB Enabled\" in the Settings tab to cache translations.",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )),
     ];
     f.render_widget(Paragraph::new(lines), inner);
@@ -244,13 +244,7 @@ pub(super) fn translation_active(app: &App) -> bool {
 }
 
 fn btn_style(active: bool, hovered: bool) -> Style {
-    if active {
-        Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD)
-    } else if hovered {
-        Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::IDLE)
-    }
+    style::toggle(active, hovered, theme::TEXT)
 }
 
 pub(super) fn replacement_label(r: crate::falcon::cache::ReplacementPolicy) -> &'static str {

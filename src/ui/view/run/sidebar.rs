@@ -7,6 +7,7 @@ use super::registers::reg_name;
 use super::{App, MemRegion};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if app.run.show_dyn {
@@ -291,10 +292,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let parsed = u32::from_str_radix(q.trim_start_matches("0x").trim_start_matches("0X"), 16).ok();
 
     let valid_span = if let Some(addr) = parsed {
-        Span::styled(
-            format!("  →  0x{addr:08X}"),
-            Style::default().fg(theme::RUNNING).bg(bg),
-        )
+        Span::styled(format!("  →  0x{addr:08X}"), style::success().bg(bg))
     } else if !q.is_empty() {
         Span::styled("  ✗", Style::default().fg(Color::Red).bg(bg))
     } else {
@@ -308,10 +306,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         valid_span,
-        Span::styled(
-            "  Ctrl+v=paste  Esc=close  Enter=ok",
-            Style::default().fg(theme::IDLE).bg(bg),
-        ),
+        Span::styled("  Ctrl+v=paste  Esc=close  Enter=ok", style::idle().bg(bg)),
     ]);
 
     f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
@@ -330,7 +325,7 @@ fn memory_block(app: &App) -> Block<'static> {
     let section = memory_title_section(app, base_addr);
     let accent = memory_accent_color(app, section);
     let title = Line::from(vec![
-        Span::styled("Memory", Style::default().fg(theme::TEXT).bold()),
+        Span::styled("Memory", style::value().bold()),
         Span::styled(
             format!("  0x{base_addr:08x}"),
             Style::default().fg(accent).bold(),
@@ -509,7 +504,7 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let marker: Option<ratatui::text::Span<'static>> = if is_sp {
         Some(ratatui::text::Span::styled(
             "\u{25b6}SP ".to_string(),
-            Style::default().fg(theme::PAUSED).bold(),
+            style::warning().bold(),
         ))
     } else if is_hb {
         Some(ratatui::text::Span::styled(
@@ -684,7 +679,11 @@ fn elf_sections_height(app: &App) -> u16 {
 }
 
 fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
-    let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain).title("ELF Sections"));
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel_frame(PanelKind::Plain).title("ELF Sections"),
+    );
 
     let mut items: Vec<ListItem<'static>> = Vec::new();
     for sec in &app.run.elf_sections {
@@ -710,7 +709,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
             }
             items.push(
                 ListItem::new(format!("  0x{:08x}: (zeroed, {} B)", sec.addr, sec.size))
-                    .style(Style::default().fg(theme::LABEL)),
+                    .style(style::label()),
             );
         } else {
             let chunks = sec.bytes.chunks(4).take(MAX_LINES_PER_SECTION);
@@ -733,7 +732,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
                 let hint = type_hint(chunk);
                 items.push(
                     ListItem::new(format!("  0x{addr:08x}: {hex:<11} │ {hint}"))
-                        .style(Style::default().fg(theme::TEXT)),
+                        .style(style::value()),
                 );
             }
             if sec.bytes.len() / 4 > MAX_LINES_PER_SECTION {
@@ -742,7 +741,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
                         "  … {} more bytes",
                         sec.bytes.len() - MAX_LINES_PER_SECTION * 4
                     ))
-                    .style(Style::default().fg(theme::LABEL)),
+                    .style(style::label()),
                 );
             }
         }

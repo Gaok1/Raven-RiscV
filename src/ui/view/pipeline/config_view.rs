@@ -4,6 +4,8 @@ use crate::ui::pipeline::{
 };
 use crate::ui::theme;
 use crate::ui::view::components::dense_value;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -11,7 +13,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 const CONFIG_CONTENT_W: u16 = 52;
 const CONFIG_LABEL_W: usize = 18;
@@ -20,7 +21,11 @@ const LATENCY_LABEL_W: usize = 8;
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.pipeline;
 
-    let inner = render_panel(f, area, panel::panel(" Pipeline Settings ", PanelKind::Accent));
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel(" Pipeline Settings ", PanelKind::Accent),
+    );
 
     let content_width = inner.width.min(CONFIG_CONTENT_W);
     let cols = Layout::default()
@@ -42,14 +47,9 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
 
     let bool_span = |v: bool| {
         if v {
-            Span::styled(
-                "on",
-                Style::default()
-                    .fg(theme::RUNNING)
-                    .add_modifier(Modifier::BOLD),
-            )
+            Span::styled("on", style::success().add_modifier(Modifier::BOLD))
         } else {
-            Span::styled("off", Style::default().fg(theme::PAUSED))
+            Span::styled("off", style::warning())
         }
     };
 
@@ -150,11 +150,9 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
                 .fg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD)
         } else if hovered {
-            Style::default()
-                .fg(theme::TEXT)
-                .add_modifier(Modifier::BOLD)
+            style::value().add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::IDLE)
+            style::idle()
         };
         let mut line_spans = vec![Span::styled(
             format!("{:<width$}", label, width = CONFIG_LABEL_W),
@@ -189,10 +187,7 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
     if rows.len() > 16 {
         for (i, line) in desc_lines.into_iter().enumerate() {
             f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    line,
-                    Style::default().fg(theme::LABEL),
-                ))),
+                Paragraph::new(Line::from(Span::styled(line, style::label()))),
                 rows[15 + i],
             );
         }
@@ -224,13 +219,10 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
                     Paragraph::new(Line::from(vec![
                         Span::styled(
                             format!("{:<width$}", name, width = LATENCY_LABEL_W),
-                            Style::default().fg(theme::LABEL),
+                            style::label(),
                         ),
                         Span::raw("  "),
-                        Span::styled(
-                            format!("{} cycle(s)", lat),
-                            Style::default().fg(theme::TEXT),
-                        ),
+                        Span::styled(format!("{} cycle(s)", lat), style::value()),
                     ])),
                     rows[20 + i],
                 );

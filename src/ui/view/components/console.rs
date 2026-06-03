@@ -4,18 +4,16 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use super::panel::{self, PanelKind};
 use crate::ui::app::App;
-use crate::ui::theme;
+use crate::ui::view::style;
 
 const CLEAR_LABEL: &str = "x clear";
 const CLEAR_WIDTH: u16 = 7;
 
 fn clear_style(hovered: bool) -> Style {
     if hovered {
-        Style::default()
-            .fg(theme::DANGER)
-            .add_modifier(Modifier::BOLD | Modifier::ITALIC)
+        style::danger().add_modifier(Modifier::BOLD | Modifier::ITALIC)
     } else {
-        Style::default().fg(theme::LABEL)
+        style::label()
     }
 }
 

@@ -4,14 +4,15 @@ mod main_view;
 use crate::ui::app::App;
 use crate::ui::pipeline::PipelineSubtab;
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, push_dense_pair};
+use crate::ui::view::style;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
     widgets::Paragraph,
 };
-use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
     app.pipeline.gantt_area_rect.set((0, 0, 0, 0));
@@ -43,11 +44,11 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
             Line::raw(""),
             Line::from(Span::styled(
                 "  No program loaded.",
-                Style::default().fg(theme::PAUSED).bold(),
+                style::warning().bold(),
             )),
             Line::from(Span::styled(
                 "  Compile in the Editor tab to load one.",
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )),
         ]);
         f.render_widget(p, layout[2]);
@@ -70,11 +71,11 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let config_style = subtab_style(p.subtab == PipelineSubtab::Config, p.hover_subtab_config);
     let core_text = format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1));
     let core_style = if single_core {
-        Style::default().fg(theme::LABEL)
+        style::label()
     } else if p.hover_core {
         Style::default().fg(theme::ACTIVE).bold()
     } else {
-        Style::default().fg(theme::TEXT).bold()
+        style::value().bold()
     };
 
     let line1 = Line::from(vec![
@@ -82,7 +83,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("main", main_style),
         Span::raw("   "),
         Span::styled("settings", config_style),
-        Span::styled("   core ", Style::default().fg(theme::LABEL)),
+        Span::styled("   core ", style::label()),
         Span::styled(core_text.clone(), core_style),
         Span::styled(
             format!(
@@ -92,15 +93,19 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
                     .unwrap_or_else(|| "-".to_string()),
                 app.core_status(app.selected_core).label()
             ),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
     ]);
     let line2 = Line::from(vec![
         Span::raw(" "),
-        Span::styled("Tab to switch", Style::default().fg(theme::LABEL)),
+        Span::styled("Tab to switch", style::label()),
     ]);
 
-    let inner = render_panel(f, area, panel::panel(" Pipeline Simulator ", PanelKind::Accent));
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel(" Pipeline Simulator ", PanelKind::Accent),
+    );
     f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 
     // Record button geometry for mouse: y=inner.y, x ranges
@@ -160,12 +165,12 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     if p.sequential_mode {
         spans.push(Span::styled(
             "   Sequential (pipeline off) — one instruction at a time",
-            Style::default().fg(theme::PAUSED),
+            style::warning(),
         ));
     } else {
         spans.push(Span::styled(
             "   r=reset  f=speed  s=step  p/Space=run",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ));
     }
     let line1 = Line::from(spans);
@@ -196,8 +201,8 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         )
     };
 
-    let line2 = Line::from(Span::styled(cpi_str, Style::default().fg(theme::LABEL)));
-    let line3 = Line::from(Span::styled(stall_str, Style::default().fg(theme::LABEL)));
+    let line2 = Line::from(Span::styled(cpi_str, style::label()));
+    let line3 = Line::from(Span::styled(stall_str, style::label()));
 
     let inner = render_panel(f, area, panel::panel("Execution", PanelKind::Plain));
     f.render_widget(Paragraph::new(vec![line1, line2, line3]), inner);
@@ -212,7 +217,7 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         .set((inner.y, speed_x, speed_x + speed_label_w));
     let state_x = inner.x + 4 + speed_label_w;
     let state_label_w = ("state ".len() + state_label.len()) as u16;
-    
+
     app.pipeline
         .btn_state_rect
         .set((inner.y, state_x, state_x + state_label_w));
@@ -224,13 +229,7 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn subtab_style(active: bool, hovered: bool) -> Style {
-    if active {
-        Style::default().fg(theme::ACTIVE).bold()
-    } else if hovered {
-        Style::default().fg(theme::TEXT).bold()
-    } else {
-        Style::default().fg(theme::IDLE)
-    }
+    style::toggle(active, hovered, theme::ACTIVE)
 }
 
 fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {

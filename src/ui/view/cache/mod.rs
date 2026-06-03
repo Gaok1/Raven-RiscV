@@ -1,15 +1,12 @@
 // ui/view/cache/mod.rs — Cache tab top-level renderer
-use ratatui::{
-    Frame,
-    prelude::*,
-    widgets::Paragraph,
-};
+use ratatui::{Frame, prelude::*, widgets::Paragraph};
 
 use crate::falcon::cache::CacheController;
 use crate::ui::app::{App, CacheScope, CacheSubtab, RunButton};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, dense_value, push_dense_pair};
+use crate::ui::view::style;
 
 mod config;
 mod stats;
@@ -23,12 +20,12 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
             Line::raw(""),
             Line::from(Span::styled(
                 "  Cache simulation is disabled.",
-                Style::default().fg(theme::PAUSED).bold(),
+                style::warning().bold(),
             )),
             Line::raw(""),
             Line::from(Span::styled(
                 "  Enable it in the Settings tab to run cache statistics.",
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )),
         ];
         f.render_widget(Paragraph::new(lines), inner);
@@ -134,7 +131,7 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         } else {
             "   r=reset  f=speed  p=pause  s=step"
         },
-        Style::default().fg(theme::LABEL),
+        style::label(),
     ));
     let line1 = Line::from(spans);
     let line2 = Line::from(vec![
@@ -148,7 +145,7 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme::METRIC_CPI),
         ),
         Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
+        Span::styled(format!("Instrs:{instr}"), style::label()),
     ]);
 
     let inner = render_panel(f, area, panel::panel("Execution", PanelKind::Plain));
@@ -163,7 +160,7 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
     app.cache.remove_level_btn.set((0, 0, 0));
 
     let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled("level", Style::default().fg(theme::IDLE)));
+    spans.push(Span::styled("level", style::idle()));
     spans.push(Span::raw(" "));
     let mut x = area.x;
     x += "level ".len() as u16;
@@ -217,10 +214,7 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    spans.push(Span::styled(
-        "   +/= add level  -/_ remove",
-        Style::default().fg(theme::LABEL),
-    ));
+    spans.push(Span::styled("   +/= add level  -/_ remove", style::label()));
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -257,7 +251,10 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         )
     };
 
-    let block = panel::panel(format!("Cache Simulation — {level_label}"), PanelKind::Accent);
+    let block = panel::panel(
+        format!("Cache Simulation — {level_label}"),
+        PanelKind::Accent,
+    );
     let inner = block.inner(area);
     let row_y = inner.y;
     let mut x = inner.x;
@@ -289,7 +286,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     ]);
     let line2 = Line::from(vec![
         Span::raw(" "),
-        Span::styled("Tab to switch", Style::default().fg(theme::LABEL)),
+        Span::styled("Tab to switch", style::label()),
     ]);
 
     f.render_widget(block, area);
@@ -391,7 +388,7 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
 
     if show_scope {
         line_spans.push(Span::raw("   "));
-        line_spans.push(Span::styled("view", Style::default().fg(theme::IDLE)));
+        line_spans.push(Span::styled("view", style::idle()));
         line_spans.push(Span::raw(" "));
         line_spans.push(dense_value(
             "i-cache",
@@ -430,25 +427,9 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn level_btn_style(active: bool, hovered: bool) -> Style {
-    dense_style(active, hovered, theme::TEXT)
+    style::toggle(active, hovered, theme::TEXT)
 }
 
 fn subtab_style(active: bool, hovered: bool) -> Style {
-    dense_style(active, hovered, theme::TEXT)
-}
-
-pub(super) fn scope_btn_style(active: bool, hovered: bool) -> Style {
-    dense_style(active, hovered, theme::TEXT)
-}
-
-fn dense_style(active: bool, hovered: bool, color: Color) -> Style {
-    if active {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    } else if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::IDLE)
-    }
+    style::toggle(active, hovered, theme::TEXT)
 }

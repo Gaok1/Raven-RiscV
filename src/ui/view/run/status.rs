@@ -5,6 +5,8 @@ use ratatui::widgets::Paragraph;
 use super::{App, FormatMode, MemRegion, RunButton};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind};
+use crate::ui::view::components::{dense_action, push_dense_pair};
+use crate::ui::view::style::{self, Metric};
 
 pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     let block = panel::panel_frame(PanelKind::Plain).title("Run Controls");
@@ -58,19 +60,13 @@ fn cycle_line(app: &App) -> Line<'static> {
             Style::default().fg(theme::ACCENT),
         ),
         Span::raw("  "),
-        Span::styled(
-            format!("Cycles:{total}"),
-            Style::default().fg(theme::METRIC_CYC),
-        ),
+        style::metric_span("Cycles:", total, Metric::Cycles),
         Span::raw("  "),
-        Span::styled(
-            format!("CPI:{cpi:.2}"),
-            Style::default().fg(theme::METRIC_CPI),
-        ),
+        style::metric_span("CPI:", format!("{cpi:.2}"), Metric::Cpi),
         Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
+        Span::styled(format!("Instrs:{instr}"), style::label()),
         Span::raw("  "),
-        Span::styled(scope_label, Style::default().fg(theme::LABEL)),
+        Span::styled(scope_label, style::label()),
     ])
 }
 
@@ -190,7 +186,7 @@ fn status_spans(app: &App) -> Vec<Span<'static>> {
     if !spans.is_empty() {
         spans.push(Span::raw("   "));
     }
-    spans.push(action_btn(
+    spans.push(dense_action(
         "reset",
         theme::DANGER,
         app.hover_run_button == Some(RunButton::Reset),
@@ -296,47 +292,4 @@ fn state_color(app: &App) -> Color {
         }
         crate::ui::app::HartLifecycle::Faulted => theme::DANGER,
     }
-}
-
-fn push_dense_pair(
-    spans: &mut Vec<Span<'static>>,
-    label: &str,
-    value: &str,
-    hovered: bool,
-    active: bool,
-    active_color: Color,
-) {
-    if !spans.is_empty() {
-        spans.push(Span::raw("   "));
-    }
-    spans.push(Span::styled(
-        label.to_string(),
-        Style::default().fg(theme::IDLE),
-    ));
-    spans.push(Span::raw(" "));
-    spans.push(value_btn(value, hovered, active, active_color));
-}
-
-fn value_btn(text: &str, hovered: bool, active: bool, color: Color) -> Span<'static> {
-    let style = if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
-    } else if active {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::IDLE)
-    };
-    Span::styled(text.to_string(), style)
-}
-
-fn action_btn(text: &str, color: Color, hovered: bool) -> Span<'static> {
-    let style = if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    };
-    Span::styled(text.to_string(), style)
 }

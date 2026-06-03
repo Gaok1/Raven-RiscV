@@ -12,7 +12,6 @@ use crate::ui::view::components::overlay::{self, OverlayStyle};
 mod cache;
 pub(crate) mod components;
 pub mod disasm;
-pub(crate) mod style;
 pub mod docs;
 mod editor;
 mod path_input_overlay;
@@ -20,6 +19,7 @@ mod pipeline;
 pub(crate) mod run;
 mod settings;
 mod splash;
+pub(crate) mod style;
 mod tlb;
 
 use crate::guided_learning::view::render_guided_learning;
@@ -132,66 +132,66 @@ pub fn ui(f: &mut Frame, app: &App) {
             let mode = match app.mode { EditorMode::Insert => "INSERT", EditorMode::Command => "COMMAND" };
             (
                 format!("{mode}  │  Ctrl+o=Open  Ctrl+s=Save  Ctrl+z=Undo  Ctrl+f=Find  Ctrl+g=Goto  Ctrl+/=Comment  [?]=Help"),
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )
         }
         Tab::Run => (
             "s=Step  r=Restart  p/Space=Run/Pause  f=Speed  v=Sidebar  k=Region  Ctrl+f=Jump RAM  Ctrl+g=Label  [?]=Help".to_string(),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
         Tab::Pipeline => {
             if let Some(ref err) = app.pipeline.status_error {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                (format!("✗  {err}"), style::danger())
             } else if let Some(ref ok) = app.pipeline.status_msg {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                (format!("✓  {ok}"), style::success())
             } else {
                 (
                     "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Settings  Ctrl+e/l=Settings  Ctrl+r=Results  [?]=Help".to_string(),
-                    Style::default().fg(theme::LABEL),
+                    style::label(),
                 )
             }
         }
         Tab::Cache => {
             if let Some(ref err) = app.cache.config_error {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                (format!("✗  {err}"), style::danger())
             } else if let Some(ref ok) = app.cache.config_status {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                (format!("✓  {ok}"), style::success())
             } else {
                 (
                     "Tab=Subtabs  Ctrl+e=Export config  Ctrl+l=Import config  Ctrl+r=Results  [?]=Help".to_string(),
-                    Style::default().fg(theme::LABEL),
+                    style::label(),
                 )
             }
         }
         Tab::Docs => (
             "Ctrl+f=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language  [?]=Help".to_string(),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
         Tab::Settings => (
             "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field  [?]=Help".to_string(),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
         Tab::Tlb => {
             if let Some(ref err) = app.tlb.config_error {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                (format!("✗  {err}"), style::danger())
             } else if let Some(ref ok) = app.tlb.config_status {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                (format!("✓  {ok}"), style::success())
             } else {
                 (
                     "Tab=Subviews  Click=Edit field  f=Flush TLB  [?]=Help".to_string(),
-                    Style::default().fg(theme::LABEL),
+                    style::label(),
                 )
             }
         }
         Tab::Activity => {
             if let Some(ref err) = app.activity.status_err {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                (format!("✗  {err}"), style::danger())
             } else if let Some(ref ok) = app.activity.status_msg {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                (format!("✓  {ok}"), style::success())
             } else {
                 (
                     "↑/↓=Selecionar  Enter=Aplicar preset".to_string(),
-                    Style::default().fg(theme::LABEL),
+                    style::label(),
                 )
             }
         }
@@ -232,11 +232,9 @@ fn render_main_tab_bar(f: &mut Frame, area: Rect, app: &App, tutorial_targeted: 
                 .fg(theme::ACTIVE)
                 .add_modifier(Modifier::BOLD)
         } else if Some(tab) == app.hover_tab {
-            Style::default()
-                .fg(theme::TEXT)
-                .add_modifier(Modifier::BOLD)
+            style::value().add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::IDLE)
+            style::idle()
         };
         labels.push(Span::styled(label, label_style));
 
@@ -282,10 +280,7 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
     let inner = overlay::overlay(
         f,
         popup,
-        OverlayStyle::new(
-            theme::DANGER,
-            Span::styled("Confirm Exit", Style::default().fg(theme::DANGER)),
-        ),
+        OverlayStyle::new(theme::DANGER, Span::styled("Confirm Exit", style::danger())),
     );
     let lines = vec![
         Line::raw("Do you wish to exit?"),
@@ -296,12 +291,12 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
                 "[Exit]",
                 Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::DANGER),
             ),
-            Span::styled("  Enter/y  ", Style::default().fg(theme::LABEL)),
+            Span::styled("  Enter/y  ", style::label()),
             Span::styled(
                 "[Cancel]",
                 Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT),
             ),
-            Span::styled("  Esc", Style::default().fg(theme::LABEL)),
+            Span::styled("  Esc", style::label()),
         ]),
     ];
     let para = Paragraph::new(lines).alignment(Alignment::Center);
@@ -352,7 +347,7 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         popup,
         OverlayStyle::new(
             theme::PAUSED,
-            Span::styled(" ELF Binary ", Style::default().fg(theme::PAUSED).bold()),
+            Span::styled(" ELF Binary ", style::warning().bold()),
         ),
     );
 
@@ -371,8 +366,8 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("  Esc", Style::default().fg(theme::LABEL)),
-            Span::styled(" = Cancel", Style::default().fg(theme::LABEL)),
+            Span::styled("  Esc", style::label()),
+            Span::styled(" = Cancel", style::label()),
         ]),
     ];
 
@@ -415,7 +410,7 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
                         format!("{key:<18}"),
                         Style::default().fg(theme::LABEL_Y).bold(),
                     ),
-                    Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
+                    Span::styled(desc.to_string(), style::value()),
                 ])
             }
         })
@@ -424,19 +419,16 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
     if total > 1 {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("← → ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                format!("page {}/{total}   ", page + 1),
-                Style::default().fg(theme::LABEL),
-            ),
-            Span::styled("Esc", Style::default().fg(theme::LABEL)),
-            Span::styled(" close", Style::default().fg(theme::LABEL)),
+            Span::styled("← → ", style::label()),
+            Span::styled(format!("page {}/{total}   ", page + 1), style::label()),
+            Span::styled("Esc", style::label()),
+            Span::styled(" close", style::label()),
         ]));
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("Esc", Style::default().fg(theme::LABEL)),
-            Span::styled(" close", Style::default().fg(theme::LABEL)),
+            Span::styled("Esc", style::label()),
+            Span::styled(" close", style::label()),
         ]));
     }
 
@@ -659,14 +651,32 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+l]", "import full Settings tab state (.rcfg)"),
         ]],
         Tab::Tlb => vec![vec![
-            ("[Tab]", "cycle subviews: status → tree → settings → TLB(stats/entries/settings)"),
+            (
+                "[Tab]",
+                "cycle subviews: status → tree → settings → TLB(stats/entries/settings)",
+            ),
             ("status", "live satp / privilege / VM-active banner"),
             ("tree", "live N-level page-table tree (read-only)"),
-            ("settings", "VM mode, paging scheme, page map, root PT, TLB geometry — then apply"),
-            ("scheme", "Custom mode: edit levels + index/offset bits (Σ must = 32)"),
-            ("TLB ▸ stats", "TLB hits, misses, evictions, page faults, hit-rate chart"),
-            ("TLB ▸ entries", "installed translations (VPN→PPN, perms, A/D, asid)"),
-            ("TLB ▸ settings", "edit entries / associativity / replacement / latencies"),
+            (
+                "settings",
+                "VM mode, paging scheme, page map, root PT, TLB geometry — then apply",
+            ),
+            (
+                "scheme",
+                "Custom mode: edit levels + index/offset bits (Σ must = 32)",
+            ),
+            (
+                "TLB ▸ stats",
+                "TLB hits, misses, evictions, page faults, hit-rate chart",
+            ),
+            (
+                "TLB ▸ entries",
+                "installed translations (VPN→PPN, perms, A/D, asid)",
+            ),
+            (
+                "TLB ▸ settings",
+                "edit entries / associativity / replacement / latencies",
+            ),
             ("[f]", "flush TLB (in TLB settings)"),
             ("[Esc]", "cancel field edit"),
             (

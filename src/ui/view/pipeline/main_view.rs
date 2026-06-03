@@ -5,6 +5,7 @@ use crate::ui::pipeline::{
     gantt_max_scroll, gantt_view_rows, gantt_visible_rows, gantt_window_bounds,
 };
 use crate::ui::theme;
+use crate::ui::view::style;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -111,8 +112,8 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
         let border_style = match slot {
             Some(s) if s.class == InstrClass::Unknown => Style::default().fg(Color::DarkGray),
             Some(s) if s.hazard.is_some() => Style::default().fg(s.hazard.unwrap().color()),
-            Some(s) if s.is_bubble => Style::default().fg(theme::PAUSED),
-            Some(s) if s.is_speculative => Style::default().fg(theme::PAUSED),
+            Some(s) if s.is_bubble => style::warning(),
+            Some(s) if s.is_speculative => style::warning(),
             Some(_) => Style::default().fg(theme::ACCENT),
             None => Style::default().fg(theme::BORDER),
         };
@@ -153,9 +154,7 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
                     Line::from(Span::styled(format!("0x{:04X}", s.pc), dim)),
                     Line::from(Span::styled(
                         "⊘ invalid",
-                        Style::default()
-                            .fg(theme::DANGER)
-                            .add_modifier(Modifier::DIM),
+                        style::danger().add_modifier(Modifier::DIM),
                     )),
                     Line::from(Span::styled(format!(".word 0x{:08x}", s.word), dim)),
                 ];
@@ -189,10 +188,7 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
                     .saturating_sub(1)
                     .max(4);
                 let (disasm_trunc, _) = s.disasm.unicode_truncate(disasm_w);
-                let mut disasm_spans = vec![Span::styled(
-                    disasm_trunc.to_string(),
-                    Style::default().fg(theme::TEXT),
-                )];
+                let mut disasm_spans = vec![Span::styled(disasm_trunc.to_string(), style::value())];
                 if let Some(h) = hazard_indicator.filter(|_| stage_badges.is_empty()) {
                     disasm_spans.push(h);
                 }
@@ -221,7 +217,7 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
                 };
 
                 let mut lines = vec![
-                    Line::from(Span::styled(pc_str, Style::default().fg(theme::LABEL))),
+                    Line::from(Span::styled(pc_str, style::label())),
                     Line::from(disasm_spans),
                     Line::from(Span::styled(
                         format!("[{}]", s.class.label()),
@@ -382,7 +378,7 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
     // Borda colorida baseada no estado do EX slot
     let border_style = match ex_slot {
         Some(s) if s.hazard.is_some() => Style::default().fg(s.hazard.unwrap().color()),
-        Some(s) if s.is_bubble => Style::default().fg(theme::PAUSED),
+        Some(s) if s.is_bubble => style::warning(),
         Some(_) => Style::default().fg(theme::ACCENT),
         None => Style::default().fg(theme::BORDER),
     };
@@ -472,12 +468,12 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
                 ),
                 Span::styled(
                     format!("{:<width$}", disasm_trunc, width = disasm_w),
-                    Style::default().fg(theme::TEXT),
+                    style::value(),
                 ),
                 Span::styled(
                     occupancy_label,
                     if shows_ex_mirror && parallel_count == 0 {
-                        Style::default().fg(theme::PAUSED)
+                        style::warning()
                     } else {
                         Style::default().fg(theme::LABEL_Y)
                     },
@@ -485,9 +481,9 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(
                     bar,
                     if shows_ex_mirror && parallel_count == 0 {
-                        Style::default().fg(theme::PAUSED)
+                        style::warning()
                     } else {
-                        Style::default().fg(theme::RUNNING)
+                        style::success()
                     },
                 ),
             ])
@@ -499,9 +495,7 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
                 ),
                 Span::styled(
                     format!("trap / syscall handoff  0/{capacity}"),
-                    Style::default()
-                        .fg(theme::LABEL)
-                        .add_modifier(Modifier::DIM),
+                    style::label().add_modifier(Modifier::DIM),
                 ),
             ])
         } else {
@@ -616,9 +610,7 @@ fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
     if p.hazard_traces.is_empty() {
         kind_lines.push(Line::from(Span::styled(
             "  —",
-            Style::default()
-                .fg(theme::LABEL)
-                .add_modifier(Modifier::DIM),
+            style::label().add_modifier(Modifier::DIM),
         )));
         map_lines.push(Line::from(Span::styled(
             if p.halted {
@@ -628,9 +620,7 @@ fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 "  No active links"
             },
-            Style::default()
-                .fg(theme::LABEL)
-                .add_modifier(Modifier::DIM),
+            style::label().add_modifier(Modifier::DIM),
         )));
         let fallback = if p.hazard_msgs.is_empty() {
             "  No textual hazard notes this cycle".to_string()
@@ -641,17 +631,13 @@ fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
             let (trunc, _) = fallback.unicode_truncate(map_area.width.saturating_sub(2) as usize);
             map_lines.push(Line::from(Span::styled(
                 format!("  {}", trunc),
-                Style::default()
-                    .fg(theme::LABEL)
-                    .add_modifier(Modifier::DIM),
+                style::label().add_modifier(Modifier::DIM),
             )));
         } else {
             let (trunc, _) = fallback.unicode_truncate(info_area.width.saturating_sub(2) as usize);
             info_lines.push(Line::from(Span::styled(
                 format!("  {}", trunc),
-                Style::default()
-                    .fg(theme::LABEL)
-                    .add_modifier(Modifier::DIM),
+                style::label().add_modifier(Modifier::DIM),
             )));
         }
     } else {
@@ -678,9 +664,7 @@ fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
             if i + 1 == p.hazard_traces.len() && rendered < row_cap {
                 kind_lines.push(Line::from(Span::styled(
                     "  i",
-                    Style::default()
-                        .fg(theme::LABEL)
-                        .add_modifier(Modifier::DIM),
+                    style::label().add_modifier(Modifier::DIM),
                 )));
                 map_lines.push(if compact {
                     render_compact_trace_legend(map_area.width as usize)
@@ -861,10 +845,7 @@ fn render_trace_detail_line(trace: &HazardTrace, detail: &str, width: usize) -> 
     };
     let text = format!("{}{}", prefix, detail);
     let (trunc, _) = text.unicode_truncate(width.max(8));
-    Line::from(Span::styled(
-        trunc.to_string(),
-        Style::default().fg(theme::TEXT),
-    ))
+    Line::from(Span::styled(trunc.to_string(), style::value()))
 }
 
 fn trace_detail_for(trace: &HazardTrace, hazard_msgs: &[(HazardType, String)]) -> String {
@@ -889,9 +870,7 @@ fn render_compact_trace_legend(width: usize) -> Line<'static> {
     let (trunc, _) = text.unicode_truncate(width.max(8));
     Line::from(Span::styled(
         trunc.to_string(),
-        Style::default()
-            .fg(theme::LABEL)
-            .add_modifier(Modifier::DIM),
+        style::label().add_modifier(Modifier::DIM),
     ))
 }
 
@@ -1014,21 +993,16 @@ fn render_trace_legend(width: usize) -> Line<'static> {
             } else {
                 " producer bypass path into consumer  "
             },
-            Style::default().fg(theme::TEXT),
+            style::value(),
         ),
-        Span::styled(
-            "[HZD]",
-            Style::default()
-                .fg(theme::PAUSED)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("[HZD]", style::warning().add_modifier(Modifier::BOLD)),
         Span::styled(
             if compact {
                 " dependency / squash"
             } else {
                 " dependency, stall, or squash path"
             },
-            Style::default().fg(theme::TEXT),
+            style::value(),
         ),
     ])
 }
@@ -1050,9 +1024,7 @@ fn speculative_compact_badge(
     }
     Some((
         badge.to_string(),
-        Style::default()
-            .fg(theme::PAUSED)
-            .add_modifier(Modifier::BOLD),
+        style::warning().add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -1072,9 +1044,7 @@ fn speculative_detail_line(
     let (trunc, _) = summary.unicode_truncate(width.max(8));
     Some(Line::from(Span::styled(
         trunc.to_string(),
-        Style::default()
-            .fg(theme::PAUSED)
-            .add_modifier(Modifier::DIM),
+        style::warning().add_modifier(Modifier::DIM),
     )))
 }
 
@@ -1125,7 +1095,7 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     let block = panel::panel_square(
         Span::styled(
             format!(" HISTORY  up to {} cycles ", visible_cols),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
         Style::default().fg(theme::BORDER),
     );
@@ -1136,11 +1106,8 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
 
     if p.gantt.is_empty() {
         f.render_widget(
-            Paragraph::new("  — no history yet —").style(
-                Style::default()
-                    .fg(theme::LABEL)
-                    .add_modifier(Modifier::DIM),
-            ),
+            Paragraph::new("  — no history yet —")
+                .style(style::label().add_modifier(Modifier::DIM)),
             inner,
         );
         return;
@@ -1166,9 +1133,7 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     for c in start_cycle..end_cycle {
         header_spans.push(Span::styled(
             format!("{:>4}", c % 10000),
-            Style::default()
-                .fg(theme::LABEL)
-                .add_modifier(Modifier::DIM),
+            style::label().add_modifier(Modifier::DIM),
         ));
     }
 
@@ -1203,7 +1168,7 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM)
         } else {
-            Style::default().fg(theme::TEXT)
+            style::value()
         };
         let mut spans = vec![Span::styled(
             format!("{:<width$}", label, width = LABEL_W),
@@ -1245,15 +1210,15 @@ fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
         GanttCell::Empty => ("·", Style::default().fg(theme::BORDER)),
         GanttCell::InStage(Stage::IF) => ("IF", Style::default().fg(theme::ACCENT)),
         GanttCell::InStage(Stage::ID) => ("ID", Style::default().fg(theme::LABEL_Y)),
-        GanttCell::InStage(Stage::EX) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InStage(Stage::EX) => ("EX", style::success()),
         GanttCell::InStage(Stage::MEM) => ("MEM", Style::default().fg(theme::LABEL_Y)),
         GanttCell::InStage(Stage::WB) => ("WB", Style::default().fg(theme::ACCENT)),
-        GanttCell::InFu(FuKind::Alu) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Mul) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Div) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Fpu) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Lsu) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Sys) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Alu) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Mul) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Div) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Fpu) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Lsu) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Sys) => ("EX", style::success()),
         GanttCell::Speculative(Stage::IF) => ("IF", spec_style),
         GanttCell::Speculative(Stage::ID) => ("ID", spec_style),
         GanttCell::Speculative(Stage::EX) => ("EX", spec_style),
@@ -1265,13 +1230,8 @@ fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
         GanttCell::SpeculativeFu(FuKind::Fpu) => ("EX", spec_style),
         GanttCell::SpeculativeFu(FuKind::Lsu) => ("EX", spec_style),
         GanttCell::SpeculativeFu(FuKind::Sys) => ("EX", spec_style),
-        GanttCell::Stall => ("──", Style::default().fg(theme::PAUSED)),
-        GanttCell::Bubble => (
-            "NOP",
-            Style::default()
-                .fg(theme::PAUSED)
-                .add_modifier(Modifier::DIM),
-        ),
-        GanttCell::Flush => ("◀FL", Style::default().fg(theme::DANGER)),
+        GanttCell::Stall => ("──", style::warning()),
+        GanttCell::Bubble => ("NOP", style::warning().add_modifier(Modifier::DIM)),
+        GanttCell::Flush => ("◀FL", style::danger()),
     }
 }

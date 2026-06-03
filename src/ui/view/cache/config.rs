@@ -13,6 +13,7 @@ use crate::ui::app::{App, CacheHoverTarget, ConfigField};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::style;
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     app.cache.config_hitboxes_i.set([(0, 0, 0); 11]);
@@ -201,9 +202,9 @@ fn render_fields(
             let label_style = if active == Some(field) {
                 Style::default().fg(theme::ACCENT).bold()
             } else if hovered == Some(field) {
-                Style::default().fg(theme::TEXT).bold()
+                style::value().bold()
             } else {
-                Style::default().fg(theme::LABEL)
+                style::label()
             };
             let item = if active == Some(field) {
                 if field.is_numeric() {
@@ -230,15 +231,15 @@ fn render_fields(
     // Sets row: show computed value or the specific validation error
     let sets_item = match &validation {
         Ok(()) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", Style::default().fg(theme::LABEL)),
+            Span::styled("  Sets:          ", style::label()),
             Span::styled(
                 format!("{}", pending.num_sets()),
                 Style::default().fg(theme::BORDER),
             ),
         ])),
         Err(msg) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", Style::default().fg(theme::LABEL)),
-            Span::styled(format!("✗ {msg}"), Style::default().fg(theme::DANGER)),
+            Span::styled("  Sets:          ", style::label()),
+            Span::styled(format!("✗ {msg}"), style::danger()),
         ])),
     };
 
@@ -324,7 +325,7 @@ fn render_fields(
             } else {
                 "  Click/edit  ◄►=cycle  Ctrl+e=export  Ctrl+l=import"
             },
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ))),
     ];
 
@@ -344,7 +345,7 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("presets", Style::default().fg(theme::IDLE)),
+        Span::styled("presets", style::idle()),
         Span::raw(" "),
         Span::styled("small", small_s),
         Span::raw(" "),
@@ -379,7 +380,7 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
     let presets = extra_level_presets();
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("presets", Style::default().fg(theme::IDLE)),
+        Span::styled("presets", style::idle()),
         Span::raw(" "),
         Span::styled(format!("small {}kb", presets[0].size / 1024), small_s),
         Span::raw(" "),
@@ -410,15 +411,9 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
 
 fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
     let line = if let Some(ref err) = app.cache.config_error {
-        Line::from(Span::styled(
-            format!(" ✗ {err}"),
-            Style::default().fg(theme::DANGER),
-        ))
+        Line::from(Span::styled(format!(" ✗ {err}"), style::danger()))
     } else if let Some(ref status) = app.cache.config_status {
-        Line::from(Span::styled(
-            format!(" ✓ {status}"),
-            Style::default().fg(theme::RUNNING),
-        ))
+        Line::from(Span::styled(format!(" ✓ {status}"), style::success()))
     } else {
         Line::from(vec![
             Span::raw(" "),
@@ -446,7 +441,7 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
 
 fn preset_btn_style(hovered: bool) -> Style {
     if hovered {
-        Style::default().fg(theme::TEXT).bold()
+        style::value().bold()
     } else {
         Style::default().fg(theme::ACCENT).bold()
     }

@@ -6,17 +6,14 @@
 // the TLB geometry. An `apply` button installs the map + scheme and re-points
 // satp; `flush tlb` drops cached translations.
 
-use ratatui::{
-    Frame,
-    prelude::*,
-    widgets::Paragraph,
-};
+use ratatui::{Frame, prelude::*, widgets::Paragraph};
 
 use crate::falcon::mmu::{MapKind, VmMode};
 use crate::ui::app::{App, TlbHoverTarget, VmSettingsField};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind};
 use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::style;
 
 /// What a hitbox in the panel points at.
 #[derive(Clone)]
@@ -34,7 +31,11 @@ struct RowBuilder {
 
 impl RowBuilder {
     fn new(x: u16) -> Self {
-        Self { x, spans: Vec::new(), hits: Vec::new() }
+        Self {
+            x,
+            spans: Vec::new(),
+            hits: Vec::new(),
+        }
     }
     fn raw(&mut self, s: &str) {
         self.x += s.chars().count() as u16;
@@ -100,19 +101,20 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     let custom = matches!(mode, VmMode::Custom);
     let auto = mode.is_auto();
     let editing = |field: VmSettingsField| app.tlb.vm_edit_field == Some(field);
-    let hov = |field: VmSettingsField| {
-        matches!(&app.tlb.hover, Some(TlbHoverTarget::VmField(f)) if *f == field)
-    };
+    let hov = |field: VmSettingsField| matches!(&app.tlb.hover, Some(TlbHoverTarget::VmField(f)) if *f == field);
     let edit_buf = app.tlb.vm_edit_buf.as_str();
 
-    let label = Style::default().fg(theme::LABEL);
+    let label = style::label();
     let dim = Style::default().fg(theme::BORDER);
     let head = Style::default().fg(theme::ACCENT);
 
     // Render a numeric field's value (edit cursor when focused).
     let num_val = |field: VmSettingsField, value: String| -> Span<'static> {
         if editing(field) {
-            Span::styled(format!("{edit_buf}█"), Style::default().fg(theme::ACCENT).bold())
+            Span::styled(
+                format!("{edit_buf}█"),
+                Style::default().fg(theme::ACCENT).bold(),
+            )
         } else {
             dense_value(&value, hov(field), true, theme::LABEL_Y)
         }
@@ -126,7 +128,12 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         r.styled("Mode         ", label);
         r.hit(
             Hit::Field(VmSettingsField::Mode),
-            dense_value(&format!("< {} >", mode.as_str()), hov(VmSettingsField::Mode), true, theme::TEXT),
+            dense_value(
+                &format!("< {} >", mode.as_str()),
+                hov(VmSettingsField::Mode),
+                true,
+                theme::TEXT,
+            ),
         );
         rows.push(r);
     }
@@ -136,7 +143,12 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         let on = app.run.tlb_enabled;
         r.hit(
             Hit::Field(VmSettingsField::TlbEnabled),
-            dense_value(if on { "[on]" } else { "[off]" }, hov(VmSettingsField::TlbEnabled), on, theme::RUNNING),
+            dense_value(
+                if on { "[on]" } else { "[off]" },
+                hov(VmSettingsField::TlbEnabled),
+                on,
+                theme::RUNNING,
+            ),
         );
         rows.push(r);
     }
@@ -205,9 +217,9 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         let page = human_bytes(page_bytes);
         let sum = scheme.total_bits();
         let sum_style = if ok {
-            Style::default().fg(theme::RUNNING)
+            style::success()
         } else {
-            Style::default().fg(theme::DANGER)
+            style::danger()
         };
         r.styled(
             &format!("  → page {page} · {} levels · ", scheme.num_levels()),
@@ -272,7 +284,10 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
             (VmSettingsField::PermU, spec.perms.u, "U"),
         ];
         for (field, on, c) in perms {
-            r.hit(Hit::Field(field), dense_value(c, hov(field), on, theme::RUNNING));
+            r.hit(
+                Hit::Field(field),
+                dense_value(c, hov(field), on, theme::RUNNING),
+            );
             r.raw(" ");
         }
         rows.push(r);
@@ -282,7 +297,12 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         r.styled("  global G    ", label);
         r.hit(
             Hit::Field(VmSettingsField::Global),
-            dense_value(if spec.global { "[on]" } else { "[off]" }, hov(VmSettingsField::Global), spec.global, theme::RUNNING),
+            dense_value(
+                if spec.global { "[on]" } else { "[off]" },
+                hov(VmSettingsField::Global),
+                spec.global,
+                theme::RUNNING,
+            ),
         );
         rows.push(r);
     }
@@ -305,14 +325,11 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         let win_hi = app.run.heap_start;
         let mut r = RowBuilder::new(x0);
         r.styled("Root PT @ ", label);
-        r.styled(&format!("0x{root_pa:08x}"), Style::default().fg(theme::TEXT));
+        r.styled(&format!("0x{root_pa:08x}"), style::value());
         rows.push(r);
         let mut r2 = RowBuilder::new(x0);
         r2.styled("Window    ", label);
-        r2.styled(
-            &format!("0x{win_lo:08x}–0x{win_hi:08x}"),
-            Style::default().fg(theme::TEXT),
-        );
+        r2.styled(&format!("0x{win_lo:08x}–0x{win_hi:08x}"), style::value());
         rows.push(r2);
     }
 
@@ -339,7 +356,10 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         r.styled("  assoc       ", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbAssoc),
-            num_val(VmSettingsField::TlbAssoc, format!("{}-way", p.associativity)),
+            num_val(
+                VmSettingsField::TlbAssoc,
+                format!("{}-way", p.associativity),
+            ),
         );
         rows.push(r);
     }
@@ -381,9 +401,23 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     // ── Apply / flush + status ────────────────────────────────────────────────
     {
         let mut r = RowBuilder::new(x0);
-        r.hit(Hit::Apply, dense_action("apply", theme::RUNNING, matches!(app.tlb.hover, Some(TlbHoverTarget::VmApply))));
+        r.hit(
+            Hit::Apply,
+            dense_action(
+                "apply",
+                theme::RUNNING,
+                matches!(app.tlb.hover, Some(TlbHoverTarget::VmApply)),
+            ),
+        );
         r.raw("   ");
-        r.hit(Hit::Flush, dense_action("flush tlb", theme::DANGER, matches!(app.tlb.hover, Some(TlbHoverTarget::VmFlush))));
+        r.hit(
+            Hit::Flush,
+            dense_action(
+                "flush tlb",
+                theme::DANGER,
+                matches!(app.tlb.hover, Some(TlbHoverTarget::VmFlush)),
+            ),
+        );
         rows.push(r);
     }
     if let Some(ref status) = app.tlb.map_status {
@@ -398,7 +432,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         } else {
             "Click to edit/toggle · Tab cycles subtabs"
         };
-        r.styled(hint, Style::default().fg(theme::IDLE));
+        r.styled(hint, style::idle());
         rows.push(r);
     }
 

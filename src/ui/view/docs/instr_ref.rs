@@ -1,6 +1,7 @@
 use super::chrome::{render_filter_bar, render_page_tabs, render_tab_hint, separator_line};
 use crate::ui::theme;
 use crate::ui::view::App;
+use crate::ui::view::style;
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 
@@ -1020,24 +1021,24 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     let meta_lines = vec![
         Line::from(vec![
             Span::styled("rd", Style::default().fg(Color::Yellow).bold()),
-            Span::styled("=dst  ", Style::default().fg(theme::LABEL)),
+            Span::styled("=dst  ", style::label()),
             Span::styled("rs1/rs2", Style::default().fg(Color::Cyan)),
-            Span::styled("=src  ", Style::default().fg(theme::LABEL)),
+            Span::styled("=src  ", style::label()),
             Span::styled("frd", Style::default().fg(Color::Yellow)),
-            Span::styled("=float dst  ", Style::default().fg(theme::LABEL)),
+            Span::styled("=float dst  ", style::label()),
             Span::styled("frs1/frs2", Style::default().fg(Color::LightYellow)),
-            Span::styled("=float src  ", Style::default().fg(theme::LABEL)),
+            Span::styled("=float src  ", style::label()),
             Span::styled("imm", Style::default().fg(Color::LightGreen)),
-            Span::styled("=immediate  ", Style::default().fg(theme::LABEL)),
+            Span::styled("=immediate  ", style::label()),
             Span::styled("label", Style::default().fg(Color::Magenta)),
-            Span::styled("=symbol", Style::default().fg(theme::LABEL)),
+            Span::styled("=symbol", style::label()),
         ]),
         separator_line(area.width),
     ];
     f.render_widget(Paragraph::new(meta_lines), meta_area);
 
     if app.docs.search_open {
-        let bar_style = Style::default().fg(theme::LABEL).bg(Color::Rgb(30, 30, 50));
+        let bar_style = style::label().bg(Color::Rgb(30, 30, 50));
         let bar_line = Line::from(vec![
             Span::styled(
                 " Find: ",
@@ -1051,10 +1052,7 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
                     .fg(theme::LABEL_Y)
                     .bg(Color::Rgb(30, 30, 50)),
             ),
-            Span::styled(
-                "  Esc=close",
-                Style::default().fg(theme::LABEL).bg(Color::Rgb(30, 30, 50)),
-            ),
+            Span::styled("  Esc=close", style::label().bg(Color::Rgb(30, 30, 50))),
         ]);
         f.render_widget(Paragraph::new(bar_line).style(bar_style), search_area);
 

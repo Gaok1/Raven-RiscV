@@ -8,6 +8,7 @@ pub(super) use super::{App, MemRegion, RunButton};
 pub(super) use crate::ui::app::FormatMode;
 use crate::ui::app::HartLifecycle;
 use crate::ui::theme;
+use crate::ui::view::style;
 
 mod formatting;
 mod instruction_details;
@@ -154,8 +155,7 @@ fn render_collapsed(
         );
         f.render_widget(
             Paragraph::new(arrow.to_string()).style(
-                Style::default()
-                    .fg(theme::RUNNING)
+                style::success()
                     .bg(Color::Rgb(20, 26, 38))
                     .add_modifier(Modifier::BOLD),
             ),
@@ -164,11 +164,7 @@ fn render_collapsed(
         if mid + 1 < area.y + area.height {
             let state_label = if area.width >= 2 { "×" } else { state };
             f.render_widget(
-                Paragraph::new(state_label).style(
-                    Style::default()
-                        .fg(theme::PAUSED)
-                        .bg(Color::Rgb(20, 26, 38)),
-                ),
+                Paragraph::new(state_label).style(style::warning().bg(Color::Rgb(20, 26, 38))),
                 Rect::new(area.x, mid + 1, area.width, 1),
             );
         }
@@ -179,7 +175,7 @@ fn render_free_core_panel(f: &mut Frame, area: Rect, title: &'static str, body: 
     let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain).title(title));
     f.render_widget(
         Paragraph::new(body)
-            .style(Style::default().fg(theme::LABEL))
+            .style(style::label())
             .wrap(Wrap { trim: true }),
         inner,
     );

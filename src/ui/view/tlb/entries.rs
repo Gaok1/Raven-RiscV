@@ -9,6 +9,7 @@ use ratatui::{
 use crate::ui::app::App;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
     let inner = render_panel(f, area, panel::panel("TLB Entries", PanelKind::Plain));
@@ -32,9 +33,9 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
         .map(|(i, e)| {
             let mark = |on: bool, c: &str| {
                 if on {
-                    Span::styled(c.to_string(), Style::default().fg(theme::RUNNING))
+                    Span::styled(c.to_string(), style::success())
                 } else {
-                    Span::styled("-".to_string(), Style::default().fg(theme::IDLE))
+                    Span::styled("-".to_string(), style::idle())
                 }
             };
             let perms = Line::from(vec![
@@ -49,19 +50,10 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
                         format!("{i:>3}"),
                         Style::default().fg(theme::BORDER),
                     )),
-                    Line::from(Span::styled(
-                        format!("0x{:05x}", e.vpn),
-                        Style::default().fg(theme::TEXT),
-                    )),
-                    Line::from(Span::styled(
-                        format!("0x{:06x}", e.ppn),
-                        Style::default().fg(theme::TEXT),
-                    )),
+                    Line::from(Span::styled(format!("0x{:05x}", e.vpn), style::value())),
+                    Line::from(Span::styled(format!("0x{:06x}", e.ppn), style::value())),
                     perms,
-                    Line::from(Span::styled(
-                        format!("{}", e.asid),
-                        Style::default().fg(theme::LABEL),
-                    )),
+                    Line::from(Span::styled(format!("{}", e.asid), style::label())),
                     Line::from(mark(e.global, "G")),
                     Line::from(mark(e.accessed, "A")),
                     Line::from(mark(e.dirty, "D")),
@@ -73,42 +65,42 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
                         format!("{i:>3}"),
                         Style::default().fg(theme::BORDER),
                     )),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
-                    Line::from(Span::styled("—", Style::default().fg(theme::IDLE))),
+                    Line::from(Span::styled("—", style::idle())),
+                    Line::from(Span::styled("—", style::idle())),
+                    Line::from(Span::styled("—", style::idle())),
+                    Line::from(Span::styled("—", style::idle())),
+                    Line::from(Span::styled("—", style::idle())),
+                    Line::from(Span::styled("—", style::idle())),
+                    Line::from(Span::styled("—", style::idle())),
+                    Line::from(Span::styled("—", style::idle())),
                 ])
             }
         })
         .collect();
 
     let widths = [
-        Constraint::Length(4),  // #
-        Constraint::Length(9),  // VPN
-        Constraint::Length(9),  // PPN
-        Constraint::Length(5),  // RWXU
-        Constraint::Length(5),  // ASID
-        Constraint::Length(2),  // G
-        Constraint::Length(2),  // A
-        Constraint::Length(2),  // D
-        Constraint::Length(3),  // mega
+        Constraint::Length(4), // #
+        Constraint::Length(9), // VPN
+        Constraint::Length(9), // PPN
+        Constraint::Length(5), // RWXU
+        Constraint::Length(5), // ASID
+        Constraint::Length(2), // G
+        Constraint::Length(2), // A
+        Constraint::Length(2), // D
+        Constraint::Length(3), // mega
     ];
     let header = Row::new(vec![
-        Span::styled(" # ", Style::default().fg(theme::LABEL)),
-        Span::styled("VPN", Style::default().fg(theme::LABEL)),
-        Span::styled("PPN", Style::default().fg(theme::LABEL)),
-        Span::styled("RWXU", Style::default().fg(theme::LABEL)),
-        Span::styled("ASID", Style::default().fg(theme::LABEL)),
-        Span::styled(" G", Style::default().fg(theme::LABEL)),
-        Span::styled(" A", Style::default().fg(theme::LABEL)),
-        Span::styled(" D", Style::default().fg(theme::LABEL)),
-        Span::styled("Mp", Style::default().fg(theme::LABEL)),
+        Span::styled(" # ", style::label()),
+        Span::styled("VPN", style::label()),
+        Span::styled("PPN", style::label()),
+        Span::styled("RWXU", style::label()),
+        Span::styled("ASID", style::label()),
+        Span::styled(" G", style::label()),
+        Span::styled(" A", style::label()),
+        Span::styled(" D", style::label()),
+        Span::styled("Mp", style::label()),
     ])
-    .style(Style::default().fg(theme::LABEL));
+    .style(style::label());
 
     let table = Table::new(rows, widths).header(header);
     f.render_widget(table, inner);

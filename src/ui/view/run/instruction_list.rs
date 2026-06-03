@@ -2,11 +2,12 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
 
-use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use super::App;
 use super::instruction_details::disasm_word;
 use super::memory::{exec_address_in_range, imem_address_in_range};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
     let block = instruction_block(app);
@@ -54,7 +55,7 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
                 "  →  {match_count} match{}",
                 if match_count == 1 { "" } else { "es" }
             ),
-            Style::default().fg(theme::RUNNING).bg(bg),
+            style::success().bg(bg),
         )
     } else {
         Span::styled("  ✗ no match", Style::default().fg(Color::Red).bg(bg))
@@ -64,8 +65,8 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" Label: ", Style::default().fg(theme::ACCENT).bg(bg).bold()),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         result_span,
-        Span::styled("  Ctrl+v=paste", Style::default().fg(theme::IDLE).bg(bg)),
-        Span::styled("  Esc=close", Style::default().fg(theme::IDLE).bg(bg)),
+        Span::styled("  Ctrl+v=paste", style::idle().bg(bg)),
+        Span::styled("  Esc=close", style::idle().bg(bg)),
     ]);
 
     f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
@@ -398,7 +399,7 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
                 // Most recent entry
                 Style::default().fg(theme::LABEL_Y)
             } else {
-                Style::default().fg(theme::LABEL)
+                style::label()
             };
             let lbl = app
                 .run

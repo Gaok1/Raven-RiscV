@@ -1,14 +1,15 @@
 use crate::falcon;
 use crate::ui::app::cpi_class_label;
 use crate::ui::theme;
+use crate::ui::view::style;
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, Wrap};
 
-use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use super::App;
 use super::memory::exec_address_in_range;
 use super::registers::reg_name;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
@@ -139,13 +140,13 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let fmt_name = ctx.format.name();
     let title = format!("Instruction  [{fmt_name}]");
     let block = panel::panel_frame(PanelKind::Plain)
-        .title(Span::styled(title, Style::default().fg(theme::TEXT)))
+        .title(Span::styled(title, style::value()))
         .title_alignment(Alignment::Left);
     let inner = render_panel(f, area, block);
 
     let origin_span = Span::styled(
         format!(" @ 0x{:08x} ({})", ctx.addr, ctx.origin),
-        Style::default().fg(theme::LABEL),
+        style::label(),
     );
     let word_span = Span::styled(
         format!("0x{:08x}", ctx.word),
@@ -174,7 +175,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             origin_span,
         ]),
         Line::from(vec![
-            Span::styled("  word  ", Style::default().fg(theme::LABEL)),
+            Span::styled("  word  ", style::label()),
             word_span,
             Span::styled(
                 format!("  ({:032b})", ctx.word),
@@ -182,21 +183,18 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             ),
         ]),
         Line::from(vec![
-            Span::styled("  cycles  ", Style::default().fg(theme::LABEL)),
+            Span::styled("  cycles  ", style::label()),
             Span::styled(
                 format!("~{base_cycles}"),
                 Style::default().fg(theme::CPI_PANEL).bold(),
             ),
-            Span::styled(
-                format!("  [{class_label}]"),
-                Style::default().fg(theme::LABEL),
-            ),
+            Span::styled(format!("  [{class_label}]"), style::label()),
         ]),
     ];
 
     if let Some(ref comment) = ctx.comment {
         lines.push(Line::from(vec![
-            Span::styled("  comment  ", Style::default().fg(theme::LABEL)),
+            Span::styled("  comment  ", style::label()),
             Span::styled(
                 comment.clone(),
                 Style::default().fg(Color::Rgb(180, 220, 130)),
@@ -227,12 +225,12 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             .copied()
             .unwrap_or(0);
         lines.push(Line::from(vec![
-            Span::styled("  target   ", Style::default().fg(theme::LABEL)),
+            Span::styled("  target   ", style::label()),
             Span::styled(arrow, Style::default().fg(color)),
         ]));
         if exec_count > 0 {
             lines.push(Line::from(vec![
-                Span::styled("  executions ", Style::default().fg(theme::LABEL)),
+                Span::styled("  executions ", style::label()),
                 Span::styled(
                     format!("×{exec_count}"),
                     Style::default().fg(theme::METRIC_CYC),
@@ -242,7 +240,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     } else if let Some(&count) = app.run.exec_counts.get(&ctx.addr) {
         if count > 0 {
             lines.push(Line::from(vec![
-                Span::styled("  executions ", Style::default().fg(theme::LABEL)),
+                Span::styled("  executions ", style::label()),
                 Span::styled(format!("×{count}"), Style::default().fg(theme::METRIC_CYC)),
             ]));
         }
@@ -377,7 +375,7 @@ fn render_decoded(
 
 fn kv(key: &'static str, val: String, val_color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{key:<10}"), Style::default().fg(theme::LABEL)),
+        Span::styled(format!("{key:<10}"), style::label()),
         Span::styled(val, Style::default().fg(val_color)),
     ])
 }
@@ -574,13 +572,13 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
 
     if !desc.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("⟹  ", Style::default().fg(theme::LABEL)),
-            Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
+            Span::styled("⟹  ", style::label()),
+            Span::styled(desc.to_string(), style::value()),
         ]));
     } else if !disasm.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("⟹  ", Style::default().fg(theme::LABEL)),
-            Span::styled(disasm.to_string(), Style::default().fg(theme::LABEL)),
+            Span::styled("⟹  ", style::label()),
+            Span::styled(disasm.to_string(), style::label()),
         ]));
     }
 }

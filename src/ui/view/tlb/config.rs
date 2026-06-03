@@ -11,6 +11,7 @@ use crate::ui::app::{App, TlbConfigField, TlbHoverTarget};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::style;
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     app.tlb.config_hitboxes.set([(0, 0, 0); 5]);
@@ -79,9 +80,9 @@ fn render_fields(f: &mut Frame, area: Rect, app: &App) {
         let label_style = if active == Some(field) {
             Style::default().fg(theme::ACCENT).bold()
         } else if hovered == Some(field) {
-            Style::default().fg(theme::TEXT).bold()
+            style::value().bold()
         } else {
-            Style::default().fg(theme::LABEL)
+            style::label()
         };
         if active == Some(field) {
             if field.is_numeric() {
@@ -125,7 +126,7 @@ fn render_fields(f: &mut Frame, area: Rect, app: &App) {
             pending.associativity == current.associativity,
         ),
         ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", Style::default().fg(theme::LABEL)),
+            Span::styled("  Sets:          ", style::label()),
             Span::styled(format!("{}", n_sets), Style::default().fg(theme::BORDER)),
         ])),
         field_item(
@@ -153,7 +154,7 @@ fn render_fields(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 "  Click to edit  ←→=cycle"
             },
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ))),
     ];
     f.render_widget(List::new(items), area);
@@ -166,7 +167,7 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App) {
     };
     let style = |on: bool| {
         if on {
-            Style::default().fg(theme::TEXT).bold()
+            style::value().bold()
         } else {
             Style::default().fg(theme::ACCENT).bold()
         }
@@ -174,7 +175,7 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App) {
     let labels = ["small 16", "med 32", "large 64"];
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("presets", Style::default().fg(theme::IDLE)),
+        Span::styled("presets", style::idle()),
         Span::raw(" "),
         Span::styled(labels[0], style(hovered == Some(0))),
         Span::raw(" "),
@@ -197,15 +198,9 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App) {
 fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
     let show_buttons = app.tlb.config_error.is_none() && app.tlb.config_status.is_none();
     let line = if let Some(ref err) = app.tlb.config_error {
-        Line::from(Span::styled(
-            format!(" ✗ {err}"),
-            Style::default().fg(theme::DANGER),
-        ))
+        Line::from(Span::styled(format!(" ✗ {err}"), style::danger()))
     } else if let Some(ref status) = app.tlb.config_status {
-        Line::from(Span::styled(
-            format!(" ✓ {status}"),
-            Style::default().fg(theme::RUNNING),
-        ))
+        Line::from(Span::styled(format!(" ✓ {status}"), style::success()))
     } else {
         Line::from(vec![
             Span::raw(" "),
@@ -228,11 +223,9 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
             .apply_btn
             .set((inner.y, inner.x + 1, inner.x + 1 + "apply".len() as u16));
         let flush_x0 = inner.x + 1 + "apply".len() as u16 + 3;
-        app.tlb.flush_btn.set((
-            inner.y,
-            flush_x0,
-            flush_x0 + "flush tlb".len() as u16,
-        ));
+        app.tlb
+            .flush_btn
+            .set((inner.y, flush_x0, flush_x0 + "flush tlb".len() as u16));
     }
     f.render_widget(ratatui::widgets::Paragraph::new(line), inner);
 }

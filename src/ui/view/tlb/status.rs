@@ -15,9 +15,14 @@ use crate::falcon::mmu::{PrivMode, SatpMode};
 use crate::ui::app::App;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
-    let inner = render_panel(f, area, panel::panel("Virtual Memory State", PanelKind::Plain));
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel("Virtual Memory State", PanelKind::Plain),
+    );
     if inner.height == 0 {
         return;
     }
@@ -45,7 +50,11 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
         PrivMode::M => theme::LABEL_Y,
         PrivMode::S | PrivMode::U => theme::RUNNING,
     };
-    let active_color = if active { theme::RUNNING } else { theme::DANGER };
+    let active_color = if active {
+        theme::RUNNING
+    } else {
+        theme::DANGER
+    };
 
     let satp_mode_label = match satp_mode {
         SatpMode::Bare => "Bare (translation off)",
@@ -59,8 +68,16 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
     let root_pt = (mmu.satp.ppn() as u64) << 12;
 
     let mut lines: Vec<Line<'static>> = vec![
-        kv(" VM mode (Settings):           ", app.vm_mode().as_str().to_string(), vm_color),
-        kv(" satp.mode:                    ", satp_mode_label.to_string(), satp_color),
+        kv(
+            " VM mode (Settings):           ",
+            app.vm_mode().as_str().to_string(),
+            vm_color,
+        ),
+        kv(
+            " satp.mode:                    ",
+            satp_mode_label.to_string(),
+            satp_color,
+        ),
         kv(
             " satp.asid:                    ",
             format!("{}", mmu.satp.asid()),
@@ -71,7 +88,11 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
             format!("0x{:08x}", root_pt),
             theme::TEXT,
         ),
-        kv(" Privilege mode:               ", priv_label.to_string(), priv_color),
+        kv(
+            " Privilege mode:               ",
+            priv_label.to_string(),
+            priv_color,
+        ),
         Line::raw(""),
         kv(
             " Translation active?           ",
@@ -84,61 +105,63 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " VM is disabled — every access is identity-mapped.",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
         lines.push(Line::from(Span::styled(
             " Toggle \"Virtual Memory\" in the Settings tab to enable the MMU.",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
     } else if !active {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " VM toggle is ON but no translation is happening yet.",
-            Style::default().fg(theme::DANGER).add_modifier(Modifier::BOLD),
+            style::danger().add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::raw(""));
         if priv_mode == PrivMode::M && !mmu.force_translate {
             lines.push(Line::from(Span::styled(
                 "  • Privilege is M — machine mode bypasses translation by spec.",
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )));
         }
         if satp_mode == SatpMode::Bare {
             lines.push(Line::from(Span::styled(
                 "  • satp.mode = Bare — no root page table is installed.",
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )));
         }
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " Translation only starts when a program writes satp to Sv32",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
         lines.push(Line::from(Span::styled(
             " (csrw satp, <ppn|mode>) and switches privilege to S/U (mret/sret).",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
         lines.push(Line::from(Span::styled(
             " Until then the TLB counters on Stats stay at zero.",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
     } else {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " Every fetch/load/store is being translated through the TLB.",
-            Style::default().fg(theme::RUNNING),
+            style::success(),
         )));
     }
 
-    f.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        inner,
-    );
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn kv(label: &'static str, value: String, value_color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled(label, Style::default().fg(theme::LABEL)),
-        Span::styled(value, Style::default().fg(value_color).add_modifier(Modifier::BOLD)),
+        Span::styled(label, style::label()),
+        Span::styled(
+            value,
+            Style::default()
+                .fg(value_color)
+                .add_modifier(Modifier::BOLD),
+        ),
     ])
 }

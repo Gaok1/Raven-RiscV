@@ -9,6 +9,7 @@ use crate::ui::app::{App, CacheScope};
 use crate::ui::theme;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
 // Run Controls widget is rendered at the cache tab level (always visible).
@@ -97,7 +98,7 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 " Program total \u{2014} "
             },
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
         Span::styled(
             format!("Cycles: {total}"),
@@ -114,10 +115,7 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme::METRIC_IPC),
         ),
         Span::raw("  "),
-        Span::styled(
-            format!("Instructions: {instr}"),
-            Style::default().fg(theme::LABEL),
-        ),
+        Span::styled(format!("Instructions: {instr}"), style::label()),
         Span::raw("  "),
         Span::styled(
             format!("I-Cache svc: {i_cyc}"),
@@ -242,7 +240,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         stats.evictions
     );
     f.render_widget(
-        Paragraph::new(Span::styled(line3, Style::default().fg(theme::LABEL))),
+        Paragraph::new(Span::styled(line3, style::label())),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
     );
 
@@ -269,7 +267,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     if !icache {
         let line5 = format!("CPU Stores:{}", fmt_bytes(stats.bytes_stored));
         f.render_widget(
-            Paragraph::new(Span::styled(line5, Style::default().fg(theme::LABEL))),
+            Paragraph::new(Span::styled(line5, style::label())),
             Rect::new(inner.x, inner.y + 4, inner.width, 1),
         );
     }
@@ -306,7 +304,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
     let line7 = format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc");
     f.render_widget(
-        Paragraph::new(Span::styled(line7, Style::default().fg(theme::LABEL))),
+        Paragraph::new(Span::styled(line7, style::label())),
         Rect::new(inner.x, inner.y + 6, inner.width, 1),
     );
 
@@ -397,7 +395,7 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         } else if is_selected {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
-            Style::default().fg(theme::TEXT)
+            style::value()
         };
 
         f.render_widget(
@@ -424,7 +422,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
 
     if i_data.is_empty() && d_data.is_empty() {
         let msg = Paragraph::new("No data yet — run the program to collect cache statistics.")
-            .style(Style::default().fg(theme::LABEL))
+            .style(style::label())
             .alignment(Alignment::Center);
         f.render_widget(msg, inner);
         return;
@@ -545,7 +543,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Hits: {hits}  Misses: {misses}  Miss Rate: {miss_rate:.1}%  Misses per 1K Instrs: {mpki:.1}"),
-            Style::default().fg(theme::TEXT),
+            style::value(),
         )),
         Rect::new(inner.x, inner.y + 1, inner.width, 1),
     );
@@ -564,7 +562,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
                 "Accesses: {total}  Evictions: {}  Writebacks: {}  Line Fills: {fills}",
                 stats.evictions, stats.writebacks
             ),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
     );
@@ -616,7 +614,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc"),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
@@ -655,7 +653,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     if data.is_empty() {
         f.render_widget(
             Paragraph::new("No data yet — run the program to collect cache statistics.")
-                .style(Style::default().fg(theme::LABEL))
+                .style(style::label())
                 .alignment(Alignment::Center),
             inner,
         );
@@ -728,10 +726,7 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
                 format!(" Snapshot {} ", snap.label),
                 Style::default().fg(theme::ACCENT).bold(),
             ),
-            bottom: Some(Line::from(Span::styled(
-                " Esc=close ",
-                Style::default().fg(theme::LABEL),
-            ))),
+            bottom: Some(Line::from(Span::styled(" Esc=close ", style::label()))),
         },
     );
 
@@ -744,7 +739,7 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
 
     // ── Program summary ───────────────────────────────────────────────────────
     lines.push(Line::from(vec![
-        Span::styled("Program  ", Style::default().fg(theme::LABEL)),
+        Span::styled("Program  ", style::label()),
         Span::styled(
             format!("Cycles: {}", snap.total_cycles),
             Style::default().fg(theme::METRIC_CYC),
@@ -762,7 +757,7 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("   "),
         Span::styled(
             format!("Instructions: {}", snap.instruction_count),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
     ]));
     lines.push(Line::raw(""));
@@ -797,13 +792,10 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
                 Span::raw("   "),
                 Span::styled(
                     format!("Hits: {}  Misses: {}", lvl.hits, lvl.misses),
-                    Style::default().fg(theme::TEXT),
+                    style::value(),
                 ),
                 Span::raw("   "),
-                Span::styled(
-                    format!("Miss/1K: {mpki:.1}"),
-                    Style::default().fg(theme::LABEL),
-                ),
+                Span::styled(format!("Miss/1K: {mpki:.1}"), style::label()),
                 Span::raw("   "),
                 Span::styled(
                     format!("AMAT: {:.2} cyc", lvl.amat),
@@ -820,7 +812,7 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
                         fmt_bytes(lvl.bytes_loaded),
                         fmt_bytes(lvl.ram_write_bytes)
                     ),
-                    Style::default().fg(theme::LABEL),
+                    style::label(),
                 ),
             ]),
         ]
@@ -847,13 +839,13 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             "I-Cache miss hotspots (top PCs):",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
         for (pc, count) in snap.miss_hotspots.iter().take(5) {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(format!("0x{pc:08x}"), Style::default().fg(theme::ACCENT)),
-                Span::styled(format!("  ×{count}"), Style::default().fg(theme::TEXT)),
+                Span::styled(format!("  ×{count}"), style::value()),
             ]));
         }
     }
