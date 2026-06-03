@@ -127,77 +127,113 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Activity => render_guided_learning(f, chunks[1], app),
     }
 
-    let (footer_text, footer_style) = match app.tab {
+    let footer_line = match app.tab {
         Tab::Editor => {
-            let mode = match app.mode { EditorMode::Insert => "INSERT", EditorMode::Command => "COMMAND" };
-            (
-                format!("{mode}  │  Ctrl+o=Open  Ctrl+s=Save  Ctrl+z=Undo  Ctrl+f=Find  Ctrl+g=Goto  Ctrl+/=Comment  [?]=Help"),
-                style::label(),
-            )
+            let mode = match app.mode {
+                EditorMode::Insert => "INSERT",
+                EditorMode::Command => "COMMAND",
+            };
+            let mut line = style::hint_bar(&[
+                ("Ctrl+o", "Open"),
+                ("Ctrl+s", "Save"),
+                ("Ctrl+z", "Undo"),
+                ("Ctrl+f", "Find"),
+                ("Ctrl+g", "Goto"),
+                ("Ctrl+/", "Comment"),
+                ("[?]", "Help"),
+            ]);
+            line.spans.insert(0, Span::styled("  │  ", style::label()));
+            line.spans.insert(0, Span::styled(mode, style::key()));
+            line
         }
-        Tab::Run => (
-            "s=Step  r=Restart  p/Space=Run/Pause  f=Speed  v=Sidebar  k=Region  Ctrl+f=Jump RAM  Ctrl+g=Label  [?]=Help".to_string(),
-            style::label(),
-        ),
+        Tab::Run => style::hint_bar(&[
+            ("s", "Step"),
+            ("r", "Restart"),
+            ("p/Space", "Run/Pause"),
+            ("f", "Speed"),
+            ("v", "Sidebar"),
+            ("k", "Region"),
+            ("Ctrl+f", "Jump RAM"),
+            ("Ctrl+g", "Label"),
+            ("[?]", "Help"),
+        ]),
         Tab::Pipeline => {
             if let Some(ref err) = app.pipeline.status_error {
-                (format!("✗  {err}"), style::danger())
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.pipeline.status_msg {
-                (format!("✓  {ok}"), style::success())
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Settings  Ctrl+e/l=Settings  Ctrl+r=Results  [?]=Help".to_string(),
-                    style::label(),
-                )
+                style::hint_bar(&[
+                    ("s", "Step"),
+                    ("p/Space", "Run/Pause"),
+                    ("r", "Reset"),
+                    ("f", "Speed"),
+                    ("Tab", "Subtab"),
+                    ("↑/↓", "Settings"),
+                    ("Ctrl+e/l", "Settings"),
+                    ("Ctrl+r", "Results"),
+                    ("[?]", "Help"),
+                ])
             }
         }
         Tab::Cache => {
             if let Some(ref err) = app.cache.config_error {
-                (format!("✗  {err}"), style::danger())
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.cache.config_status {
-                (format!("✓  {ok}"), style::success())
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "Tab=Subtabs  Ctrl+e=Export config  Ctrl+l=Import config  Ctrl+r=Results  [?]=Help".to_string(),
-                    style::label(),
-                )
+                style::hint_bar(&[
+                    ("Tab", "Subtabs"),
+                    ("Ctrl+e", "Export config"),
+                    ("Ctrl+l", "Import config"),
+                    ("Ctrl+r", "Results"),
+                    ("[?]", "Help"),
+                ])
             }
         }
-        Tab::Docs => (
-            "Ctrl+f=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language  [?]=Help".to_string(),
-            style::label(),
-        ),
-        Tab::Settings => (
-            "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field  [?]=Help".to_string(),
-            style::label(),
-        ),
+        Tab::Docs => style::hint_bar(&[
+            ("Ctrl+f", "Search"),
+            ("←/→", "Filter"),
+            ("Space", "Toggle filter"),
+            ("↑/↓", "Scroll"),
+            ("PgUp/PgDn", "Fast scroll"),
+            ("l", "Language"),
+            ("[?]", "Help"),
+        ]),
+        Tab::Settings => style::hint_bar(&[
+            ("↑/↓", "Navigate"),
+            ("Enter", "Edit/Toggle"),
+            ("Esc", "Cancel"),
+            ("Click", "Toggle bool"),
+            ("Tab", "Next field"),
+            ("[?]", "Help"),
+        ]),
         Tab::Tlb => {
             if let Some(ref err) = app.tlb.config_error {
-                (format!("✗  {err}"), style::danger())
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.tlb.config_status {
-                (format!("✓  {ok}"), style::success())
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "Tab=Subviews  Click=Edit field  f=Flush TLB  [?]=Help".to_string(),
-                    style::label(),
-                )
+                style::hint_bar(&[
+                    ("Tab", "Subviews"),
+                    ("Click", "Edit field"),
+                    ("f", "Flush TLB"),
+                    ("[?]", "Help"),
+                ])
             }
         }
         Tab::Activity => {
             if let Some(ref err) = app.activity.status_err {
-                (format!("✗  {err}"), style::danger())
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.activity.status_msg {
-                (format!("✓  {ok}"), style::success())
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "↑/↓=Selecionar  Enter=Aplicar preset".to_string(),
-                    style::label(),
-                )
+                style::hint_bar(&[("↑/↓", "Selecionar"), ("Enter", "Aplicar preset")])
             }
         }
     };
 
-    f.render_widget(Paragraph::new(footer_text).style(footer_style), chunks[2]);
+    f.render_widget(Paragraph::new(footer_line), chunks[2]);
 
     if app.show_exit_popup {
         render_exit_popup(f, size);
@@ -328,14 +364,15 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         + ELF_BTN_DISCARD.len() as u16;
     let btn_x0 = popup.x + 1 + inner_w.saturating_sub(total_btns) / 2;
 
-    let btn_style = |label: &str, x: u16| {
+    let btn = |label: &str, x: u16| {
         let hovered =
             app.mouse_y == btn_y && app.mouse_x >= x && app.mouse_x < x + label.len() as u16;
-        if hovered {
-            Style::default().fg(Color::Black).bg(theme::ACCENT)
+        let kind = if hovered {
+            style::Badge::Accent
         } else {
-            Style::default().fg(Color::Black).bg(theme::IDLE)
-        }
+            style::Badge::Idle
+        };
+        style::badge(label, kind)
     };
 
     let x_cancel = btn_x0;
@@ -358,11 +395,11 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         Line::raw(""),
         Line::from(vec![
             Span::raw(" ".repeat(inner_w.saturating_sub(total_btns) as usize / 2)),
-            Span::styled(ELF_BTN_CANCEL, btn_style(ELF_BTN_CANCEL, x_cancel)),
+            btn(ELF_BTN_CANCEL, x_cancel),
             Span::raw("  "),
-            Span::styled(ELF_BTN_EDIT, btn_style(ELF_BTN_EDIT, x_edit)),
+            btn(ELF_BTN_EDIT, x_edit),
             Span::raw("  "),
-            Span::styled(ELF_BTN_DISCARD, btn_style(ELF_BTN_DISCARD, x_discard)),
+            btn(ELF_BTN_DISCARD, x_discard),
         ]),
         Line::raw(""),
         Line::from(vec![
