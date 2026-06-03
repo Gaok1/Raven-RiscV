@@ -2,13 +2,13 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{
-        Axis, Block, BorderType, Borders, Chart, Clear, Dataset, Gauge, GraphType, Paragraph,
-    },
+    widgets::{Axis, Chart, Dataset, Gauge, GraphType, Paragraph},
 };
 
 use crate::ui::app::{App, CacheScope};
 use crate::ui::theme;
+use crate::ui::view::components::overlay::{self, OverlayStyle};
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
 // Run Controls widget is rendered at the cache tab level (always visible).
@@ -188,16 +188,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         theme::DANGER
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -343,13 +334,7 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
     } else {
         " Snapshots (\u{2191}\u{2193} \u{b7} Enter=view \u{b7} D=delete) "
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(title, Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(title, PanelKind::Plain));
 
     if inner.height == 0 {
         return;
@@ -423,13 +408,11 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_chart(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title("Hit Rate History (%)");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel_frame(PanelKind::Plain).title("Hit Rate History (%)"),
+    );
 
     if inner.height < 3 || inner.width < 10 {
         return;
@@ -534,16 +517,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         theme::DANGER
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -661,13 +635,11 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
 }
 
 fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title("Hit Rate History (%)");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel_frame(PanelKind::Plain).title("Hit Rate History (%)"),
+    );
 
     if inner.height < 3 || inner.width < 10 {
         return;
@@ -747,23 +719,21 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
         pop_h.min(area.height),
     );
 
-    f.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::ACCENT))
-        .title(Span::styled(
-            format!(" Snapshot {} ", snap.label),
-            Style::default().fg(theme::ACCENT).bold(),
-        ))
-        .title_bottom(Span::styled(
-            " Esc=close ",
-            Style::default().fg(theme::LABEL),
-        ));
-
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle {
+            border: theme::ACCENT,
+            title: Span::styled(
+                format!(" Snapshot {} ", snap.label),
+                Style::default().fg(theme::ACCENT).bold(),
+            ),
+            bottom: Some(Line::from(Span::styled(
+                " Esc=close ",
+                Style::default().fg(theme::LABEL),
+            ))),
+        },
+    );
 
     if inner.height == 0 || inner.width == 0 {
         return;

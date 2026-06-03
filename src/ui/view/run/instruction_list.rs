@@ -1,7 +1,8 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, List, ListItem, Paragraph};
 
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use super::App;
 use super::instruction_details::disasm_word;
 use super::memory::{exec_address_in_range, imem_address_in_range};
@@ -78,17 +79,12 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn instruction_block(app: &App) -> Block<'static> {
-    let border_style = if app.run.hover_imem_bar {
-        Style::default().fg(theme::HOVER_BG)
+    let border = if app.run.hover_imem_bar {
+        theme::HOVER_BG
     } else {
-        Style::default().fg(theme::BORDER)
+        theme::BORDER
     };
-
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .border_type(BorderType::Rounded)
-        .title("Instruction Memory")
+    panel::panel_frame(PanelKind::Custom(border)).title("Instruction Memory")
 }
 
 fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -381,16 +377,11 @@ fn render_instruction_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
 
 /// Render the execution trace panel (last N executed instructions).
 pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Trace (last executed)",
-            Style::default().fg(theme::ACCENT),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let block = panel::panel_frame(PanelKind::Plain).title(Span::styled(
+        "Trace (last executed)",
+        Style::default().fg(theme::ACCENT),
+    ));
+    let inner = render_panel(f, area, block);
 
     let visible = inner.height as usize;
     let total = app.run.exec_trace.len();

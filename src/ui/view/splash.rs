@@ -1,8 +1,9 @@
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind};
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Paragraph},
 };
 use std::time::Instant;
 
@@ -134,13 +135,11 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64, mem_si
             .bg(theme::BG_PANEL)
             .add_modifier(Modifier::BOLD)
     };
-    let prompt_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if pulse_on {
-            theme::ACTIVE
-        } else {
-            theme::BORDER_HOV
-        }));
+    let prompt_block = panel::panel_frame(PanelKind::Custom(if pulse_on {
+        theme::ACTIVE
+    } else {
+        theme::BORDER_HOV
+    }));
     if prompt_y + 2 < area.height {
         f.render_widget(
             Paragraph::new("   ENTER TO START   ")

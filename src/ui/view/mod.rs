@@ -1,15 +1,16 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
 pub(super) use super::editor::Editor;
 use crate::ui::theme;
+use crate::ui::view::components::overlay::{self, OverlayStyle};
 
 mod cache;
-mod components;
+pub(crate) mod components;
 pub mod disasm;
 pub(crate) mod style;
 pub mod docs;
@@ -278,15 +279,14 @@ fn underline_cell(active: bool, total_width: usize, line_width: usize) -> Span<'
 
 fn render_exit_popup(f: &mut Frame, area: Rect) {
     let popup = centered_rect(area.width / 3, area.height / 4, area);
-    f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(theme::DANGER))
-        .title(Span::styled(
-            "Confirm Exit",
-            Style::default().fg(theme::DANGER),
-        ));
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(
+            theme::DANGER,
+            Span::styled("Confirm Exit", Style::default().fg(theme::DANGER)),
+        ),
+    );
     let lines = vec![
         Line::raw("Do you wish to exit?"),
         Line::raw("Check your code is saved before exiting."),
@@ -304,10 +304,8 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
             Span::styled("  Esc", Style::default().fg(theme::LABEL)),
         ]),
     ];
-    let para = Paragraph::new(lines)
-        .block(block)
-        .alignment(Alignment::Center);
-    f.render_widget(para, popup);
+    let para = Paragraph::new(lines).alignment(Alignment::Center);
+    f.render_widget(para, inner);
 }
 
 // ── ELF prompt popup ─────────────────────────────────────────────────────────
@@ -322,7 +320,6 @@ pub(super) const ELF_BTN_ROW: u16 = 4; // inner_y of the button row (0-indexed)
 fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
     let popup_w = ELF_POPUP_W.min(area.width.saturating_sub(4));
     let popup = centered_rect(popup_w, ELF_POPUP_H, area);
-    f.render_widget(Clear, popup);
 
     let btn_y = popup.y + 1 + ELF_BTN_ROW; // absolute row of the button line
     let inner_w = popup_w.saturating_sub(2);
@@ -350,14 +347,14 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
     let x_edit = x_cancel + ELF_BTN_CANCEL.len() as u16 + GAP;
     let x_discard = x_edit + ELF_BTN_EDIT.len() as u16 + GAP;
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(theme::PAUSED))
-        .title(Span::styled(
-            " ELF Binary ",
-            Style::default().fg(theme::PAUSED).bold(),
-        ));
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(
+            theme::PAUSED,
+            Span::styled(" ELF Binary ", Style::default().fg(theme::PAUSED).bold()),
+        ),
+    );
 
     let lines = vec![
         Line::raw(""),
@@ -379,8 +376,7 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         ]),
     ];
 
-    let para = Paragraph::new(lines).block(block);
-    f.render_widget(para, popup);
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 // ── Help popup ───────────────────────────────────────────────────────────────
@@ -392,8 +388,6 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
     let page = app.help_page.min(total.saturating_sub(1));
     let content = &pages[page];
 
-    f.render_widget(Clear, popup);
-
     let tab_label = app.tab.label();
     let title = if total > 1 {
         format!("Help — {tab_label}  [{}/{total}]", page + 1)
@@ -401,16 +395,14 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
         format!("Help — {tab_label}")
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::ACCENT))
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(
+            theme::ACCENT,
+            Span::styled(title, Style::default().fg(theme::ACCENT).bold()),
+        ),
+    );
 
     let mut lines: Vec<Line<'static>> = content
         .iter()

@@ -9,6 +9,7 @@ use crate::ui::view::run::{
 use crate::ui::view::{
     ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W,
 };
+use crate::ui::view::components::panel::{self, PanelKind};
 use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
@@ -1890,10 +1891,7 @@ fn l1_config_panel_areas(content_area: Rect, icache: bool) -> (Rect, Rect, Rect,
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(content_area);
     let panel = if icache { cols[0] } else { cols[1] };
-    let inner = ratatui::widgets::Block::default()
-        .borders(ratatui::widgets::Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .inner(panel);
+    let inner = panel::panel_frame(PanelKind::Plain).inner(panel);
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1906,10 +1904,7 @@ fn l1_config_panel_areas(content_area: Rect, icache: bool) -> (Rect, Rect, Rect,
 }
 
 fn unified_config_areas(content_area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
-    let outer_inner = ratatui::widgets::Block::default()
-        .borders(ratatui::widgets::Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .inner(content_area);
+    let outer_inner = panel::panel_frame(PanelKind::Plain).inner(content_area);
     let col_w = outer_inner.width.min(60);
     let col_x = outer_inner.x + (outer_inner.width.saturating_sub(col_w)) / 2;
     let col_area = Rect::new(col_x, outer_inner.y, col_w, outer_inner.height);

@@ -9,8 +9,9 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 const CONFIG_CONTENT_W: u16 = 52;
 const CONFIG_LABEL_W: usize = 18;
@@ -19,18 +20,7 @@ const LATENCY_LABEL_W: usize = 8;
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.pipeline;
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            " Pipeline Settings ",
-            Style::default()
-                .fg(theme::ACCENT)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(" Pipeline Settings ", PanelKind::Accent));
 
     let content_width = inner.width.min(CONFIG_CONTENT_W);
     let cols = Layout::default()

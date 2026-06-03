@@ -4,11 +4,12 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, List, ListItem},
+    widgets::{List, ListItem},
 };
 
 use crate::ui::app::{App, TlbConfigField, TlbHoverTarget};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, dense_value};
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
@@ -21,14 +22,7 @@ pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     let col_x = area.x + (area.width.saturating_sub(col_w)) / 2;
     let col_area = Rect::new(col_x, area.y, col_w, area.height);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "TLB Settings",
-            Style::default().fg(theme::LABEL),
-        ));
+    let block = panel::panel("TLB Settings", PanelKind::Plain);
     let inner = block.inner(col_area);
     f.render_widget(block, col_area);
     if inner.height == 0 {
@@ -188,11 +182,7 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(" "),
         Span::styled(labels[2], style(hovered == Some(2))),
     ]);
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let x0 = inner.x + 9;
     let mut x = x0;
     let mut btns = [(0u16, 0u16, 0u16); 3];
@@ -232,11 +222,7 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
             ),
         ])
     };
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     if show_buttons {
         app.tlb
             .apply_btn

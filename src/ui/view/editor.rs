@@ -1,9 +1,10 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use std::cmp::min;
 use std::collections::HashSet;
 
+use super::components::panel::{self, PanelKind};
 use super::{App, Editor};
 
 pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
@@ -140,13 +141,8 @@ pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
 
     let actions = Line::from(actions_spans);
 
-    let para = Paragraph::new(vec![build, stats, actions]).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
-            .border_type(BorderType::Rounded)
-            .title("Editor Control"),
-    );
+    let para = Paragraph::new(vec![build, stats, actions])
+        .block(panel::panel_frame(PanelKind::Custom(Color::DarkGray)).title("Editor Control"));
     f.render_widget(para, area);
 }
 
@@ -373,11 +369,8 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         rows.push(row_line);
     }
 
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .border_type(BorderType::Rounded)
-        .title("Editor (Risc-v ASM)");
+    let mut block =
+        panel::panel_frame(PanelKind::Custom(Color::DarkGray)).title("Editor (Risc-v ASM)");
     if let Some(ok) = app.editor.last_compile_ok {
         let (txt, color) = if ok {
             ("[OK]", Color::Green)

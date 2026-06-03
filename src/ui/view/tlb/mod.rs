@@ -11,11 +11,12 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::ui::app::{App, TlbHoverTarget, TlbSubtab, VmSubtab};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 mod config;
 mod entries;
@@ -98,14 +99,7 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
         matches!(app.tlb.hover, Some(TlbHoverTarget::VmTlb)),
     );
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Virtual Memory",
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
+    let block = panel::panel("Virtual Memory", PanelKind::Accent);
     let inner = block.inner(area);
     let row_y = inner.y;
     let mut x = inner.x + 1;
@@ -184,14 +178,7 @@ fn render_tlb_subheader(f: &mut Frame, area: Rect, app: &App) {
         matches!(app.tlb.hover, Some(TlbHoverTarget::TlbSettings)),
     );
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Translation Lookaside Buffer",
-            Style::default().fg(theme::LABEL),
-        ));
+    let block = panel::panel("Translation Lookaside Buffer", PanelKind::Plain);
     let inner = block.inner(area);
     let row_y = inner.y;
     let mut x = inner.x + 1;
@@ -227,12 +214,7 @@ fn render_tlb_subheader(f: &mut Frame, area: Rect, app: &App) {
 
 /// Shown in the TLB world when the cache is disabled in Settings.
 fn render_tlb_disabled_notice(f: &mut Frame, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
     let lines = vec![
         Line::raw(""),
         Line::from(Span::styled(

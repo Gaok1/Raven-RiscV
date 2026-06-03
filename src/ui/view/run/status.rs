@@ -1,17 +1,13 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::{App, FormatMode, MemRegion, RunButton};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind};
 
 pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title("Run Controls");
-
+    let block = panel::panel_frame(PanelKind::Plain).title("Run Controls");
     let para = Paragraph::new(status_lines(app)).block(block);
     f.render_widget(para, area);
 }

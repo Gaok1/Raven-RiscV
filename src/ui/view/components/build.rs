@@ -1,7 +1,8 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
+use super::panel::{self, PanelKind};
 use crate::ui::app::App;
 
 pub(crate) fn render_build_status(f: &mut Frame, area: Rect, app: &App) {
@@ -27,12 +28,8 @@ pub(crate) fn render_build_status(f: &mut Frame, area: Rect, app: &App) {
             Color::DarkGray,
         )
     };
-    let status = Paragraph::new(msg).style(style).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Build status")
-            .border_style(Style::default().fg(build_border))
-            .border_type(BorderType::Rounded),
-    );
+    let status = Paragraph::new(msg)
+        .style(style)
+        .block(panel::panel_frame(PanelKind::Custom(build_border)).title("Build status"));
     f.render_widget(status, area);
 }

@@ -9,8 +9,9 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
 };
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
     app.pipeline.gantt_area_rect.set((0, 0, 0, 0));
@@ -99,16 +100,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("Tab to switch", Style::default().fg(theme::LABEL)),
     ]);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            " Pipeline Simulator ",
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(" Pipeline Simulator ", PanelKind::Accent));
     f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 
     // Record button geometry for mouse: y=inner.y, x ranges
@@ -207,13 +199,7 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let line2 = Line::from(Span::styled(cpi_str, Style::default().fg(theme::LABEL)));
     let line3 = Line::from(Span::styled(stall_str, Style::default().fg(theme::LABEL)));
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Execution", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Execution", PanelKind::Plain));
     f.render_widget(Paragraph::new(vec![line1, line2, line3]), inner);
 
     // Record button geometry for mouse
@@ -226,9 +212,11 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         .set((inner.y, speed_x, speed_x + speed_label_w));
     let state_x = inner.x + 4 + speed_label_w;
     let state_label_w = ("state ".len() + state_label.len()) as u16;
+    
     app.pipeline
         .btn_state_rect
         .set((inner.y, state_x, state_x + state_label_w));
+
     let reset_x = state_x + state_label_w + 3;
     app.pipeline
         .btn_reset_rect
@@ -267,12 +255,7 @@ fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
 
     let y = inner.y;

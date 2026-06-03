@@ -3,8 +3,9 @@ use crate::ui::app::cpi_class_label;
 use crate::ui::theme;
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use super::App;
 use super::memory::exec_address_in_range;
 use super::registers::reg_name;
@@ -137,15 +138,10 @@ fn detail_context(app: &App) -> DetailContext {
 fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let fmt_name = ctx.format.name();
     let title = format!("Instruction  [{fmt_name}]");
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
+    let block = panel::panel_frame(PanelKind::Plain)
         .title(Span::styled(title, Style::default().fg(theme::TEXT)))
         .title_alignment(Alignment::Left);
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, block);
 
     let origin_span = Span::styled(
         format!(" @ 0x{:08x} ({})", ctx.addr, ctx.origin),
@@ -259,14 +255,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
 
 fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
     let segs = format.segments();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Field Map", Style::default().fg(theme::LABEL)));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Field Map", PanelKind::Plain));
 
     // Row 1 — bit position markers
     let pos_line = bit_position_line(&segs);
@@ -364,14 +353,7 @@ fn render_decoded(
     comment: Option<&str>,
     cpu: Option<&crate::falcon::Cpu>,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Decoded", Style::default().fg(theme::LABEL)));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Decoded", PanelKind::Plain));
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(c) = comment {

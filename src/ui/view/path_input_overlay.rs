@@ -1,9 +1,10 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::ui::app::{App, PathInputAction};
 use crate::ui::theme;
+use crate::ui::view::components::overlay::{self, OverlayStyle};
 
 pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
     if !app.path_input.open {
@@ -31,19 +32,14 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
         popup_h,
     );
 
-    f.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::ACCENT))
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(
+            theme::ACCENT,
+            Span::styled(title, Style::default().fg(theme::ACCENT).bold()),
+        ),
+    );
 
     // Split: 1 line for input, rest for completions
     let (input_area, comp_area) = if inner.height > 1 {

@@ -3,11 +3,12 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Axis, Block, BorderType, Borders, Chart, Dataset, GraphType, Paragraph},
+    widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
 };
 
 use crate::ui::app::App;
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
     let layout = Layout::default()
@@ -93,25 +94,12 @@ fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
             ),
         ]),
     ];
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Metrics", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Metrics", PanelKind::Plain));
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Hit Rate History",
-            Style::default().fg(theme::LABEL),
-        ));
+    let block = panel::panel("Hit Rate History", PanelKind::Plain);
 
     let pts: Vec<(f64, f64)> = app.run.mem.mmu().tlb.stats.history.iter().copied().collect();
     if pts.is_empty() {

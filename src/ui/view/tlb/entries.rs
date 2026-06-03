@@ -3,23 +3,15 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Row, Table},
+    widgets::{Row, Table},
 };
 
 use crate::ui::app::App;
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "TLB Entries",
-            Style::default().fg(theme::LABEL),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("TLB Entries", PanelKind::Plain));
     if inner.height == 0 {
         return;
     }

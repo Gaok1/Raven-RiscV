@@ -2,12 +2,13 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::falcon::cache::CacheController;
 use crate::ui::app::{App, CacheScope, CacheSubtab, RunButton};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, dense_value, push_dense_pair};
 
 mod config;
@@ -17,12 +18,7 @@ mod view;
 pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     // When cache is disabled, show a notice and skip all cache-specific content.
     if !app.run.cache_enabled {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(theme::BORDER));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
+        let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
         let lines = vec![
             Line::raw(""),
             Line::from(Span::styled(
@@ -99,11 +95,7 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let mut spans = Vec::new();
-    let inner_for_hits = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .inner(area);
+    let inner_for_hits = panel::panel_frame(PanelKind::Plain).inner(area);
     let line1_y = inner_for_hits.y;
     let mut x = inner_for_hits.x;
     let speed_x0 = x + "speed ".len() as u16;
@@ -159,13 +151,7 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
     ]);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title(Span::styled("Execution", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Execution", PanelKind::Plain));
     f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 }
 
@@ -271,14 +257,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         )
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            format!("Cache Simulation — {level_label}"),
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
+    let block = panel::panel(format!("Cache Simulation — {level_label}"), PanelKind::Accent);
     let inner = block.inner(area);
     let row_y = inner.y;
     let mut x = inner.x;
@@ -321,10 +300,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     let show_scope = app.cache.selected_level == 0;
     let show_cfg_btns = matches!(app.cache.subtab, CacheSubtab::Config);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER));
+    let block = panel::panel_frame(PanelKind::Plain);
     let inner = block.inner(area);
     let row_y = inner.y;
     let mut x = inner.x + 1; // leading space

@@ -9,12 +9,13 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::falcon::mmu::{MapKind, VmMode};
 use crate::ui::app::{App, TlbHoverTarget, VmSettingsField};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind};
 use crate::ui::view::components::{dense_action, dense_value};
 
 /// What a hitbox in the panel points at.
@@ -58,14 +59,7 @@ pub(super) fn render_vm_settings(f: &mut Frame, area: Rect, app: &App) {
     let col_x = area.x + (area.width.saturating_sub(col_w)) / 2;
     let col_area = Rect::new(col_x, area.y, col_w, area.height);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Virtual Memory Settings",
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
+    let block = panel::panel("Virtual Memory Settings", PanelKind::Accent);
     let inner = block.inner(col_area);
     f.render_widget(block, col_area);
     if inner.height == 0 || inner.width < 4 {

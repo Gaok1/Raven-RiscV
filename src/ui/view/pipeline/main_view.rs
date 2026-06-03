@@ -10,8 +10,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
+
+use crate::ui::view::components::panel::{self, render_panel};
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
@@ -123,16 +125,11 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App) {
             _ => stage_labels[i].to_string(),
         };
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .title(Span::styled(
-                title_label,
-                border_style.add_modifier(Modifier::BOLD),
-            ));
-
-        let inner = block.inner(cols[i]);
-        f.render_widget(block, cols[i]);
+        let block = panel::panel_square(
+            Span::styled(title_label, border_style.add_modifier(Modifier::BOLD)),
+            border_style,
+        );
+        let inner = render_panel(f, cols[i], block);
         let content_area = inner;
 
         let lines = match slot {
@@ -390,16 +387,11 @@ fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
         None => Style::default().fg(theme::BORDER),
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(Span::styled(
-            "EX (UFs)",
-            border_style.add_modifier(Modifier::BOLD),
-        ));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let block = panel::panel_square(
+        Span::styled("EX (UFs)", border_style.add_modifier(Modifier::BOLD)),
+        border_style,
+    );
+    let inner = render_panel(f, area, block);
     let fu_area = inner;
 
     // Lista de UFs: (nome, classe que a ocupa, latência via CPI config)
@@ -581,15 +573,11 @@ fn split_fu_activity<'a>(
 fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.pipeline;
 
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            " Hazard / Forwarding Map ",
-            Style::default().fg(theme::LABEL_Y),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let block = panel::handle_bar(theme::BORDER).title(Span::styled(
+        " Hazard / Forwarding Map ",
+        Style::default().fg(theme::LABEL_Y),
+    ));
+    let inner = render_panel(f, area, block);
 
     let compact = hazard_map_is_compact(inner);
     let cols = if compact {
@@ -1134,14 +1122,13 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     let preview_cols = ((preview_inner_w.saturating_sub(LABEL_W)) / CELL_W).max(1);
     let visible_cols = preview_cols.min(crate::ui::pipeline::MAX_GANTT_COLS);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
+    let block = panel::panel_square(
+        Span::styled(
             format!(" HISTORY  up to {} cycles ", visible_cols),
             Style::default().fg(theme::LABEL),
-        ));
-
+        ),
+        Style::default().fg(theme::BORDER),
+    );
     let inner = block.inner(area);
     p.gantt_area_rect
         .set((inner.x, inner.y, inner.width, inner.height));

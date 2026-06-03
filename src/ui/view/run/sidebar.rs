@@ -1,11 +1,12 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Cell, List, ListItem, Paragraph, Row, Table};
 
 use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
 use super::{App, MemRegion};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if app.run.show_dyn {
@@ -43,15 +44,11 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         String::new()
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title(if app.run.show_dyn {
-            format!("Registers [Dyn]{cursor_info}")
-        } else {
-            format!("Registers  [P]=pin  [Tab]=float{cursor_info}")
-        });
+    let block = panel::panel_frame(PanelKind::Plain).title(if app.run.show_dyn {
+        format!("Registers [Dyn]{cursor_info}")
+    } else {
+        format!("Registers  [P]=pin  [Tab]=float{cursor_info}")
+    });
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
     let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]).block(block);
@@ -186,11 +183,7 @@ fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
 // ── Float register table (RV32F) ──────────────────────────────────────────────
 
 fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title("Float Regs (f0–f31)  [Tab]=int regs");
+    let block = panel::panel_frame(PanelKind::Plain).title("Float Regs (f0–f31)  [Tab]=int regs");
     let inner = block.inner(area);
 
     let visible = inner.height.saturating_sub(2) as usize;
@@ -344,11 +337,7 @@ fn memory_block(app: &App) -> Block<'static> {
         ),
         Span::styled(format!(" [{}]", section), Style::default().fg(accent)),
     ]);
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent))
-        .border_type(BorderType::Rounded)
-        .title(title)
+    panel::panel_frame(PanelKind::Custom(accent)).title(title)
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -695,13 +684,7 @@ fn elf_sections_height(app: &App) -> u16 {
 }
 
 fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title("ELF Sections");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain).title("ELF Sections"));
 
     let mut items: Vec<ListItem<'static>> = Vec::new();
     for sec in &app.run.elf_sections {

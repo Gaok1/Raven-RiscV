@@ -14,9 +14,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{
-        Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    },
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use unicode_truncate::UnicodeTruncateStr;
 
@@ -27,6 +25,7 @@ use crate::ui::app::{
     App, CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope,
 };
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 const DIRTY_COLOR: Color = theme::DIRTY;
 fn addr_mode_hint(addr_mode: CacheAddrMode, cfgs: &[&CacheConfig]) -> String {
@@ -394,16 +393,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         format!("{level_name}: disabled")
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(title, PanelKind::Accent));
 
     if !cfg.is_valid_config() {
         if inner.height > 0 {
@@ -622,16 +612,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         format!("{label}: disabled")
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(title, PanelKind::Accent));
 
     if !cfg.is_valid_config() {
         if inner.height > 0 {

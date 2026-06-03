@@ -2,7 +2,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
+    widgets::{List, ListItem, Paragraph},
 };
 
 use crate::falcon::cache::{
@@ -11,6 +11,7 @@ use crate::falcon::cache::{
 };
 use crate::ui::app::{App, CacheHoverTarget, ConfigField};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, dense_value};
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
@@ -62,16 +63,7 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         _ => None,
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -130,16 +122,7 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
         _ => None,
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -369,11 +352,7 @@ fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         Span::raw(" "),
         Span::styled("large", large_s),
     ]);
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let btns = [
         (inner.y, inner.x + 9, inner.x + 14),
         (inner.y, inner.x + 15, inner.x + 21),
@@ -408,11 +387,7 @@ fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usiz
         Span::raw(" "),
         Span::styled(format!("large {}kb", presets[2].size / 1024), large_s),
     ]);
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let small_label = format!("small {}kb", presets[0].size / 1024);
     let med_label = format!("med {}kb", presets[1].size / 1024);
     let large_label = format!("large {}kb", presets[2].size / 1024);
@@ -461,11 +436,7 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
         ])
     };
 
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     app.cache.config_apply_btns.set([
         (inner.y, inner.x + 1, inner.x + 20),
         (inner.y, inner.x + 23, inner.x + 41),

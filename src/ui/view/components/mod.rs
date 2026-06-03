@@ -23,6 +23,8 @@ pub(super) mod build;
 pub(super) mod console;
 pub(super) mod controls;
 pub(crate) mod layout;
+pub(crate) mod overlay;
+pub(crate) mod panel;
 
 // Re-export selected widgets for use by sibling modules under `view`
 pub(super) use console::render_console;

@@ -15,7 +15,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::falcon::memory::Bus;
@@ -23,6 +23,7 @@ use crate::falcon::mmu::walker::Pte;
 use crate::falcon::mmu::{Mmu, SatpMode};
 use crate::ui::app::App;
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 /// Minimum length of an identity-megapage run before it collapses to one line.
 const IDENTITY_COLLAPSE_THRESHOLD: usize = 4;
@@ -34,13 +35,7 @@ pub(super) fn render_page_tree(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_tree(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Page Table Tree", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Page Table Tree", PanelKind::Plain));
     if inner.height == 0 {
         return;
     }

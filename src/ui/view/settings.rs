@@ -2,7 +2,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
+    widgets::{List, ListItem, Paragraph},
 };
 
 use crate::ui::app::{
@@ -12,20 +12,11 @@ use crate::ui::app::{
     SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{dense_action, dense_value};
 
 pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            " Settings ",
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(" Settings ", PanelKind::Accent));
     if inner.height == 0 {
         return;
     }
@@ -670,13 +661,7 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Actions", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Actions", PanelKind::Plain));
     if inner.height == 0 {
         app.settings.import_rcfg_rect.set((0, 0, 0));
         app.settings.export_rcfg_rect.set((0, 0, 0));
