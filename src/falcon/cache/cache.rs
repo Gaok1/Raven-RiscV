@@ -33,6 +33,7 @@ impl CacheLine {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct CacheSet {
     pub(crate) lines: Vec<CacheLine>,
     pub(crate) lru_order: VecDeque<usize>, // front=MRU, back=LRU (LRU & MRU)
@@ -157,6 +158,7 @@ impl CacheSet {
 
 // ── Cache ────────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct Cache {
     pub config: CacheConfig,
     pub(crate) sets: Vec<CacheSet>,

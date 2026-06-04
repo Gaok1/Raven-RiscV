@@ -9,7 +9,7 @@ mod stats;
 
 pub use cache::{Cache, CacheLineView, CacheSetView};
 pub use config::CacheConfig;
-pub use controller::CacheController;
+pub use controller::{CacheController, CacheSnapshot};
 pub use policies::{InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
 pub use presets::{cache_presets, extra_level_presets};
 pub use stats::CacheStats;

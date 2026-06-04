@@ -188,6 +188,13 @@ pub trait Bus {
 pub struct Ram {
     data: Vec<u8>,
     reservations: HashMap<u32, Reservation>,
+    /// When `Some`, every byte mutated by `store8` first appends its
+    /// `(addr, old_byte)` pre-image here. This is the single chokepoint for
+    /// *all* runtime RAM writes — direct stores, write-through, and dirty-line
+    /// writebacks all funnel through `store8` — so the `Machine` journal can
+    /// rewind a step by replaying these pre-images in reverse. `None` (the
+    /// default) means recording is off and `store8` pays nothing.
+    write_log: Option<Vec<(u32, u8)>>,
 }
 
 impl Ram {
@@ -195,6 +202,7 @@ impl Ram {
         Self {
             data: vec![0; size],
             reservations: HashMap::new(),
+            write_log: None,
         }
     }
 
@@ -212,6 +220,29 @@ impl Ram {
     /// Return a read-only view of the raw bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.data
+    }
+
+    // ── Step-journal recording (see the `falcon::machine` module) ──
+
+    /// Start capturing `(addr, old_byte)` pre-images for every subsequent
+    /// `store8`. Replaces any in-flight log.
+    pub fn begin_recording(&mut self) {
+        self.write_log = Some(Vec::new());
+    }
+
+    /// Stop recording and return the pre-images in write order (oldest first).
+    /// Replay them in *reverse* — each via [`Ram::poke8`] — to undo the writes.
+    pub fn take_recording(&mut self) -> Vec<(u32, u8)> {
+        self.write_log.take().unwrap_or_default()
+    }
+
+    /// Raw byte write that bypasses both recording and reservation tracking.
+    /// Used only to restore pre-images during a step-back; out-of-bounds
+    /// addresses are silently ignored (the address was valid when captured).
+    pub fn poke8(&mut self, addr: u32, val: u8) {
+        if let Some(slot) = self.data.get_mut(addr as usize) {
+            *slot = val;
+        }
     }
 }
 
@@ -235,6 +266,9 @@ impl Bus for Ram {
     }
     fn store8(&mut self, a: u32, v: u8) -> Result<(), FalconError> {
         if let Some(slot) = self.data.get_mut(a as usize) {
+            if let Some(log) = self.write_log.as_mut() {
+                log.push((a, *slot));
+            }
             *slot = v;
             invalidate_reservations(&mut self.reservations, a, 1);
             Ok(())
