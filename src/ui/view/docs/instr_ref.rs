@@ -1,7 +1,7 @@
 use super::chrome::{render_filter_bar, render_page_tabs, render_tab_hint, separator_line};
 use crate::ui::theme;
 use crate::ui::view::App;
-use crate::ui::view::components::visible_window;
+use crate::ui::view::components::{horizontal_scrollbar, vertical_scrollbar, visible_window};
 use crate::ui::view::style;
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
@@ -10,7 +10,6 @@ const TY_W: usize = 8;
 const MNE_W: usize = 13;
 const OPS_W: usize = 21;
 const EXP_W: usize = 26;
-const SHOW_EXP_MIN_W: usize = 95;
 
 #[derive(Clone, Copy)]
 struct DocRow {
@@ -912,47 +911,44 @@ fn pad_or_truncate(s: &str, width: usize) -> String {
     }
 }
 
-fn col_widths(width: usize) -> (usize, bool) {
-    let show_exp = width >= SHOW_EXP_MIN_W;
-    let fixed = TY_W + 1 + MNE_W + 1 + OPS_W + 1;
-    let exp_overhead = if show_exp { 1 + EXP_W } else { 0 };
-    let desc_w = width.saturating_sub(fixed + exp_overhead).max(8);
-    (desc_w, show_exp)
+/// Everything except the flexible Description column: the 4 fixed columns plus
+/// the 4 single-space gaps between the 5 columns.
+const NON_DESC_W: usize = TY_W + 1 + MNE_W + 1 + OPS_W + 1 + 1 + EXP_W;
+/// Smallest Description width before the table scrolls horizontally.
+const DESC_MIN: usize = 20;
+
+/// Pick the Description width for `content_w` columns of space and report the
+/// table's full natural width. Description flexes to fill spare room; once the
+/// terminal is narrower than the natural minimum the table keeps all columns and
+/// scrolls horizontally instead of hiding any (`natural_w > content_w`).
+fn col_dims(content_w: usize) -> (usize, usize) {
+    if content_w > NON_DESC_W + DESC_MIN {
+        (content_w - NON_DESC_W, content_w)
+    } else {
+        (DESC_MIN, NON_DESC_W + DESC_MIN)
+    }
 }
 
-fn render_col_header(width: usize) -> Line<'static> {
-    let (desc_w, show_exp) = col_widths(width);
-    let hdr_style = Style::default()
+fn render_col_header(desc_w: usize) -> Line<'static> {
+    let h = Style::default()
         .fg(Color::DarkGray)
         .add_modifier(Modifier::BOLD);
-    let mut spans = vec![
-        Span::styled(format!("{:<8}", "Type"), hdr_style),
+    Line::from(vec![
+        Span::styled(format!("{:<8}", "Type"), h),
         Span::raw(" "),
-        Span::styled(format!("{:<13}", "Mnemonic"), hdr_style),
+        Span::styled(format!("{:<13}", "Mnemonic"), h),
         Span::raw(" "),
-        Span::styled(format!("{:<21}", "Operands"), hdr_style),
+        Span::styled(format!("{:<21}", "Operands"), h),
         Span::raw(" "),
-        Span::styled(pad_or_truncate("Description", desc_w), hdr_style),
-    ];
-    if show_exp {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(format!("{:<26}", "Expands to"), hdr_style));
-    }
-    Line::from(spans)
+        Span::styled(pad_or_truncate("Description", desc_w), h),
+        Span::raw(" "),
+        Span::styled(format!("{:<26}", "Expands to"), h),
+    ])
 }
 
-fn render_doc_row(row: &DocRow, desc_w: usize, show_exp: bool) -> Line<'static> {
+fn render_doc_row(row: &DocRow, desc_w: usize) -> Line<'static> {
     let color = ty_color(row.ty);
     let badge = format!("{:>8}", format!("[{}]", row.ty));
-    let mne = format!("{:<13}", row.mnemonic);
-
-    let ops_len = row.operands.chars().count();
-    let mut ops_spans = color_text(row.operands);
-    if ops_len < OPS_W {
-        ops_spans.push(Span::raw(" ".repeat(OPS_W - ops_len)));
-    }
-
-    let desc = pad_or_truncate(row.desc, desc_w);
 
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
@@ -961,23 +957,31 @@ fn render_doc_row(row: &DocRow, desc_w: usize, show_exp: bool) -> Line<'static> 
         ),
         Span::raw(" "),
         Span::styled(
-            mne,
+            format!("{:<13}", row.mnemonic),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ];
+
+    let ops_len = row.operands.chars().count();
+    let mut ops_spans = color_text(row.operands);
+    if ops_len < OPS_W {
+        ops_spans.push(Span::raw(" ".repeat(OPS_W - ops_len)));
+    }
     spans.extend(ops_spans);
     spans.push(Span::raw(" "));
-    spans.push(Span::raw(desc));
 
-    if show_exp && !row.expands.is_empty() {
-        spans.push(Span::raw(" "));
+    spans.push(Span::raw(pad_or_truncate(row.desc, desc_w)));
+    spans.push(Span::raw(" "));
+
+    if row.expands.is_empty() {
+        spans.push(Span::raw(" ".repeat(EXP_W)));
+    } else {
         let exp_text = format!("→ {}", row.expands);
-        let exp = pad_or_truncate(&exp_text, EXP_W);
         spans.push(Span::styled(
-            exp,
+            pad_or_truncate(&exp_text, EXP_W),
             Style::default().fg(Color::Rgb(100, 100, 120)),
         ));
     }
@@ -1068,26 +1072,8 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     render_filter_bar(f, filter_area, app);
 
     if table_area.height == 0 || table_area.width == 0 {
-        return;
-    }
-
-    let w = table_area.width as usize;
-    let (desc_w, show_exp) = col_widths(w);
-
-    let table_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .split(table_area);
-
-    f.render_widget(Paragraph::new(render_col_header(w)), table_chunks[0]);
-    f.render_widget(Paragraph::new(separator_line(w as u16)), table_chunks[1]);
-
-    let data_area = table_chunks[2];
-    if data_area.height == 0 {
+        app.docs.sb_v.set(None);
+        app.docs.sb_h.set(None);
         return;
     }
 
@@ -1102,6 +1088,47 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
         filtered_rows(q, app.docs.type_filter)
     };
 
+    // Decide which bars are needed. Vertical: rows overflow the body height
+    // (header + separator = 2 rows, minus a horizontal bar if present). Reserve
+    // a right column for it. Horizontal: the table keeps every column and scrolls
+    // when its natural width exceeds the space (no column hiding).
+    let h_bar_est = u16::from(col_dims(table_area.width as usize).1 > table_area.width as usize);
+    let body_h = table_area.height.saturating_sub(2 + h_bar_est) as usize;
+    let needs_v = body_h > 0 && rows.len() > body_h;
+    let content_w = (table_area.width as usize).saturating_sub(usize::from(needs_v));
+    let (desc_w, natural_w) = col_dims(content_w);
+    let needs_h = natural_w > content_w;
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),          // column header
+            Constraint::Length(1),          // separator
+            Constraint::Min(0),             // data rows
+            Constraint::Length(needs_h.into()), // horizontal scrollbar
+        ])
+        .split(table_area);
+    let header_area = chunks[0];
+    let sep_area = chunks[1];
+    let data_area = chunks[2];
+    let hbar_area = chunks[3];
+
+    let content_w_u16 = content_w as u16;
+    let viewport_h = data_area.height as usize;
+    let max_h = natural_w.saturating_sub(content_w);
+    let h_off = app.docs.h_scroll.min(max_h) as u16;
+
+    // Header + separator scroll horizontally in lock-step with the rows.
+    let text_rect = |a: Rect| Rect::new(a.x, a.y, content_w_u16, a.height);
+    f.render_widget(
+        Paragraph::new(render_col_header(desc_w)).scroll((0, h_off)),
+        text_rect(header_area),
+    );
+    f.render_widget(
+        Paragraph::new(separator_line(natural_w as u16)).scroll((0, h_off)),
+        text_rect(sep_area),
+    );
+
     if rows.is_empty() {
         f.render_widget(
             Paragraph::new(Line::styled(
@@ -1110,15 +1137,42 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
             )),
             data_area,
         );
+        app.docs.sb_v.set(None);
+        app.docs.sb_h.set(None);
         return;
     }
 
-    let viewport_h = data_area.height as usize;
     let (start, end) = visible_window(rows.len(), viewport_h, app.docs.scroll);
     let lines: Vec<Line<'static>> = rows[start..end]
         .iter()
-        .map(|r| render_doc_row(r, desc_w, show_exp))
+        .map(|r| render_doc_row(r, desc_w))
         .collect();
+    f.render_widget(Paragraph::new(lines).scroll((0, h_off)), text_rect(data_area));
 
-    f.render_widget(Paragraph::new(lines), data_area);
+    // Vertical scrollbar in the reserved right column; register its track for
+    // mouse drag (or clear it when absent).
+    if needs_v {
+        let sb_area = Rect::new(data_area.x, data_area.y, table_area.width, data_area.height);
+        let max_v = rows.len().saturating_sub(viewport_h);
+        vertical_scrollbar(f, sb_area, rows.len(), viewport_h, start);
+        app.docs.sb_v.set(Some((
+            data_area.y,
+            data_area.height,
+            data_area.x + content_w_u16,
+            max_v,
+        )));
+    } else {
+        app.docs.sb_v.set(None);
+    }
+
+    // Horizontal scrollbar along the bottom, spanning the content columns only.
+    if needs_h {
+        let hbar = Rect::new(hbar_area.x, hbar_area.y, content_w_u16, 1);
+        horizontal_scrollbar(f, hbar, natural_w, content_w, h_off as usize);
+        app.docs
+            .sb_h
+            .set(Some((hbar_area.x, content_w_u16, hbar_area.y, max_h)));
+    } else {
+        app.docs.sb_h.set(None);
+    }
 }

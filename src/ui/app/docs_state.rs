@@ -50,10 +50,21 @@ impl DocsLang {
     }
 }
 
+/// Which scrollbar (if any) the mouse is currently dragging on the Docs tab.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SbDrag {
+    #[default]
+    None,
+    Vert,
+    Horz,
+}
+
 pub(crate) struct DocsState {
     pub(crate) page: DocsPage,
     pub(crate) lang: DocsLang,
     pub(crate) scroll: usize,
+    /// Horizontal scroll offset (InstrRef table when it overflows its width).
+    pub(crate) h_scroll: usize,
     pub(crate) search_open: bool,
     pub(crate) search_query: String,
     pub(crate) hover_page: Option<DocsPage>,
@@ -68,6 +79,13 @@ pub(crate) struct DocsState {
     pub(crate) tab_bar_xs: std::cell::Cell<[(u16, u16); 4]>,
     /// Y row of the filter bar (InstrRef page only).
     pub(crate) filter_bar_y: std::cell::Cell<u16>,
+    /// Vertical/horizontal scrollbar tracks for mouse drag, set by render each
+    /// frame: `(track_start, track_len, cross_axis_coord, max_offset)`. `None`
+    /// when that bar isn't shown.
+    pub(crate) sb_v: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
+    pub(crate) sb_h: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
+    /// Which bar is being dragged right now.
+    pub(crate) sb_drag: SbDrag,
 }
 
 // ── Tutorial state ─────────────────────────────────────────────────────────────

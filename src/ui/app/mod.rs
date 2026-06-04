@@ -24,7 +24,7 @@ pub(crate) use self::tlb_state::{
     TlbConfigField, TlbHoverTarget, TlbState, TlbSubtab, VmSettingsField, VmSubtab,
 };
 pub(crate) use self::docs_state::{
-    DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
+    DocsLang, DocsPage, DocsState, PathInput, PathInputAction, SbDrag, TutorialState,
 };
 pub(crate) use self::hart::{
     HartCoreRuntime, HartLifecycle, is_transparent_single_step_word, step_hart_bg_inner,
@@ -450,6 +450,7 @@ impl App {
                 page: DocsPage::InstrRef,
                 lang: DocsLang::En,
                 scroll: 0,
+                h_scroll: 0,
                 search_open: false,
                 search_query: String::new(),
                 hover_page: None,
@@ -458,6 +459,9 @@ impl App {
                 tab_bar_y: std::cell::Cell::new(0),
                 tab_bar_xs: std::cell::Cell::new([(0, 0); 4]),
                 filter_bar_y: std::cell::Cell::new(0),
+                sb_v: std::cell::Cell::new(None),
+                sb_h: std::cell::Cell::new(None),
+                sb_drag: SbDrag::None,
             },
             cache: CacheState {
                 subtab: CacheSubtab::Stats,
@@ -513,8 +517,7 @@ impl App {
                 viewing_snapshot: None,
                 window_start_instr: 0,
                 hscroll_drag: false,
-                hscroll_drag_start_x: 0,
-                hscroll_start: 0,
+                hscroll_drag_track_x: 0,
                 hscroll_drag_max: 0,
                 hscroll_drag_track_w: 1,
                 hscroll_drag_is_dcache: false,

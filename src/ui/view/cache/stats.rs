@@ -9,6 +9,7 @@ use crate::ui::app::{App, CacheScope};
 use crate::ui::theme;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::vertical_scrollbar;
 use crate::ui::view::style;
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
@@ -349,6 +350,10 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         0
     };
 
+    // Reserve a right column for the scrollbar when the list overflows.
+    let needs_sb = history.len() > visible;
+    let text_w = inner.width.saturating_sub(u16::from(needs_sb));
+
     for (i, snap) in history.iter().enumerate().skip(start).take(visible) {
         let row = (i - start) as u16;
         if row >= inner.height {
@@ -400,8 +405,12 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
 
         f.render_widget(
             Paragraph::new(Span::styled(text, style)),
-            Rect::new(inner.x, inner.y + row, inner.width, 1),
+            Rect::new(inner.x, inner.y + row, text_w, 1),
         );
+    }
+
+    if needs_sb {
+        vertical_scrollbar(f, inner, history.len(), visible, start);
     }
 }
 

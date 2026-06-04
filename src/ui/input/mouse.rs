@@ -11,11 +11,13 @@ use crate::ui::view::{
 };
 use crate::ui::view::components::layout;
 use crate::ui::view::components::panel::{self, PanelKind};
+use crate::ui::view::components::scroll_offset_from_pos;
 use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
-        EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED,
+        EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SbDrag,
+        SETTINGS_ROW_CACHE_ENABLED,
         SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
         SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED,
         SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
@@ -277,26 +279,18 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 } else {
                     CacheViewFocus::ICache
                 };
-                let cur_scroll = if is_dcache {
-                    app.cache.view_h_scroll_d
+                // Map the click column to an absolute scroll position; the drag
+                // handler maps the cursor the same way, so the view tracks the
+                // mouse 1:1 instead of snapping back to the old offset.
+                let new_scroll = scroll_offset_from_pos(me.column, track_x, track_w, max_scroll);
+                if is_dcache {
+                    app.cache.view_h_scroll_d = new_scroll;
                 } else {
-                    app.cache.view_h_scroll
-                };
-                // Jump to click ratio immediately
-                if track_w > 0 {
-                    let rel = me.column.saturating_sub(track_x).min(track_w - 1) as f64;
-                    let track_span = track_w.saturating_sub(1).max(1) as f64;
-                    let new_scroll = ((rel / track_span) * max_scroll as f64).round() as usize;
-                    if is_dcache {
-                        app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
-                    } else {
-                        app.cache.view_h_scroll = new_scroll.min(max_scroll);
-                    }
+                    app.cache.view_h_scroll = new_scroll;
                 }
                 // Start drag state
                 app.cache.hscroll_drag = true;
-                app.cache.hscroll_drag_start_x = me.column;
-                app.cache.hscroll_start = cur_scroll;
+                app.cache.hscroll_drag_track_x = track_x;
                 app.cache.hscroll_drag_max = max_scroll;
                 app.cache.hscroll_drag_track_w = track_w;
             } else {
@@ -307,20 +301,16 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             app.cache.hscroll_drag = false;
         }
         if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.hscroll_drag {
-            let track_w = app.cache.hscroll_drag_track_w;
-            let max_scroll = app.cache.hscroll_drag_max;
-            if track_w > 0 && max_scroll > 0 {
-                let delta = me.column as i32 - app.cache.hscroll_drag_start_x as i32;
-                let track_span = track_w.saturating_sub(1).max(1) as f64;
-                let scale = max_scroll as f64 / track_span;
-                let new_scroll = (app.cache.hscroll_start as f64 + (delta as f64 * scale))
-                    .round()
-                    .max(0.0) as usize;
-                if app.cache.hscroll_drag_is_dcache {
-                    app.cache.view_h_scroll_d = new_scroll.min(max_scroll);
-                } else {
-                    app.cache.view_h_scroll = new_scroll.min(max_scroll);
-                }
+            let new_scroll = scroll_offset_from_pos(
+                me.column,
+                app.cache.hscroll_drag_track_x,
+                app.cache.hscroll_drag_track_w,
+                app.cache.hscroll_drag_max,
+            );
+            if app.cache.hscroll_drag_is_dcache {
+                app.cache.view_h_scroll_d = new_scroll;
+            } else {
+                app.cache.view_h_scroll = new_scroll;
             }
         }
     }
@@ -334,8 +324,16 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 
     if let Tab::Docs = app.tab {
         update_docs_hover(app, me);
-        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+        if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
+            app.docs.sb_drag = SbDrag::None;
+        }
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left))
+            && !start_docs_scrollbar_drag(app, me)
+        {
             handle_docs_click(app, me);
+        }
+        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) {
+            drag_docs_scrollbar(app, me);
         }
     }
 
@@ -954,6 +952,44 @@ fn update_docs_hover(app: &mut App, me: MouseEvent) {
             app.docs.hover_page = Some(pages[i]);
             return;
         }
+    }
+}
+
+/// On left-down over a Docs scrollbar track, begin dragging it and jump to the
+/// click position. Returns true if a bar was hit (caller then skips the normal
+/// click handling). Tracks are `(start, len, cross, max_offset)`, set by render.
+fn start_docs_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
+    if let Some((start, len, cross, max)) = app.docs.sb_v.get() {
+        if me.column == cross && me.row >= start && me.row < start + len {
+            app.docs.sb_drag = SbDrag::Vert;
+            app.docs.scroll = scroll_offset_from_pos(me.row, start, len, max);
+            return true;
+        }
+    }
+    if let Some((start, len, cross, max)) = app.docs.sb_h.get() {
+        if me.row == cross && me.column >= start && me.column < start + len {
+            app.docs.sb_drag = SbDrag::Horz;
+            app.docs.h_scroll = scroll_offset_from_pos(me.column, start, len, max);
+            return true;
+        }
+    }
+    false
+}
+
+/// While a Docs scrollbar is being dragged, map the cursor to the scroll offset.
+fn drag_docs_scrollbar(app: &mut App, me: MouseEvent) {
+    match app.docs.sb_drag {
+        SbDrag::Vert => {
+            if let Some((start, len, _, max)) = app.docs.sb_v.get() {
+                app.docs.scroll = scroll_offset_from_pos(me.row, start, len, max);
+            }
+        }
+        SbDrag::Horz => {
+            if let Some((start, len, _, max)) = app.docs.sb_h.get() {
+                app.docs.h_scroll = scroll_offset_from_pos(me.column, start, len, max);
+            }
+        }
+        SbDrag::None => {}
     }
 }
 

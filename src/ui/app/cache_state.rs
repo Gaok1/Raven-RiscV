@@ -307,8 +307,7 @@ pub(crate) struct CacheState {
     pub(crate) window_start_instr: u64,         // start of current capture window, reset on restart
     // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse
     pub(crate) hscroll_drag: bool,
-    pub(crate) hscroll_drag_start_x: u16,
-    pub(crate) hscroll_start: usize,
+    pub(crate) hscroll_drag_track_x: u16,
     pub(crate) hscroll_drag_max: usize,
     pub(crate) hscroll_drag_track_w: u16,
     pub(crate) hscroll_drag_is_dcache: bool, // true = dragging D-cache bar, false = I-cache/unified

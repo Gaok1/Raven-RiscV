@@ -70,4 +70,7 @@ pub(crate) use controls::{
     ControlState, bool_value, dense_action, dense_value, edit_value, field_row, label_span,
     push_dense_pair,
 };
-pub(crate) use lists::visible_window;
+pub(crate) use lists::{
+    horizontal_scrollbar, scroll_offset_from_pos, vertical_scrollbar, visible_window,
+};
+pub(crate) use tables::{Align, Col, DataTable};
