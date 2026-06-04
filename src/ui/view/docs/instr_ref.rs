@@ -1,6 +1,7 @@
 use super::chrome::{render_filter_bar, render_page_tabs, render_tab_hint, separator_line};
 use crate::ui::theme;
 use crate::ui::view::App;
+use crate::ui::view::components::visible_window;
 use crate::ui::view::style;
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
@@ -1113,9 +1114,7 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let viewport_h = data_area.height as usize;
-    let max_start = rows.len().saturating_sub(viewport_h);
-    let start = app.docs.scroll.min(max_start);
-    let end = (start + viewport_h).min(rows.len());
+    let (start, end) = visible_window(rows.len(), viewport_h, app.docs.scroll);
     let lines: Vec<Line<'static>> = rows[start..end]
         .iter()
         .map(|r| render_doc_row(r, desc_w, show_exp))

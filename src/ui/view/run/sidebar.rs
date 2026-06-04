@@ -72,7 +72,7 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         let pin_label = format!("◉ {label}");
         let base = age_style(age).add_modifier(Modifier::BOLD);
         let style = if is_hover {
-            base.bg(Color::Rgb(60, 80, 60))
+            base.bg(theme::PIN_HOVER_BG)
         } else {
             base
         };
@@ -116,9 +116,9 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         let full_label = format!("{marker}{label}");
         let base_style = age_style(age);
         let row_style = if is_cursor {
-            base_style.bg(Color::Rgb(50, 50, 80))
+            base_style.bg(theme::SEL_ROW_BG)
         } else if is_hover {
-            base_style.bg(Color::Rgb(40, 60, 40))
+            base_style.bg(theme::HOVER_ROW_BG)
         } else {
             base_style
         };

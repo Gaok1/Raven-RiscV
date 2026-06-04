@@ -9,6 +9,7 @@ use ratatui::{
 use crate::ui::app::App;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::visible_window;
 use crate::ui::view::style;
 
 pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
@@ -21,8 +22,7 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
     let total = mmu.tlb.entries.len();
     // Reserve one row for the header.
     let visible = (inner.height as usize).saturating_sub(1).max(1);
-    let max_scroll = total.saturating_sub(visible);
-    let scroll = app.tlb.entries_scroll.min(max_scroll);
+    let (scroll, _) = visible_window(total, visible, app.tlb.entries_scroll);
     let rows: Vec<Row> = mmu
         .tlb
         .entries

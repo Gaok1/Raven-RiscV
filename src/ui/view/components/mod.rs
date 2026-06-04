@@ -23,8 +23,10 @@ pub(super) mod build;
 pub(super) mod console;
 pub(super) mod controls;
 pub(crate) mod layout;
+pub(super) mod lists;
 pub(crate) mod overlay;
 pub(crate) mod panel;
+pub(super) mod tables;
 
 // Re-export selected widgets for use by sibling modules under `view`
 pub(super) use console::render_console;
@@ -32,3 +34,4 @@ pub(crate) use controls::{
     ControlState, bool_value, dense_action, dense_value, edit_value, field_row, label_span,
     push_dense_pair,
 };
+pub(crate) use lists::visible_window;
