@@ -94,6 +94,13 @@ pub(crate) fn app_frame(area: Rect) -> (Rect, Rect, Rect) {
     (chunks[0], chunks[1], chunks[2])
 }
 
+/// The root app frame as an indexable `[tabs, body, status]` array — the same
+/// split as [`app_frame`], for the `input::mouse` sites that index by position.
+pub(crate) fn app_frame_chunks(area: Rect) -> [Rect; 3] {
+    let (tabs, body, status) = app_frame(area);
+    [tabs, body, status]
+}
+
 /// Split `area` into `n` equal-width columns.
 pub(crate) fn even_columns(area: Rect, n: usize) -> Vec<Rect> {
     if n == 0 {

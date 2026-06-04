@@ -7,6 +7,7 @@ use ratatui::{
 pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
 pub(super) use super::editor::Editor;
 use crate::ui::theme;
+use crate::ui::view::components::layout;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
 
 mod cache;
@@ -49,14 +50,7 @@ pub fn ui(f: &mut Frame, app: &App) {
     );
 
     let size = f.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(size);
+    let chunks = layout::app_frame_chunks(size);
 
     // Tab bar: tabs on left, [?] help button on right
     let tab_row = chunks[0];
@@ -473,14 +467,7 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
 }
 
 pub(crate) fn help_button_area(area: Rect) -> Rect {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let chunks = layout::app_frame_chunks(area);
     let tab_row = chunks[0];
     Rect::new(
         tab_row.x + tab_row.width.saturating_sub(HELP_BTN_W),
@@ -740,12 +727,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
 }
 
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
-    Rect::new(
-        r.x + (r.width.saturating_sub(width)) / 2,
-        r.y + (r.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    )
+    layout::centered_rect(width, height, r)
 }
 
 pub(crate) fn best_popup_rect(target: Rect, pw: u16, ph: u16, term: Rect) -> Rect {

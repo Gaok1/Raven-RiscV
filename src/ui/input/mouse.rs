@@ -9,6 +9,7 @@ use crate::ui::view::run::{
 use crate::ui::view::{
     ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W,
 };
+use crate::ui::view::components::layout;
 use crate::ui::view::components::panel::{self, PanelKind};
 use crate::ui::platform::OSFileDialog;
 use crate::ui::{
@@ -355,14 +356,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     if let Tab::Editor = app.tab {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(5),
-                Constraint::Length(1),
-            ])
-            .split(area);
+        let chunks = layout::app_frame_chunks(area);
         let editor_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(5), Constraint::Min(3)])
@@ -630,14 +624,7 @@ fn handle_cache_run_status_click(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 pub(crate) fn run_status_area(app: &App, area: Rect) -> Rect {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -770,14 +757,7 @@ pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunBut
 }
 
 fn run_main_area(app: &App, area: Rect) -> Rect {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let run_area = root_chunks[1];
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1036,14 +1016,7 @@ fn handle_docs_click(app: &mut App, me: MouseEvent) {
 }
 
 fn clamp_docs_scroll(app: &mut App, area: Rect) {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let docs_area = root_chunks[1];
 
     let max_start = match app.docs.page {
@@ -1293,14 +1266,7 @@ fn handle_sidebar_drag(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let run_area = root_chunks[1];
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1333,14 +1299,7 @@ fn update_console_hover(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn start_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let run_area = root_chunks[1];
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1367,14 +1326,7 @@ fn start_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn handle_console_clear(app: &mut App, me: MouseEvent, area: Rect) {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let run_area = root_chunks[1];
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1396,14 +1348,7 @@ fn handle_console_clear(app: &mut App, me: MouseEvent, area: Rect) {
 
 fn handle_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
     let delta = app.run.console_drag_start_y as i32 - me.row as i32;
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let run_area = root_chunks[1];
     let max = run_area.height.saturating_sub(3 + 5);
     let mut new_h = app.run.console_height_start as i32 + delta;
@@ -1417,14 +1362,7 @@ fn handle_console_drag(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let run_area = root_chunks[1];
     let run_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1763,26 +1701,14 @@ fn handle_elf_prompt_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
-    Rect::new(
-        r.x + (r.width.saturating_sub(width)) / 2,
-        r.y + (r.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    )
+    layout::centered_rect(width, height, r)
 }
 
 // ── Cache tab mouse handlers ─────────────────────────────────────────────────
 
 /// Returns (level_selector, subtab_header, exec_controls, content, controls_bar).
 fn cache_content_area(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
-    let root_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let root_chunks = layout::app_frame_chunks(area);
     let cache_area = root_chunks[1];
     let parts = Layout::default()
         .direction(Direction::Vertical)
