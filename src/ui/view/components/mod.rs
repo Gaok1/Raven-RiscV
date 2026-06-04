@@ -18,6 +18,42 @@
 //! - Need a rectangle that the mouse code also computes? Put it in [`layout`] and
 //!   call the same function from both sides — never recompute a split inline.
 //! - A control's look/behavior should be editable in exactly one place.
+//!
+//! ## Before / after
+//!
+//! A titled, rounded content panel — *before* (hand-rolled in every view):
+//!
+//! ```ignore
+//! let block = Block::default()
+//!     .borders(Borders::ALL)
+//!     .border_type(BorderType::Rounded)
+//!     .border_style(Style::default().fg(theme::BORDER))
+//!     .title(Span::styled("TLB Entries", Style::default().fg(theme::ACCENT).bold()));
+//! let inner = block.inner(area);
+//! f.render_widget(block, area);
+//! ```
+//!
+//! *after* (one call, and the mouse side computes `inner` the same way):
+//!
+//! ```ignore
+//! let inner = panel::render_panel(f, area, panel::panel("TLB Entries", PanelKind::Accent));
+//! ```
+//!
+//! The root frame, *before* (duplicated in the renderer and ~10 mouse handlers):
+//!
+//! ```ignore
+//! let chunks = Layout::default()
+//!     .direction(Direction::Vertical)
+//!     .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(1)])
+//!     .split(area);
+//! let body = chunks[1];
+//! ```
+//!
+//! *after* — one definition in [`layout`], called from both sides:
+//!
+//! ```ignore
+//! let (_tabs, body, _status) = layout::app_frame(area);
+//! ```
 
 pub(super) mod build;
 pub(super) mod console;

@@ -5,8 +5,11 @@
 //!
 //! Mirrors the good existing pattern `run::run_panel_constraints`.
 
-// Phase 0 scaffolding: consumed by Phase 5 (view↔mouse dedup). The
-// module-level allow is removed in Phase 6 once every site is migrated.
+// The root-frame helpers (`app_frame`/`app_frame_chunks`/`centered_rect`) are
+// wired into both the renderer and `input::mouse`. The remaining geometry
+// helpers are the documented toolkit surface, offered ahead of their consumers
+// (e.g. `anchored_popup`, whose convergence with the bespoke popup helpers is a
+// deliberate behavior change still pending the interactive mouse pass).
 #![allow(dead_code)]
 
 use ratatui::prelude::*;

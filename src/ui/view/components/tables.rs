@@ -112,10 +112,8 @@ impl DataTable {
                 })
                 .collect();
             let mut row = Row::new(row_cells);
-            if let Some(bg) = self.zebra {
-                if i % 2 == 1 {
-                    row = row.style(Style::default().bg(bg));
-                }
+            if let Some(bg) = self.zebra.filter(|_| i % 2 == 1) {
+                row = row.style(Style::default().bg(bg));
             }
             table_rows.push(row);
         }
