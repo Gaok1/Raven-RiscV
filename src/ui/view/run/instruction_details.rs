@@ -39,7 +39,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         ctx.format,
         &ctx.disasm,
         ctx.comment.as_deref(),
-        Some(&app.run.cpu),
+        Some(app.run.cpu()),
     );
 }
 
@@ -65,7 +65,7 @@ struct DetailContext {
 fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Option<String>)> {
     use crate::falcon::decoder::decode;
     use crate::falcon::instruction::Instruction::*;
-    let cpu = &app.run.cpu;
+    let cpu = app.run.cpu();
     let (taken, target) = match decode(word) {
         Ok(Beq { rs1, rs2, imm }) => (
             cpu.x[rs1 as usize] == cpu.x[rs2 as usize],
@@ -101,14 +101,14 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
 
 fn detail_context(app: &App) -> DetailContext {
     let (addr, word, origin) = if let Some(addr) = app.run.hover_imem_addr {
-        let word = app.run.mem.peek32(addr).unwrap_or(0);
+        let word = app.run.mem().peek32(addr).unwrap_or(0);
         (addr, word, "hover")
-    } else if exec_address_in_range(app, app.run.cpu.pc) {
-        let word = app.run.mem.peek32(app.run.cpu.pc).unwrap_or(0);
-        (app.run.cpu.pc, word, "PC")
+    } else if exec_address_in_range(app, app.run.cpu().pc) {
+        let word = app.run.mem().peek32(app.run.cpu().pc).unwrap_or(0);
+        (app.run.cpu().pc, word, "PC")
     } else {
         return DetailContext {
-            addr: app.run.cpu.pc,
+            addr: app.run.cpu().pc,
             word: 0,
             disasm: "<PC out of RAM>".into(),
             origin: "PC",
@@ -165,7 +165,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let base_cycles = crate::ui::app::classify_cpi_for_display(
         ctx.word,
         ctx.addr,
-        &app.run.cpu,
+        app.run.cpu(),
         cpi,
         app.pipeline.enabled,
     );

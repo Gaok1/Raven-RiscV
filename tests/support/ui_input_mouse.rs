@@ -231,13 +231,13 @@ fn cache_view_mouse_wheel_updates_vertical_scroll() {
         "halt".into(),
     ];
     app.assemble_and_load();
-    app.run.mem.icache.config = crate::falcon::cache::CacheConfig {
+    app.run.machine.mem_mut_unjournaled().icache.config = crate::falcon::cache::CacheConfig {
         size: 512,
         line_size: 16,
         associativity: 1,
         ..crate::falcon::cache::CacheConfig::default()
     };
-    app.run.mem.dcache.config = app.run.mem.icache.config.clone();
+    app.run.machine.mem_mut_unjournaled().dcache.config = app.run.mem().icache.config.clone();
     let area = Rect::new(0, 0, 160, 40);
 
     handle_mouse(
@@ -434,7 +434,7 @@ fn pipeline_state_click_restarts_when_halted() {
     app.pipeline.enabled = true;
     app.pipeline.halted = true;
     app.pipeline.btn_state_rect.set((6, 20, 31));
-    app.run.cpu.pc = 32;
+    app.run.machine.cpu_mut_unjournaled().pc = 32;
     app.pipeline.fetch_pc = 32;
 
     handle_mouse(

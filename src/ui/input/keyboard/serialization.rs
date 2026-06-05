@@ -478,7 +478,7 @@ pub(super) fn make_level_snapshot(
 }
 
 pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
-    let mem = &app.run.mem;
+    let mem = app.run.mem();
     let pipeline = capture_pipeline_snapshot(app);
     let i_amat = mem.icache_amat();
     let d_amat = mem.dcache_amat();
@@ -620,10 +620,11 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
     app.cache.pending_dcache = dcfg;
     let n_extra = extra.len();
     app.cache.extra_pending = extra;
-    app.run.mem.extra_levels.clear();
+    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
     for cfg in &app.cache.extra_pending {
         app.run
-            .mem
+            .machine
+            .mem_mut_unjournaled()
             .extra_levels
             .push(crate::falcon::cache::Cache::new(cfg.clone()));
     }
@@ -631,7 +632,7 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
         app.cache.selected_level = n_extra;
     }
     app.tlb.pending = tlb.clone();
-    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
+    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
     Ok(())
 }
 
@@ -677,10 +678,11 @@ pub(crate) fn do_import_cfg(app: &mut App) {
                     app.cache.pending_dcache = dcfg;
                     let n_extra = extra.len();
                     app.cache.extra_pending = extra;
-                    app.run.mem.extra_levels.clear();
+                    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
                     for cfg in &app.cache.extra_pending {
                         app.run
-                            .mem
+                            .machine
+                            .mem_mut_unjournaled()
                             .extra_levels
                             .push(crate::falcon::cache::Cache::new(cfg.clone()));
                     }
@@ -688,7 +690,7 @@ pub(crate) fn do_import_cfg(app: &mut App) {
                         app.cache.selected_level = n_extra;
                     }
                     app.tlb.pending = tlb.clone();
-                    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
+                    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",
@@ -1582,10 +1584,11 @@ pub(super) fn dispatch_path_input(
                     app.cache.pending_icache = icfg;
                     app.cache.pending_dcache = dcfg;
                     app.cache.extra_pending = extra;
-                    app.run.mem.extra_levels.clear();
+                    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
                     for cfg in &app.cache.extra_pending {
                         app.run
-                            .mem
+                            .machine
+                            .mem_mut_unjournaled()
                             .extra_levels
                             .push(crate::falcon::cache::Cache::new(cfg.clone()));
                     }
@@ -1593,7 +1596,7 @@ pub(super) fn dispatch_path_input(
                         app.cache.selected_level = n_extra;
                     }
                     app.tlb.pending = tlb.clone();
-                    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
+                    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",

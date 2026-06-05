@@ -13,7 +13,7 @@ fn setup_stats(app: &mut App) {
 fn setup_config(app: &mut App) {
     app.tlb.vm_subtab = VmSubtab::Tlb;
     app.tlb.subtab = TlbSubtab::Settings;
-    app.tlb.pending = app.run.mem.mmu().tlb.config.clone();
+    app.tlb.pending = app.run.mem().mmu().tlb.config.clone();
 }
 fn setup_entries(app: &mut App) {
     app.tlb.vm_subtab = VmSubtab::Tlb;

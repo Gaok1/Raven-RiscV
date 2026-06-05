@@ -70,7 +70,7 @@ fn render_fields(f: &mut Frame, area: Rect, app: &App) {
         _ => None,
     };
 
-    let current = &app.run.mem.mmu().tlb.config;
+    let current = &app.run.mem().mmu().tlb.config;
     let value_color = |same: bool| if same { theme::TEXT } else { theme::LABEL_Y };
 
     let entry_ok = pending.entry_count >= pending.associativity as u16;

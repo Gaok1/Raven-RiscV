@@ -39,9 +39,9 @@ fn cycle_line(app: &App) -> Line<'static> {
         (cycles, cpi, app.pipeline.instr_committed)
     } else {
         (
-            app.run.mem.total_program_cycles(),
-            app.run.mem.overall_cpi(),
-            app.run.mem.instruction_count,
+            app.run.mem().total_program_cycles(),
+            app.run.mem().overall_cpi(),
+            app.run.mem().instruction_count,
         )
     };
     let scope_label = if app.pipeline.enabled || app.pipeline.sequential_mode {
@@ -269,14 +269,14 @@ pub(crate) fn state_text(app: &App) -> String {
         crate::ui::app::HartLifecycle::Free => "free".to_string(),
         crate::ui::app::HartLifecycle::Running => "run".to_string(),
         crate::ui::app::HartLifecycle::Paused => {
-            if app.run.cpu.ebreak_hit {
+            if app.run.cpu().ebreak_hit {
                 "ebrk".to_string()
             } else {
                 "pause".to_string()
             }
         }
         crate::ui::app::HartLifecycle::Exited => {
-            if app.run.cpu.local_exit {
+            if app.run.cpu().local_exit {
                 "halt".to_string()
             } else {
                 "exit".to_string()
@@ -292,7 +292,7 @@ fn state_color(app: &App) -> Color {
         crate::ui::app::HartLifecycle::Running => theme::RUNNING,
         crate::ui::app::HartLifecycle::Paused => theme::PAUSED,
         crate::ui::app::HartLifecycle::Exited => {
-            if app.run.cpu.local_exit {
+            if app.run.cpu().local_exit {
                 theme::DANGER
             } else {
                 theme::LABEL

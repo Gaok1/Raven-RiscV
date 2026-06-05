@@ -1,5 +1,6 @@
 use super::CpiConfig;
 use crate::falcon::jit::ExecutionBackend;
+use crate::falcon::machine::Machine;
 use crate::falcon::{CacheController, Cpu, registers::ExecRegion};
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
@@ -139,13 +140,26 @@ impl RunState {
     pub(crate) fn vm_enabled(&self) -> bool {
         self.vm_mode != crate::falcon::mmu::VmMode::Off
     }
+
+    /// Shared read access to the CPU. The `~117` `run.cpu` read sites borrow
+    /// through here; mutation must go through a `Machine` method.
+    pub(crate) fn cpu(&self) -> &Cpu {
+        self.machine.cpu()
+    }
+
+    /// Shared read access to the memory hierarchy. See [`RunState::cpu`].
+    pub(crate) fn mem(&self) -> &CacheController {
+        self.machine.mem()
+    }
 }
 
 pub(crate) struct RunState {
-    pub(crate) cpu: Cpu,
+    /// The simulator's CPU + memory hierarchy, owned behind the journaling
+    /// gateway. Reads go through [`RunState::cpu`] / [`RunState::mem`]; mutation
+    /// is only expressible via `Machine`'s methods (see its module docs).
+    pub(crate) machine: Machine,
     pub(crate) prev_x: [u32; 32],
     pub(crate) prev_pc: u32,
-    pub(crate) mem: CacheController,
     pub(crate) breakpoints: std::collections::HashSet<u32>,
     pub(crate) mem_size: usize,
     pub(crate) base_pc: u32,
