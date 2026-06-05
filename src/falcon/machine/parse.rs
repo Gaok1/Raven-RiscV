@@ -14,6 +14,8 @@ pub enum CellFormat {
     Hex,
     /// Base-10. Combined with `signed`, accepts a leading `-`.
     Dec,
+    /// Base-2, with an optional `0b` / `0B` prefix.
+    Bin,
     /// Raw bytes, packed little-endian (memory cells only).
     Str,
 }
@@ -37,8 +39,19 @@ pub fn parse_cell(
         CellFormat::Hex => parse_hex(trimmed, width),
         CellFormat::Dec if signed => parse_signed_dec(trimmed, width),
         CellFormat::Dec => parse_unsigned_dec(trimmed, width),
+        CellFormat::Bin => parse_bin(trimmed, width),
         CellFormat::Str => parse_str(input, width),
     }
+}
+
+fn parse_bin(input: &str, width: MemWidth) -> Result<u64, EditError> {
+    let digits = input
+        .strip_prefix("0b")
+        .or_else(|| input.strip_prefix("0B"))
+        .unwrap_or(input);
+    let value = u128::from_str_radix(&without_separators(digits), 2)
+        .map_err(|_| EditError::ParseFailed { input: input.to_string() })?;
+    fits_unsigned(value, width, false)
 }
 
 fn parse_hex(input: &str, width: MemWidth) -> Result<u64, EditError> {

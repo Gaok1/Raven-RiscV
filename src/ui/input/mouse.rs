@@ -509,7 +509,8 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::Format => {
             app.run.fmt_mode = match app.run.fmt_mode {
                 FormatMode::Hex => FormatMode::Dec,
-                FormatMode::Dec => FormatMode::Str,
+                FormatMode::Dec => FormatMode::Bin,
+                FormatMode::Bin => FormatMode::Str,
                 FormatMode::Str => FormatMode::Hex,
             };
         }

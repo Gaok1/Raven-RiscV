@@ -2009,6 +2009,17 @@ mod run_edit {
     }
 
     #[test]
+    fn commit_writes_register_in_binary() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Bin;
+        app.begin_run_edit(x(7));
+        app.run.run_edit_buf = "0b1010_1010".to_string();
+        app.commit_run_edit();
+        assert!(app.run.run_edit.is_none());
+        assert_eq!(app.run.cpu().x[7], 0b1010_1010);
+    }
+
+    #[test]
     fn commit_writes_float_register() {
         let mut app = loaded_app();
         app.run.show_float_regs = true;

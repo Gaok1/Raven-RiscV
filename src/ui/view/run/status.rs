@@ -263,6 +263,7 @@ fn format_text(app: &App) -> &'static str {
     match app.run.fmt_mode {
         FormatMode::Hex => "hex",
         FormatMode::Dec => "dec",
+        FormatMode::Bin => "bin",
         FormatMode::Str => "str",
     }
 }

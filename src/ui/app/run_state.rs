@@ -41,6 +41,7 @@ pub(crate) enum MemRegion {
 pub(crate) enum FormatMode {
     Hex,
     Dec,
+    Bin,
     Str,
 }
 

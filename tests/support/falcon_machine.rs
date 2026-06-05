@@ -246,6 +246,24 @@ fn parse_cell_overflow_matrix() {
 }
 
 #[test]
+fn parse_cell_binary() {
+    use CellFormat::Bin;
+    use MemWidth::{B1, B4};
+
+    assert_eq!(parse_cell("1010", B1, Bin, false), Ok(0b1010));
+    assert_eq!(parse_cell("0b1111_1111", B1, Bin, false), Ok(0xFF));
+    assert_eq!(
+        parse_cell("1_0000_0000", B1, Bin, false), // 9 bits → too wide for B1
+        Err(EditError::OutOfRange { width: B1, signed: false })
+    );
+    assert_eq!(parse_cell("0b0", B4, Bin, false), Ok(0));
+    assert!(matches!(
+        parse_cell("012", B4, Bin, false), // '2' is not a binary digit
+        Err(EditError::ParseFailed { .. })
+    ));
+}
+
+#[test]
 fn parse_cell_str_packs_little_endian() {
     assert_eq!(parse_cell("AB", MemWidth::B2, CellFormat::Str, false), Ok(0x4241));
     assert!(matches!(
