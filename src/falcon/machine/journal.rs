@@ -49,26 +49,34 @@ pub enum StepbackKind {
     Checkpoint,
 }
 
-/// One reversible unit of history: the CPU as it was, plus how to undo the
-/// memory effects.
-pub(super) struct ChangeSet {
+/// One reversible unit of history: the CPU as it was, the pipeline snapshot as
+/// it was, plus how to undo the memory effects.
+///
+/// `S` is the pipeline's reversible snapshot type ([`super::JournaledPipeline::Snapshot`]).
+/// For a machine without a pipeline it is `()`, so this collapses to the old
+/// CPU+memory change-set at zero cost.
+pub(super) struct ChangeSet<S> {
     /// Clock value at which this change was recorded (stack key, for display).
     pub clock: u64,
     /// What kind of change this was, for the caller's post-undo refresh.
     pub kind: StepbackKind,
     pub cpu_before: Cpu,
+    /// The pipeline's reversible state as it was *before* this change. Captured
+    /// by the same journaling methods that snapshot the CPU, so the pipeline can
+    /// never drift out of the undo history — see [`super::Machine`].
+    pub pipe_before: S,
     pub rewind: Rewind,
 }
 
 /// A bounded stack of [`ChangeSet`]s. Pushing past the capacity evicts the
 /// oldest entry, so memory stays bounded while the most recent history (the
 /// part a user can step back through) is always retained.
-pub(super) struct StepJournal {
-    stack: VecDeque<ChangeSet>,
+pub(super) struct StepJournal<S> {
+    stack: VecDeque<ChangeSet<S>>,
     cap: usize,
 }
 
-impl StepJournal {
+impl<S> StepJournal<S> {
     /// Create a journal holding at most `cap` change-sets (`cap >= 1`).
     pub fn new(cap: usize) -> Self {
         Self {
@@ -78,7 +86,7 @@ impl StepJournal {
     }
 
     /// Push the newest change-set, evicting the oldest if at capacity.
-    pub fn push(&mut self, change: ChangeSet) {
+    pub fn push(&mut self, change: ChangeSet<S>) {
         if self.stack.len() == self.cap {
             self.stack.pop_front();
         }
@@ -86,7 +94,7 @@ impl StepJournal {
     }
 
     /// Pop the newest change-set (the next one a step-back undoes).
-    pub fn pop(&mut self) -> Option<ChangeSet> {
+    pub fn pop(&mut self) -> Option<ChangeSet<S>> {
         self.stack.pop_back()
     }
 
