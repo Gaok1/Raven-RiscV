@@ -92,9 +92,9 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         (cycles, cpi, committed)
     } else {
         (
-            app.run.mem.total_program_cycles(),
-            app.run.mem.overall_cpi(),
-            app.run.mem.instruction_count,
+            app.run.mem().total_program_cycles(),
+            app.run.mem().overall_cpi(),
+            app.run.mem().instruction_count,
         )
     };
 

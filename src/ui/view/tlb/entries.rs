@@ -24,7 +24,7 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mmu = app.run.mem.mmu();
+    let mmu = app.run.mem().mmu();
     let total = mmu.tlb.entries.len();
     // Reserve one row for the header.
     let visible = (inner.height as usize).saturating_sub(1).max(1);

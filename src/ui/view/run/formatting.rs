@@ -5,17 +5,17 @@ pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
     // so write-back stores are visible in the RUN tab memory view.
     match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.run.mem.effective_read32(addr).unwrap_or(0),
+            app.run.mem().effective_read32(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.run.mem.effective_read16(addr).unwrap_or(0),
+            app.run.mem().effective_read16(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.run.mem.effective_read8(addr).unwrap_or(0),
+            app.run.mem().effective_read8(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
@@ -26,17 +26,17 @@ pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
 pub(super) fn format_stale_value(app: &App, addr: u32) -> String {
     match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.run.mem.peek32(addr).unwrap_or(0),
+            app.run.mem().peek32(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.run.mem.peek16(addr).unwrap_or(0),
+            app.run.mem().peek16(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.run.mem.peek8(addr).unwrap_or(0),
+            app.run.mem().peek8(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),

@@ -64,10 +64,10 @@ fn single_step_advances_from_ebreak_pause_sequential() {
 
     app.single_step();
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Paused);
-    assert_eq!(app.run.cpu.x[10], 0);
+    assert_eq!(app.run.cpu().x[10], 0);
 
     app.single_step();
-    assert_eq!(app.run.cpu.x[10], 7);
+    assert_eq!(app.run.cpu().x[10], 7);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Running);
 }
 
@@ -90,10 +90,10 @@ fn single_step_advances_from_ebreak_pause_pipeline() {
 
     app.single_step();
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Paused);
-    assert_eq!(app.run.cpu.x[10], 0);
+    assert_eq!(app.run.cpu().x[10], 0);
 
     app.single_step();
-    assert_eq!(app.run.cpu.x[10], 7);
+    assert_eq!(app.run.cpu().x[10], 7);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Running);
 }
 
@@ -112,8 +112,8 @@ fn pipeline_tab_single_step_without_cache_stall_advances_one_cycle() {
             "halt",
         ],
     );
-    app.run.mem.bypass = true;
-    app.pipeline.reset_stages(app.run.cpu.pc);
+    app.run.machine.mem_mut_unjournaled().bypass = true;
+    app.pipeline.reset_stages(app.run.cpu().pc);
 
     let cycle_before = app.pipeline.cycle_count;
     app.single_step();
@@ -146,12 +146,12 @@ fn pipeline_tab_single_step_skips_consecutive_icache_stalls() {
             "halt",
         ],
     );
-    app.run.mem.icache.config.hit_latency = 3;
-    app.run.mem.icache.config.miss_penalty = 0;
-    app.run.mem.icache.config.assoc_penalty = 0;
-    app.run.mem.icache.config.transfer_width = 4;
-    app.run.mem.bypass = false;
-    app.pipeline.reset_stages(app.run.cpu.pc);
+    app.run.machine.mem_mut_unjournaled().icache.config.hit_latency = 3;
+    app.run.machine.mem_mut_unjournaled().icache.config.miss_penalty = 0;
+    app.run.machine.mem_mut_unjournaled().icache.config.assoc_penalty = 0;
+    app.run.machine.mem_mut_unjournaled().icache.config.transfer_width = 4;
+    app.run.machine.mem_mut_unjournaled().bypass = false;
+    app.pipeline.reset_stages(app.run.cpu().pc);
 
     app.single_step();
     let if_slot = app.pipeline.stages[crate::ui::pipeline::Stage::IF as usize]
@@ -188,7 +188,7 @@ fn pipeline_tab_single_step_skips_consecutive_icache_stalls() {
         || app.pipeline.stages[crate::ui::pipeline::Stage::WB as usize]
             .as_ref()
             .is_some_and(|slot| !slot.is_bubble && slot.disasm == "addi a0, zero, 1")
-        || app.run.cpu.x[10] == 1;
+        || app.run.cpu().x[10] == 1;
     assert!(
         advanced_or_committed,
         "instruction should continue to advance on the next user step"
@@ -212,9 +212,9 @@ fn sequential_single_step_updates_cache_history_each_instruction() {
 
     app.single_step();
 
-    assert_eq!(app.run.mem.instruction_count, 1);
-    assert_eq!(app.run.mem.icache.stats.history.len(), 1);
-    assert_eq!(app.run.mem.dcache.stats.history.len(), 1);
+    assert_eq!(app.run.mem().instruction_count, 1);
+    assert_eq!(app.run.mem().icache.stats.history.len(), 1);
+    assert_eq!(app.run.mem().dcache.stats.history.len(), 1);
 }
 
 #[test]
@@ -235,9 +235,9 @@ fn pipeline_single_step_updates_cache_history_on_commit() {
 
     app.single_step();
 
-    assert_eq!(app.run.mem.instruction_count, 1);
-    assert_eq!(app.run.mem.icache.stats.history.len(), 1);
-    assert_eq!(app.run.mem.dcache.stats.history.len(), 1);
+    assert_eq!(app.run.mem().instruction_count, 1);
+    assert_eq!(app.run.mem().icache.stats.history.len(), 1);
+    assert_eq!(app.run.mem().dcache.stats.history.len(), 1);
 }
 
 #[test]
@@ -256,12 +256,12 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_if_cache_stalls() {
             "halt",
         ],
     );
-    app.run.mem.icache.config.hit_latency = 3;
-    app.run.mem.icache.config.miss_penalty = 0;
-    app.run.mem.icache.config.assoc_penalty = 0;
-    app.run.mem.icache.config.transfer_width = 4;
-    app.run.mem.bypass = false;
-    app.pipeline.reset_stages(app.run.cpu.pc);
+    app.run.machine.mem_mut_unjournaled().icache.config.hit_latency = 3;
+    app.run.machine.mem_mut_unjournaled().icache.config.miss_penalty = 0;
+    app.run.machine.mem_mut_unjournaled().icache.config.assoc_penalty = 0;
+    app.run.machine.mem_mut_unjournaled().icache.config.transfer_width = 4;
+    app.run.machine.mem_mut_unjournaled().bypass = false;
+    app.pipeline.reset_stages(app.run.cpu().pc);
 
     app.single_step();
     app.single_step();
@@ -331,9 +331,9 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_multilevel_if_stall
     let dcfg = slow_level(16, 16, 1);
     let l2 = slow_level(4, 4, 5);
     let l3 = slow_level(4, 8, 9);
-    app.run.mem.apply_config(icfg, dcfg, vec![l2, l3]);
-    app.run.mem.bypass = false;
-    app.pipeline.reset_stages(app.run.cpu.pc);
+    app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, vec![l2, l3]);
+    app.run.machine.mem_mut_unjournaled().bypass = false;
+    app.pipeline.reset_stages(app.run.cpu().pc);
 
     app.single_step();
     app.single_step();
@@ -383,9 +383,9 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_multilevel_mem_stal
     let dcfg = slow_level(4, 4, 1);
     let l2 = slow_level(4, 4, 5);
     let l3 = slow_level(4, 8, 9);
-    app.run.mem.apply_config(icfg, dcfg, vec![l2, l3]);
-    app.run.mem.bypass = false;
-    app.pipeline.reset_stages(app.run.cpu.pc);
+    app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, vec![l2, l3]);
+    app.run.machine.mem_mut_unjournaled().bypass = false;
+    app.pipeline.reset_stages(app.run.cpu().pc);
 
     for _ in 0..16 {
         if app.pipeline.stages[crate::ui::pipeline::Stage::EX as usize]
@@ -432,8 +432,8 @@ fn pipeline_tab_single_step_keeps_single_cycle_alu_latency_visible_in_ex() {
             "halt",
         ],
     );
-    app.run.mem.bypass = true;
-    app.pipeline.reset_stages(app.run.cpu.pc);
+    app.run.machine.mem_mut_unjournaled().bypass = true;
+    app.pipeline.reset_stages(app.run.cpu().pc);
 
     for _ in 0..8 {
         app.single_step();
@@ -587,7 +587,7 @@ fn halt_in_source_is_terminal_not_resumable() {
     );
 
     app.single_step();
-    assert_eq!(app.run.cpu.x[10], 1);
+    assert_eq!(app.run.cpu().x[10], 1);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Running);
 
     app.single_step();
@@ -597,7 +597,7 @@ fn halt_in_source_is_terminal_not_resumable() {
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 
     app.single_step();
-    assert_eq!(app.run.cpu.x[10], 1);
+    assert_eq!(app.run.cpu().x[10], 1);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 }
 
@@ -639,16 +639,16 @@ fn sequential_linux_exit_is_terminal_not_resumable() {
         }
     }
 
-    let exit_pc = app.run.cpu.pc;
-    assert_eq!(app.run.cpu.exit_code, Some(7));
+    let exit_pc = app.run.cpu().pc;
+    assert_eq!(app.run.cpu().exit_code, Some(7));
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 
     app.resume_selected_hart();
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 
     app.single_step();
-    assert_eq!(app.run.cpu.pc, exit_pc);
-    assert_eq!(app.run.cpu.x[10], 7);
+    assert_eq!(app.run.cpu().pc, exit_pc);
+    assert_eq!(app.run.cpu().x[10], 7);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
     assert!(!app.run.faulted, "{}", console_tail(&app));
 }
@@ -676,14 +676,14 @@ fn pipeline_halt_is_terminal_not_resumable() {
     }
 
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
-    assert!(app.run.cpu.local_exit);
-    assert!(!app.run.cpu.ebreak_hit);
+    assert!(app.run.cpu().local_exit);
+    assert!(!app.run.cpu().ebreak_hit);
 
     app.resume_selected_hart();
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 
     app.single_step();
-    assert_eq!(app.run.cpu.x[10], 0);
+    assert_eq!(app.run.cpu().x[10], 0);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 }
 
@@ -712,16 +712,16 @@ fn pipeline_linux_exit_in_run_tab_is_terminal_not_resumable() {
         }
     }
 
-    let exit_pc = app.run.cpu.pc;
-    assert_eq!(app.run.cpu.exit_code, Some(7), "{}", console_tail(&app));
+    let exit_pc = app.run.cpu().pc;
+    assert_eq!(app.run.cpu().exit_code, Some(7), "{}", console_tail(&app));
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 
     app.resume_selected_hart();
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 
     app.single_step();
-    assert_eq!(app.run.cpu.pc, exit_pc);
-    assert_eq!(app.run.cpu.x[10], 7);
+    assert_eq!(app.run.cpu().pc, exit_pc);
+    assert_eq!(app.run.cpu().x[10], 7);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
     assert!(!app.pipeline.faulted, "{}", console_tail(&app));
     assert!(!app.run.faulted, "{}", console_tail(&app));
@@ -938,18 +938,18 @@ fn focused_secondary_hart_falls_through_unsupported_word_until_halt() {
         app.single_step();
     }
 
-    assert_eq!(app.run.cpu.x[5], trap_pc);
-    assert_eq!(app.run.mem.peek32(trap_pc).unwrap_or(0), 0xC000_1073);
+    assert_eq!(app.run.cpu().x[5], trap_pc);
+    assert_eq!(app.run.mem().peek32(trap_pc).unwrap_or(0), 0xC000_1073);
     assert_eq!(app.core_status(1), HartLifecycle::Exited);
-    assert_eq!(app.run.cpu.pc, halt_pc.wrapping_add(4));
+    assert_eq!(app.run.cpu().pc, halt_pc.wrapping_add(4));
     app.sync_selected_core_to_runtime();
     assert_eq!(app.harts[1].cpu.pc, halt_pc.wrapping_add(4));
     assert!(!app.can_start_run());
 
-    let before_pc = app.run.cpu.pc;
+    let before_pc = app.run.cpu().pc;
     app.single_step();
 
-    assert_eq!(app.run.cpu.pc, before_pc);
+    assert_eq!(app.run.cpu().pc, before_pc);
     app.sync_selected_core_to_runtime();
     assert_eq!(app.harts[1].cpu.pc, before_pc);
     assert_eq!(app.core_status(1), HartLifecycle::Exited);
@@ -1001,7 +1001,7 @@ fn focused_secondary_pipeline_ebreak_can_resume_with_step() {
 
     app.single_step();
 
-    assert_eq!(app.run.cpu.x[10], 9);
+    assert_eq!(app.run.cpu().x[10], 9);
     assert_eq!(app.core_status(1), HartLifecycle::Running);
 }
 
@@ -1054,7 +1054,7 @@ fn focused_secondary_pipeline_unimp_then_ebreak_can_resume_with_step() {
     }
 
     assert_eq!(
-        app.run.mem.peek32(app.run.base_pc + 28).unwrap_or(0),
+        app.run.mem().peek32(app.run.base_pc + 28).unwrap_or(0),
         0xC000_1073
     );
     assert_eq!(
@@ -1067,7 +1067,7 @@ fn focused_secondary_pipeline_unimp_then_ebreak_can_resume_with_step() {
 
     app.single_step();
 
-    assert_eq!(app.run.cpu.x[10], 11, "{}", trace_tail(&app));
+    assert_eq!(app.run.cpu().x[10], 11, "{}", trace_tail(&app));
     assert_eq!(app.core_status(1), HartLifecycle::Running);
 }
 
@@ -1099,7 +1099,7 @@ fn hart_start_can_reuse_exited_core() {
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr))
         .expect("worker label present");
-    app.run.cpu.pending_hart_start = Some(crate::falcon::registers::HartStartRequest {
+    app.run.machine.cpu_mut_unjournaled().pending_hart_start = Some(crate::falcon::registers::HartStartRequest {
         entry_pc: worker_pc,
         stack_ptr,
         arg: 123,
@@ -1252,7 +1252,7 @@ fn rust_to_raven_debug_elf_runs_multihart_in_pipeline_without_fault() {
         if app.run.faulted || app.pipeline.faulted {
             break;
         }
-        if app.run.cpu.exit_code.is_some() {
+        if app.run.cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
@@ -1271,7 +1271,7 @@ fn rust_to_raven_debug_elf_runs_multihart_in_pipeline_without_fault() {
         trace_tail(&app)
     );
     assert_eq!(
-        app.run.cpu.exit_code,
+        app.run.cpu().exit_code,
         Some(0),
         "{}\n{}",
         console_tail(&app),
@@ -1287,7 +1287,7 @@ fn rust_to_raven_debug_elf_single_core_pipeline_does_not_panic() {
     app.load_binary(&rust_to_raven_elf_bytes());
 
     for _ in 0..10_000 {
-        if app.run.faulted || app.pipeline.faulted || app.run.cpu.exit_code.is_some() {
+        if app.run.faulted || app.pipeline.faulted || app.run.cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
@@ -1306,7 +1306,7 @@ fn rust_to_raven_debug_elf_single_core_pipeline_does_not_panic() {
         trace_tail(&app)
     );
     assert_ne!(
-        app.run.cpu.exit_code,
+        app.run.cpu().exit_code,
         Some(101),
         "{}\n{}",
         console_tail(&app),
@@ -1338,7 +1338,7 @@ fn hart_start_child_inherits_parallel_fu_config() {
     app.pipeline.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
     app.pipeline.fu_capacity[crate::ui::pipeline::FuKind::Div.index()] = 4;
     app.pipeline.fu_capacity[crate::ui::pipeline::FuKind::Lsu.index()] = 2;
-    app.run.cpu.pending_hart_start = Some(crate::falcon::registers::HartStartRequest {
+    app.run.machine.cpu_mut_unjournaled().pending_hart_start = Some(crate::falcon::registers::HartStartRequest {
         entry_pc: app.run.base_pc,
         stack_ptr: 0x0010_0000,
         arg: 0x1234_5678,
@@ -1366,14 +1366,14 @@ fn rust_to_raven_debug_elf_runs_multihart_sequential_without_fault() {
         if app.run.faulted {
             break;
         }
-        if app.run.cpu.exit_code.is_some() {
+        if app.run.cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
     }
 
     assert!(!app.run.faulted, "{}", console_tail(&app));
-    assert_eq!(app.run.cpu.exit_code, Some(0), "{}", console_tail(&app));
+    assert_eq!(app.run.cpu().exit_code, Some(0), "{}", console_tail(&app));
 }
 
 #[test]
@@ -1405,7 +1405,7 @@ fn pipeline_ecall_return_updates_a0_before_next_consumer() {
     );
 
     for _ in 0..200 {
-        if app.run.faulted || app.pipeline.faulted || app.run.cpu.exit_code.is_some() {
+        if app.run.faulted || app.pipeline.faulted || app.run.cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
@@ -1413,7 +1413,7 @@ fn pipeline_ecall_return_updates_a0_before_next_consumer() {
 
     assert!(!app.run.faulted, "{}", console_tail(&app));
     assert!(!app.pipeline.faulted, "{}", console_tail(&app));
-    assert_eq!(app.run.cpu.exit_code, Some(0), "{}", trace_tail(&app));
+    assert_eq!(app.run.cpu().exit_code, Some(0), "{}", trace_tail(&app));
 }
 
 #[test]
@@ -1470,7 +1470,7 @@ fn pipeline_hart_start_delivers_a0_to_spawned_hart() {
         trace_tail(&app)
     );
     assert_eq!(
-        app.run.mem.load32(result_addr).expect("result word"),
+        app.run.mem().load32(result_addr).expect("result word"),
         0x1234_5678
     );
 }
@@ -1532,7 +1532,7 @@ fn pipeline_ecall_reads_fresh_a0_through_a7_values() {
         trace_tail(&app)
     );
     assert_eq!(
-        app.run.mem.load32(result_addr).expect("result word"),
+        app.run.mem().load32(result_addr).expect("result word"),
         0x1234_5678
     );
 }
@@ -1589,7 +1589,7 @@ fn pipeline_hart_exit_keeps_worker_pc_on_ecall() {
         "{}",
         trace_tail(&app)
     );
-    assert_eq!(app.run.cpu.pc, hart_exit_pc, "{}", trace_tail(&app));
+    assert_eq!(app.run.cpu().pc, hart_exit_pc, "{}", trace_tail(&app));
 }
 
 #[test]
@@ -1648,7 +1648,7 @@ fn pipeline_spawned_hart_branch_sees_fresh_andi_result() {
     assert!(!app.run.faulted, "{}", console_tail(&app));
     assert!(!app.pipeline.faulted, "{}", console_tail(&app));
     assert_eq!(
-        app.run.mem.load32(result_addr).expect("result word"),
+        app.run.mem().load32(result_addr).expect("result word"),
         0x1234_5678
     );
 }
@@ -1682,7 +1682,7 @@ fn pipeline_ret_sees_loaded_ra_with_stack_adjust_between() {
     );
 
     for _ in 0..160 {
-        if app.run.faulted || app.pipeline.faulted || app.run.cpu.exit_code.is_some() {
+        if app.run.faulted || app.pipeline.faulted || app.run.cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
@@ -1690,7 +1690,7 @@ fn pipeline_ret_sees_loaded_ra_with_stack_adjust_between() {
 
     assert!(!app.run.faulted, "{}", console_tail(&app));
     assert!(!app.pipeline.faulted, "{}", console_tail(&app));
-    assert_eq!(app.run.cpu.exit_code, Some(7), "{}", trace_tail(&app));
+    assert_eq!(app.run.cpu().exit_code, Some(7), "{}", trace_tail(&app));
 }
 
 #[test]
@@ -1702,9 +1702,9 @@ fn loading_elf_resets_pipeline_to_entry_pc() {
     let info = crate::falcon::program::load_elf(&elf, &mut ram).expect("parse rust-to-raven ELF");
     app.load_binary(&elf);
 
-    assert_eq!(app.pipeline.fetch_pc, app.run.cpu.pc);
-    assert_eq!(app.run.cpu.pc, info.entry);
-    assert_ne!(app.run.cpu.pc, app.run.base_pc);
+    assert_eq!(app.pipeline.fetch_pc, app.run.cpu().pc);
+    assert_eq!(app.run.cpu().pc, info.entry);
+    assert_ne!(app.run.cpu().pc, app.run.base_pc);
 }
 
 #[test]
@@ -1732,10 +1732,10 @@ fn rust_to_raven_debug_elf_pipeline_matches_sequential_until_exit() {
                 trace_tail(&pipe)
             );
         }
-        if seq.run.cpu.exit_code.is_some() || pipe.run.cpu.exit_code.is_some() {
+        if seq.run.cpu().exit_code.is_some() || pipe.run.cpu().exit_code.is_some() {
             assert_eq!(
-                pipe.run.cpu.exit_code,
-                seq.run.cpu.exit_code,
+                pipe.run.cpu().exit_code,
+                seq.run.cpu().exit_code,
                 "exit mismatch at step {step}\nSEQ:\n{}\n{}\nPIPE:\n{}\n{}",
                 console_tail(&seq),
                 trace_tail(&seq),
@@ -1748,32 +1748,32 @@ fn rust_to_raven_debug_elf_pipeline_matches_sequential_until_exit() {
         seq.single_step();
         pipe.single_step();
 
-        let same_core = seq.run.cpu.pc == pipe.run.cpu.pc
-            && seq.run.cpu.x == pipe.run.cpu.x
-            && seq.run.cpu.f == pipe.run.cpu.f
-            && seq.run.cpu.heap_break == pipe.run.cpu.heap_break
-            && seq.run.cpu.local_exit == pipe.run.cpu.local_exit
-            && seq.run.cpu.ebreak_hit == pipe.run.cpu.ebreak_hit
-            && seq.run.cpu.exit_code == pipe.run.cpu.exit_code;
-        let same_mem_stats = seq.run.mem.instruction_count == pipe.run.mem.instruction_count;
+        let same_core = seq.run.cpu().pc == pipe.run.cpu().pc
+            && seq.run.cpu().x == pipe.run.cpu().x
+            && seq.run.cpu().f == pipe.run.cpu().f
+            && seq.run.cpu().heap_break == pipe.run.cpu().heap_break
+            && seq.run.cpu().local_exit == pipe.run.cpu().local_exit
+            && seq.run.cpu().ebreak_hit == pipe.run.cpu().ebreak_hit
+            && seq.run.cpu().exit_code == pipe.run.cpu().exit_code;
+        let same_mem_stats = seq.run.mem().instruction_count == pipe.run.mem().instruction_count;
 
         assert!(
             same_core && same_mem_stats,
             "diverged at step {step}\nSEQ pc=0x{:08X} sp=0x{:08X} ra=0x{:08X} a0=0x{:08X} a1=0x{:08X} a2=0x{:08X}\n{}\n{}\nPIPE pc=0x{:08X} sp=0x{:08X} ra=0x{:08X} a0=0x{:08X} a1=0x{:08X} a2=0x{:08X}\n{}\n{}",
-            seq.run.cpu.pc,
-            seq.run.cpu.x[2],
-            seq.run.cpu.x[1],
-            seq.run.cpu.x[10],
-            seq.run.cpu.x[11],
-            seq.run.cpu.x[12],
+            seq.run.cpu().pc,
+            seq.run.cpu().x[2],
+            seq.run.cpu().x[1],
+            seq.run.cpu().x[10],
+            seq.run.cpu().x[11],
+            seq.run.cpu().x[12],
             console_tail(&seq),
             trace_tail(&seq),
-            pipe.run.cpu.pc,
-            pipe.run.cpu.x[2],
-            pipe.run.cpu.x[1],
-            pipe.run.cpu.x[10],
-            pipe.run.cpu.x[11],
-            pipe.run.cpu.x[12],
+            pipe.run.cpu().pc,
+            pipe.run.cpu().x[2],
+            pipe.run.cpu().x[1],
+            pipe.run.cpu().x[10],
+            pipe.run.cpu().x[11],
+            pipe.run.cpu().x[12],
             console_tail(&pipe),
             trace_tail(&pipe)
         );

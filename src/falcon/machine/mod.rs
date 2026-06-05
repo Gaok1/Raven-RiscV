@@ -242,6 +242,19 @@ impl Machine {
         &mut self.mem
     }
 
+    /// Mutable CPU **and** memory at once, without journaling. Callers that need
+    /// both disjoint borrows simultaneously — the execution `ExecCtx`, the
+    /// pipeline tick, and the per-step MMU sync — cannot stack two separate
+    /// `&mut self` accessors, so this hands out the pair in one borrow. Same
+    /// journal semantics as [`Machine::mem_mut_unjournaled`].
+    pub fn cpu_mem_mut_unjournaled(&mut self) -> (&mut Cpu, &mut CacheController) {
+        if !self.journal.top_is_full_checkpoint() {
+            self.journal.clear();
+            self.clock = 0;
+        }
+        (&mut self.cpu, &mut self.mem)
+    }
+
     // ── Internal ──
 
     /// Advance the clock and push one change-set.
