@@ -110,6 +110,20 @@ impl Machine {
         outcome
     }
 
+    /// Apply one instruction's worth of cycle/stats accounting after a
+    /// journaled [`Machine::step_interpreted`].
+    ///
+    /// This mutates the cache subsystem but deliberately does **not** touch the
+    /// journal: the change-set the step just pushed snapshotted the cache
+    /// *before* the instruction, so a [`Machine::stepback`] reverts this
+    /// accounting along with the instruction. Keep it paired with
+    /// `step_interpreted` (the GO/JIT path accounts cycles through
+    /// [`Machine::mem_mut_unjournaled`] instead).
+    pub fn account_step_cycles(&mut self, cpi_cycles: u64) {
+        self.mem.add_instruction_cycles(cpi_cycles);
+        self.mem.snapshot_stats();
+    }
+
     // ── Sanctioned edits (each journaled, each undoable by `stepback`) ──
 
     /// Write an integer register or the PC. Writing `x0` is rejected
