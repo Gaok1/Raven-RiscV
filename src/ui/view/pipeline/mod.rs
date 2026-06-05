@@ -5,7 +5,7 @@ use crate::ui::app::App;
 use crate::ui::pipeline::PipelineSubtab;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{ControlState, Toolbar, dense_action, push_dense_pair};
+use crate::ui::view::components::{ControlState, Toolbar};
 use crate::ui::view::style;
 
 /// A button in the pipeline header bar.
@@ -14,6 +14,92 @@ pub(crate) enum PipelineHeaderBtn {
     Main,
     Config,
     Core,
+}
+
+/// A button in the pipeline exec-controls bar.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PipelineExecBtn {
+    Speed,
+    State,
+    Reset,
+}
+
+/// A button in the pipeline bottom controls bar.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PipelineCtrlBtn {
+    Results,
+    ImportCfg,
+    ExportCfg,
+}
+
+/// The live `(label, color)` of the exec `state` chip.
+fn pipeline_state_chip(app: &App) -> (&'static str, ratatui::style::Color) {
+    let p = &app.pipeline;
+    if p.faulted {
+        ("fault", theme::DANGER)
+    } else if p.halted {
+        ("halt", theme::PAUSED)
+    } else if app.run.is_running {
+        ("run", theme::RUNNING)
+    } else {
+        ("pause", theme::PAUSED)
+    }
+}
+
+/// The exec-controls bar — `speed <s>  state <s>  reset` — as a [`Toolbar`].
+pub(crate) fn build_pipeline_exec_bar(app: &App) -> Toolbar<PipelineExecBtn> {
+    let p = &app.pipeline;
+    let state_clickable = !p.faulted;
+    let (state_label, state_color) = pipeline_state_chip(app);
+    let mut bar = Toolbar::new();
+    bar.toggle(
+        PipelineExecBtn::Speed,
+        "speed",
+        p.speed.label(),
+        ControlState::chip(true, p.hover_speed),
+        theme::TEXT,
+    );
+    let state_ctrl = if state_clickable {
+        ControlState::chip(true, p.hover_state)
+    } else {
+        ControlState::Disabled
+    };
+    bar.toggle(PipelineExecBtn::State, "state", state_label, state_ctrl, state_color);
+    bar.action(
+        PipelineExecBtn::Reset,
+        "reset",
+        ControlState::chip(false, p.hover_reset),
+        theme::DANGER,
+    );
+    bar
+}
+
+/// The bottom controls bar — `results` (+ `import cfg` `export cfg` in Config) —
+/// as a [`Toolbar`].
+pub(crate) fn build_pipeline_ctrl_bar(app: &App) -> Toolbar<PipelineCtrlBtn> {
+    let p = &app.pipeline;
+    let mut bar = Toolbar::new();
+    bar.action(
+        PipelineCtrlBtn::Results,
+        "results",
+        ControlState::chip(false, p.hover_export_results),
+        theme::ACCENT,
+    );
+    if matches!(p.subtab, PipelineSubtab::Config) {
+        bar.action(
+            PipelineCtrlBtn::ImportCfg,
+            "import cfg",
+            ControlState::chip(false, p.hover_import_cfg),
+            theme::METRIC_CYC,
+        )
+        .action(
+            PipelineCtrlBtn::ExportCfg,
+            "export cfg",
+            ControlState::chip(false, p.hover_export_cfg),
+            theme::METRIC_CYC,
+        );
+    }
+    bar
 }
 use ratatui::{
     Frame,
@@ -133,37 +219,9 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.pipeline;
-    let state_clickable = !p.faulted;
 
-    let (state_label, state_color) = if p.faulted {
-        ("fault", theme::DANGER)
-    } else if p.halted {
-        ("halt", theme::PAUSED)
-    } else if app.run.is_running {
-        ("run", theme::RUNNING)
-    } else {
-        ("pause", theme::PAUSED)
-    };
-
-    let mut spans = Vec::new();
-    push_dense_pair(
-        &mut spans,
-        "speed",
-        p.speed.label(),
-        p.hover_speed,
-        true,
-        theme::TEXT,
-    );
-    push_dense_pair(
-        &mut spans,
-        "state",
-        state_label,
-        p.hover_state && state_clickable,
-        state_clickable,
-        state_color,
-    );
-    spans.push(Span::raw("   "));
-    spans.push(dense_action("reset", theme::DANGER, p.hover_reset));
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(build_pipeline_exec_bar(app).spans());
     if p.sequential_mode {
         spans.push(Span::styled(
             "   Sequential (pipeline off) — one instruction at a time",
@@ -207,72 +265,16 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     let line3 = Line::from(Span::styled(stall_str, style::label()));
 
     let inner = render_panel(f, area, panel::panel("Execution", PanelKind::Plain));
+    app.pipeline.exec_origin.set((inner.y, inner.x + 1));
     f.render_widget(Paragraph::new(vec![line1, line2, line3]), inner);
-
-    // Record button geometry for mouse
-    // Layout: "speed <speed_label>   state <state_label>   reset"
-    // Offsets: speed_label at +6, state_label at +15+speed_w, reset at +18+speed_w+state_w
-    let speed_x = inner.x + 1;
-    let speed_label_w = ("speed ".len() + p.speed.label().len()) as u16;
-    app.pipeline
-        .btn_speed_rect
-        .set((inner.y, speed_x, speed_x + speed_label_w));
-    let state_x = inner.x + 4 + speed_label_w;
-    let state_label_w = ("state ".len() + state_label.len()) as u16;
-
-    app.pipeline
-        .btn_state_rect
-        .set((inner.y, state_x, state_x + state_label_w));
-
-    let reset_x = state_x + state_label_w + 3;
-    app.pipeline
-        .btn_reset_rect
-        .set((inner.y, reset_x, reset_x + 5));
 }
 
 
 fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
-    let mut spans = vec![
-        Span::raw(" "),
-        dense_action("results", theme::ACCENT, p.hover_export_results),
-    ];
-
-    if matches!(p.subtab, PipelineSubtab::Config) {
-        spans.push(Span::raw("   "));
-        spans.push(dense_action(
-            "import cfg",
-            theme::METRIC_CYC,
-            p.hover_import_cfg,
-        ));
-        spans.push(Span::raw("   "));
-        spans.push(dense_action(
-            "export cfg",
-            theme::METRIC_CYC,
-            p.hover_export_cfg,
-        ));
-    }
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(build_pipeline_ctrl_bar(app).spans());
 
     let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
+    app.pipeline.ctrl_origin.set((inner.y, inner.x + 1));
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
-
-    let y = inner.y;
-    let x = inner.x + 1;
-    app.pipeline
-        .btn_export_results_rect
-        .set((y, x, x + "results".len() as u16));
-
-    if matches!(p.subtab, PipelineSubtab::Config) {
-        let import_x = x + "results".len() as u16 + 3;
-        let export_x = import_x + "import cfg".len() as u16 + 3;
-        app.pipeline
-            .btn_import_cfg_rect
-            .set((y, import_x, import_x + "import cfg".len() as u16));
-        app.pipeline
-            .btn_export_cfg_rect
-            .set((y, export_x, export_x + "export cfg".len() as u16));
-    } else {
-        app.pipeline.btn_import_cfg_rect.set((0, 0, 0));
-        app.pipeline.btn_export_cfg_rect.set((0, 0, 0));
-    }
 }

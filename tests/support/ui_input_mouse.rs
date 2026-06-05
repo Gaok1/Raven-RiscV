@@ -433,16 +433,23 @@ fn pipeline_state_click_restarts_when_halted() {
     app.tab = Tab::Pipeline;
     app.pipeline.enabled = true;
     app.pipeline.halted = true;
-    app.pipeline.btn_state_rect.set((6, 20, 31));
+    let origin = (6u16, 1u16);
+    app.pipeline.exec_origin.set(origin);
     app.run.cpu.pc = 32;
     app.pipeline.fetch_pc = 32;
+
+    // Click the rendered `state` control on the exec bar (single-source geometry).
+    use crate::ui::view::pipeline::{PipelineExecBtn, build_pipeline_exec_bar};
+    let state_col = (origin.1..160)
+        .find(|&c| build_pipeline_exec_bar(&app).hit(c, origin.1) == Some(PipelineExecBtn::State))
+        .expect("state control present on exec bar");
 
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 21,
-            row: 6,
+            column: state_col,
+            row: origin.0,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 160, 40),

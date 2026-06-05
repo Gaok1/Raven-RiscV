@@ -1110,12 +1110,10 @@ pub struct PipelineSimState {
     /// Origin `(row, first_col)` of the header bar ([main][settings][core]); the
     /// `Toolbar` in `view::pipeline` maps a click column back to the button.
     pub header_origin: Cell<(u16, u16)>,
-    pub btn_reset_rect: Cell<(u16, u16, u16)>,
-    pub btn_speed_rect: Cell<(u16, u16, u16)>,
-    pub btn_state_rect: Cell<(u16, u16, u16)>,
-    pub btn_export_results_rect: Cell<(u16, u16, u16)>,
-    pub btn_import_cfg_rect: Cell<(u16, u16, u16)>,
-    pub btn_export_cfg_rect: Cell<(u16, u16, u16)>,
+    /// Origin of the exec-controls bar ([speed][state][reset]).
+    pub exec_origin: Cell<(u16, u16)>,
+    /// Origin of the bottom controls bar ([results][import cfg][export cfg]).
+    pub ctrl_origin: Cell<(u16, u16)>,
     pub gantt_area_rect: Cell<(u16, u16, u16, u16)>,
 }
 
@@ -1185,12 +1183,8 @@ impl PipelineSimState {
             status_msg: None,
             status_error: None,
             header_origin: Cell::new((0, 0)),
-            btn_reset_rect: Cell::new((0, 0, 0)),
-            btn_speed_rect: Cell::new((0, 0, 0)),
-            btn_state_rect: Cell::new((0, 0, 0)),
-            btn_export_results_rect: Cell::new((0, 0, 0)),
-            btn_import_cfg_rect: Cell::new((0, 0, 0)),
-            btn_export_cfg_rect: Cell::new((0, 0, 0)),
+            exec_origin: Cell::new((0, 0)),
+            ctrl_origin: Cell::new((0, 0)),
             gantt_area_rect: Cell::new((0, 0, 0, 0)),
         }
     }

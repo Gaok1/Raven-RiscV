@@ -2486,7 +2486,6 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 // ── Pipeline tab mouse ────────────────────────────────────────────────────────
 
 fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
-    let state_clickable = !app.pipeline.faulted;
     {
         let p = &mut app.pipeline;
         p.hover_subtab_main = false;
@@ -2521,39 +2520,49 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
             None => {}
         }
     }
-    let p = &mut app.pipeline;
-    let (rst_y, rst_x0, rst_x1) = p.btn_reset_rect.get();
-    if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
-        p.hover_reset = true;
-        return;
+    // Exec-controls bar [speed][state][reset] (state is inert while faulted).
+    let (ey, ex) = app.pipeline.exec_origin.get();
+    if me.row == ey {
+        use crate::ui::view::pipeline::PipelineExecBtn;
+        match crate::ui::view::pipeline::build_pipeline_exec_bar(app).hit(me.column, ex) {
+            Some(PipelineExecBtn::Speed) => {
+                app.pipeline.hover_speed = true;
+                return;
+            }
+            Some(PipelineExecBtn::State) => {
+                app.pipeline.hover_state = true;
+                return;
+            }
+            Some(PipelineExecBtn::Reset) => {
+                app.pipeline.hover_reset = true;
+                return;
+            }
+            None => {}
+        }
     }
-    let (spd_y, spd_x0, spd_x1) = p.btn_speed_rect.get();
-    if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
-        p.hover_speed = true;
-        return;
-    }
-    let (st_y, st_x0, st_x1) = p.btn_state_rect.get();
-    if state_clickable && me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
-        p.hover_state = true;
-        return;
-    }
-    let (res_y, res_x0, res_x1) = p.btn_export_results_rect.get();
-    if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
-        p.hover_export_results = true;
-        return;
-    }
-    let (in_y, in_x0, in_x1) = p.btn_import_cfg_rect.get();
-    if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
-        p.hover_import_cfg = true;
-        return;
-    }
-    let (out_y, out_x0, out_x1) = p.btn_export_cfg_rect.get();
-    if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
-        p.hover_export_cfg = true;
-        return;
+    // Bottom controls bar [results][import cfg][export cfg].
+    let (cy, cx) = app.pipeline.ctrl_origin.get();
+    if me.row == cy {
+        use crate::ui::view::pipeline::PipelineCtrlBtn;
+        match crate::ui::view::pipeline::build_pipeline_ctrl_bar(app).hit(me.column, cx) {
+            Some(PipelineCtrlBtn::Results) => {
+                app.pipeline.hover_export_results = true;
+                return;
+            }
+            Some(PipelineCtrlBtn::ImportCfg) => {
+                app.pipeline.hover_import_cfg = true;
+                return;
+            }
+            Some(PipelineCtrlBtn::ExportCfg) => {
+                app.pipeline.hover_export_cfg = true;
+                return;
+            }
+            None => {}
+        }
     }
 
     // Config row hover
+    let p = &mut app.pipeline;
     if matches!(p.subtab, crate::ui::pipeline::PipelineSubtab::Config) {
         let rects = p.config_row_rects.get();
         for i in 0..crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS {
@@ -2591,50 +2600,60 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
             None => {}
         }
     }
-    let (rst_y, rst_x0, rst_x1) = app.pipeline.btn_reset_rect.get();
-    if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
-        app.restart_simulation();
-        return;
-    }
-    let (spd_y, spd_x0, spd_x1) = app.pipeline.btn_speed_rect.get();
-    if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
-        app.pipeline.speed = app.pipeline.speed.next();
-        app.pipeline.last_tick = std::time::Instant::now();
-        return;
-    }
-    let (st_y, st_x0, st_x1) = app.pipeline.btn_state_rect.get();
-    if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
-        if app.pipeline.enabled && !app.pipeline.faulted {
-            if app.pipeline.halted {
-                app.restart_simulation();
-                if app.can_start_run() {
-                    app.run.is_running = true;
-                }
-            } else if app.run.is_running {
-                app.run.is_running = false;
-            } else {
-                app.resume_selected_hart();
-                if app.can_start_run() {
-                    app.run.is_running = true;
-                }
+    // Exec-controls bar [speed][state][reset] — same bar as render & hover.
+    let (ey, ex) = app.pipeline.exec_origin.get();
+    if me.row == ey {
+        use crate::ui::view::pipeline::PipelineExecBtn;
+        match crate::ui::view::pipeline::build_pipeline_exec_bar(app).hit(me.column, ex) {
+            Some(PipelineExecBtn::Speed) => {
+                app.pipeline.speed = app.pipeline.speed.next();
+                app.pipeline.last_tick = std::time::Instant::now();
+                return;
             }
+            Some(PipelineExecBtn::State) => {
+                if app.pipeline.enabled && !app.pipeline.faulted {
+                    if app.pipeline.halted {
+                        app.restart_simulation();
+                        if app.can_start_run() {
+                            app.run.is_running = true;
+                        }
+                    } else if app.run.is_running {
+                        app.run.is_running = false;
+                    } else {
+                        app.resume_selected_hart();
+                        if app.can_start_run() {
+                            app.run.is_running = true;
+                        }
+                    }
+                }
+                return;
+            }
+            Some(PipelineExecBtn::Reset) => {
+                app.restart_simulation();
+                return;
+            }
+            None => {}
         }
-        return;
     }
-    let (res_y, res_x0, res_x1) = app.pipeline.btn_export_results_rect.get();
-    if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
-        do_export_pipeline_results(app);
-        return;
-    }
-    let (in_y, in_x0, in_x1) = app.pipeline.btn_import_cfg_rect.get();
-    if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
-        crate::ui::input::keyboard::do_import_pcfg(app);
-        return;
-    }
-    let (out_y, out_x0, out_x1) = app.pipeline.btn_export_cfg_rect.get();
-    if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
-        crate::ui::input::keyboard::do_export_pcfg(app);
-        return;
+    // Bottom controls bar [results][import cfg][export cfg].
+    let (cy, cx) = app.pipeline.ctrl_origin.get();
+    if me.row == cy {
+        use crate::ui::view::pipeline::PipelineCtrlBtn;
+        match crate::ui::view::pipeline::build_pipeline_ctrl_bar(app).hit(me.column, cx) {
+            Some(PipelineCtrlBtn::Results) => {
+                do_export_pipeline_results(app);
+                return;
+            }
+            Some(PipelineCtrlBtn::ImportCfg) => {
+                crate::ui::input::keyboard::do_import_pcfg(app);
+                return;
+            }
+            Some(PipelineCtrlBtn::ExportCfg) => {
+                crate::ui::input::keyboard::do_export_pcfg(app);
+                return;
+            }
+            None => {}
+        }
     }
 
     // Config row clicks — toggle on click like Cache tab
