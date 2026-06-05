@@ -17,7 +17,7 @@ impl App {
     }
 
     pub(crate) fn aggregate_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.pipeline.enabled {
+        if !self.run.pipeline().enabled {
             return None;
         }
 
@@ -44,7 +44,7 @@ impl App {
         if self.core_hart_id(self.selected_core).is_some()
             || !matches!(self.core_status(self.selected_core), HartLifecycle::Free)
         {
-            accumulate(&self.pipeline);
+            accumulate(&self.run.pipeline());
         }
 
         for (idx, hart) in self.harts.iter().enumerate() {
@@ -86,19 +86,19 @@ impl App {
             branch_stalls,
             fu_stalls,
             mem_stalls,
-            bypass: self.pipeline.bypass.summary(),
-            mode: format!("{:?}", self.pipeline.mode),
-            branch_resolve: format!("{:?}", self.pipeline.branch_resolve),
-            branch_predict: format!("{:?}", self.pipeline.predict),
+            bypass: self.run.pipeline().bypass.summary(),
+            mode: format!("{:?}", self.run.pipeline().mode),
+            branch_resolve: format!("{:?}", self.run.pipeline().branch_resolve),
+            branch_predict: format!("{:?}", self.run.pipeline().predict),
         })
     }
 
     pub(crate) fn selected_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.pipeline.enabled {
+        if !self.run.pipeline().enabled {
             return None;
         }
 
-        let pipe = &self.pipeline;
+        let pipe = &self.run.pipeline();
         let [
             raw_stalls,
             load_use_stalls,
@@ -168,8 +168,8 @@ impl App {
     }
 
     pub(in crate::ui) fn set_pipeline_enabled(&mut self, enabled: bool) {
-        self.pipeline.enabled = enabled;
-        self.pipeline.sequential_mode = !enabled;
+        self.run.pipeline_mut().enabled = enabled;
+        self.run.pipeline_mut().sequential_mode = !enabled;
         self.reconfigure_pipeline_model();
         self.ensure_visible_tab();
     }
@@ -280,14 +280,14 @@ impl App {
 
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
         self.run.is_running = false;
-        self.pipeline.reset_stages(self.run.cpu().pc);
+        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
 
         for (idx, hart) in self.harts.iter_mut().enumerate() {
             if idx == self.selected_core {
                 continue;
             }
             if let Some(p) = hart.pipeline.as_mut() {
-                Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+                Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
                 p.reset_stages(hart.cpu.pc);
             }
         }
@@ -344,7 +344,7 @@ impl App {
                 runtime.mem_access_log = self.run.mem_access_log.clone();
                 runtime.pipeline = None;
             } else if let Some(p) = runtime.pipeline.as_mut() {
-                Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+                Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
                 p.reset_stages(runtime.cpu.pc);
             }
             self.harts.push(runtime);
@@ -372,7 +372,7 @@ impl App {
             runtime.exec_trace = self.run.exec_trace.clone();
             runtime.dyn_mem_access = self.run.dyn_mem_access;
             runtime.mem_access_log = self.run.mem_access_log.clone();
-            runtime.pipeline = Some(std::mem::replace(&mut self.pipeline, replacement));
+            runtime.pipeline = Some(std::mem::replace(&mut self.run.pipeline_mut(), replacement));
         }
     }
 
@@ -400,11 +400,11 @@ impl App {
                 .pipeline
                 .take()
                 .unwrap_or_else(crate::ui::pipeline::PipelineSimState::new);
-            Self::copy_pipeline_config_to_hart(&self.pipeline, &mut pipeline);
+            Self::copy_pipeline_config_to_hart(&self.run.pipeline(), &mut pipeline);
             if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
                 pipeline.reset_stages(self.run.cpu().pc);
             }
-            self.pipeline = pipeline;
+            *self.run.pipeline_mut() = pipeline;
         }
     }
 
@@ -525,7 +525,7 @@ impl App {
         child.cpu.heap_break = self.run.cpu().heap_break;
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+            Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
             p.reset_stages(child.cpu.pc);
         }
 
@@ -616,7 +616,7 @@ impl App {
         child.cpu.heap_break = self.harts[core_idx].cpu.heap_break;
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+            Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
             p.reset_stages(child.cpu.pc);
         }
 

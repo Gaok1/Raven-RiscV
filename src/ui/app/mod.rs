@@ -229,7 +229,6 @@ pub struct App {
     pub(super) cache: CacheState,
     pub(super) tlb: TlbState,
     pub(super) settings: SettingsState,
-    pub(super) pipeline: crate::ui::pipeline::PipelineSimState,
     pub(crate) max_cores: usize,
     pub(crate) selected_core: usize,
     pub(crate) run_scope: RunScope,
@@ -365,7 +364,7 @@ impl App {
                         vec![],
                         mem_size,
                     ),
-                    crate::falcon::machine::NoPipeline,
+                    crate::ui::pipeline::PipelineSimState::new(),
                 ),
                 prev_x: [0; 32],
                 prev_pc: base_pc,
@@ -551,7 +550,6 @@ impl App {
             tutorial: TutorialState::default(),
             activity: crate::guided_learning::GuidedLearningState::default(),
             settings: SettingsState::default(),
-            pipeline: crate::ui::pipeline::PipelineSimState::new(),
             max_cores: 4,
             selected_core: 0,
             run_scope: RunScope::AllHarts,
@@ -586,7 +584,7 @@ impl App {
 
     /// Reset the pipeline to the current CPU PC (used after loading a preset).
     pub(crate) fn pipeline_reset_to_current_pc(&mut self) {
-        self.pipeline.reset_stages(self.run.cpu().pc);
+        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
     }
 
     pub(crate) fn assemble_and_load(&mut self) {
@@ -699,7 +697,7 @@ impl App {
                 }
 
                 // Reset pipeline stages (shares cpu/mem with RunState)
-                self.pipeline.reset_stages(self.run.cpu().pc);
+                let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
 
                 self.editor.last_assemble_msg = Some(format!(
                     "Assembled {} instructions, {} data bytes, {} bss bytes.",
@@ -773,8 +771,8 @@ impl App {
     }
 
     fn sync_pipeline_program_range(&mut self) {
-        self.pipeline.set_exec_regions(&self.run.exec_regions);
-        let regions = self.pipeline.exec_regions.clone();
+        let regions = self.run.exec_regions.clone();
+        self.run.pipeline_mut().set_exec_regions(&regions);
         for hart in &mut self.harts {
             if let Some(p) = hart.pipeline.as_mut() {
                 p.set_exec_regions(&regions);
@@ -885,7 +883,7 @@ impl App {
             self.reset_exec_regions_to_loaded_text();
             self.sync_pipeline_program_range();
             // Reset pipeline stages so it picks up the reloaded program
-            self.pipeline.reset_stages(self.run.cpu().pc);
+            let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
             self.rebuild_harts();
         }
     }
@@ -908,7 +906,7 @@ impl App {
         self.cache.window_start_instr = 0;
         self.load_last_ok_program();
         // Reset pipeline AFTER loading program (cpu.pc is now set correctly)
-        self.pipeline.reset_stages(self.run.cpu().pc);
+        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
         self.rebuild_harts();
         // Rebuild JIT backend AFTER load so FullBackend can scan the loaded program.
         self.rebuild_backend();
@@ -1119,9 +1117,9 @@ impl App {
         self.mode = EditorMode::Command;
         self.editor.elf_prompt_open = false;
         // Reset pipeline stages (shares cpu/mem with RunState)
-        self.pipeline.reset_stages(self.run.cpu().pc);
+        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
         self.rebuild_harts();
-        self.pipeline.reset_stages(self.run.cpu().pc);
+        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
     }
 
     /// Convert the currently-loaded ELF into an editable assembly source and load
@@ -1915,8 +1913,8 @@ impl App {
             // the journaling path and need no checkpoint; pipeline modes journal
             // per-cycle separately (Phase 4b).
             let go_burst = matches!(self.run.speed, RunSpeed::Instant)
-                && !self.pipeline.enabled
-                && !self.pipeline.sequential_mode;
+                && !self.run.pipeline().enabled
+                && !self.run.pipeline().sequential_mode;
             if go_burst && !self.run.go_checkpointed {
                 self.run.machine.checkpoint();
                 self.run.go_checkpointed = true;
@@ -1925,27 +1923,27 @@ impl App {
             // use pipeline speed for rate-limiting (educational slow stepping).
             // Otherwise use run speed.
             use crate::ui::pipeline::PipelineSpeed;
-            let use_pipeline_speed = (self.pipeline.enabled || self.pipeline.sequential_mode)
+            let use_pipeline_speed = (self.run.pipeline().enabled || self.run.pipeline().sequential_mode)
                 && matches!(self.tab, Tab::Pipeline);
 
             if use_pipeline_speed {
-                match self.pipeline.speed {
+                match self.run.pipeline().speed {
                     PipelineSpeed::Slow => {
-                        if self.pipeline.last_tick.elapsed() >= Duration::from_millis(600) {
+                        if self.run.pipeline().last_tick.elapsed() >= Duration::from_millis(600) {
                             self.single_step();
-                            self.pipeline.last_tick = Instant::now();
+                            self.run.pipeline_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Normal => {
-                        if self.pipeline.last_tick.elapsed() >= Duration::from_millis(300) {
+                        if self.run.pipeline().last_tick.elapsed() >= Duration::from_millis(300) {
                             self.single_step();
-                            self.pipeline.last_tick = Instant::now();
+                            self.run.pipeline_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Fast => {
-                        if self.pipeline.last_tick.elapsed() >= Duration::from_millis(80) {
+                        if self.run.pipeline().last_tick.elapsed() >= Duration::from_millis(80) {
                             self.single_step();
-                            self.pipeline.last_tick = Instant::now();
+                            self.run.pipeline_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Instant => {
@@ -2045,9 +2043,9 @@ impl App {
             } else {
                 HartLifecycle::Paused
             }
-        } else if self.run.faulted || self.pipeline.faulted {
+        } else if self.run.faulted || self.run.pipeline().faulted {
             HartLifecycle::Faulted
-        } else if self.run.cpu().exit_code.is_some() || self.pipeline.halted {
+        } else if self.run.cpu().exit_code.is_some() || self.run.pipeline().halted {
             HartLifecycle::Exited
         } else {
             HartLifecycle::Running
@@ -2093,12 +2091,13 @@ impl App {
     /// Whether a step-back is currently allowed: not mid auto-run, and with at
     /// least one journaled change to undo.
     ///
-    /// The journal is the ground truth for what is reversible. Only the
-    /// sequential interpreter (`step_interpreted`) and GO checkpoints fill it;
-    /// pipeline ticks and background harts mutate state through the un-journaled
-    /// hatches, which clear it. So a non-empty journal already implies the last
-    /// activity was a reversible sequential step or GO burst — no separate
-    /// pipeline / multi-core check is needed here.
+    /// The journal is the ground truth for what is reversible. The sequential
+    /// interpreter (`step_interpreted`), each pipeline clock cycle
+    /// (`step_pipeline`), and GO checkpoints fill it; background harts and
+    /// program exit/fault mutate state through the un-journaled hatches, which
+    /// clear it. So a non-empty journal already implies the last activity was a
+    /// reversible step, pipeline cycle, or GO burst — no separate mode check is
+    /// needed here.
     pub(crate) fn can_stepback_now(&self) -> bool {
         !self.run.is_running && self.run.machine.can_stepback()
     }
@@ -2141,14 +2140,19 @@ impl App {
         self.run.prev_pc = pc;
         self.run.dyn_mem_access = None;
 
-        // A single instruction owns one exec-trace row and one run-count tick;
-        // an edit or a GO checkpoint owns neither.
+        // A committed instruction (sequential step, or a pipeline cycle that
+        // retired one) owns one exec-trace row and one run-count tick; a
+        // stall/bubble cycle (`Cycle`), an edit, or a GO checkpoint owns
+        // neither. Decrement the run count for the *retired* PC — taken from the
+        // popped trace row, not the rewound `cpu.pc`, since in the pipeline the
+        // instruction that committed is several stages behind the fetch PC.
         if kind == crate::falcon::machine::StepbackKind::Step {
-            self.run.exec_trace.pop_back();
-            if let Some(count) = self.run.exec_counts.get_mut(&pc) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    self.run.exec_counts.remove(&pc);
+            if let Some((trace_pc, _)) = self.run.exec_trace.pop_back() {
+                if let Some(count) = self.run.exec_counts.get_mut(&trace_pc) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.run.exec_counts.remove(&trace_pc);
+                    }
                 }
             }
         }
@@ -2270,8 +2274,8 @@ impl App {
         }
         self.run.machine.cpu_mut_unjournaled().ebreak_hit = false;
         self.run.faulted = false;
-        self.pipeline.halted = false;
-        self.pipeline.faulted = false;
+        self.run.pipeline_mut().halted = false;
+        self.run.pipeline_mut().faulted = false;
         if let Some(runtime) = self.selected_runtime_mut() {
             if runtime.hart_id.is_some() {
                 runtime.lifecycle = HartLifecycle::Running;
@@ -2285,26 +2289,19 @@ impl App {
         // Sequential mode: if the CPU advanced outside the pipeline (e.g. the
         // user stepped in the Run tab), auto-reset so the visualization starts
         // fresh from the current PC.
-        if self.pipeline.sequential_mode {
-            let all_clear = self.pipeline.stages.iter().all(|s| s.is_none());
+        if self.run.pipeline().sequential_mode {
+            let all_clear = self.run.pipeline().stages.iter().all(|s| s.is_none());
             if all_clear
-                && self.pipeline.fetch_pc != self.run.cpu().pc
-                && !self.pipeline.halted
-                && !self.pipeline.faulted
+                && self.run.pipeline().fetch_pc != self.run.cpu().pc
+                && !self.run.pipeline().halted
+                && !self.run.pipeline().faulted
             {
-                self.pipeline.reset_stages(self.run.cpu().pc);
+                let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
             }
         }
 
-        if self.pipeline.halted || self.pipeline.faulted {
+        if self.run.pipeline().halted || self.run.pipeline().faulted {
             return false;
-        }
-
-        // Restore the selected hart's satp/priv_mode into the shared MMU
-        // before stepping its pipeline. See B18 in the bug audit.
-        {
-            let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
-            crate::ui::app::hart::sync_mmu_to_cpu(mem, cpu);
         }
 
         self.run.prev_x = self.run.cpu().x;
@@ -2314,16 +2311,18 @@ impl App {
         // Clone CpiConfig to avoid borrow conflict (80 bytes, cheap)
         let cpi = self.run.cpi_config.clone();
 
-        let commit = {
-            let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
-            crate::ui::pipeline::sim::pipeline_tick(
-                &mut self.pipeline,
-                cpu,
-                mem,
-                &cpi,
-                &mut self.console,
-            )
-        };
+        // One journaled clock cycle. `step_pipeline` re-syncs the MMU to the
+        // selected hart (journal-preserving), snapshots cpu+mem+pipeline, runs
+        // the tick on the machine-owned pipeline, and records the change-set —
+        // so a single step-back rewinds exactly this cycle. The closure borrows
+        // the console, which is disjoint from `self.run.machine`.
+        let console = &mut self.console;
+        let commit = self.run.machine.step_pipeline(
+            |pipe, cpu, mem| {
+                crate::ui::pipeline::sim::pipeline_tick(pipe, cpu, mem, &cpi, console)
+            },
+            |commit| commit.is_some(),
+        );
 
         let committed = if let Some(info) = commit {
             *self.run.exec_counts.entry(info.pc).or_insert(0) += 1;
@@ -2359,15 +2358,13 @@ impl App {
             self.run.prev_f = self.run.cpu().f;
             self.run.prev_pc = info.pc;
 
-            self.run.machine.mem_mut_unjournaled().instruction_count =
-                self.run.mem().instruction_count.saturating_add(1);
-            self.run.machine.mem_mut_unjournaled().snapshot_stats();
+            self.run.machine.account_pipeline_commit();
             !is_transparent_single_step_word(word)
         } else {
             false
         };
 
-        if self.pipeline.faulted {
+        if self.run.pipeline().faulted {
             self.run.faulted = true;
         }
         if self.run.breakpoints.contains(&self.run.cpu().pc) {
@@ -2386,7 +2383,7 @@ impl App {
         // borrow checker's disjoint-field rules.
         let exec_regions = self.run.exec_regions.clone();
         let mem_size = self.run.mem_size;
-        let pipeline_enabled = self.pipeline.enabled || self.pipeline.sequential_mode;
+        let pipeline_enabled = self.run.pipeline().enabled || self.run.pipeline().sequential_mode;
         // CpiConfig is ~80 bytes; cheap to clone once per round.
         let cpi = self.run.cpi_config.clone();
 
@@ -2480,7 +2477,7 @@ impl App {
         if status == HartLifecycle::Paused {
             self.resume_selected_hart();
         }
-        if self.pipeline.enabled || self.pipeline.sequential_mode {
+        if self.run.pipeline().enabled || self.run.pipeline().sequential_mode {
             self.pipeline_step()
         } else {
             self.single_step_selected_sequential();
@@ -2491,7 +2488,7 @@ impl App {
     fn pipeline_tab_step_once(&mut self) -> bool {
         // Sequential mode always drives the selected hart through the pipeline
         // visualizer; other harts stay paused.
-        if self.pipeline.sequential_mode {
+        if self.run.pipeline().sequential_mode {
             return self.pipeline_step();
         }
         if self.max_cores > 1 {
@@ -2511,24 +2508,24 @@ impl App {
         }
 
         if matches!(self.tab, Tab::Pipeline)
-            && (self.pipeline.enabled || self.pipeline.sequential_mode)
+            && (self.run.pipeline().enabled || self.run.pipeline().sequential_mode)
         {
             // Pipeline tab (pipelined or sequential): advance one cycle, then
             // skip only consecutive cache-only hold cycles. If a cycle advanced
             // stages or committed, stop immediately so EX/MEM/WB remain visible.
             let committed = self.pipeline_tab_step_once();
-            if committed || !self.pipeline.last_cycle_cache_only {
+            if committed || !self.run.pipeline().last_cycle_cache_only {
                 if !self.run.is_running {
                     self.ensure_pc_visible_in_imem();
                 }
                 return;
             }
             for _ in 0..1_000_000 {
-                if self.pipeline.halted || self.pipeline.faulted {
+                if self.run.pipeline().halted || self.run.pipeline().faulted {
                     break;
                 }
                 let committed = self.pipeline_tab_step_once();
-                if committed || !self.pipeline.last_cycle_cache_only {
+                if committed || !self.run.pipeline().last_cycle_cache_only {
                     break;
                 }
             }
@@ -2541,7 +2538,7 @@ impl App {
         if self.max_cores > 1 {
             let all_scope = matches!(self.run_scope, RunScope::AllHarts);
 
-            if (self.pipeline.enabled || self.pipeline.sequential_mode)
+            if (self.run.pipeline().enabled || self.run.pipeline().sequential_mode)
                 && !matches!(self.tab, Tab::Pipeline)
             {
                 for _ in 0..200 {
@@ -2589,12 +2586,12 @@ impl App {
             return;
         }
 
-        if self.pipeline.enabled || self.pipeline.sequential_mode {
+        if self.run.pipeline().enabled || self.run.pipeline().sequential_mode {
             // Run/Cache/other tabs: advance until one instruction commits
             // Safety limit to prevent infinite loop on stall/halt/fault
             for _ in 0..200 {
                 let committed = self.pipeline_step();
-                if committed || self.pipeline.halted || self.pipeline.faulted {
+                if committed || self.run.pipeline().halted || self.run.pipeline().faulted {
                     break;
                 }
             }

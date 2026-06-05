@@ -400,8 +400,8 @@ fn cache_view_mouse_wheel_clamps_to_rendered_max_scroll() {
 fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.pipeline.gantt_area_rect.set((0, 10, 80, 8));
-    app.pipeline.gantt = (0..10)
+    app.run.pipeline().gantt_area_rect.set((0, 10, 80, 8));
+    app.run.pipeline_mut().gantt = (0..10)
         .map(|i| GanttRow {
             gantt_id: i + 1,
             pc: (i * 4) as u32,
@@ -413,10 +413,10 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
             last_stage: None,
         })
         .collect();
-    app.pipeline
+    app.run.pipeline()
         .gantt_max_scroll_cache
-        .set(gantt_max_scroll(&app.pipeline, 20));
-    app.pipeline.gantt_scroll = app.pipeline.gantt_max_scroll_cache.get();
+        .set(gantt_max_scroll(&app.run.pipeline(), 20));
+    app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_max_scroll_cache.get();
 
     handle_mouse(
         &mut app,
@@ -430,8 +430,8 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
     );
 
     assert_eq!(
-        app.pipeline.gantt_scroll,
-        app.pipeline.gantt_max_scroll_cache.get()
+        app.run.pipeline().gantt_scroll,
+        app.run.pipeline().gantt_max_scroll_cache.get()
     );
 }
 
@@ -439,8 +439,8 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
 fn pipeline_history_mouse_wheel_ignores_scroll_outside_history_panel() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.pipeline.gantt_area_rect.set((0, 10, 80, 8));
-    app.pipeline.gantt_scroll = 3;
+    app.run.pipeline().gantt_area_rect.set((0, 10, 80, 8));
+    app.run.pipeline_mut().gantt_scroll = 3;
 
     handle_mouse(
         &mut app,
@@ -453,18 +453,18 @@ fn pipeline_history_mouse_wheel_ignores_scroll_outside_history_panel() {
         Rect::new(0, 0, 160, 20),
     );
 
-    assert_eq!(app.pipeline.gantt_scroll, 3);
+    assert_eq!(app.run.pipeline().gantt_scroll, 3);
 }
 
 #[test]
 fn pipeline_state_click_restarts_when_halted() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.pipeline.enabled = true;
-    app.pipeline.halted = true;
-    app.pipeline.btn_state_rect.set((6, 20, 31));
+    app.run.pipeline_mut().enabled = true;
+    app.run.pipeline_mut().halted = true;
+    app.run.pipeline().btn_state_rect.set((6, 20, 31));
     app.run.machine.cpu_mut_unjournaled().pc = 32;
-    app.pipeline.fetch_pc = 32;
+    app.run.pipeline_mut().fetch_pc = 32;
 
     handle_mouse(
         &mut app,
@@ -477,19 +477,19 @@ fn pipeline_state_click_restarts_when_halted() {
         Rect::new(0, 0, 160, 40),
     );
 
-    assert!(!app.pipeline.halted);
-    assert_eq!(app.pipeline.fetch_pc, app.run.base_pc);
+    assert!(!app.run.pipeline().halted);
+    assert_eq!(app.run.pipeline().fetch_pc, app.run.base_pc);
 }
 
 #[test]
 fn pipeline_main_subtab_ignores_stale_config_row_hitboxes() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.pipeline.subtab = crate::ui::pipeline::PipelineSubtab::Main;
-    let original = app.pipeline.bypass.ex_to_ex;
+    app.run.pipeline_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
+    let original = app.run.pipeline().bypass.ex_to_ex;
     let mut rects = [(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS];
     rects[0] = (12, 4, 40);
-    app.pipeline.config_row_rects.set(rects);
+    app.run.pipeline().config_row_rects.set(rects);
 
     handle_mouse(
         &mut app,
@@ -502,7 +502,7 @@ fn pipeline_main_subtab_ignores_stale_config_row_hitboxes() {
         Rect::new(0, 0, 160, 40),
     );
 
-    assert_eq!(app.pipeline.bypass.ex_to_ex, original);
+    assert_eq!(app.run.pipeline().bypass.ex_to_ex, original);
 }
 
 #[test]

@@ -201,6 +201,18 @@ impl<P: JournaledPipeline> Machine<P> {
         self.mem.snapshot_stats();
     }
 
+    /// Record one committed pipeline instruction (cycle accounting for the
+    /// pipeline backend), **without** touching the journal. Like
+    /// [`Machine::account_step_cycles`], the change-set pushed by
+    /// [`Machine::step_pipeline`] snapshotted the cache *before* the cycle, so a
+    /// step-back reverts this bump along with the cycle. Pair it with
+    /// `step_pipeline`; routing it through `mem_mut_unjournaled` instead would
+    /// erase the cycle's change-set.
+    pub fn account_pipeline_commit(&mut self) {
+        self.mem.instruction_count = self.mem.instruction_count.saturating_add(1);
+        self.mem.snapshot_stats();
+    }
+
     /// Advance the pipeline by **one clock cycle**, journaling the whole cycle
     /// so step-back reverts it exactly. This is the *only* way execution can
     /// touch the pipeline stages, so a tick can never escape the undo history.
@@ -217,9 +229,14 @@ impl<P: JournaledPipeline> Machine<P> {
     /// [`Machine::sync_mmu`] rather than an unjournaled hatch — that earlier
     /// erased the history on every cycle and was why pipeline step-back never
     /// worked.
+    /// `committed` inspects the tick's result to classify the cycle: a cycle
+    /// that retired an instruction is recorded as [`StepbackKind::Step`] (the
+    /// caller rolls back one exec-trace row on undo), a stall/bubble cycle as
+    /// [`StepbackKind::Cycle`] (state rewinds, bookkeeping untouched).
     pub fn step_pipeline<R>(
         &mut self,
         tick: impl FnOnce(&mut P, &mut Cpu, &mut CacheController) -> R,
+        committed: impl FnOnce(&R) -> bool,
     ) -> R {
         self.sync_mmu();
         let cpu_before = self.cpu.clone();
@@ -230,10 +247,15 @@ impl<P: JournaledPipeline> Machine<P> {
         let result = tick(&mut self.pipeline, &mut self.cpu, &mut self.mem);
 
         let ram_log = self.mem.ram_mut().take_recording();
+        let kind = if committed(&result) {
+            StepbackKind::Step
+        } else {
+            StepbackKind::Cycle
+        };
         self.record_with_pipe(
             cpu_before,
             pipe_before,
-            StepbackKind::Step,
+            kind,
             Rewind::Delta { cache_before, ram_log },
         );
         result
