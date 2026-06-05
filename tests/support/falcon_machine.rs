@@ -6,7 +6,7 @@
 
 use super::parse::{parse_cell, CellFormat};
 use super::types::{EditError, FRegId, MemWidth, RegId, RegTarget};
-use super::Machine;
+use super::{Machine, NoPipeline};
 
 use crate::falcon::cache::{CacheConfig, CacheController};
 use crate::falcon::encoder::encode;
@@ -30,7 +30,7 @@ fn machine_with(program: &[Instruction], dcfg: CacheConfig) -> Machine {
             .store32(i as u32 * 4, word)
             .expect("in-bounds program word");
     }
-    Machine::new(Cpu::default(), mem)
+    Machine::new(Cpu::default(), mem, NoPipeline)
 }
 
 /// A small program: set a base pointer, compute a value, store it, load it back.
