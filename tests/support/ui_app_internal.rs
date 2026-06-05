@@ -1951,6 +1951,21 @@ mod run_edit {
         assert_eq!(app.run.cpu().pc, 0x100);
     }
 
+    /// Editing the PC must also steer the pipeline's fetch, otherwise the next
+    /// step keeps fetching the stale `fetch_pc` (the "PC doesn't advance" bug).
+    #[test]
+    fn commit_pc_redirects_pipeline_fetch() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Hex;
+        let entry = app.run.base_pc;
+        app.begin_run_edit(RunEditTarget::Reg(RegTarget::Pc));
+        app.run.run_edit_buf = format!("{entry:x}");
+        app.commit_run_edit();
+        if app.run.pipeline().enabled {
+            assert_eq!(app.run.pipeline().fetch_pc, entry);
+        }
+    }
+
     #[test]
     fn commit_rejects_x0_and_keeps_editor_open() {
         let mut app = loaded_app();
