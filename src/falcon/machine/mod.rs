@@ -49,15 +49,58 @@ use journal::{ChangeSet, Rewind, StepJournal};
 pub use journal::StepbackKind;
 use types::{EditError, FRegId, MemWidth, RegTarget};
 
+/// A pipeline whose per-cycle microarchitectural state the [`Machine`] owns and
+/// journals, so step-back reverts the pipeline together with the CPU and memory.
+///
+/// The pipeline simulator is a UI-layer type ([`crate::ui::pipeline::PipelineSimState`]),
+/// so `falcon` cannot name it directly. This trait is the seam: `Machine` is
+/// generic over the pipeline, snapshots its reversible state into every
+/// change-set, and restores it on undo — without `falcon` depending on `ui`.
+///
+/// `Snapshot` holds *only* the reversible execution state (stage latches,
+/// functional-unit occupancy, fetch PC, hazard counters, …) — never the UI's
+/// view/config state. Because the snapshot is taken by the same journaling
+/// methods that snapshot the CPU, the pipeline can never silently drift out of
+/// the undo history: that is the whole point of folding it into `Machine`.
+pub trait JournaledPipeline {
+    /// The reversible slice of the pipeline state. `Clone` is not required —
+    /// each snapshot is produced fresh by [`Self::exec_snapshot`] and moved into
+    /// the journal, then moved back out on undo.
+    type Snapshot;
+    /// Capture the reversible execution state as of *now* (before a tick).
+    fn exec_snapshot(&self) -> Self::Snapshot;
+    /// Restore the reversible execution state from a snapshot (on step-back).
+    fn restore_exec(&mut self, snapshot: Self::Snapshot);
+}
+
+/// The "no pipeline" instantiation: a [`Machine`] that only ever single-steps
+/// the interpreter or takes edits. Its snapshot is `()`, so the journal carries
+/// zero extra bytes and the pipeline restore is a no-op.
+#[derive(Default)]
+pub struct NoPipeline;
+
+impl JournaledPipeline for NoPipeline {
+    type Snapshot = ();
+    fn exec_snapshot(&self) {}
+    fn restore_exec(&mut self, _: ()) {}
+}
+
 /// Default journal depth: how many steps/edits a user can rewind.
 const JOURNAL_CAPACITY: usize = 1024;
 
-/// Owns the CPU, the memory hierarchy, and the step journal, and is the sole
-/// gateway for mutating them. See the module docs for the design rationale.
-pub struct Machine {
+/// Owns the CPU, the memory hierarchy, the pipeline, and the step journal, and
+/// is the sole gateway for mutating them. See the module docs for the rationale.
+///
+/// `P` is the pipeline ([`JournaledPipeline`]); it defaults to [`NoPipeline`] so
+/// the interpreter-only and test paths pay nothing for it.
+pub struct Machine<P: JournaledPipeline = NoPipeline> {
     cpu: Cpu,
     mem: CacheController,
-    journal: StepJournal,
+    /// The pipeline simulator. Private like `cpu`/`mem`: execution may only
+    /// advance it through [`Machine::step_pipeline`], which journals the cycle.
+    /// UI/config mutation goes through [`Machine::pipeline_mut`] (unjournaled).
+    pipeline: P,
+    journal: StepJournal<P::Snapshot>,
     /// Reused across steps so the interpreter's hot-branch profile persists.
     interp: InterpreterBackend,
     /// Logical timeline. Advances by one per recorded change; the value is the
@@ -65,11 +108,12 @@ pub struct Machine {
     clock: u64,
 }
 
-impl Machine {
-    pub fn new(cpu: Cpu, mem: CacheController) -> Self {
+impl<P: JournaledPipeline> Machine<P> {
+    pub fn new(cpu: Cpu, mem: CacheController, pipeline: P) -> Self {
         Self {
             cpu,
             mem,
+            pipeline,
             journal: StepJournal::new(JOURNAL_CAPACITY),
             interp: InterpreterBackend::new(),
             clock: 0,
@@ -84,6 +128,24 @@ impl Machine {
 
     pub fn mem(&self) -> &CacheController {
         &self.mem
+    }
+
+    /// Shared read access to the pipeline (rendering, hit-testing, stats).
+    pub fn pipeline(&self) -> &P {
+        &self.pipeline
+    }
+
+    /// Mutable pipeline access for **UI/config** changes only — hover flags,
+    /// scroll, subtab, gantt cosmetics, forwarding/branch config, resets. This
+    /// does **not** journal and deliberately does **not** clear the journal:
+    /// these mutations happen between steps and must not erase undo history.
+    ///
+    /// It must never be used to *advance execution* (tick the stages): that is
+    /// [`Machine::step_pipeline`]'s job, which captures the cycle. Resetting the
+    /// pipeline stages for a fresh run should be paired with
+    /// [`Machine::clear_journal`], since the old history no longer applies.
+    pub fn pipeline_mut(&mut self) -> &mut P {
+        &mut self.pipeline
     }
 
     // ── Execution ──
@@ -137,6 +199,44 @@ impl Machine {
     pub fn account_step_cycles(&mut self, cpi_cycles: u64) {
         self.mem.add_instruction_cycles(cpi_cycles);
         self.mem.snapshot_stats();
+    }
+
+    /// Advance the pipeline by **one clock cycle**, journaling the whole cycle
+    /// so step-back reverts it exactly. This is the *only* way execution can
+    /// touch the pipeline stages, so a tick can never escape the undo history.
+    ///
+    /// The closure receives the machine's owned pipeline, CPU, and memory and
+    /// runs the cycle (typically `pipeline_tick`); its return value is passed
+    /// back to the caller. Before the tick this snapshots the CPU, the
+    /// pipeline's reversible state, and the cache subsystem, and records the
+    /// per-byte RAM pre-images the cycle writes — exactly like a single
+    /// interpreter step, plus the pipeline latches.
+    ///
+    /// The MMU is re-synced to the CPU's `satp`/privilege first (a background
+    /// hart may have left it elsewhere), through the journal-preserving
+    /// [`Machine::sync_mmu`] rather than an unjournaled hatch — that earlier
+    /// erased the history on every cycle and was why pipeline step-back never
+    /// worked.
+    pub fn step_pipeline<R>(
+        &mut self,
+        tick: impl FnOnce(&mut P, &mut Cpu, &mut CacheController) -> R,
+    ) -> R {
+        self.sync_mmu();
+        let cpu_before = self.cpu.clone();
+        let pipe_before = self.pipeline.exec_snapshot();
+        let cache_before = self.mem.snapshot_state();
+        self.mem.ram_mut().begin_recording();
+
+        let result = tick(&mut self.pipeline, &mut self.cpu, &mut self.mem);
+
+        let ram_log = self.mem.ram_mut().take_recording();
+        self.record_with_pipe(
+            cpu_before,
+            pipe_before,
+            StepbackKind::Step,
+            Rewind::Delta { cache_before, ram_log },
+        );
+        result
     }
 
     // ── Sanctioned edits (each journaled, each undoable by `stepback`) ──
@@ -203,6 +303,7 @@ impl Machine {
         let change = self.journal.pop()?;
         let kind = change.kind;
         self.cpu = change.cpu_before;
+        self.pipeline.restore_exec(change.pipe_before);
         match change.rewind {
             Rewind::CpuOnly => {}
             Rewind::Delta { cache_before, ram_log } => {
@@ -286,13 +387,31 @@ impl Machine {
 
     // ── Internal ──
 
-    /// Advance the clock and push one change-set.
+    /// Advance the clock and push one change-set, snapshotting the pipeline
+    /// *now*. Used by every path that does not itself advance the pipeline
+    /// (single-step interpreter, edits, checkpoint) — there the current pipeline
+    /// state *is* the before-state.
     fn record(&mut self, cpu_before: Cpu, kind: StepbackKind, rewind: Rewind) {
+        let pipe_before = self.pipeline.exec_snapshot();
+        self.record_with_pipe(cpu_before, pipe_before, kind, rewind);
+    }
+
+    /// Advance the clock and push one change-set with an explicitly-captured
+    /// pipeline snapshot. [`Machine::step_pipeline`] uses this because the tick
+    /// mutates the pipeline, so the before-state must be captured up front.
+    fn record_with_pipe(
+        &mut self,
+        cpu_before: Cpu,
+        pipe_before: P::Snapshot,
+        kind: StepbackKind,
+        rewind: Rewind,
+    ) {
         self.clock += 1;
         self.journal.push(ChangeSet {
             clock: self.clock,
             kind,
             cpu_before,
+            pipe_before,
             rewind,
         });
     }

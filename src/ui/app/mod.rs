@@ -365,6 +365,7 @@ impl App {
                         vec![],
                         mem_size,
                     ),
+                    crate::falcon::machine::NoPipeline,
                 ),
                 prev_x: [0; 32],
                 prev_pc: base_pc,
