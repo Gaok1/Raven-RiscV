@@ -13,12 +13,9 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
         return false;
     }
 
-    // An open inline editor claims keystrokes first, so the Run shortcuts
-    // (`s`, `b`, `r`, …) feed the value buffer instead of stepping.
-    if app.run.run_edit.is_some() {
-        return handle_run_edit_key(app, code);
-    }
-
+    // An open inline editor claims keystrokes earlier, in
+    // `intercepts::handle_post_find_intercepts` (which sees key modifiers, so
+    // Ctrl+C / Ctrl+V work); nothing to do here while one is open.
     match code {
         KeyCode::Char('s') => {
             if !app.run.faulted {
@@ -51,30 +48,11 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
     }
 }
 
-/// Route a keystroke into the open inline editor: Esc cancels, Enter commits,
-/// Backspace trims, and characters valid for the active format extend the
-/// buffer. Any keystroke clears a stale rejection message.
-fn handle_run_edit_key(app: &mut App, code: KeyCode) -> bool {
-    match code {
-        KeyCode::Esc => app.cancel_run_edit(),
-        KeyCode::Enter => app.commit_run_edit(),
-        KeyCode::Backspace => {
-            app.run.run_edit_buf.pop();
-            app.run.run_edit_error = None;
-        }
-        KeyCode::Char(c) if edit_char_allowed(app, c) => {
-            app.run.run_edit_buf.push(c);
-            app.run.run_edit_error = None;
-        }
-        _ => {}
-    }
-    true
-}
-
 /// Whether `c` is a legal character for the cell currently being edited. Floats
 /// accept a free decimal/scientific form; integer and memory cells follow the
-/// Run tab's display format (hex / decimal / raw string).
-fn edit_char_allowed(app: &App, c: char) -> bool {
+/// Run tab's display format (hex / decimal / binary / raw string). Shared by the
+/// editor's key handler and clipboard paste (both in `intercepts`).
+pub(super) fn edit_char_allowed(app: &App, c: char) -> bool {
     use crate::ui::app::{FormatMode, RunEditTarget};
     if matches!(app.run.run_edit, Some(RunEditTarget::FReg(_))) {
         return c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+');
@@ -82,6 +60,7 @@ fn edit_char_allowed(app: &App, c: char) -> bool {
     match app.run.fmt_mode {
         FormatMode::Hex => c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | '_'),
         FormatMode::Dec => c.is_ascii_digit() || matches!(c, '-' | '_'),
+        FormatMode::Bin => matches!(c, '0' | '1' | 'b' | 'B' | '_'),
         FormatMode::Str => !c.is_control(),
     }
 }

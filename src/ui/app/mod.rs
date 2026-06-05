@@ -2255,6 +2255,7 @@ impl App {
         match self.run.fmt_mode {
             FormatMode::Hex => CellFormat::Hex,
             FormatMode::Dec => CellFormat::Dec,
+            FormatMode::Bin => CellFormat::Bin,
             FormatMode::Str => CellFormat::Str,
         }
     }
@@ -2267,6 +2268,7 @@ impl App {
             FormatMode::Hex => format!("{value:x}"),
             FormatMode::Dec if self.run.show_signed => format!("{}", value as i32),
             FormatMode::Dec => format!("{value}"),
+            FormatMode::Bin => format!("{value:b}"),
             FormatMode::Str => String::new(),
         };
         match target {

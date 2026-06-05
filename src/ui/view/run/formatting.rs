@@ -50,6 +50,7 @@ pub(super) fn format_u32_value(value: u32, fmt: FormatMode, show_signed: bool) -
             true => format!("{}", value as i32),
             false => format!("{value}"),
         },
+        FormatMode::Bin => format!("0b{value:032b}"),
         FormatMode::Str => ascii_bytes(&value.to_le_bytes()),
     }
 }
@@ -61,6 +62,7 @@ pub(super) fn format_u16_value(value: u16, fmt: FormatMode, show_signed: bool) -
             true => format!("{}", value as i16),
             false => format!("{value}"),
         },
+        FormatMode::Bin => format!("0b{value:016b}"),
         FormatMode::Str => ascii_bytes(&value.to_le_bytes()),
     }
 }
@@ -72,6 +74,7 @@ pub(super) fn format_u8_value(value: u8, fmt: FormatMode, show_signed: bool) -> 
             true => format!("{}", value as i8),
             false => format!("{value}"),
         },
+        FormatMode::Bin => format!("0b{value:08b}"),
         FormatMode::Str => ascii_bytes(&[value]),
     }
 }
