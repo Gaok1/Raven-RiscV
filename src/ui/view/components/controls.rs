@@ -28,6 +28,20 @@ impl ControlState {
         }
     }
 
+    /// Hover-first state for a *value chip* / toggle: hover feedback wins over
+    /// the active colour (mirrors [`dense_value`]). Use this for clickable value
+    /// chips and subtabs; use [`from`](Self::from) for the selected-first label
+    /// triangle.
+    pub(crate) fn chip(active: bool, hovered: bool) -> Self {
+        if hovered {
+            Self::Hovered
+        } else if active {
+            Self::Selected
+        } else {
+            Self::Normal
+        }
+    }
+
     /// Collapse to `Disabled` when a control is inert (e.g. TLB row while VM off).
     pub(crate) fn disabled_if(self, off: bool) -> Self {
         if off { Self::Disabled } else { self }
