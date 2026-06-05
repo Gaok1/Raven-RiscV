@@ -218,6 +218,46 @@ fn sequential_single_step_updates_cache_history_each_instruction() {
 }
 
 #[test]
+fn stepback_reverts_sequential_step_state_and_trace() {
+    let mut app = App::new(None);
+    app.tab = Tab::Run;
+    // Step-back rides the journaling sequential interpreter, which runs only with
+    // the pipeline off on a single core (pipeline step-back is Phase 4b).
+    app.pipeline.enabled = false;
+    load_program(
+        &mut app,
+        &[
+            ".text",
+            ".globl _start",
+            "_start:",
+            "addi a0, zero, 7",
+            "addi a1, zero, 9",
+        ],
+    );
+    assert!(!app.can_stepback_now(), "nothing to undo before stepping");
+
+    app.single_step();
+    assert_eq!(app.run.cpu().x[10], 7);
+    app.single_step();
+    assert_eq!(app.run.cpu().x[11], 9);
+    let pc_after_two = app.run.cpu().pc;
+    assert_eq!(app.run.exec_trace.len(), 2);
+    assert!(app.can_stepback_now());
+
+    // Undo the second instruction: x11 reverts, PC backs up, trace shrinks.
+    app.stepback_one();
+    assert_eq!(app.run.cpu().x[11], 0, "x11 reverted");
+    assert_eq!(app.run.exec_trace.len(), 1);
+    assert!(app.run.cpu().pc < pc_after_two);
+
+    // Undo the first: x10 reverts and the journal empties.
+    app.stepback_one();
+    assert_eq!(app.run.cpu().x[10], 0, "x10 reverted");
+    assert_eq!(app.run.exec_trace.len(), 0);
+    assert!(!app.can_stepback_now(), "journal drained");
+}
+
+#[test]
 fn pipeline_single_step_updates_cache_history_on_commit() {
     let mut app = App::new(None);
     app.set_cache_enabled(true);

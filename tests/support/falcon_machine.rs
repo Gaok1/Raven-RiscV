@@ -76,7 +76,7 @@ fn step_then_stepback_is_identity() {
     assert_ne!(fingerprint(m.cpu()), cpu0);
 
     while m.can_stepback() {
-        assert!(m.stepback());
+        assert!(m.stepback().is_some());
     }
     assert_eq!(fingerprint(m.cpu()), cpu0, "CPU must round-trip to its start");
     assert_eq!(
@@ -113,7 +113,7 @@ fn write_reg_journaled_undo() {
     m.write_reg(x5, 0xDEAD).unwrap();
     assert_eq!(m.cpu().read(5), 0xDEAD);
 
-    assert!(m.stepback());
+    assert!(m.stepback().is_some());
     assert_eq!(m.cpu().read(5), 0, "register reverted");
     assert!(!m.can_stepback());
 }
@@ -184,8 +184,26 @@ fn checkpoint_restores_full_state() {
         .unwrap();
     assert_eq!(m.mem().peek32(DATA_ADDR).unwrap(), 0x2222_2222);
 
-    assert!(m.stepback(), "step back to the checkpoint");
+    assert!(m.stepback().is_some(), "step back to the checkpoint");
     assert_eq!(m.mem().peek32(DATA_ADDR).unwrap(), 0x1111_1111);
+}
+
+#[test]
+fn stepback_reports_what_it_undid() {
+    // The UI keys its post-undo bookkeeping off this kind, so each path must
+    // report itself: a step, an edit, and a checkpoint, newest-first.
+    use super::StepbackKind;
+    let mut m = machine_with(&load_store_program(), write_through_dcache());
+    let mut console = Console::default();
+
+    m.step_interpreted(&mut console).unwrap(); // one instruction
+    m.write_reg(RegTarget::X(RegId::new(5).unwrap()), 0xABCD).unwrap(); // an edit
+    m.checkpoint(); // a burst boundary
+
+    assert_eq!(m.stepback(), Some(StepbackKind::Checkpoint));
+    assert_eq!(m.stepback(), Some(StepbackKind::Edit));
+    assert_eq!(m.stepback(), Some(StepbackKind::Step));
+    assert_eq!(m.stepback(), None, "journal is empty");
 }
 
 #[test]

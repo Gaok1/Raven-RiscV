@@ -46,6 +46,7 @@ use crate::falcon::registers::Cpu;
 use crate::ui::Console;
 
 use journal::{ChangeSet, Rewind, StepJournal};
+pub use journal::StepbackKind;
 use types::{EditError, FRegId, MemWidth, RegTarget};
 
 /// Default journal depth: how many steps/edits a user can rewind.
@@ -106,8 +107,22 @@ impl Machine {
         };
 
         let ram_log = self.mem.ram_mut().take_recording();
-        self.record(cpu_before, Rewind::Delta { cache_before, ram_log });
+        self.record(cpu_before, StepbackKind::Step, Rewind::Delta { cache_before, ram_log });
         outcome
+    }
+
+    /// Point the shared MMU at the CPU's current `satp` / privilege before a
+    /// sequential step — a background hart may have left it elsewhere.
+    ///
+    /// Unlike [`Machine::mem_mut_unjournaled`] this keeps the journal: it writes
+    /// only MMU metadata (no RAM), the values are a pure function of the CPU
+    /// `satp`/priv that a step-back restores, and the immediately-following
+    /// [`Machine::step_interpreted`] snapshots the synced MMU into its
+    /// change-set. So step-back stays exact without the sync erasing history.
+    pub fn sync_mmu(&mut self) {
+        let mmu = self.mem.mmu_mut();
+        mmu.satp = crate::falcon::mmu::Satp::new(self.cpu.satp);
+        mmu.priv_mode = self.cpu.priv_mode;
     }
 
     /// Apply one instruction's worth of cycle/stats accounting after a
@@ -139,7 +154,7 @@ impl Machine {
             RegTarget::X(reg) => self.cpu.write(reg.index(), value),
             RegTarget::Pc => self.cpu.pc = value,
         }
-        self.record(cpu_before, Rewind::CpuOnly);
+        self.record(cpu_before, StepbackKind::Edit, Rewind::CpuOnly);
         Ok(())
     }
 
@@ -147,7 +162,7 @@ impl Machine {
     pub fn write_freg(&mut self, freg: FRegId, bits: u32) {
         let cpu_before = self.cpu.clone();
         self.cpu.fwrite_bits(freg.index(), bits);
-        self.record(cpu_before, Rewind::CpuOnly);
+        self.record(cpu_before, StepbackKind::Edit, Rewind::CpuOnly);
     }
 
     /// Write a `width`-byte cell at `addr` through the normal cache-aware store
@@ -170,7 +185,7 @@ impl Machine {
         };
 
         let ram_log = self.mem.ram_mut().take_recording();
-        self.record(cpu_before, Rewind::Delta { cache_before, ram_log });
+        self.record(cpu_before, StepbackKind::Edit, Rewind::Delta { cache_before, ram_log });
         result
     }
 
@@ -182,11 +197,11 @@ impl Machine {
     }
 
     /// Undo the most recent journaled change (one step, edit, or back to the
-    /// last checkpoint). Returns `false` when the journal is empty.
-    pub fn stepback(&mut self) -> bool {
-        let Some(change) = self.journal.pop() else {
-            return false;
-        };
+    /// last checkpoint). Returns the [`StepbackKind`] of what was undone, or
+    /// `None` when the journal is empty.
+    pub fn stepback(&mut self) -> Option<StepbackKind> {
+        let change = self.journal.pop()?;
+        let kind = change.kind;
         self.cpu = change.cpu_before;
         match change.rewind {
             Rewind::CpuOnly => {}
@@ -205,7 +220,7 @@ impl Machine {
             }
         }
         self.clock = self.journal.top_clock().unwrap_or(0);
-        true
+        Some(kind)
     }
 
     /// Push a full-state checkpoint. Used at the boundary of a GO/JIT burst or
@@ -215,7 +230,7 @@ impl Machine {
         let cpu_before = self.cpu.clone();
         let cache_before = self.mem.snapshot_state();
         let ram_before = self.mem.ram().as_bytes().to_vec();
-        self.record(cpu_before, Rewind::Full { cache_before, ram_before });
+        self.record(cpu_before, StepbackKind::Checkpoint, Rewind::Full { cache_before, ram_before });
     }
 
     /// Drop all history (reset / program reload / mode switch).
@@ -272,10 +287,11 @@ impl Machine {
     // ── Internal ──
 
     /// Advance the clock and push one change-set.
-    fn record(&mut self, cpu_before: Cpu, rewind: Rewind) {
+    fn record(&mut self, cpu_before: Cpu, kind: StepbackKind, rewind: Rewind) {
         self.clock += 1;
         self.journal.push(ChangeSet {
             clock: self.clock,
+            kind,
             cpu_before,
             rewind,
         });
