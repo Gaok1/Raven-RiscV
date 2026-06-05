@@ -30,14 +30,14 @@ fn status_lines(app: &App) -> Vec<Line<'static>> {
 }
 
 fn cycle_line(app: &App) -> Line<'static> {
-    let (total, cpi, instr) = if app.pipeline.enabled || app.pipeline.sequential_mode {
-        let cycles = app.pipeline.cycle_count;
-        let cpi = if app.pipeline.instr_committed > 0 {
-            cycles as f64 / app.pipeline.instr_committed as f64
+    let (total, cpi, instr) = if app.run.pipeline().enabled || app.run.pipeline().sequential_mode {
+        let cycles = app.run.pipeline().cycle_count;
+        let cpi = if app.run.pipeline().instr_committed > 0 {
+            cycles as f64 / app.run.pipeline().instr_committed as f64
         } else {
             0.0
         };
-        (cycles, cpi, app.pipeline.instr_committed)
+        (cycles, cpi, app.run.pipeline().instr_committed)
     } else {
         (
             app.run.mem().total_program_cycles(),
@@ -45,7 +45,7 @@ fn cycle_line(app: &App) -> Line<'static> {
             app.run.mem().instruction_count,
         )
     };
-    let scope_label = if app.pipeline.enabled || app.pipeline.sequential_mode {
+    let scope_label = if app.run.pipeline().enabled || app.run.pipeline().sequential_mode {
         "Scope:selected"
     } else {
         "Scope:program"

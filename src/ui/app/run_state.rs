@@ -152,13 +152,29 @@ impl RunState {
     pub(crate) fn mem(&self) -> &CacheController {
         self.machine.mem()
     }
+
+    /// Shared read access to the pipeline simulator. The pipeline lives inside
+    /// `Machine` so a clock cycle is journaled together with the CPU and memory
+    /// (see [`crate::falcon::machine::Machine::step_pipeline`]); reads borrow
+    /// through here.
+    pub(crate) fn pipeline(&self) -> &crate::ui::pipeline::PipelineSimState {
+        self.machine.pipeline()
+    }
+
+    /// Mutable pipeline access for UI/config changes (hover, scroll, subtab,
+    /// forwarding/branch config, reset). Does **not** journal and does **not**
+    /// clear history. Never use it to advance execution — that is
+    /// [`crate::falcon::machine::Machine::step_pipeline`].
+    pub(crate) fn pipeline_mut(&mut self) -> &mut crate::ui::pipeline::PipelineSimState {
+        self.machine.pipeline_mut()
+    }
 }
 
 pub(crate) struct RunState {
     /// The simulator's CPU + memory hierarchy, owned behind the journaling
     /// gateway. Reads go through [`RunState::cpu`] / [`RunState::mem`]; mutation
     /// is only expressible via `Machine`'s methods (see its module docs).
-    pub(crate) machine: Machine,
+    pub(crate) machine: Machine<crate::ui::pipeline::PipelineSimState>,
     pub(crate) prev_x: [u32; 32],
     pub(crate) prev_pc: u32,
     pub(crate) breakpoints: std::collections::HashSet<u32>,

@@ -298,14 +298,14 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.pipeline.gantt_scroll = 2;
-    app.pipeline.gantt_visible_rows_cache.set(4);
-    app.pipeline.gantt_max_scroll_cache.set(9);
+    app.run.pipeline_mut().gantt_scroll = 2;
+    app.run.pipeline().gantt_visible_rows_cache.set(4);
+    app.run.pipeline().gantt_max_scroll_cache.set(9);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
         .expect("pipeline down handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.pipeline.gantt_scroll, 3);
+    assert_eq!(app.run.pipeline().gantt_scroll, 3);
 
     let outcome = handle_key(
         &mut app,
@@ -313,23 +313,23 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
     )
     .expect("pipeline page down handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.pipeline.gantt_scroll, 7);
+    assert_eq!(app.run.pipeline().gantt_scroll, 7);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
         .expect("pipeline page up handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.pipeline.gantt_scroll, 3);
+    assert_eq!(app.run.pipeline().gantt_scroll, 3);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
         .expect("pipeline up handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.pipeline.gantt_scroll, 2);
+    assert_eq!(app.run.pipeline().gantt_scroll, 2);
 }
 
 #[test]
 fn run_r_key_restarts_after_exit() {
     let mut app = App::new(None);
-    app.pipeline.enabled = false;
+    app.run.pipeline_mut().enabled = false;
     app.tab = Tab::Run;
     app.mode = EditorMode::Command;
     load_program(
@@ -472,14 +472,14 @@ fn pipeline_up_down_do_not_move_hidden_config_cursor_on_main_subtab() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.pipeline.subtab = crate::ui::pipeline::PipelineSubtab::Main;
-    app.pipeline.config_cursor = 3;
+    app.run.pipeline_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
+    app.run.pipeline_mut().config_cursor = 3;
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
         .expect("pipeline down handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.pipeline.config_cursor, 3);
+    assert_eq!(app.run.pipeline().config_cursor, 3);
 }
 
 #[test]
@@ -487,18 +487,18 @@ fn pipeline_tab_switch_clears_stale_config_row_hover() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.pipeline.subtab = crate::ui::pipeline::PipelineSubtab::Config;
-    app.pipeline.hover_config_row = Some(4);
+    app.run.pipeline_mut().subtab = crate::ui::pipeline::PipelineSubtab::Config;
+    app.run.pipeline_mut().hover_config_row = Some(4);
 
     let outcome =
         handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).expect("tab handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
     assert!(matches!(
-        app.pipeline.subtab,
+        app.run.pipeline().subtab,
         crate::ui::pipeline::PipelineSubtab::Main
     ));
-    assert_eq!(app.pipeline.hover_config_row, None);
+    assert_eq!(app.run.pipeline().hover_config_row, None);
 }
 
 #[test]
@@ -506,9 +506,9 @@ fn pipeline_keyboard_actions_clear_stale_button_hover_flags() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.pipeline.hover_speed = true;
-    app.pipeline.hover_state = true;
-    app.pipeline.hover_subtab_config = true;
+    app.run.pipeline_mut().hover_speed = true;
+    app.run.pipeline_mut().hover_state = true;
+    app.run.pipeline_mut().hover_subtab_config = true;
 
     let outcome = handle_key(
         &mut app,
@@ -517,9 +517,9 @@ fn pipeline_keyboard_actions_clear_stale_button_hover_flags() {
     .expect("f handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(!app.pipeline.hover_speed);
-    assert!(!app.pipeline.hover_state);
-    assert!(!app.pipeline.hover_subtab_config);
+    assert!(!app.run.pipeline().hover_speed);
+    assert!(!app.run.pipeline().hover_state);
+    assert!(!app.run.pipeline().hover_subtab_config);
 }
 
 #[test]
@@ -640,7 +640,7 @@ fn pipeline_step_key_is_handled_without_requesting_quit() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.pipeline.enabled = true;
+    app.run.pipeline_mut().enabled = true;
 
     let outcome = handle_key(
         &mut app,
@@ -682,12 +682,12 @@ fn pipeline_snapshot_and_exports_use_pipeline_clock_model() {
     app.set_pipeline_enabled(true);
     app.run.machine.mem_mut_unjournaled().instruction_count = 41;
     app.run.machine.mem_mut_unjournaled().extra_cycles = 99;
-    app.pipeline.cycle_count = 12;
-    app.pipeline.instr_committed = 3;
-    app.pipeline.stall_count = 4;
-    app.pipeline.flush_count = 1;
-    app.pipeline.branches_executed = 2;
-    app.pipeline.stall_by_type = [1, 1, 1, 1, 0];
+    app.run.pipeline_mut().cycle_count = 12;
+    app.run.pipeline_mut().instr_committed = 3;
+    app.run.pipeline_mut().stall_count = 4;
+    app.run.pipeline_mut().flush_count = 1;
+    app.run.pipeline_mut().branches_executed = 2;
+    app.run.pipeline_mut().stall_by_type = [1, 1, 1, 1, 0];
 
     let snap = capture_snapshot(&app);
     assert_eq!(snap.instruction_count, 3);

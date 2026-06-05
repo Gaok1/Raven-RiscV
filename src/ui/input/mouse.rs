@@ -133,8 +133,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
-                if point_in_rect(me.column, me.row, app.pipeline.gantt_area_rect.get()) {
-                    app.pipeline.gantt_scroll = app.pipeline.gantt_scroll.saturating_sub(1);
+                if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
+                    app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
                 }
             }
             Tab::Docs => {
@@ -191,9 +191,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
-                if point_in_rect(me.column, me.row, app.pipeline.gantt_area_rect.get()) {
-                    let max = app.pipeline.gantt_max_scroll_cache.get();
-                    app.pipeline.gantt_scroll = (app.pipeline.gantt_scroll + 1).min(max);
+                if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
+                    let max = app.run.pipeline().gantt_max_scroll_cache.get();
+                    app.run.pipeline_mut().gantt_scroll = (app.run.pipeline_mut().gantt_scroll + 1).min(max);
                 }
             }
             Tab::Docs => {
@@ -1424,8 +1424,8 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
         if let Some(addr) = app.run.hover_imem_addr {
             app.run.prev_pc = app.run.cpu().pc;
             app.run.machine.cpu_mut_unjournaled().pc = addr;
-            if app.pipeline.enabled {
-                app.pipeline.redirect_pc(addr);
+            if app.run.pipeline().enabled {
+                app.run.pipeline_mut().redirect_pc(addr);
             }
         }
     }
@@ -2370,7 +2370,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 
     let (pipe_y, _, _) = app.settings.bool_btn_pipeline_rect.get();
     if me.row == pipe_y {
-        app.set_pipeline_enabled(!app.pipeline.enabled);
+        app.set_pipeline_enabled(!app.run.pipeline().enabled);
         app.settings.selected = SETTINGS_ROW_PIPELINE_ENABLED;
         return;
     }
@@ -2424,7 +2424,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 // ── Pipeline tab mouse ────────────────────────────────────────────────────────
 
 fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
-    let p = &mut app.pipeline;
+    let p = app.run.pipeline_mut();
     let state_clickable = !p.faulted;
     p.hover_subtab_main = false;
     p.hover_subtab_config = false;
@@ -2501,36 +2501,36 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineSubtab,
     };
 
-    let (main_y, main_x0, main_x1) = app.pipeline.btn_subtab_main_rect.get();
+    let (main_y, main_x0, main_x1) = app.run.pipeline().btn_subtab_main_rect.get();
     if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
-        app.pipeline.subtab = PipelineSubtab::Main;
+        app.run.pipeline_mut().subtab = PipelineSubtab::Main;
         return;
     }
-    let (cfg_y, cfg_x0, cfg_x1) = app.pipeline.btn_subtab_config_rect.get();
+    let (cfg_y, cfg_x0, cfg_x1) = app.run.pipeline().btn_subtab_config_rect.get();
     if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
-        app.pipeline.subtab = PipelineSubtab::Config;
+        app.run.pipeline_mut().subtab = PipelineSubtab::Config;
         return;
     }
-    let (core_y, core_x0, core_x1) = app.pipeline.btn_core_rect.get();
+    let (core_y, core_x0, core_x1) = app.run.pipeline().btn_core_rect.get();
     if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
         app.cycle_selected_core(1);
         return;
     }
-    let (rst_y, rst_x0, rst_x1) = app.pipeline.btn_reset_rect.get();
+    let (rst_y, rst_x0, rst_x1) = app.run.pipeline().btn_reset_rect.get();
     if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
         app.restart_simulation();
         return;
     }
-    let (spd_y, spd_x0, spd_x1) = app.pipeline.btn_speed_rect.get();
+    let (spd_y, spd_x0, spd_x1) = app.run.pipeline().btn_speed_rect.get();
     if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
-        app.pipeline.speed = app.pipeline.speed.next();
-        app.pipeline.last_tick = std::time::Instant::now();
+        app.run.pipeline_mut().speed = app.run.pipeline_mut().speed.next();
+        app.run.pipeline_mut().last_tick = std::time::Instant::now();
         return;
     }
-    let (st_y, st_x0, st_x1) = app.pipeline.btn_state_rect.get();
+    let (st_y, st_x0, st_x1) = app.run.pipeline().btn_state_rect.get();
     if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
-        if app.pipeline.enabled && !app.pipeline.faulted {
-            if app.pipeline.halted {
+        if app.run.pipeline().enabled && !app.run.pipeline().faulted {
+            if app.run.pipeline().halted {
                 app.restart_simulation();
                 if app.can_start_run() {
                     app.run.is_running = true;
@@ -2546,107 +2546,107 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         }
         return;
     }
-    let (res_y, res_x0, res_x1) = app.pipeline.btn_export_results_rect.get();
+    let (res_y, res_x0, res_x1) = app.run.pipeline().btn_export_results_rect.get();
     if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
         do_export_pipeline_results(app);
         return;
     }
-    let (in_y, in_x0, in_x1) = app.pipeline.btn_import_cfg_rect.get();
+    let (in_y, in_x0, in_x1) = app.run.pipeline().btn_import_cfg_rect.get();
     if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
         crate::ui::input::keyboard::do_import_pcfg(app);
         return;
     }
-    let (out_y, out_x0, out_x1) = app.pipeline.btn_export_cfg_rect.get();
+    let (out_y, out_x0, out_x1) = app.run.pipeline().btn_export_cfg_rect.get();
     if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
         crate::ui::input::keyboard::do_export_pcfg(app);
         return;
     }
 
     // Config row clicks — toggle on click like Cache tab
-    if matches!(app.pipeline.subtab, PipelineSubtab::Config) {
-        let rects = app.pipeline.config_row_rects.get();
+    if matches!(app.run.pipeline().subtab, PipelineSubtab::Config) {
+        let rects = app.run.pipeline().config_row_rects.get();
         for i in 0..PipelineBypassConfig::CONFIG_ROWS {
             let (ry, rx0, rx1) = rects[i];
             if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
                 match i {
-                    0 => app.pipeline.bypass.ex_to_ex = !app.pipeline.bypass.ex_to_ex,
-                    1 => app.pipeline.bypass.mem_to_ex = !app.pipeline.bypass.mem_to_ex,
-                    2 => app.pipeline.bypass.wb_to_id = !app.pipeline.bypass.wb_to_id,
-                    3 => app.pipeline.bypass.store_to_load = !app.pipeline.bypass.store_to_load,
+                    0 => app.run.pipeline_mut().bypass.ex_to_ex = !app.run.pipeline_mut().bypass.ex_to_ex,
+                    1 => app.run.pipeline_mut().bypass.mem_to_ex = !app.run.pipeline_mut().bypass.mem_to_ex,
+                    2 => app.run.pipeline_mut().bypass.wb_to_id = !app.run.pipeline_mut().bypass.wb_to_id,
+                    3 => app.run.pipeline_mut().bypass.store_to_load = !app.run.pipeline_mut().bypass.store_to_load,
                     4 => {
-                        app.pipeline.mode = match app.pipeline.mode {
+                        app.run.pipeline_mut().mode = match app.run.pipeline_mut().mode {
                             PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
                             PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
                         }
                     }
                     5 => {
-                        app.pipeline.branch_resolve = match app.pipeline.branch_resolve {
+                        app.run.pipeline_mut().branch_resolve = match app.run.pipeline_mut().branch_resolve {
                             BranchResolve::Id => BranchResolve::Ex,
                             BranchResolve::Ex => BranchResolve::Mem,
                             BranchResolve::Mem => BranchResolve::Id,
                         }
                     }
                     6 => {
-                        let next = match app.pipeline.predict {
+                        let next = match app.run.pipeline().predict {
                             BranchPredict::NotTaken => BranchPredict::Taken,
                             BranchPredict::Taken => BranchPredict::Btfnt,
                             BranchPredict::Btfnt => BranchPredict::TwoBit,
                             BranchPredict::TwoBit => BranchPredict::NotTaken,
                         };
-                        app.pipeline.set_predict(next);
+                        app.run.pipeline_mut().set_predict(next);
                     }
                     7 => {
                         let idx = crate::ui::pipeline::FuKind::Alu.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     8 => {
                         let idx = crate::ui::pipeline::FuKind::Mul.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     9 => {
                         let idx = crate::ui::pipeline::FuKind::Div.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     10 => {
                         let idx = crate::ui::pipeline::FuKind::Fpu.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     11 => {
                         let idx = crate::ui::pipeline::FuKind::Lsu.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     12 => {
                         let idx = crate::ui::pipeline::FuKind::Sys.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     _ => {}
                 }
                 app.reconfigure_pipeline_model();
-                app.pipeline.config_cursor = i;
+                app.run.pipeline_mut().config_cursor = i;
                 return;
             }
         }

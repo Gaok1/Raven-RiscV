@@ -13,9 +13,9 @@ use ratatui::{
 };
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
-    app.pipeline.gantt_area_rect.set((0, 0, 0, 0));
-    if !matches!(app.pipeline.subtab, PipelineSubtab::Config) {
-        app.pipeline
+    app.run.pipeline().gantt_area_rect.set((0, 0, 0, 0));
+    if !matches!(app.run.pipeline().subtab, PipelineSubtab::Config) {
+        app.run.pipeline()
             .config_row_rects
             .set([(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS]);
     }
@@ -53,7 +53,7 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    match app.pipeline.subtab {
+    match app.run.pipeline().subtab {
         PipelineSubtab::Main => main_view::render_pipeline_main(f, layout[2], app),
         PipelineSubtab::Config => config_view::render_pipeline_config(f, layout[2], app),
     }
@@ -62,7 +62,7 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
 // ── Subtab header ─────────────────────────────────────────────────────────────
 
 fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
     let single_core = app.max_cores <= 1;
 
     let main_style = subtab_style(p.subtab == PipelineSubtab::Main, p.hover_subtab_main);
@@ -113,18 +113,18 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 
     // Record button geometry for mouse: y=inner.y, x ranges
     // "main" starts at x = inner.x + 1, "settings" starts at +8
-    app.pipeline
+    app.run.pipeline()
         .btn_subtab_main_rect
         .set((inner.y, inner.x + 1, inner.x + 5));
-    app.pipeline
+    app.run.pipeline()
         .btn_subtab_config_rect
         .set((inner.y, inner.x + 8, inner.x + 14));
     if single_core {
-        app.pipeline.btn_core_rect.set((0, 0, 0));
+        app.run.pipeline().btn_core_rect.set((0, 0, 0));
     } else {
         let core_x = inner.x + 17;
         let core_w = ("core ".len() + core_text.len()) as u16;
-        app.pipeline
+        app.run.pipeline()
             .btn_core_rect
             .set((inner.y, core_x, core_x + core_w));
     }
@@ -133,7 +133,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
 // ── Exec controls ─────────────────────────────────────────────────────────────
 
 fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
     let state_clickable = !p.faulted;
 
     let (state_label, state_color) = if p.faulted {
@@ -221,16 +221,16 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
     // Offsets: speed_label at +6, state_label at +15+speed_w, reset at +18+speed_w+state_w
     let speed_x = inner.x + 1;
     let speed_label_w = ("speed ".len() + p.speed.label().len()) as u16;
-    app.pipeline
+    app.run.pipeline()
         .btn_speed_rect
         .set((inner.y, speed_x, speed_x + speed_label_w));
     let state_x = inner.x + 4 + speed_label_w;
     let state_label_w = ("state ".len() + state_label.len()) as u16;
-    app.pipeline
+    app.run.pipeline()
         .btn_state_rect
         .set((inner.y, state_x, state_x + state_label_w));
     let reset_x = state_x + state_label_w + 3;
-    app.pipeline
+    app.run.pipeline()
         .btn_reset_rect
         .set((inner.y, reset_x, reset_x + 5));
 }
@@ -246,7 +246,7 @@ fn subtab_style(active: bool, hovered: bool) -> Style {
 }
 
 fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
     let mut spans = vec![
         Span::raw(" "),
         dense_action("results", theme::ACCENT, p.hover_export_results),
@@ -277,21 +277,21 @@ fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
 
     let y = inner.y;
     let x = inner.x + 1;
-    app.pipeline
+    app.run.pipeline()
         .btn_export_results_rect
         .set((y, x, x + "results".len() as u16));
 
     if matches!(p.subtab, PipelineSubtab::Config) {
         let import_x = x + "results".len() as u16 + 3;
         let export_x = import_x + "import cfg".len() as u16 + 3;
-        app.pipeline
+        app.run.pipeline()
             .btn_import_cfg_rect
             .set((y, import_x, import_x + "import cfg".len() as u16));
-        app.pipeline
+        app.run.pipeline()
             .btn_export_cfg_rect
             .set((y, export_x, export_x + "export cfg".len() as u16));
     } else {
-        app.pipeline.btn_import_cfg_rect.set((0, 0, 0));
-        app.pipeline.btn_export_cfg_rect.set((0, 0, 0));
+        app.run.pipeline().btn_import_cfg_rect.set((0, 0, 0));
+        app.run.pipeline().btn_export_cfg_rect.set((0, 0, 0));
     }
 }

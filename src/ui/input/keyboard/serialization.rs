@@ -609,7 +609,7 @@ pub(crate) fn apply_rcfg_text(app: &mut App, text: &str) -> Result<(), String> {
 /// Apply a raw .pcfg text to the app (parse + apply, no file I/O).
 pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
     let cfg = parse_pcfg(text)?;
-    cfg.apply_to_state(&mut app.pipeline);
+    cfg.apply_to_state(&mut app.run.pipeline_mut());
     Ok(())
 }
 
@@ -716,7 +716,7 @@ pub(crate) fn do_export_rcfg(app: &mut App) {
     let text = serialize_rcfg(
         &app.run.cpi_config,
         app.run.cache_enabled,
-        app.pipeline.enabled,
+        app.run.pipeline().enabled,
         app.vm_mode(),
         &app.active_scheme(),
         app.run.trace_syscalls,
@@ -779,7 +779,7 @@ pub(crate) fn do_import_rcfg(app: &mut App) {
 }
 
 pub(crate) fn do_export_pcfg(app: &mut App) {
-    let text = serialize_pcfg(&app.pipeline);
+    let text = serialize_pcfg(&app.run.pipeline());
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Pipeline Config", &["pcfg"])
         .set_file_name("pipeline.pcfg")
@@ -788,15 +788,15 @@ pub(crate) fn do_export_pcfg(app: &mut App) {
         let path = ensure_extension(path, "pcfg");
         match std::fs::write(&path, &text) {
             Ok(()) => {
-                app.pipeline.status_error = None;
-                app.pipeline.status_msg = Some(format!(
+                app.run.pipeline_mut().status_error = None;
+                app.run.pipeline_mut().status_msg = Some(format!(
                     "Pipeline config exported to {}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }
             Err(e) => {
-                app.pipeline.status_msg = None;
-                app.pipeline.status_error = Some(format!("Export failed: {e}"));
+                app.run.pipeline_mut().status_msg = None;
+                app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
             }
         }
     } else {
@@ -812,21 +812,21 @@ pub(crate) fn do_import_pcfg(app: &mut App) {
         match std::fs::read_to_string(&path) {
             Ok(text) => match parse_pcfg(&text) {
                 Ok(cfg) => {
-                    cfg.apply_to_state(&mut app.pipeline);
-                    app.pipeline.status_error = None;
-                    app.pipeline.status_msg = Some(format!(
+                    cfg.apply_to_state(&mut app.run.pipeline_mut());
+                    app.run.pipeline_mut().status_error = None;
+                    app.run.pipeline_mut().status_msg = Some(format!(
                         "Pipeline config imported from {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
                 }
                 Err(msg) => {
-                    app.pipeline.status_msg = None;
-                    app.pipeline.status_error = Some(format!("Import failed: {msg}"));
+                    app.run.pipeline_mut().status_msg = None;
+                    app.run.pipeline_mut().status_error = Some(format!("Import failed: {msg}"));
                 }
             },
             Err(e) => {
-                app.pipeline.status_msg = None;
-                app.pipeline.status_error = Some(format!("Import failed: {e}"));
+                app.run.pipeline_mut().status_msg = None;
+                app.run.pipeline_mut().status_error = Some(format!("Import failed: {e}"));
             }
         }
     } else {
@@ -901,15 +901,15 @@ pub(crate) fn do_export_pipeline_results(app: &mut App) {
         };
         match std::fs::write(&path, &text) {
             Ok(()) => {
-                app.pipeline.status_msg = Some(format!(
+                app.run.pipeline_mut().status_msg = Some(format!(
                     "Pipeline results exported to {}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
-                app.pipeline.status_error = None;
+                app.run.pipeline_mut().status_error = None;
             }
             Err(e) => {
-                app.pipeline.status_error = Some(format!("Export failed: {e}"));
-                app.pipeline.status_msg = None;
+                app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
+                app.run.pipeline_mut().status_msg = None;
             }
         }
     } else {
@@ -1658,7 +1658,7 @@ pub(super) fn dispatch_path_input(
             let text = serialize_rcfg(
                 &app.run.cpi_config,
                 app.run.cache_enabled,
-                app.pipeline.enabled,
+                app.run.pipeline().enabled,
                 app.vm_mode(),
                 &app.active_scheme(),
                 app.run.trace_syscalls,
@@ -1684,7 +1684,7 @@ pub(super) fn dispatch_path_input(
         PathInputAction::OpenPcfg => match std::fs::read_to_string(&path) {
             Ok(text) => match parse_pcfg(&text) {
                 Ok(cfg) => {
-                    cfg.apply_to_state(&mut app.pipeline);
+                    cfg.apply_to_state(&mut app.run.pipeline_mut());
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Pipeline config imported from {}",
@@ -1703,7 +1703,7 @@ pub(super) fn dispatch_path_input(
         },
         PathInputAction::SavePcfg => {
             let path = ensure_extension(path, "pcfg");
-            let text = serialize_pcfg(&app.pipeline);
+            let text = serialize_pcfg(&app.run.pipeline());
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_error = None;
@@ -1769,15 +1769,15 @@ pub(super) fn dispatch_path_input(
             };
             match std::fs::write(&path, &text) {
                 Ok(()) => {
-                    app.pipeline.status_msg = Some(format!(
+                    app.run.pipeline_mut().status_msg = Some(format!(
                         "Pipeline results exported to {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
-                    app.pipeline.status_error = None;
+                    app.run.pipeline_mut().status_error = None;
                 }
                 Err(e) => {
-                    app.pipeline.status_error = Some(format!("Export failed: {e}"));
-                    app.pipeline.status_msg = None;
+                    app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
+                    app.run.pipeline_mut().status_msg = None;
                 }
             }
         }

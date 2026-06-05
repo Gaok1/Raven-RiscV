@@ -65,19 +65,19 @@ fn target_hazards(term: Rect, app: &App) -> Option<Rect> {
         .saturating_sub(5)
         .clamp(3, 8);
     let trace_rows = app
-        .pipeline
+        .run.pipeline()
         .hazard_traces
         .len()
         .min(max_trace_rows as usize) as u16;
-    let legend_rows = if app.pipeline.hazard_traces.is_empty() {
+    let legend_rows = if app.run.pipeline().hazard_traces.is_empty() {
         0
     } else {
         1
     };
-    let msg_rows = if app.pipeline.hazard_msgs.is_empty() {
+    let msg_rows = if app.run.pipeline().hazard_msgs.is_empty() {
         1
     } else {
-        app.pipeline.hazard_msgs.len().min(2) as u16
+        app.run.pipeline().hazard_msgs.len().min(2) as u16
     };
     let hazards_h = (2 + trace_rows + legend_rows + msg_rows)
         .min(content.height.saturating_sub(stages_h).saturating_sub(3))
@@ -99,19 +99,19 @@ fn target_gantt(term: Rect, app: &App) -> Option<Rect> {
         .saturating_sub(5)
         .clamp(3, 8);
     let trace_rows = app
-        .pipeline
+        .run.pipeline()
         .hazard_traces
         .len()
         .min(max_trace_rows as usize) as u16;
-    let legend_rows = if app.pipeline.hazard_traces.is_empty() {
+    let legend_rows = if app.run.pipeline().hazard_traces.is_empty() {
         0
     } else {
         1
     };
-    let msg_rows = if app.pipeline.hazard_msgs.is_empty() {
+    let msg_rows = if app.run.pipeline().hazard_msgs.is_empty() {
         1
     } else {
-        app.pipeline.hazard_msgs.len().min(2) as u16
+        app.run.pipeline().hazard_msgs.len().min(2) as u16
     };
     let hazards_h = (2 + trace_rows + legend_rows + msg_rows)
         .min(content.height.saturating_sub(stages_h).saturating_sub(3))
@@ -132,11 +132,11 @@ fn target_config(term: Rect, _app: &App) -> Option<Rect> {
 }
 
 fn setup_main(app: &mut App) {
-    app.pipeline.subtab = PipelineSubtab::Main;
+    app.run.pipeline_mut().subtab = PipelineSubtab::Main;
 }
 
 fn setup_config(app: &mut App) {
-    app.pipeline.subtab = PipelineSubtab::Config;
+    app.run.pipeline_mut().subtab = PipelineSubtab::Config;
 }
 
 pub static STEPS: &[TutorialStep] = &[

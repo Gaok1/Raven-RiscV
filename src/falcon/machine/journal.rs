@@ -41,8 +41,14 @@ pub(super) enum Rewind {
 /// checkpoint touches neither.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StepbackKind {
-    /// One interpreted instruction (sequential single-step).
+    /// One *committed* instruction — a sequential single-step, or a pipeline
+    /// clock cycle in which an instruction retired. The caller pops one
+    /// exec-trace row and decrements that instruction's run count.
     Step,
+    /// A pipeline clock cycle that committed **nothing** (a stall or bubble).
+    /// State (CPU/memory/pipeline) still rewinds, but no instruction retired, so
+    /// the exec-trace and run counts are left untouched.
+    Cycle,
     /// A manual register / float / memory edit.
     Edit,
     /// A GO/JIT burst boundary checkpoint.

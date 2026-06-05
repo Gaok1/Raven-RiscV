@@ -138,9 +138,9 @@ pub fn ui(f: &mut Frame, app: &App) {
             Style::default().fg(theme::LABEL),
         ),
         Tab::Pipeline => {
-            if let Some(ref err) = app.pipeline.status_error {
+            if let Some(ref err) = app.run.pipeline().status_error {
                 (format!("✗  {err}"), Style::default().fg(theme::DANGER))
-            } else if let Some(ref ok) = app.pipeline.status_msg {
+            } else if let Some(ref ok) = app.run.pipeline().status_msg {
                 (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
             } else {
                 (
