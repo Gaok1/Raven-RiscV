@@ -127,17 +127,17 @@ pub(crate) fn badge(text: impl Into<String>, kind: Badge) -> Span<'static> {
 /// `active_color`, otherwise idle. Collapses the ~6 per-file `*_btn_style`
 /// duplicates and matches `controls::dense_value`.
 pub(crate) fn toggle(active: bool, hovered: bool, active_color: Color) -> Style {
-    if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
+    // Hover-first precedence (hover feedback wins over the active colour), same
+    // as the value chips. The state core lives in `controls::control_style`.
+    use super::components::controls::{control_style, ControlState};
+    let state = if hovered {
+        ControlState::Hovered
     } else if active {
-        Style::default()
-            .fg(active_color)
-            .add_modifier(Modifier::BOLD)
+        ControlState::Selected
     } else {
-        Style::default().fg(theme::IDLE)
-    }
+        ControlState::Normal
+    };
+    control_style(state, active_color, theme::IDLE)
 }
 
 // ── Key hints / legend bars ───────────────────────────────────────────────────

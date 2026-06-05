@@ -34,16 +34,36 @@ impl ControlState {
     }
 }
 
+/// The single style core shared by every control (labels, value chips, toggles,
+/// subtabs, actions). Maps the four interaction states to their leaf styles:
+/// Hovered → text bold, Selected → `active_color` bold, Disabled → dim border,
+/// Normal → `normal_color`.
+///
+/// Callers decide the *precedence* between Selected and Hovered themselves (the
+/// label triangle is selected-first via [`ControlState::from`]; value chips are
+/// hover-first, see [`dense_value`]) and pass the two colours that vary by role:
+/// a value chip selects in its semantic colour over a dim `IDLE` normal, while a
+/// label selects in `ACCENT` over a visible `base` normal.
+pub(crate) fn control_style(
+    state: ControlState,
+    active_color: Color,
+    normal_color: Color,
+) -> Style {
+    match state {
+        ControlState::Hovered => Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        ControlState::Selected => Style::default()
+            .fg(active_color)
+            .add_modifier(Modifier::BOLD),
+        ControlState::Disabled => Style::default().fg(theme::BORDER),
+        ControlState::Normal => Style::default().fg(normal_color),
+    }
+}
+
 /// The unified label triangle: Selected → accent bold, Hovered → text bold,
 /// Disabled → dim border, Normal → the caller's `base` color (LABEL for most
 /// settings, IDLE for pipeline, CPI_PANEL for the CPI section).
 pub(crate) fn label_style(state: ControlState, base: Color) -> Style {
-    match state {
-        ControlState::Selected => Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
-        ControlState::Hovered => Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD),
-        ControlState::Disabled => Style::default().fg(theme::BORDER),
-        ControlState::Normal => Style::default().fg(base),
-    }
+    control_style(state, theme::ACCENT, base)
 }
 
 /// `label_style` applied to text, ready to drop into a `Line`.
@@ -147,26 +167,27 @@ pub(crate) fn push_dense_pair(
     spans.push(dense_value(value, hovered, active, active_color));
 }
 
+/// A value chip: bold-bright when hovered, lit in `color` when active, dim
+/// otherwise. Hover-first precedence (hover feedback wins over the active
+/// colour), unlike the selected-first label triangle.
 pub(crate) fn dense_value(text: &str, hovered: bool, active: bool, color: Color) -> Span<'static> {
-    let style = if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
+    let state = if hovered {
+        ControlState::Hovered
     } else if active {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
+        ControlState::Selected
     } else {
-        Style::default().fg(theme::IDLE)
+        ControlState::Normal
     };
-    Span::styled(text.to_string(), style)
+    Span::styled(text.to_string(), control_style(state, color, theme::IDLE))
 }
 
+/// A standalone action word (e.g. `reset`): always lit in `color`, bold-bright
+/// when hovered. There is no inactive state.
 pub(crate) fn dense_action(text: &str, color: Color, hovered: bool) -> Span<'static> {
-    let style = if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
+    let state = if hovered {
+        ControlState::Hovered
     } else {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
+        ControlState::Selected
     };
-    Span::styled(text.to_string(), style)
+    Span::styled(text.to_string(), control_style(state, color, theme::IDLE))
 }
