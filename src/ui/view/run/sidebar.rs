@@ -5,7 +5,38 @@ use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragra
 use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
 use super::{App, MemRegion};
+use crate::falcon::machine::types::{RegId, RegTarget};
+use crate::ui::app::RunEditTarget;
 use crate::ui::theme;
+
+/// The cursor-suffixed edit buffer to paint in a cell, when it is the target of
+/// the open inline editor. `None` means render the cell's value normally.
+fn reg_edit_overlay(app: &App, target: RegTarget) -> Option<String> {
+    match app.run.run_edit {
+        Some(RunEditTarget::Reg(t)) if t == target => Some(format!("{}█", app.run.run_edit_buf)),
+        _ => None,
+    }
+}
+
+/// Like [`reg_edit_overlay`] for the float register `index`.
+fn freg_edit_overlay(app: &App, index: u8) -> Option<String> {
+    match app.run.run_edit {
+        Some(RunEditTarget::FReg(f)) if f.index() == index => {
+            Some(format!("{}█", app.run.run_edit_buf))
+        }
+        _ => None,
+    }
+}
+
+/// Like [`reg_edit_overlay`] for the memory cell at `addr`.
+fn mem_edit_overlay(app: &App, addr: u32) -> Option<String> {
+    match app.run.run_edit {
+        Some(RunEditTarget::Mem { addr: a, .. }) if a == addr => {
+            Some(format!("{}█", app.run.run_edit_buf))
+        }
+        _ => None,
+    }
+}
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if app.run.show_dyn {
@@ -78,9 +109,14 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         } else {
             base
         };
+        let target = RegId::new(reg_idx).map(RegTarget::X);
+        let (val, value_style) = match target.and_then(|t| reg_edit_overlay(app, t)) {
+            Some(overlay) => (overlay, edit_value_style()),
+            None => (val, style),
+        };
         rows.push(Row::new(vec![
             Cell::from(pin_label).style(style),
-            Cell::from(val).style(style),
+            Cell::from(val).style(value_style),
         ]));
     }
 
@@ -124,13 +160,33 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         } else {
             base_style
         };
+        let target = reg_target_for_row(index);
+        let (val, value_style) = match target.and_then(|t| reg_edit_overlay(app, t)) {
+            Some(overlay) => (overlay, edit_value_style()),
+            None => (val, row_style),
+        };
         rows.push(Row::new(vec![
             Cell::from(full_label).style(row_style),
-            Cell::from(val).style(row_style),
+            Cell::from(val).style(value_style),
         ]));
     }
 
     rows
+}
+
+/// Row index `0 = PC`, `1..=32 = x0..x31` to its edit target (mirrors the click
+/// hit-test in `mouse.rs`).
+fn reg_target_for_row(reg_idx: usize) -> Option<RegTarget> {
+    match reg_idx {
+        0 => Some(RegTarget::Pc),
+        1..=32 => RegId::new((reg_idx - 1) as u8).map(RegTarget::X),
+        _ => None,
+    }
+}
+
+/// Accent style for a cell currently being inline-edited.
+fn edit_value_style() -> Style {
+    Style::default().fg(theme::ACCENT).bold()
 }
 
 /// Style based on register age (0 = just changed → bright yellow, fades over steps).
@@ -216,9 +272,13 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
                 format!("{val:.6}")
             };
             let style = age_style(age);
+            let (value, value_style) = match freg_edit_overlay(app, i) {
+                Some(overlay) => (overlay, edit_value_style()),
+                None => (value, style),
+            };
             Row::new(vec![
                 Cell::from(label).style(style),
-                Cell::from(value).style(style),
+                Cell::from(value).style(value_style),
             ])
         })
         .collect();
@@ -333,7 +393,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn memory_block(app: &App) -> Block<'static> {
-    let base_addr = visible_memory_base_addr(app, None);
+    let base_addr = app.run.visible_memory_base_addr(None);
     let section = memory_title_section(app, base_addr);
     let accent = memory_accent_color(app, section);
     let title = Line::from(vec![
@@ -352,7 +412,7 @@ fn memory_block(app: &App) -> Block<'static> {
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
-    let base = visible_memory_base_addr(app, Some(inner.height as u32));
+    let base = app.run.visible_memory_base_addr(Some(inner.height as u32));
     let bytes = app.run.mem_view_bytes;
     let lines = inner.height as u32;
     let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
@@ -363,23 +423,6 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
         .filter(|&addr| addr <= max)
         .map(|addr| memory_line(app, addr))
         .collect()
-}
-
-fn visible_memory_base_addr(app: &App, lines_override: Option<u32>) -> u32 {
-    let bytes = app.run.mem_view_bytes.max(1);
-    let lines = lines_override.unwrap_or(0);
-    let center = app.run.mem_region == MemRegion::Stack
-        || app.run.mem_region == MemRegion::Access
-        || app.run.mem_region == MemRegion::Heap
-        || (app.run.show_dyn && matches!(app.run.dyn_mem_access, Some((_, _, true))));
-    let base = if center {
-        let half = lines / 2;
-        app.run.mem_view_addr.saturating_sub(half * bytes)
-    } else {
-        app.run.mem_view_addr
-    };
-    let align_mask = !(bytes - 1);
-    base & align_mask
 }
 
 fn memory_title_section<'a>(app: &'a App, addr: u32) -> &'a str {
@@ -457,6 +500,12 @@ fn mem_age_style(age: u8) -> Option<Style> {
 const HEAP_COLOR: Color = Color::Rgb(80, 200, 120);
 
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
+    // When this cell is the open inline editor, paint the buffer + cursor and
+    // skip the usual cache/marker decorations (transient while editing).
+    if let Some(overlay) = mem_edit_overlay(app, addr) {
+        return ListItem::new(format!("  0x{addr:08x}: {overlay}")).style(edit_value_style());
+    }
+
     let sp = app.run.cpu().x[2];
     let sp_aligned = sp & !(app.run.mem_view_bytes - 1);
     let is_sp = addr == sp_aligned;

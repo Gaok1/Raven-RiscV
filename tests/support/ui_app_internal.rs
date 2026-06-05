@@ -1907,3 +1907,120 @@ fn rust_to_raven_debug_elf_pipeline_matches_sequential_until_exit() {
         trace_tail(&pipe)
     );
 }
+
+// ── Phase 5: inline editing (registers / PC / floats / RAM) ─────────────────
+
+mod run_edit {
+    use super::super::{App, FormatMode, RunEditTarget};
+    use super::load_program;
+    use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
+
+    /// A minimal loaded program so the machine has a CPU + memory to edit.
+    fn loaded_app() -> App {
+        let mut app = App::new(None);
+        load_program(
+            &mut app,
+            &[".text", ".globl _start", "_start:", "addi a0, zero, 1"],
+        );
+        app.rebuild_harts_for_debug();
+        app
+    }
+
+    fn x(index: u8) -> RunEditTarget {
+        RunEditTarget::Reg(RegTarget::X(RegId::new(index).unwrap()))
+    }
+
+    #[test]
+    fn commit_writes_integer_register() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Hex;
+        app.begin_run_edit(x(5));
+        app.run.run_edit_buf = "deadbeef".to_string();
+        app.commit_run_edit();
+        assert!(app.run.run_edit.is_none(), "editor closes on success");
+        assert_eq!(app.run.cpu().x[5], 0xdead_beef);
+    }
+
+    #[test]
+    fn commit_writes_pc() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Hex;
+        app.begin_run_edit(RunEditTarget::Reg(RegTarget::Pc));
+        app.run.run_edit_buf = "100".to_string();
+        app.commit_run_edit();
+        assert_eq!(app.run.cpu().pc, 0x100);
+    }
+
+    #[test]
+    fn commit_rejects_x0_and_keeps_editor_open() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Hex;
+        app.begin_run_edit(x(0));
+        app.run.run_edit_buf = "5".to_string();
+        app.commit_run_edit();
+        assert!(app.run.run_edit.is_some(), "editor stays open on rejection");
+        assert!(app.run.run_edit_error.is_some());
+        assert_eq!(app.run.cpu().x[0], 0);
+    }
+
+    #[test]
+    fn commit_rejects_out_of_range_byte_cell() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Hex;
+        app.run.mem_view_bytes = 1;
+        let addr = app.run.data_base;
+        app.begin_run_edit(RunEditTarget::Mem { addr, width: MemWidth::B1 });
+        app.run.run_edit_buf = "1ff".to_string(); // 0x1FF > 1 byte
+        app.commit_run_edit();
+        assert!(app.run.run_edit.is_some());
+        assert!(app.run.run_edit_error.is_some());
+    }
+
+    #[test]
+    fn commit_writes_memory_then_stepback_restores() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Hex;
+        app.run.mem_view_bytes = 4;
+        let addr = app.run.data_base & !3;
+        let before = app.run.mem().effective_read32(addr).unwrap_or(0);
+
+        app.begin_run_edit(RunEditTarget::Mem { addr, width: MemWidth::B4 });
+        app.run.run_edit_buf = "cafebabe".to_string();
+        app.commit_run_edit();
+        assert_eq!(app.run.mem().effective_read32(addr).unwrap(), 0xcafe_babe);
+
+        app.stepback_one();
+        assert_eq!(app.run.mem().effective_read32(addr).unwrap_or(0), before);
+    }
+
+    #[test]
+    fn commit_writes_float_register() {
+        let mut app = loaded_app();
+        app.run.show_float_regs = true;
+        app.begin_run_edit(RunEditTarget::FReg(FRegId::new(3).unwrap()));
+        app.run.run_edit_buf = "1.5".to_string();
+        app.commit_run_edit();
+        assert_eq!(f32::from_bits(app.run.cpu().f[3]), 1.5);
+    }
+
+    #[test]
+    fn register_edit_is_undone_by_stepback() {
+        let mut app = loaded_app();
+        app.run.fmt_mode = FormatMode::Hex;
+        let before = app.run.cpu().x[6];
+        app.begin_run_edit(x(6));
+        app.run.run_edit_buf = "abc".to_string();
+        app.commit_run_edit();
+        assert_eq!(app.run.cpu().x[6], 0xabc);
+        app.stepback_one();
+        assert_eq!(app.run.cpu().x[6], before);
+    }
+
+    #[test]
+    fn begin_run_edit_is_noop_while_running() {
+        let mut app = loaded_app();
+        app.run.is_running = true;
+        app.begin_run_edit(x(5));
+        assert!(app.run.run_edit.is_none());
+    }
+}
