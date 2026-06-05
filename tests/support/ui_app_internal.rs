@@ -265,7 +265,7 @@ fn stepback_reverts_sequential_step_state_and_trace() {
 #[test]
 fn stepback_reverts_pipeline_cycle_state() {
     let mut app = App::new(None);
-    app.max_cores = 1;
+    // default max_cores (4), AllHarts — the real-world config
     app.tab = Tab::Run;
     // Pipeline on (the default). Drive the journaling per-cycle path.
     app.run.pipeline_mut().enabled = true;
