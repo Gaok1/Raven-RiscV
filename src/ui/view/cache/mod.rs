@@ -2,10 +2,12 @@
 use ratatui::{Frame, prelude::*, widgets::Paragraph};
 
 use crate::falcon::cache::CacheController;
-use crate::ui::app::{App, CacheScope, CacheSubtab, RunButton};
+use crate::ui::app::{App, CacheHoverTarget, CacheScope, CacheSubtab, RunButton};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{dense_action, dense_value, push_dense_pair};
+use crate::ui::view::components::{
+    ControlState, Toolbar, dense_action, dense_value, push_dense_pair,
+};
 use crate::ui::view::style;
 
 mod config;
@@ -219,29 +221,21 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
-    let stats_style = subtab_style(
-        matches!(app.cache.subtab, CacheSubtab::Stats),
-        matches!(
-            app.cache.hover,
-            Some(crate::ui::app::CacheHoverTarget::SubtabStats)
-        ),
-    );
-    let view_style = subtab_style(
-        matches!(app.cache.subtab, CacheSubtab::View),
-        matches!(
-            app.cache.hover,
-            Some(crate::ui::app::CacheHoverTarget::SubtabView)
-        ),
-    );
-    let config_style = subtab_style(
-        matches!(app.cache.subtab, CacheSubtab::Config),
-        matches!(
-            app.cache.hover,
-            Some(crate::ui::app::CacheHoverTarget::SubtabConfig)
-        ),
-    );
+/// The Cache subtab bar — `[stats] [view] [settings]` — as a [`Toolbar`] keyed by
+/// [`CacheSubtab`]. Shared by the renderer and `mouse::update_cache_hover` /
+/// `handle_cache_click`, so the click targets cannot drift from the labels.
+pub(crate) fn build_cache_subtab_bar(app: &App) -> Toolbar<CacheSubtab> {
+    let st = |sub: CacheSubtab, t: CacheHoverTarget| {
+        ControlState::chip(app.cache.subtab == sub, app.cache.hover == Some(t))
+    };
+    let mut bar = Toolbar::new();
+    bar.value(CacheSubtab::Stats, "stats", st(CacheSubtab::Stats, CacheHoverTarget::SubtabStats), theme::ACCENT)
+        .value(CacheSubtab::View, "view", st(CacheSubtab::View, CacheHoverTarget::SubtabView), theme::ACCENT)
+        .value(CacheSubtab::Config, "settings", st(CacheSubtab::Config, CacheHoverTarget::SubtabConfig), theme::ACCENT);
+    bar
+}
 
+fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let level_label = if app.cache.selected_level == 0 {
         "L1 Split I/D".to_string()
     } else {
@@ -256,34 +250,11 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
         PanelKind::Accent,
     );
     let inner = block.inner(area);
-    let row_y = inner.y;
-    let mut x = inner.x;
-    x += 1; // leading space
-    let stats_x0 = x;
-    x += "stats".len() as u16;
-    let stats_x1 = x;
-    x += 3; // separator
-    let view_x0 = x;
-    x += "view".len() as u16;
-    let view_x1 = x;
-    x += 3; // separator
-    let config_x0 = x;
-    x += "settings".len() as u16;
-    let config_x1 = x;
-    app.cache.subtab_stats_btn.set((row_y, stats_x0, stats_x1));
-    app.cache.subtab_view_btn.set((row_y, view_x0, view_x1));
-    app.cache
-        .subtab_config_btn
-        .set((row_y, config_x0, config_x1));
+    app.cache.subtab_header_origin.set((inner.y, inner.x + 1));
 
-    let line1 = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("stats", stats_style),
-        Span::raw("   "),
-        Span::styled("view", view_style),
-        Span::raw("   "),
-        Span::styled("settings", config_style),
-    ]);
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(build_cache_subtab_bar(app).spans());
+    let line1 = Line::from(spans);
     let line2 = Line::from(vec![
         Span::raw(" "),
         Span::styled("Tab to switch", style::label()),
@@ -430,6 +401,3 @@ fn level_btn_style(active: bool, hovered: bool) -> Style {
     style::toggle(active, hovered, theme::TEXT)
 }
 
-fn subtab_style(active: bool, hovered: bool) -> Style {
-    style::toggle(active, hovered, theme::TEXT)
-}

@@ -1107,9 +1107,9 @@ pub struct PipelineSimState {
     pub config_row_rects: Cell<[(u16, u16, u16); PipelineBypassConfig::CONFIG_ROWS]>,
 
     // ── Geometrias dos botões (y, x_start, x_end) para mouse hit-test ──
-    pub btn_subtab_main_rect: Cell<(u16, u16, u16)>,
-    pub btn_subtab_config_rect: Cell<(u16, u16, u16)>,
-    pub btn_core_rect: Cell<(u16, u16, u16)>,
+    /// Origin `(row, first_col)` of the header bar ([main][settings][core]); the
+    /// `Toolbar` in `view::pipeline` maps a click column back to the button.
+    pub header_origin: Cell<(u16, u16)>,
     pub btn_reset_rect: Cell<(u16, u16, u16)>,
     pub btn_speed_rect: Cell<(u16, u16, u16)>,
     pub btn_state_rect: Cell<(u16, u16, u16)>,
@@ -1184,9 +1184,7 @@ impl PipelineSimState {
             hover_export_cfg: false,
             status_msg: None,
             status_error: None,
-            btn_subtab_main_rect: Cell::new((0, 0, 0)),
-            btn_subtab_config_rect: Cell::new((0, 0, 0)),
-            btn_core_rect: Cell::new((0, 0, 0)),
+            header_origin: Cell::new((0, 0)),
             btn_reset_rect: Cell::new((0, 0, 0)),
             btn_speed_rect: Cell::new((0, 0, 0)),
             btn_state_rect: Cell::new((0, 0, 0)),

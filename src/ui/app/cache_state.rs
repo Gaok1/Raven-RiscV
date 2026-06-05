@@ -258,9 +258,9 @@ pub(crate) struct CacheState {
     pub(crate) data_fmt: CacheDataFmt,
     pub(crate) data_group: CacheDataGroup,
     pub(crate) addr_mode: CacheAddrMode,
-    pub(crate) subtab_stats_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) subtab_view_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) subtab_config_btn: std::cell::Cell<(u16, u16, u16)>,
+    /// Origin `(row, first_col)` of the subtab bar; the `Toolbar` in
+    /// `view::cache` maps a click column back to the [`CacheSubtab`].
+    pub(crate) subtab_header_origin: std::cell::Cell<(u16, u16)>,
     pub(crate) level_btns: std::cell::RefCell<Vec<(u16, u16, u16)>>,
     pub(crate) add_level_btn: std::cell::Cell<(u16, u16, u16)>,
     pub(crate) remove_level_btn: std::cell::Cell<(u16, u16, u16)>,

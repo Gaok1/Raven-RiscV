@@ -5,8 +5,16 @@ use crate::ui::app::App;
 use crate::ui::pipeline::PipelineSubtab;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{dense_action, push_dense_pair};
+use crate::ui::view::components::{ControlState, Toolbar, dense_action, push_dense_pair};
 use crate::ui::view::style;
+
+/// A button in the pipeline header bar.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PipelineHeaderBtn {
+    Main,
+    Config,
+    Core,
+}
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -63,68 +71,62 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
 
 // ── Subtab header ─────────────────────────────────────────────────────────────
 
-fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
+/// The pipeline header bar — `[main] [settings]  core N/M` — as a [`Toolbar`].
+/// The two subtabs light up in ACCENT when selected; `core` is a stepper that
+/// keeps its off-white value and is `Disabled` (inert) on a single-core machine.
+/// Shared by the renderer and `mouse::update_pipeline_hover` / click.
+pub(crate) fn build_pipeline_header_bar(app: &App) -> Toolbar<PipelineHeaderBtn> {
     let p = &app.pipeline;
     let single_core = app.max_cores <= 1;
-
-    let main_style = subtab_style(p.subtab == PipelineSubtab::Main, p.hover_subtab_main);
-    let config_style = subtab_style(p.subtab == PipelineSubtab::Config, p.hover_subtab_config);
     let core_text = format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1));
-    let core_style = if single_core {
-        style::label()
-    } else if p.hover_core {
-        Style::default().fg(theme::ACTIVE).bold()
+    let mut bar = Toolbar::new();
+    bar.value(
+        PipelineHeaderBtn::Main,
+        "main",
+        ControlState::chip(p.subtab == PipelineSubtab::Main, p.hover_subtab_main),
+        theme::ACCENT,
+    )
+    .value(
+        PipelineHeaderBtn::Config,
+        "settings",
+        ControlState::chip(p.subtab == PipelineSubtab::Config, p.hover_subtab_config),
+        theme::ACCENT,
+    );
+    let core_state = if single_core {
+        ControlState::Disabled
     } else {
-        style::value().bold()
+        ControlState::chip(true, p.hover_core)
     };
+    bar.toggle(PipelineHeaderBtn::Core, "core", &core_text, core_state, theme::TEXT);
+    bar
+}
 
-    let line1 = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("main", main_style),
-        Span::raw("   "),
-        Span::styled("settings", config_style),
-        Span::styled("   core ", style::label()),
-        Span::styled(core_text.clone(), core_style),
-        Span::styled(
-            format!(
-                " / Hart {} / {}",
-                app.core_hart_id(app.selected_core)
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-                app.core_status(app.selected_core).label()
-            ),
-            style::label(),
-        ),
-    ]);
-    let line2 = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("Tab to switch", style::label()),
-    ]);
-
+fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let inner = render_panel(
         f,
         area,
         panel::panel(" Pipeline Simulator ", PanelKind::Accent),
     );
-    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
+    app.pipeline.header_origin.set((inner.y, inner.x + 1));
 
-    // Record button geometry for mouse: y=inner.y, x ranges
-    // "main" starts at x = inner.x + 1, "settings" starts at +8
-    app.pipeline
-        .btn_subtab_main_rect
-        .set((inner.y, inner.x + 1, inner.x + 5));
-    app.pipeline
-        .btn_subtab_config_rect
-        .set((inner.y, inner.x + 8, inner.x + 14));
-    if single_core {
-        app.pipeline.btn_core_rect.set((0, 0, 0));
-    } else {
-        let core_x = inner.x + 17;
-        let core_w = ("core ".len() + core_text.len()) as u16;
-        app.pipeline
-            .btn_core_rect
-            .set((inner.y, core_x, core_x + core_w));
-    }
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(build_pipeline_header_bar(app).spans());
+    spans.push(Span::styled(
+        format!(
+            " / Hart {} / {}",
+            app.core_hart_id(app.selected_core)
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            app.core_status(app.selected_core).label()
+        ),
+        style::label(),
+    ));
+    let line1 = Line::from(spans);
+    let line2 = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("Tab to switch", style::label()),
+    ]);
+    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 }
 
 // ── Exec controls ─────────────────────────────────────────────────────────────
@@ -228,9 +230,6 @@ fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         .set((inner.y, reset_x, reset_x + 5));
 }
 
-fn subtab_style(active: bool, hovered: bool) -> Style {
-    style::toggle(active, hovered, theme::ACTIVE)
-}
 
 fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.pipeline;

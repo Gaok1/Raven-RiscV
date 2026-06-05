@@ -10,13 +10,13 @@ use crate::ui::theme;
 use crate::ui::view::components::layout;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
 
-mod cache;
+pub(crate) mod cache;
 pub(crate) mod components;
 pub mod disasm;
 pub mod docs;
 mod editor;
 mod path_input_overlay;
-mod pipeline;
+pub(crate) mod pipeline;
 pub(crate) mod run;
 mod settings;
 mod splash;

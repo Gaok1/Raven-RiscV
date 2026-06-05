@@ -1892,13 +1892,16 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         update_level_selector_hover(app, me, level_area);
     }
 
-    // Header row (subtab buttons)
-    if point_in_btn(me, app.cache.subtab_stats_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::SubtabStats);
-    } else if point_in_btn(me, app.cache.subtab_view_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::SubtabView);
-    } else if point_in_btn(me, app.cache.subtab_config_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::SubtabConfig);
+    // Header row (subtab buttons) — the bar maps a column back to its CacheSubtab.
+    let (sy, sx) = app.cache.subtab_header_origin.get();
+    if me.row == sy {
+        if let Some(sub) = crate::ui::view::cache::build_cache_subtab_bar(app).hit(me.column, sx) {
+            app.cache.hover = Some(match sub {
+                CacheSubtab::Stats => CacheHoverTarget::SubtabStats,
+                CacheSubtab::View => CacheHoverTarget::SubtabView,
+                CacheSubtab::Config => CacheHoverTarget::SubtabConfig,
+            });
+        }
     }
 
     if point_in_btn(me, app.cache.ctrl_results_btn.get()) {
@@ -2033,18 +2036,13 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
-    // Subtab header clicks — Stats | View | Config
-    if point_in_btn(me, app.cache.subtab_stats_btn.get()) {
-        app.cache.subtab = CacheSubtab::Stats;
-        return;
-    }
-    if point_in_btn(me, app.cache.subtab_view_btn.get()) {
-        app.cache.subtab = CacheSubtab::View;
-        return;
-    }
-    if point_in_btn(me, app.cache.subtab_config_btn.get()) {
-        app.cache.subtab = CacheSubtab::Config;
-        return;
+    // Subtab header clicks — Stats | View | Config (same bar as render & hover)
+    let (sy, sx) = app.cache.subtab_header_origin.get();
+    if me.row == sy {
+        if let Some(sub) = crate::ui::view::cache::build_cache_subtab_bar(app).hit(me.column, sx) {
+            app.cache.subtab = sub;
+            return;
+        }
     }
 
     // Shared controls bar — available in all subtabs
@@ -2488,34 +2486,42 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 // ── Pipeline tab mouse ────────────────────────────────────────────────────────
 
 fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
-    let p = &mut app.pipeline;
-    let state_clickable = !p.faulted;
-    p.hover_subtab_main = false;
-    p.hover_subtab_config = false;
-    p.hover_core = false;
-    p.hover_reset = false;
-    p.hover_speed = false;
-    p.hover_state = false;
-    p.hover_export_results = false;
-    p.hover_import_cfg = false;
-    p.hover_export_cfg = false;
-    p.hover_config_row = None;
+    let state_clickable = !app.pipeline.faulted;
+    {
+        let p = &mut app.pipeline;
+        p.hover_subtab_main = false;
+        p.hover_subtab_config = false;
+        p.hover_core = false;
+        p.hover_reset = false;
+        p.hover_speed = false;
+        p.hover_state = false;
+        p.hover_export_results = false;
+        p.hover_import_cfg = false;
+        p.hover_export_cfg = false;
+        p.hover_config_row = None;
+    }
 
-    let (main_y, main_x0, main_x1) = p.btn_subtab_main_rect.get();
-    if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
-        p.hover_subtab_main = true;
-        return;
+    // Header bar [main][settings][core] — one bar maps a column to its button.
+    let (hy, hx) = app.pipeline.header_origin.get();
+    if me.row == hy {
+        use crate::ui::view::pipeline::PipelineHeaderBtn;
+        match crate::ui::view::pipeline::build_pipeline_header_bar(app).hit(me.column, hx) {
+            Some(PipelineHeaderBtn::Main) => {
+                app.pipeline.hover_subtab_main = true;
+                return;
+            }
+            Some(PipelineHeaderBtn::Config) => {
+                app.pipeline.hover_subtab_config = true;
+                return;
+            }
+            Some(PipelineHeaderBtn::Core) => {
+                app.pipeline.hover_core = true;
+                return;
+            }
+            None => {}
+        }
     }
-    let (cfg_y, cfg_x0, cfg_x1) = p.btn_subtab_config_rect.get();
-    if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
-        p.hover_subtab_config = true;
-        return;
-    }
-    let (core_y, core_x0, core_x1) = p.btn_core_rect.get();
-    if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
-        p.hover_core = true;
-        return;
-    }
+    let p = &mut app.pipeline;
     let (rst_y, rst_x0, rst_x1) = p.btn_reset_rect.get();
     if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
         p.hover_reset = true;
@@ -2565,20 +2571,25 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineSubtab,
     };
 
-    let (main_y, main_x0, main_x1) = app.pipeline.btn_subtab_main_rect.get();
-    if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
-        app.pipeline.subtab = PipelineSubtab::Main;
-        return;
-    }
-    let (cfg_y, cfg_x0, cfg_x1) = app.pipeline.btn_subtab_config_rect.get();
-    if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
-        app.pipeline.subtab = PipelineSubtab::Config;
-        return;
-    }
-    let (core_y, core_x0, core_x1) = app.pipeline.btn_core_rect.get();
-    if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
-        app.cycle_selected_core(1);
-        return;
+    // Header bar [main][settings][core] — same bar as render & hover.
+    let (hy, hx) = app.pipeline.header_origin.get();
+    if me.row == hy {
+        use crate::ui::view::pipeline::PipelineHeaderBtn;
+        match crate::ui::view::pipeline::build_pipeline_header_bar(app).hit(me.column, hx) {
+            Some(PipelineHeaderBtn::Main) => {
+                app.pipeline.subtab = PipelineSubtab::Main;
+                return;
+            }
+            Some(PipelineHeaderBtn::Config) => {
+                app.pipeline.subtab = PipelineSubtab::Config;
+                return;
+            }
+            Some(PipelineHeaderBtn::Core) => {
+                app.cycle_selected_core(1);
+                return;
+            }
+            None => {}
+        }
     }
     let (rst_y, rst_x0, rst_x1) = app.pipeline.btn_reset_rect.get();
     if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
