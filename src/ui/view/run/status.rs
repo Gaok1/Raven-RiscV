@@ -25,8 +25,30 @@ pub(crate) fn run_controls_plain_text(app: &App) -> String {
 }
 
 fn status_lines(app: &App) -> Vec<Line<'static>> {
-    let hint = Line::from(""); // hints removed — use [?] help button
-    vec![Line::from(status_spans(app)), cycle_line(app), hint]
+    vec![
+        Line::from(status_spans(app)),
+        cycle_line(app),
+        edit_status_line(app),
+    ]
+}
+
+/// Third status row: while an inline edit is open it shows the commit/cancel
+/// prompt, or the rejection message when the last commit was out of range.
+/// Otherwise blank (the old hints moved to the `[?]` help button).
+fn edit_status_line(app: &App) -> Line<'static> {
+    if let Some(error) = &app.run.run_edit_error {
+        Line::from(Span::styled(
+            format!("  ✗ {error}"),
+            Style::default().fg(Color::Red).bold(),
+        ))
+    } else if app.run.run_edit.is_some() {
+        Line::from(Span::styled(
+            "  editing — Enter=commit  Esc=cancel  ⌫=delete",
+            Style::default().fg(theme::ACCENT),
+        ))
+    } else {
+        Line::from("")
+    }
 }
 
 fn cycle_line(app: &App) -> Line<'static> {

@@ -30,7 +30,8 @@ pub(crate) use self::hart::{
     HartCoreRuntime, HartLifecycle, is_transparent_single_step_word, step_hart_bg_inner,
 };
 pub(crate) use self::run_state::{
-    BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunSpeed, RunState,
+    BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunEditTarget, RunSpeed,
+    RunState,
 };
 pub(crate) use self::settings_state::{
     RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
@@ -46,6 +47,8 @@ use super::{
     view::ui,
 };
 use crate::falcon::cache::CacheConfig;
+use crate::falcon::machine::parse::{CellFormat, parse_cell};
+use crate::falcon::machine::types::MemWidth;
 use crate::falcon::{self, CacheController, Cpu};
 use crate::ui::platform::Clipboard;
 use crossterm::{
@@ -418,6 +421,9 @@ impl App {
                 faulted: false,
                 speed: RunSpeed::X1,
                 go_checkpointed: false,
+                run_edit: None,
+                run_edit_buf: String::new(),
+                run_edit_error: None,
                 comments: std::collections::HashMap::new(),
                 labels: std::collections::HashMap::new(),
                 halt_pcs: std::collections::HashSet::new(),
@@ -1907,6 +1913,9 @@ impl App {
 
     fn tick(&mut self) {
         if self.run.is_running {
+            // A live run owns the state; close any inline editor left open so its
+            // keystrokes don't fight the running program.
+            self.cancel_run_edit();
             // A GO/Instant burst writes RAM directly (un-journaled), so take one
             // full checkpoint at the burst's first tick — step-back can then
             // rewind to just before it. Rate-limited modes single-step through
@@ -2162,6 +2171,132 @@ impl App {
         if let Some(runtime) = self.selected_runtime_mut() {
             runtime.lifecycle = HartLifecycle::Running;
             runtime.faulted = false;
+        }
+        self.ensure_pc_visible_in_imem();
+    }
+
+    // ── Inline editing of live state (registers / PC / floats / RAM) ────────
+
+    /// Open the inline editor on `target`, seeding the buffer with the cell's
+    /// current value. No-op while a run is active — running state is the
+    /// program's to own, not the user's to hand-edit.
+    pub(crate) fn begin_run_edit(&mut self, target: RunEditTarget) {
+        if self.run.is_running {
+            return;
+        }
+        self.run.run_edit_buf = self.run_edit_seed(target);
+        self.run.run_edit = Some(target);
+        self.run.run_edit_error = None;
+    }
+
+    /// Close the inline editor, discarding any in-progress text.
+    pub(crate) fn cancel_run_edit(&mut self) {
+        self.run.run_edit = None;
+        self.run.run_edit_buf.clear();
+        self.run.run_edit_error = None;
+    }
+
+    /// Commit the open inline edit: parse the buffer against the target's width
+    /// and current display format, then write it through the journaling
+    /// `Machine` mutator so step-back can undo it. On rejection the editor stays
+    /// open and `run_edit_error` carries the reason, so the input isn't lost.
+    pub(crate) fn commit_run_edit(&mut self) {
+        let Some(target) = self.run.run_edit else {
+            return;
+        };
+        let buf = self.run.run_edit_buf.clone();
+        let before_x = self.run.cpu().x;
+        let before_f = self.run.cpu().f;
+
+        let result: Result<(), String> = match target {
+            RunEditTarget::Reg(reg) => parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
+                .map_err(|e| e.message())
+                .and_then(|value| {
+                    self.run.machine.write_reg(reg, value as u32).map_err(|e| e.message())
+                }),
+            RunEditTarget::FReg(freg) => match buf.trim().parse::<f32>() {
+                Ok(value) => {
+                    self.run.machine.write_freg(freg, value.to_bits());
+                    Ok(())
+                }
+                Err(_) => Err(format!("cannot parse \"{}\" as a float", buf.trim())),
+            },
+            RunEditTarget::Mem { addr, width } => {
+                parse_cell(&buf, width, self.cell_format(), self.run.show_signed)
+                    .map_err(|e| e.message())
+                    .and_then(|value| {
+                        self.run.machine.write_mem(addr, width, value).map_err(|e| e.to_string())
+                    })
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                self.cancel_run_edit();
+                self.refresh_after_edit(before_x, before_f, target);
+            }
+            Err(message) => self.run.run_edit_error = Some(message),
+        }
+    }
+
+    /// Map the Run tab's display format to the parser's [`CellFormat`].
+    fn cell_format(&self) -> CellFormat {
+        match self.run.fmt_mode {
+            FormatMode::Hex => CellFormat::Hex,
+            FormatMode::Dec => CellFormat::Dec,
+            FormatMode::Str => CellFormat::Str,
+        }
+    }
+
+    /// The text an editor starts from: the cell's current value, formatted the
+    /// way it reads on screen (plain digits, no `0x`). `Str` mode seeds empty —
+    /// rendering non-printable bytes back as `.` would round-trip lossily.
+    fn run_edit_seed(&self, target: RunEditTarget) -> String {
+        use crate::falcon::machine::types::RegTarget;
+        let plain_word = |value: u32| match self.run.fmt_mode {
+            FormatMode::Hex => format!("{value:x}"),
+            FormatMode::Dec if self.run.show_signed => format!("{}", value as i32),
+            FormatMode::Dec => format!("{value}"),
+            FormatMode::Str => String::new(),
+        };
+        match target {
+            RunEditTarget::Reg(RegTarget::Pc) => plain_word(self.run.cpu().pc),
+            RunEditTarget::Reg(RegTarget::X(reg)) => {
+                plain_word(self.run.cpu().x[reg.index() as usize])
+            }
+            RunEditTarget::FReg(freg) => {
+                let value = f32::from_bits(self.run.cpu().f[freg.index() as usize]);
+                format!("{value}")
+            }
+            RunEditTarget::Mem { addr, width } => {
+                let raw = match width {
+                    MemWidth::B1 => self.run.mem().effective_read8(addr).unwrap_or(0) as u32,
+                    MemWidth::B2 => self.run.mem().effective_read16(addr).unwrap_or(0) as u32,
+                    MemWidth::B4 => self.run.mem().effective_read32(addr).unwrap_or(0),
+                };
+                plain_word(raw)
+            }
+        }
+    }
+
+    /// Refresh the Run tab's highlight bookkeeping after a committed edit:
+    /// light up the register/float it changed and flag the touched memory cell.
+    fn refresh_after_edit(&mut self, before_x: [u32; 32], before_f: [u32; 32], target: RunEditTarget) {
+        let pc = self.run.cpu().pc;
+        let now_x = self.run.cpu().x;
+        let now_f = self.run.cpu().f;
+        for i in 0..32 {
+            if now_x[i] != before_x[i] {
+                self.run.reg_age[i] = 0;
+                self.run.reg_last_write_pc[i] = Some(pc);
+            }
+            if now_f[i] != before_f[i] {
+                self.run.f_age[i] = 0;
+                self.run.f_last_write_pc[i] = Some(pc);
+            }
+        }
+        if let RunEditTarget::Mem { addr, width } = target {
+            self.run.mem_access_log.push((addr, width.bytes(), 0));
         }
         self.ensure_pc_visible_in_imem();
     }

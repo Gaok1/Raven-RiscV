@@ -1,3 +1,4 @@
+use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
 use crate::ui::input::keyboard::{
     do_export_cfg, do_export_pipeline_results, do_export_rcfg, do_export_results, do_import_cfg,
     do_import_rcfg,
@@ -13,7 +14,8 @@ use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
-        EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SETTINGS_ROW_CACHE_ENABLED,
+        EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, RunEditTarget,
+        SETTINGS_ROW_CACHE_ENABLED,
         SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
         SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED,
         SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
@@ -461,6 +463,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
                 handle_register_click(app, me, area);
+                handle_memory_click(app, me, area);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if app.run.sidebar_drag {
@@ -1480,29 +1483,54 @@ fn update_sidebar_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
-fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
-    if !app.run_sidebar_shows_registers() || app.run.show_float_regs {
-        return;
+/// Label-column width of the integer / float register tables (see the
+/// `Constraint::Length` in `sidebar.rs`). A click at or past this offset lands
+/// on the value column and opens the inline editor; a click on the label keeps
+/// its existing meaning (pin / unpin).
+const INT_LABEL_W: u16 = 16;
+const FLOAT_LABEL_W: u16 = 13;
+
+/// The edit target for a register list row, where `0 = PC` and `1..=32 = x0..x31`.
+fn reg_target_for_row(reg_idx: usize) -> Option<RegTarget> {
+    match reg_idx {
+        0 => Some(RegTarget::Pc),
+        1..=32 => RegId::new((reg_idx - 1) as u8).map(RegTarget::X),
+        _ => None,
     }
-    let cols = run_cols(app, area);
-    let sidebar = cols[0];
+}
+
+/// The sidebar's inner content rect (inside the panel border), or `None` when
+/// the click misses it or the sidebar is collapsed.
+fn sidebar_inner_hit(app: &App, me: MouseEvent, area: Rect) -> Option<Rect> {
     if app.run.sidebar_collapsed {
-        return;
+        return None;
     }
+    let sidebar = run_cols(app, area)[0];
     let inner = Rect::new(
         sidebar.x + 1,
         sidebar.y + 1,
         sidebar.width.saturating_sub(2),
         sidebar.height.saturating_sub(2),
     );
-    if me.column < inner.x || me.column >= inner.x + inner.width {
+    let in_x = me.column >= inner.x && me.column < inner.x + inner.width;
+    let in_y = me.row >= inner.y && me.row < inner.y + inner.height;
+    (in_x && in_y).then_some(inner)
+}
+
+fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if !app.run_sidebar_shows_registers() {
         return;
     }
-    if me.row < inner.y || me.row >= inner.y + inner.height {
+    if app.run.show_float_regs {
+        handle_float_register_click(app, me, area);
         return;
     }
+    let Some(inner) = sidebar_inner_hit(app, me, area) else {
+        return;
+    };
 
     let visual_row = (me.row - inner.y) as usize;
+    let is_value = me.column >= inner.x + INT_LABEL_W;
     let pinned = &app.run.pinned_regs;
     let sep_row = if pinned.is_empty() {
         usize::MAX
@@ -1510,10 +1538,16 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
         pinned.len()
     };
 
-    // Click on a pinned register row → unpin it
+    // Pinned section: value column edits the register, label column unpins it.
     if visual_row < pinned.len() {
         let reg = pinned[visual_row];
-        app.run.pinned_regs.retain(|&r| r != reg);
+        if is_value {
+            if let Some(target) = reg_target_for_row(reg as usize + 1) {
+                app.begin_run_edit(RunEditTarget::Reg(target));
+            }
+        } else {
+            app.run.pinned_regs.retain(|&r| r != reg);
+        }
         return;
     }
     // Click on separator → ignore
@@ -1521,7 +1555,7 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
-    // Click on a regular (scrolled) register row → pin/unpin
+    // Regular (scrolled) section.
     let offset = if pinned.is_empty() {
         0
     } else {
@@ -1533,11 +1567,19 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     let max_scroll = total.saturating_sub(visible_rows.saturating_sub(offset));
     let start = app.run.regs_scroll.min(max_scroll);
     let reg_idx = start + row_in_scroll; // 0 = PC, 1..=32 = x0..x31
-
-    if reg_idx == 0 {
-        return;
-    } // PC can't be pinned
     if reg_idx > 32 {
+        return;
+    }
+
+    // Value column → open the editor (PC included).
+    if is_value {
+        if let Some(target) = reg_target_for_row(reg_idx) {
+            app.begin_run_edit(RunEditTarget::Reg(target));
+        }
+        return;
+    }
+    // Label column → pin / unpin (the PC row cannot be pinned).
+    if reg_idx == 0 {
         return;
     }
     let reg = (reg_idx - 1) as u8;
@@ -1546,6 +1588,65 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     } else {
         app.run.pinned_regs.push(reg);
     }
+}
+
+/// A click on the float register table's value column opens its editor. The row
+/// → `f`-index mapping mirrors `render_float_register_table` (scroll + visible).
+fn handle_float_register_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let Some(inner) = sidebar_inner_hit(app, me, area) else {
+        return;
+    };
+    if me.column < inner.x + FLOAT_LABEL_W {
+        return;
+    }
+    let visible = inner.height.saturating_sub(2) as usize;
+    if visible == 0 {
+        return;
+    }
+    let scroll = app.run.regs_scroll.min(32usize.saturating_sub(visible));
+    let visual_row = (me.row - inner.y) as usize;
+    if visual_row >= visible {
+        return;
+    }
+    let f_index = scroll + visual_row;
+    if let Some(freg) = FRegId::new(f_index as u8) {
+        app.begin_run_edit(RunEditTarget::FReg(freg));
+    }
+}
+
+/// A click on a memory row opens that cell's editor (width follows the byte
+/// view). The row → address mapping mirrors `memory_items`, including the
+/// one-line offset the search bar takes when open.
+fn handle_memory_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if !app.run_sidebar_shows_memory() {
+        return;
+    }
+    let Some(inner) = sidebar_inner_hit(app, me, area) else {
+        return;
+    };
+    // The search bar, when open, occupies the first inner row (see
+    // `render_memory_view`); the memory list starts below it.
+    let search_offset = if app.run.mem_search_open && inner.height > 2 {
+        1
+    } else {
+        0
+    };
+    if me.row < inner.y + search_offset {
+        return;
+    }
+    let list_height = inner.height.saturating_sub(search_offset) as u32;
+    let row = (me.row - inner.y - search_offset) as u32;
+    let bytes = app.run.mem_view_bytes;
+    let base = app.run.visible_memory_base_addr(Some(list_height));
+    let addr = base.wrapping_add(row * bytes);
+    let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
+    if addr > max {
+        return;
+    }
+    app.begin_run_edit(RunEditTarget::Mem {
+        addr,
+        width: MemWidth::from_view_bytes(bytes),
+    });
 }
 
 fn handle_help_popup_mouse(app: &mut App, me: MouseEvent, area: Rect) {

@@ -1,9 +1,26 @@
 use super::CpiConfig;
 use crate::falcon::jit::ExecutionBackend;
 use crate::falcon::machine::Machine;
+use crate::falcon::machine::types::{FRegId, MemWidth, RegTarget};
 use crate::falcon::{CacheController, Cpu, registers::ExecRegion};
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
+
+/// What the Run tab is editing inline, when [`RunState::run_edit`] is `Some`.
+///
+/// Every variant commits through a journaling `Machine` mutator
+/// ([`Machine::write_reg`] / [`Machine::write_freg`] / [`Machine::write_mem`]),
+/// so a manual edit is undoable by step-back exactly like an executed
+/// instruction.
+#[derive(Clone, Copy)]
+pub(crate) enum RunEditTarget {
+    /// An integer register `x1..=x31` or the PC. `x0` is rejected on commit.
+    Reg(RegTarget),
+    /// A float register `f0..=f31`, typed as a decimal value.
+    FReg(FRegId),
+    /// A `width`-byte memory cell at the (virtual) address `addr`.
+    Mem { addr: u32, width: MemWidth },
+}
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(crate) enum EditorMode {
@@ -142,6 +159,27 @@ impl RunState {
         self.vm_mode != crate::falcon::mmu::VmMode::Off
     }
 
+    /// First address shown at the top of the memory view, given the panel's
+    /// inner height in rows. Auto-following regions (Stack/Access/Heap) center
+    /// `mem_view_addr`; others anchor it at the top. Shared by the renderer and
+    /// the click-to-edit hit test so both agree on each row's address.
+    pub(crate) fn visible_memory_base_addr(&self, lines_override: Option<u32>) -> u32 {
+        let bytes = self.mem_view_bytes.max(1);
+        let lines = lines_override.unwrap_or(0);
+        let center = self.mem_region == MemRegion::Stack
+            || self.mem_region == MemRegion::Access
+            || self.mem_region == MemRegion::Heap
+            || (self.show_dyn && matches!(self.dyn_mem_access, Some((_, _, true))));
+        let base = if center {
+            let half = lines / 2;
+            self.mem_view_addr.saturating_sub(half * bytes)
+        } else {
+            self.mem_view_addr
+        };
+        let align_mask = !(bytes - 1);
+        base & align_mask
+    }
+
     /// Shared read access to the CPU. The `~117` `run.cpu` read sites borrow
     /// through here; mutation must go through a `Machine` method.
     pub(crate) fn cpu(&self) -> &Cpu {
@@ -250,6 +288,16 @@ pub(crate) struct RunState {
     /// One-shot guard: a full step-back checkpoint has been taken for the
     /// current GO/Instant burst. Reset when the run stops. See `App::tick`.
     pub(crate) go_checkpointed: bool,
+
+    // ── Inline editing of live state (registers / PC / floats / RAM) ──
+    /// The cell currently open for inline editing, or `None`. While `Some`,
+    /// keystrokes feed `run_edit_buf` instead of the normal Run shortcuts.
+    pub(crate) run_edit: Option<RunEditTarget>,
+    /// The text typed so far for the open edit (committed on Enter).
+    pub(crate) run_edit_buf: String,
+    /// The rejection message from the last failed commit; cleared on the next
+    /// keystroke. While set, the editor stays open so the user can fix the value.
+    pub(crate) run_edit_error: Option<String>,
 
     // Visible comments from source (#! text), keyed by instruction address
     pub(crate) comments: std::collections::HashMap<u32, String>,
