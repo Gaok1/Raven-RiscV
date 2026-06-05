@@ -48,7 +48,7 @@ use super::{
 };
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::machine::parse::{CellFormat, parse_cell};
-use crate::falcon::machine::types::MemWidth;
+use crate::falcon::machine::types::{MemWidth, RegTarget};
 use crate::falcon::{self, CacheController, Cpu};
 use crate::ui::platform::Clipboard;
 use crossterm::{
@@ -2232,6 +2232,17 @@ impl App {
 
         match result {
             Ok(()) => {
+                // A PC edit must also steer the pipeline: with the pipeline
+                // enabled (the default) execution fetches from `fetch_pc`, not
+                // `cpu.pc`, so without this the next step keeps fetching the old
+                // address. Mirrors the imem PC-redirect click. The redirect is
+                // reversible state captured by the change-set's pipeline
+                // snapshot, so step-back undoes it together with the PC write.
+                if matches!(target, RunEditTarget::Reg(RegTarget::Pc)) && self.run.pipeline().enabled
+                {
+                    let pc = self.run.cpu().pc;
+                    self.run.pipeline_mut().redirect_pc(pc);
+                }
                 self.cancel_run_edit();
                 self.refresh_after_edit(before_x, before_f, target);
             }
@@ -2252,7 +2263,6 @@ impl App {
     /// way it reads on screen (plain digits, no `0x`). `Str` mode seeds empty —
     /// rendering non-printable bytes back as `.` would round-trip lossily.
     fn run_edit_seed(&self, target: RunEditTarget) -> String {
-        use crate::falcon::machine::types::RegTarget;
         let plain_word = |value: u32| match self.run.fmt_mode {
             FormatMode::Hex => format!("{value:x}"),
             FormatMode::Dec if self.run.show_signed => format!("{}", value as i32),
