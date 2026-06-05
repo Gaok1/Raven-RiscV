@@ -1119,6 +1119,97 @@ pub struct PipelineSimState {
     pub gantt_area_rect: Cell<(u16, u16, u16, u16)>,
 }
 
+/// The reversible slice of [`PipelineSimState`] — everything `pipeline_tick`
+/// mutates as the clock advances, and nothing else. Captured before each cycle
+/// by [`crate::falcon::machine::Machine::step_pipeline`] and restored on
+/// step-back, so undoing a cycle rewinds the stages, functional units, branch
+/// predictor, hazard read-outs, and the Gantt history exactly.
+///
+/// Excludes pure config (`bypass`/`mode`/`branch_resolve`/`exec_regions`/
+/// `fu_capacity`/`sequential_mode`) and pure view state (hover flags, button
+/// rects, render caches) — those are not part of a clock cycle and must survive
+/// an undo.
+pub struct PipelineExecSnapshot {
+    fetch_pc: u32,
+    halted: bool,
+    faulted: bool,
+    stages: [Option<PipeSlot>; 5],
+    fu_bank: FuBank,
+    fu_busy: [u8; 7],
+    predictor: predictor::PredictorState,
+    pending_fetch_trap: Option<(u32, u32, u32, u32)>,
+    cycle_count: u64,
+    instr_committed: u64,
+    stall_count: u64,
+    stall_by_type: [u64; HazardType::STALL_TYPE_COUNT],
+    flush_count: u64,
+    branches_executed: u64,
+    class_counts: [u64; InstrClass::COUNT],
+    last_cycle_cache_only: bool,
+    hazard_msgs: Vec<(HazardType, String)>,
+    hazard_traces: Vec<HazardTrace>,
+    gantt: VecDeque<GanttRow>,
+    gantt_scroll: usize,
+    next_gantt_id: u64,
+    next_seq: u64,
+}
+
+impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
+    type Snapshot = PipelineExecSnapshot;
+
+    fn exec_snapshot(&self) -> PipelineExecSnapshot {
+        PipelineExecSnapshot {
+            fetch_pc: self.fetch_pc,
+            halted: self.halted,
+            faulted: self.faulted,
+            stages: self.stages.clone(),
+            fu_bank: self.fu_bank.clone(),
+            fu_busy: self.fu_busy,
+            predictor: self.predictor.clone(),
+            pending_fetch_trap: self.pending_fetch_trap,
+            cycle_count: self.cycle_count,
+            instr_committed: self.instr_committed,
+            stall_count: self.stall_count,
+            stall_by_type: self.stall_by_type,
+            flush_count: self.flush_count,
+            branches_executed: self.branches_executed,
+            class_counts: self.class_counts,
+            last_cycle_cache_only: self.last_cycle_cache_only,
+            hazard_msgs: self.hazard_msgs.clone(),
+            hazard_traces: self.hazard_traces.clone(),
+            gantt: self.gantt.clone(),
+            gantt_scroll: self.gantt_scroll,
+            next_gantt_id: self.next_gantt_id,
+            next_seq: self.next_seq,
+        }
+    }
+
+    fn restore_exec(&mut self, s: PipelineExecSnapshot) {
+        self.fetch_pc = s.fetch_pc;
+        self.halted = s.halted;
+        self.faulted = s.faulted;
+        self.stages = s.stages;
+        self.fu_bank = s.fu_bank;
+        self.fu_busy = s.fu_busy;
+        self.predictor = s.predictor;
+        self.pending_fetch_trap = s.pending_fetch_trap;
+        self.cycle_count = s.cycle_count;
+        self.instr_committed = s.instr_committed;
+        self.stall_count = s.stall_count;
+        self.stall_by_type = s.stall_by_type;
+        self.flush_count = s.flush_count;
+        self.branches_executed = s.branches_executed;
+        self.class_counts = s.class_counts;
+        self.last_cycle_cache_only = s.last_cycle_cache_only;
+        self.hazard_msgs = s.hazard_msgs;
+        self.hazard_traces = s.hazard_traces;
+        self.gantt = s.gantt;
+        self.gantt_scroll = s.gantt_scroll;
+        self.next_gantt_id = s.next_gantt_id;
+        self.next_seq = s.next_seq;
+    }
+}
+
 impl PipelineSimState {
     pub fn clear_hover_state(&mut self) {
         self.hover_subtab_main = false;

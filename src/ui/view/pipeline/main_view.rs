@@ -35,7 +35,7 @@ fn is_atomic_instr(slot: &crate::ui::pipeline::PipeSlot) -> bool {
 }
 
 pub fn render_pipeline_main(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
 
     // The main EX view always shows the functional units so students can
     // reason about potential parallelism even when execution is serialized.
@@ -80,7 +80,7 @@ pub fn render_pipeline_main(f: &mut Frame, area: Rect, app: &App) {
 // ── 5-stage boxes ─────────────────────────────────────────────────────────────
 
 fn render_stages(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
     let stage_labels = ["IF", "ID", "EX", "MEM", "WB"];
 
     // EX always gets the expanded functional-unit panel.
@@ -379,7 +379,7 @@ fn trim_stage_badges_to_fit(stage_badges: &mut Vec<(String, Style)>, width: usiz
 // ── EX box expandido (Functional Units mode) ──────────────────────────────────
 
 fn render_fu_box(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
     let ex_slot = p.stages[Stage::EX as usize].as_ref();
 
     // Borda colorida baseada no estado do EX slot
@@ -579,7 +579,7 @@ fn split_fu_activity<'a>(
 // ── Hazard messages ────────────────────────────────────────────────────────────
 
 fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
 
     let block = Block::default()
         .borders(Borders::TOP)
@@ -1126,7 +1126,7 @@ fn trace_glyphs(kind: TraceKind, forward_dir: bool) -> (char, char, char) {
 // ── Gantt diagram ─────────────────────────────────────────────────────────────
 
 fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    let p = &app.run.pipeline();
 
     const LABEL_W: usize = 12;
     const CELL_W: usize = 4;

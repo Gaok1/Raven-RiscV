@@ -167,7 +167,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
         ctx.addr,
         app.run.cpu(),
         cpi,
-        app.pipeline.enabled,
+        app.run.pipeline().enabled,
     );
     let class_label = cpi_class_label(ctx.word);
 
