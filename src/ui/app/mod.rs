@@ -417,6 +417,7 @@ impl App {
                 step_interval: Duration::from_millis(80),
                 faulted: false,
                 speed: RunSpeed::X1,
+                go_checkpointed: false,
                 comments: std::collections::HashMap::new(),
                 labels: std::collections::HashMap::new(),
                 halt_pcs: std::collections::HashSet::new(),
@@ -891,6 +892,10 @@ impl App {
     pub(super) fn restart_simulation(&mut self) {
         self.run.is_running = false;
         self.run.faulted = false;
+        // Drop step-back history: the timeline (and any GO checkpoint) belongs to
+        // the program being replaced.
+        self.run.machine.clear_journal();
+        self.run.go_checkpointed = false;
         self.run.machine.cpu_mut_unjournaled().ebreak_hit = false;
         self.run.reg_last_write_pc = [None; 32];
         self.run.f_last_write_pc = [None; 32];
@@ -1903,6 +1908,18 @@ impl App {
 
     fn tick(&mut self) {
         if self.run.is_running {
+            // A GO/Instant burst writes RAM directly (un-journaled), so take one
+            // full checkpoint at the burst's first tick — step-back can then
+            // rewind to just before it. Rate-limited modes single-step through
+            // the journaling path and need no checkpoint; pipeline modes journal
+            // per-cycle separately (Phase 4b).
+            let go_burst = matches!(self.run.speed, RunSpeed::Instant)
+                && !self.pipeline.enabled
+                && !self.pipeline.sequential_mode;
+            if go_burst && !self.run.go_checkpointed {
+                self.run.machine.checkpoint();
+                self.run.go_checkpointed = true;
+            }
             // When pipeline is enabled and we're viewing the Pipeline tab,
             // use pipeline speed for rate-limiting (educational slow stepping).
             // Otherwise use run speed.
@@ -1977,6 +1994,10 @@ impl App {
                     }
                 }
             }
+        }
+        // Arm the next GO burst's one-shot checkpoint once the run has stopped.
+        if !self.run.is_running {
+            self.run.go_checkpointed = false;
         }
         // Scroll instruction list to follow PC (skipped in Instant to avoid pointless churn)
         if self.run.is_running && !matches!(self.run.speed, RunSpeed::Instant) {
@@ -2066,6 +2087,78 @@ impl App {
             self.run.machine.mem_mut_unjournaled().sync_to_ram();
             self.run.is_running = false;
         }
+    }
+
+    /// Whether a step-back is currently allowed: not mid auto-run, and with at
+    /// least one journaled change to undo.
+    ///
+    /// The journal is the ground truth for what is reversible. Only the
+    /// sequential interpreter (`step_interpreted`) and GO checkpoints fill it;
+    /// pipeline ticks and background harts mutate state through the un-journaled
+    /// hatches, which clear it. So a non-empty journal already implies the last
+    /// activity was a reversible sequential step or GO burst — no separate
+    /// pipeline / multi-core check is needed here.
+    pub(crate) fn can_stepback_now(&self) -> bool {
+        !self.run.is_running && self.run.machine.can_stepback()
+    }
+
+    /// Undo the most recent journaled change — one instruction, one edit, or the
+    /// whole of the last GO burst (back to its checkpoint) — then refresh the
+    /// derived run-tab bookkeeping so the view matches the rewound state.
+    pub(crate) fn stepback_one(&mut self) {
+        if !self.can_stepback_now() {
+            return;
+        }
+        let before_x = self.run.cpu().x;
+        let before_f = self.run.cpu().f;
+        let Some(kind) = self.run.machine.stepback() else {
+            return;
+        };
+
+        let now_x = self.run.cpu().x;
+        let now_f = self.run.cpu().f;
+        let pc = self.run.cpu().pc;
+
+        // Highlight the registers/floats the undo reverted and age the rest,
+        // mirroring the forward single-step bookkeeping.
+        for i in 0..32 {
+            if now_x[i] != before_x[i] {
+                self.run.reg_age[i] = 0;
+                self.run.reg_last_write_pc[i] = Some(pc);
+            } else {
+                self.run.reg_age[i] = self.run.reg_age[i].saturating_add(1).min(8);
+            }
+            if now_f[i] != before_f[i] {
+                self.run.f_age[i] = 0;
+                self.run.f_last_write_pc[i] = Some(pc);
+            } else {
+                self.run.f_age[i] = self.run.f_age[i].saturating_add(1).min(8);
+            }
+        }
+        self.run.prev_x = now_x;
+        self.run.prev_f = now_f;
+        self.run.prev_pc = pc;
+        self.run.dyn_mem_access = None;
+
+        // A single instruction owns one exec-trace row and one run-count tick;
+        // an edit or a GO checkpoint owns neither.
+        if kind == crate::falcon::machine::StepbackKind::Step {
+            self.run.exec_trace.pop_back();
+            if let Some(count) = self.run.exec_counts.get_mut(&pc) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    self.run.exec_counts.remove(&pc);
+                }
+            }
+        }
+
+        // Rewinding out of a fault/halt returns to a runnable state.
+        self.run.faulted = false;
+        if let Some(runtime) = self.selected_runtime_mut() {
+            runtime.lifecycle = HartLifecycle::Running;
+            runtime.faulted = false;
+        }
+        self.ensure_pc_visible_in_imem();
     }
 
     fn any_running_harts(&self) -> bool {
@@ -2514,12 +2607,11 @@ impl App {
     }
 
     fn single_step_selected_sequential(&mut self) {
-        // Restore the selected hart's satp/priv_mode into the shared MMU —
-        // a background hart may have just run with different page tables.
-        {
-            let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
-            crate::ui::app::hart::sync_mmu_to_cpu(mem, cpu);
-        }
+        // Restore the selected hart's satp/priv_mode into the shared MMU — a
+        // background hart may have just run with different page tables. Uses the
+        // journal-preserving sync (it only touches MMU metadata) so the step
+        // history survives across single-steps.
+        self.run.machine.sync_mmu();
         let go_mode = matches!(self.run.speed, RunSpeed::Instant);
         for _ in 0..16 {
             // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.

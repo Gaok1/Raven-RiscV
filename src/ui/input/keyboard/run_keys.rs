@@ -20,6 +20,10 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
             }
             true
         }
+        KeyCode::Char('b') => {
+            app.stepback_one();
+            true
+        }
         KeyCode::Char('r') => {
             app.restart_simulation();
             true
