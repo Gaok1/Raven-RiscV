@@ -580,6 +580,9 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                 }
             }
         }
+        RunButton::Stepback => {
+            app.stepback_one();
+        }
         RunButton::Reset => {
             app.restart_simulation();
         }
@@ -649,123 +652,10 @@ pub(crate) fn run_status_area(app: &App, area: Rect) -> Rect {
 }
 
 pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
-    let core_text = format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1));
-    let view_text = if app.run.show_dyn {
-        "dyn"
-    } else if app.run.show_registers {
-        "regs"
-    } else {
-        "ram"
-    };
-    let fmt_text = match app.run.fmt_mode {
-        FormatMode::Hex => "hex",
-        FormatMode::Dec => "dec",
-        FormatMode::Str => "str",
-    };
-    let sign_text = if app.run.show_signed { "sgn" } else { "uns" };
-    let bytes_text = match app.run.mem_view_bytes {
-        4 => "4b",
-        2 => "2b",
-        _ => "1b",
-    };
-    let region_text = match app.run.mem_region {
-        MemRegion::Data | MemRegion::Custom => "data",
-        MemRegion::Stack => "stack",
-        MemRegion::Access => "r/w",
-        MemRegion::Heap => "heap",
-    };
-    let state_text = crate::ui::view::run::state_text(app);
-
-    let mut pos = status.x + 1;
-    let range = |start: &mut u16, label: &str| {
-        let s = *start;
-        *start += label.len() as u16;
-        (s, *start)
-    };
-    let pair_range = |start: &mut u16, label: &str, value: &str| {
-        let s = *start;
-        *start += (label.len() + 1 + value.len()) as u16;
-        (s, *start)
-    };
-    let skip = |start: &mut u16, s: &str| {
-        *start += s.len() as u16;
-    };
-
-    let (core_start, core_end) = pair_range(&mut pos, "core", &core_text);
-    skip(&mut pos, "   ");
-    let (view_start, view_end) = pair_range(&mut pos, "view", view_text);
-
-    let (region_start, region_end) = if app.run_sidebar_shows_memory() {
-        skip(&mut pos, "   ");
-        pair_range(&mut pos, "region", region_text)
-    } else {
-        (0, 0)
-    };
-
-    skip(&mut pos, "   ");
-    let (fmt_start, fmt_end) = pair_range(&mut pos, "fmt", fmt_text);
-
-    skip(&mut pos, "   ");
-    let (sign_start, sign_end) = pair_range(&mut pos, "sign", sign_text);
-
-    let (bytes_start, bytes_end) = if app.run_sidebar_shows_memory() {
-        skip(&mut pos, "   ");
-        pair_range(&mut pos, "bytes", bytes_text)
-    } else {
-        (0, 0)
-    };
-
-    let speed_text = if app.run.speed.label() == "GO" {
-        "go"
-    } else {
-        app.run.speed.label()
-    };
-    skip(&mut pos, "   ");
-    let (speed_start, speed_end) = pair_range(&mut pos, "speed", speed_text);
-
-    skip(&mut pos, "   ");
-    let (state_start, state_end) = pair_range(&mut pos, "state", &state_text);
-
-    let count_text = if app.run.show_exec_count { "on" } else { "off" };
-    skip(&mut pos, "   ");
-    let (count_start, count_end) = pair_range(&mut pos, "count", count_text);
-
-    let type_text = if app.run.show_instr_type { "on" } else { "off" };
-    skip(&mut pos, "   ");
-    let (type_start, type_end) = pair_range(&mut pos, "type", type_text);
-
-    skip(&mut pos, "   ");
-    let (reset_start, reset_end) = range(&mut pos, "reset");
-
-    if app.max_cores > 1 && col >= core_start && col < core_end {
-        Some(RunButton::Core)
-    } else if col >= view_start && col < view_end {
-        Some(RunButton::View)
-    } else if app.run_sidebar_shows_memory() && col >= region_start && col < region_end {
-        Some(RunButton::Region)
-    } else if col >= fmt_start && col < fmt_end {
-        Some(RunButton::Format)
-    } else if col >= sign_start && col < sign_end {
-        if matches!(app.run.fmt_mode, FormatMode::Dec) {
-            Some(RunButton::Sign)
-        } else {
-            None
-        }
-    } else if app.run_sidebar_shows_memory() && col >= bytes_start && col < bytes_end {
-        Some(RunButton::Bytes)
-    } else if col >= speed_start && col < speed_end {
-        Some(RunButton::Speed)
-    } else if col >= state_start && col < state_end {
-        Some(RunButton::State)
-    } else if col >= count_start && col < count_end {
-        Some(RunButton::ExecCount)
-    } else if col >= type_start && col < type_end {
-        Some(RunButton::InstrType)
-    } else if col >= reset_start && col < reset_end {
-        Some(RunButton::Reset)
-    } else {
-        None
-    }
+    // The run-controls bar is laid out once in `build_run_toolbar`; ask that same
+    // model which control the column falls in. The paragraph's block border eats
+    // one column, so content begins at `status.x + 1`.
+    crate::ui::view::run::build_run_toolbar(app).hit(col, status.x + 1)
 }
 
 fn run_main_area(app: &App, area: Rect) -> Rect {

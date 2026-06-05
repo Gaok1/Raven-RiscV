@@ -76,6 +76,7 @@ pub(crate) enum RunButton {
     Speed,
     ExecCount,
     InstrType,
+    Stepback,
     Reset,
 }
 
@@ -230,6 +231,9 @@ pub(crate) struct RunState {
     pub(crate) step_interval: Duration,
     pub(crate) faulted: bool,
     pub(crate) speed: RunSpeed,
+    /// One-shot guard: a full step-back checkpoint has been taken for the
+    /// current GO/Instant burst. Reset when the run stops. See `App::tick`.
+    pub(crate) go_checkpointed: bool,
 
     // Visible comments from source (#! text), keyed by instruction address
     pub(crate) comments: std::collections::HashMap<u32, String>,

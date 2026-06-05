@@ -34,11 +34,28 @@ pub(super) enum Rewind {
     },
 }
 
+/// What a journaled change represents, surfaced by
+/// [`Machine::stepback`](super::Machine::stepback) so the caller can refresh the
+/// bookkeeping that matches it — a single instruction pops the exec-trace and
+/// decrements its run count, whereas an interactive edit or a GO-burst
+/// checkpoint touches neither.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StepbackKind {
+    /// One interpreted instruction (sequential single-step).
+    Step,
+    /// A manual register / float / memory edit.
+    Edit,
+    /// A GO/JIT burst boundary checkpoint.
+    Checkpoint,
+}
+
 /// One reversible unit of history: the CPU as it was, plus how to undo the
 /// memory effects.
 pub(super) struct ChangeSet {
     /// Clock value at which this change was recorded (stack key, for display).
     pub clock: u64,
+    /// What kind of change this was, for the caller's post-undo refresh.
+    pub kind: StepbackKind,
     pub cpu_before: Cpu,
     pub rewind: Rewind,
 }

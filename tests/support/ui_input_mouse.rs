@@ -97,6 +97,35 @@ fn run_status_hit_shows_region_and_bytes_when_dyn_is_displaying_memory() {
 }
 
 #[test]
+fn run_status_hit_exposes_stepback_only_when_undoable() {
+    use crate::falcon::machine::types::{RegId, RegTarget};
+
+    let mut app = App::new(None);
+    let status = run_status_area(&app, Rect::new(0, 0, 200, 40));
+
+    let hits = |app: &App| -> Vec<RunButton> {
+        (status.x..status.x + status.width)
+            .filter_map(|col| run_status_hit(app, status, col))
+            .collect()
+    };
+
+    // Fresh: nothing journaled → step-back renders dim and is not clickable,
+    // while the rest of the bar still resolves around it.
+    let before = hits(&app);
+    assert!(!before.contains(&RunButton::Stepback));
+    assert!(before.contains(&RunButton::Reset));
+
+    // Journal a change → step-back becomes clickable without disturbing reset.
+    app.run
+        .machine
+        .write_reg(RegTarget::X(RegId::new(5).unwrap()), 0xABCD)
+        .unwrap();
+    let after = hits(&app);
+    assert!(after.contains(&RunButton::Stepback));
+    assert!(after.contains(&RunButton::Reset));
+}
+
+#[test]
 fn cache_exec_hit_exposes_reset_speed_and_state() {
     let app = App::new(None);
     let status = cache_run_status_area(Rect::new(0, 0, 160, 40));
