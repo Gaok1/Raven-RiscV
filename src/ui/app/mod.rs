@@ -2548,16 +2548,18 @@ impl App {
             };
 
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
-                let mut ctx = crate::falcon::jit::ExecCtx::new(cpu, mem, &mut self.console);
                 if go_mode {
                     // Run mode: usa o backend JIT completo (blocos compilados).
+                    // A rajada GO escreve direto na RAM, então passa pelo escape
+                    // hatch não-journalizado.
+                    let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
+                    let mut ctx = crate::falcon::jit::ExecCtx::new(cpu, mem, &mut self.console);
                     self.run.backend.run_until_yield(&mut ctx)
                 } else {
-                    // Step mode: sempre 1 instrução via interpretador para que
-                    // trace, highlights e exec_counts sejam por-instrução.
-                    use crate::falcon::jit::ExecutionBackend as _;
-                    crate::falcon::jit::InterpreterBackend::default().run_until_yield(&mut ctx)
+                    // Step mode: 1 instrução via interpretador, journalizada pelo
+                    // `Machine` para que trace/highlights/exec_counts sejam
+                    // por-instrução e o stepback possa revertê-la.
+                    self.run.machine.step_interpreted(&mut self.console)
                 }
             }));
             let (alive, jit_instr_count) = match res {
@@ -2592,8 +2594,14 @@ impl App {
                     (false, 1)
                 }
             };
-            self.run.machine.mem_mut_unjournaled().add_instruction_cycles(cpi_cycles);
-            self.run.machine.mem_mut_unjournaled().snapshot_stats();
+            if go_mode {
+                self.run.machine.mem_mut_unjournaled().add_instruction_cycles(cpi_cycles);
+                self.run.machine.mem_mut_unjournaled().snapshot_stats();
+            } else {
+                // Dobra o accounting de ciclos/stats dentro do passo journalizado,
+                // sem zerar o journal — o stepback (Fase 4) o desfaz junto.
+                self.run.machine.account_step_cycles(cpi_cycles);
+            }
 
             // Track every instruction the JIT block executed (not just block entry).
             // For the interpreter jit_instr_count == 1, so this is equivalent.
