@@ -357,16 +357,18 @@ impl App {
                 show_encoding: false,
             },
             run: RunState {
-                cpu,
+                machine: crate::falcon::machine::Machine::new(
+                    cpu,
+                    CacheController::new(
+                        CacheConfig::default(),
+                        CacheConfig::default(),
+                        vec![],
+                        mem_size,
+                    ),
+                ),
                 prev_x: [0; 32],
                 prev_pc: base_pc,
                 mem_size,
-                mem: CacheController::new(
-                    CacheConfig::default(),
-                    CacheConfig::default(),
-                    vec![],
-                    mem_size,
-                ),
                 breakpoints: std::collections::HashSet::new(),
                 base_pc,
                 data_base,
@@ -582,46 +584,51 @@ impl App {
 
     /// Reset the pipeline to the current CPU PC (used after loading a preset).
     pub(crate) fn pipeline_reset_to_current_pc(&mut self) {
-        self.pipeline.reset_stages(self.run.cpu.pc);
+        self.pipeline.reset_stages(self.run.cpu().pc);
     }
 
     pub(crate) fn assemble_and_load(&mut self) {
         use falcon::asm::assemble;
         use falcon::program::{load_bytes, load_words, zero_bytes};
 
-        self.run.prev_x = self.run.cpu.x;
+        self.run.prev_x = self.run.cpu().x;
         self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024);
-        self.run.cpu = Cpu::default();
-        self.run.cpu.pc = self.run.base_pc;
-        self.run.prev_pc = self.run.cpu.pc;
-        self.run.cpu.write(2, self.run.mem_size as u32);
-        self.run.mem = CacheController::new(
+        *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
+        self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
+        self.run.prev_pc = self.run.cpu().pc;
+        self.run.machine.cpu_mut_unjournaled().write(2, self.run.mem_size as u32);
+        *self.run.machine.mem_mut_unjournaled() = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
             self.cache.extra_pending.clone(),
             self.run.mem_size,
         );
-        self.run.mem.bypass = !self.run.cache_enabled;
-        self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
+        self.run.machine.mem_mut_unjournaled().bypass = !self.run.cache_enabled;
+        self.run
+            .machine
+            .mem_mut_unjournaled()
+            .mmu_mut()
+            .tlb
+            .reconfigure(self.tlb.pending.clone());
         self.push_vm_mode_to_mmu();
         self.run.faulted = false;
 
         match assemble(&self.editor.buf.text(), self.run.base_pc) {
             Ok(prog) => {
                 // Write directly to RAM (bypass cache) so invalidate() won't discard data
-                if let Err(e) = load_words(&mut self.run.mem.ram, self.run.base_pc, &prog.text) {
+                if let Err(e) = load_words(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.base_pc, &prog.text) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
-                if let Err(e) = load_bytes(&mut self.run.mem.ram, prog.data_base, &prog.data) {
+                if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, prog.data_base, &prog.data) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
                 let bss_base = prog.data_base.saturating_add(prog.data.len() as u32);
                 if prog.bss_size > 0 {
-                    if let Err(e) = zero_bytes(&mut self.run.mem.ram, bss_base, prog.bss_size) {
+                    if let Err(e) = zero_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, bss_base, prog.bss_size) {
                         self.console.push_error(e.to_string());
                         self.run.faulted = true;
                         return;
@@ -631,13 +638,13 @@ impl App {
                 self.run.mem_view_addr = prog.data_base;
                 self.run.mem_region = MemRegion::Data;
                 // Invalidate & reset stats so execution starts from cold cache
-                self.run.mem.invalidate_all();
-                self.run.mem.reset_stats();
+                self.run.machine.mem_mut_unjournaled().invalidate_all();
+                self.run.machine.mem_mut_unjournaled().reset_stats();
                 let bss_end = prog
                     .data_base
                     .wrapping_add(prog.data.len() as u32 + prog.bss_size);
                 self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
-                self.run.cpu.heap_break = self.run.heap_start;
+                self.run.machine.cpu_mut_unjournaled().heap_break = self.run.heap_start;
 
                 self.run.comments = prog.comments;
                 self.run.block_comments = prog.block_comments;
@@ -675,7 +682,7 @@ impl App {
                         self.run.heap_start,
                     );
                     crate::falcon::mmu::Mmu::install_map_scheme(
-                        &mut self.run.mem.ram,
+                        &mut self.run.machine.mem_mut_unjournaled().ram,
                         root_pa,
                         &scheme,
                         self.tlb.page_map,
@@ -683,14 +690,14 @@ impl App {
                     );
                     let satp_val =
                         crate::falcon::mmu::Mmu::make_satp(root_pa, self.tlb.page_map.asid);
-                    self.run.cpu.satp = satp_val;
-                    let mmu = self.run.mem.mmu_mut();
+                    self.run.machine.cpu_mut_unjournaled().satp = satp_val;
+                    let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
                     mmu.satp = crate::falcon::mmu::Satp::new(satp_val);
                     mmu.force_translate = true;
                 }
 
                 // Reset pipeline stages (shares cpu/mem with RunState)
-                self.pipeline.reset_stages(self.run.cpu.pc);
+                self.pipeline.reset_stages(self.run.cpu().pc);
 
                 self.editor.last_assemble_msg = Some(format!(
                     "Assembled {} instructions, {} data bytes, {} bss bytes.",
@@ -786,27 +793,32 @@ impl App {
             self.editor.last_ok_data.as_ref(),
             self.editor.last_ok_data_base,
         ) {
-            self.run.prev_x = self.run.cpu.x;
+            self.run.prev_x = self.run.cpu().x;
             self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024);
-            self.run.cpu = Cpu::default();
-            self.run.cpu.pc = self.run.base_pc;
-            self.run.prev_pc = self.run.cpu.pc;
-            self.run.cpu.write(2, self.run.mem_size as u32);
-            self.run.mem = CacheController::new(
+            *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
+            self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
+            self.run.prev_pc = self.run.cpu().pc;
+            self.run.machine.cpu_mut_unjournaled().write(2, self.run.mem_size as u32);
+            *self.run.machine.mem_mut_unjournaled() = CacheController::new(
                 self.cache.pending_icache.clone(),
                 self.cache.pending_dcache.clone(),
                 self.cache.extra_pending.clone(),
                 self.run.mem_size,
             );
-            self.run.mem.bypass = !self.run.cache_enabled;
-            self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
+            self.run.machine.mem_mut_unjournaled().bypass = !self.run.cache_enabled;
+            self.run
+                .machine
+                .mem_mut_unjournaled()
+                .mmu_mut()
+                .tlb
+                .reconfigure(self.tlb.pending.clone());
             // Inlined `push_vm_mode_to_mmu` (the destructuring `let` above holds
             // an immutable borrow of `self.editor`, so we can't take `&mut self`).
             {
                 let (enabled, force_translate) = self.run.vm_mode.flags();
                 let scheme = self.active_scheme();
                 let tlb_enabled = self.run.tlb_enabled;
-                let mmu = self.run.mem.mmu_mut();
+                let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
                 mmu.set_scheme(scheme);
                 mmu.enabled = enabled;
                 mmu.force_translate = force_translate;
@@ -815,12 +827,12 @@ impl App {
             self.run.faulted = false;
 
             // Write directly to RAM (bypass cache) so invalidate() won't discard data
-            if let Err(e) = load_words(&mut self.run.mem.ram, self.run.base_pc, text) {
+            if let Err(e) = load_words(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.base_pc, text) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
             }
-            if let Err(e) = load_bytes(&mut self.run.mem.ram, data_base, data) {
+            if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, data_base, data) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
@@ -828,7 +840,7 @@ impl App {
             if let Some(bss) = self.editor.last_ok_bss_size {
                 if bss > 0 {
                     let bss_base = data_base.saturating_add(data.len() as u32);
-                    if let Err(e) = zero_bytes(&mut self.run.mem.ram, bss_base, bss) {
+                    if let Err(e) = zero_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, bss_base, bss) {
                         self.console.push_error(e.to_string());
                         self.run.faulted = true;
                         return;
@@ -839,14 +851,14 @@ impl App {
             self.run.data_base = data_base;
             self.run.mem_view_addr = data_base;
             self.run.mem_region = MemRegion::Data;
-            self.run.mem.invalidate_all();
-            self.run.mem.reset_stats();
+            self.run.machine.mem_mut_unjournaled().invalidate_all();
+            self.run.machine.mem_mut_unjournaled().reset_stats();
             let bss_sz = self.editor.last_ok_bss_size.unwrap_or(0);
             let bss_end = data_base
                 .wrapping_add(data.len() as u32)
                 .wrapping_add(bss_sz);
             self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
-            self.run.cpu.heap_break = self.run.heap_start;
+            self.run.machine.cpu_mut_unjournaled().heap_break = self.run.heap_start;
 
             self.run.reg_age = [255u8; 32];
             self.run.f_age = [255u8; 32];
@@ -871,7 +883,7 @@ impl App {
             self.reset_exec_regions_to_loaded_text();
             self.sync_pipeline_program_range();
             // Reset pipeline stages so it picks up the reloaded program
-            self.pipeline.reset_stages(self.run.cpu.pc);
+            self.pipeline.reset_stages(self.run.cpu().pc);
             self.rebuild_harts();
         }
     }
@@ -879,7 +891,7 @@ impl App {
     pub(super) fn restart_simulation(&mut self) {
         self.run.is_running = false;
         self.run.faulted = false;
-        self.run.cpu.ebreak_hit = false;
+        self.run.machine.cpu_mut_unjournaled().ebreak_hit = false;
         self.run.reg_last_write_pc = [None; 32];
         self.run.f_last_write_pc = [None; 32];
         self.run.reg_age = [255u8; 32];
@@ -890,16 +902,16 @@ impl App {
         self.cache.window_start_instr = 0;
         self.load_last_ok_program();
         // Reset pipeline AFTER loading program (cpu.pc is now set correctly)
-        self.pipeline.reset_stages(self.run.cpu.pc);
+        self.pipeline.reset_stages(self.run.cpu().pc);
         self.rebuild_harts();
         // Rebuild JIT backend AFTER load so FullBackend can scan the loaded program.
         self.rebuild_backend();
     }
 
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
-        self.run.prev_x = self.run.cpu.x;
+        self.run.prev_x = self.run.cpu().x;
         self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024); // default 16 MB for ELF (heap support)
-        self.run.cpu = Cpu::default();
+        *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
         self.run.reg_age = [255u8; 32];
         self.run.f_age = [255u8; 32];
         self.run.reg_last_write_pc = [None; 32];
@@ -907,22 +919,27 @@ impl App {
         self.run.exec_counts.clear();
         self.run.exec_trace.clear();
         self.run.mem_access_log.clear();
-        self.run.cpu.write(2, self.run.mem_size as u32);
-        self.run.mem = CacheController::new(
+        self.run.machine.cpu_mut_unjournaled().write(2, self.run.mem_size as u32);
+        *self.run.machine.mem_mut_unjournaled() = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
             self.cache.extra_pending.clone(),
             self.run.mem_size,
         );
-        self.run.mem.bypass = !self.run.cache_enabled;
-        self.run.mem.mmu_mut().tlb.reconfigure(self.tlb.pending.clone());
+        self.run.machine.mem_mut_unjournaled().bypass = !self.run.cache_enabled;
+        self.run
+            .machine
+            .mem_mut_unjournaled()
+            .mmu_mut()
+            .tlb
+            .reconfigure(self.tlb.pending.clone());
         self.push_vm_mode_to_mmu();
         self.run.faulted = false;
 
         // ── Detect format and load ───────────────────────────────────────
         if bytes.len() >= 4 && &bytes[0..4] == b"\x7fELF" {
             // ── ELF32 LE RISC-V ─────────────────────────────────────────
-            let info = match falcon::program::load_elf(bytes, &mut self.run.mem.ram) {
+            let info = match falcon::program::load_elf(bytes, &mut self.run.machine.mem_mut_unjournaled().ram) {
                 Ok(i) => i,
                 Err(e) => {
                     self.console.push_error(e.to_string());
@@ -931,14 +948,14 @@ impl App {
                 }
             };
 
-            self.run.cpu.pc = info.entry;
+            self.run.machine.cpu_mut_unjournaled().pc = info.entry;
             self.run.prev_pc = info.entry;
             self.run.base_pc = info.text_base;
             self.run.data_base = info.data_base;
             self.run.mem_view_addr = info.data_base;
             self.run.mem_region = crate::ui::app::MemRegion::Data;
-            self.run.mem.invalidate_all();
-            self.run.mem.reset_stats();
+            self.run.machine.mem_mut_unjournaled().invalidate_all();
+            self.run.machine.mem_mut_unjournaled().reset_stats();
             let elf_data_bytes = info
                 .sections
                 .iter()
@@ -950,7 +967,7 @@ impl App {
             self.run.halt_pcs.clear();
             self.run.elf_sections = info.sections;
             self.run.heap_start = info.heap_start;
-            self.run.cpu.heap_break = info.heap_start;
+            self.run.machine.cpu_mut_unjournaled().heap_break = info.heap_start;
 
             let mut words = Vec::with_capacity(info.text_bytes.len() / 4);
             for chunk in info.text_bytes.chunks(4) {
@@ -1010,13 +1027,13 @@ impl App {
                     (bytes.to_vec(), Vec::new(), 0)
                 };
 
-            if let Err(e) = load_bytes(&mut self.run.mem.ram, self.run.base_pc, &text_bytes) {
+            if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.base_pc, &text_bytes) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
             }
             if !data_bytes.is_empty() {
-                if let Err(e) = load_bytes(&mut self.run.mem.ram, self.run.data_base, &data_bytes) {
+                if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.data_base, &data_bytes) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
@@ -1024,17 +1041,17 @@ impl App {
             }
             if bss_size > 0 {
                 let bss_base = self.run.data_base + data_bytes.len() as u32;
-                if let Err(e) = zero_bytes(&mut self.run.mem.ram, bss_base, bss_size) {
+                if let Err(e) = zero_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, bss_base, bss_size) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
             }
 
-            self.run.cpu.pc = self.run.base_pc;
+            self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
             self.run.prev_pc = self.run.base_pc;
-            self.run.mem.invalidate_all();
-            self.run.mem.reset_stats();
+            self.run.machine.mem_mut_unjournaled().invalidate_all();
+            self.run.machine.mem_mut_unjournaled().reset_stats();
 
             // Heap starts right after BSS, 16-byte aligned
             let bss_end = self
@@ -1043,7 +1060,7 @@ impl App {
                 .wrapping_add(data_bytes.len() as u32)
                 .wrapping_add(bss_size);
             self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
-            self.run.cpu.heap_break = self.run.heap_start;
+            self.run.machine.cpu_mut_unjournaled().heap_break = self.run.heap_start;
 
             let mut words = Vec::with_capacity(text_bytes.len() / 4);
             for chunk in text_bytes.chunks(4) {
@@ -1096,9 +1113,9 @@ impl App {
         self.mode = EditorMode::Command;
         self.editor.elf_prompt_open = false;
         // Reset pipeline stages (shares cpu/mem with RunState)
-        self.pipeline.reset_stages(self.run.cpu.pc);
+        self.pipeline.reset_stages(self.run.cpu().pc);
         self.rebuild_harts();
-        self.pipeline.reset_stages(self.run.cpu.pc);
+        self.pipeline.reset_stages(self.run.cpu().pc);
     }
 
     /// Convert the currently-loaded ELF into an editable assembly source and load
@@ -1301,7 +1318,7 @@ impl App {
         use crate::falcon::cache::extra_level_presets;
         let cfg = extra_level_presets()[0].clone(); // Small L2 default
         self.cache.extra_pending.push(cfg.clone());
-        self.run.mem.add_extra_level(cfg);
+        self.run.machine.mem_mut_unjournaled().add_extra_level(cfg);
         // Select the newly added level
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
     }
@@ -1417,13 +1434,13 @@ impl App {
             self.tlb.config_error = Some("entry count must be ≥ associativity".into());
             return;
         }
-        self.run.mem.mmu_mut().tlb.reconfigure(cfg);
+        self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
         self.tlb.config_error = None;
         self.tlb.config_status = Some("Applied (TLB reset)".into());
     }
 
     pub(crate) fn flush_tlb(&mut self) {
-        self.run.mem.mmu_mut().tlb.flush();
+        self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.flush();
         self.tlb.config_status = Some("TLB flushed".into());
         self.tlb.config_error = None;
     }
@@ -1574,7 +1591,7 @@ impl App {
     pub(crate) fn apply_vm_settings(&mut self) {
         let cfg = self.tlb.pending.clone();
         if cfg.entry_count >= cfg.associativity as u16 && cfg.associativity >= 1 {
-            self.run.mem.mmu_mut().tlb.reconfigure(cfg);
+            self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
         }
         self.apply_page_map();
     }
@@ -1603,10 +1620,10 @@ impl App {
         let root_pa = scheme.root_pa(self.run.mem_size as u32);
         let window = (self.run.base_pc.min(self.run.data_base), self.run.heap_start);
         let spec = self.tlb.pending_map;
-        Mmu::install_map_scheme(&mut self.run.mem.ram, root_pa, &scheme, spec, window);
+        Mmu::install_map_scheme(&mut self.run.machine.mem_mut_unjournaled().ram, root_pa, &scheme, spec, window);
         let satp_val = Mmu::make_satp(root_pa, spec.asid);
-        self.run.cpu.satp = satp_val;
-        let mmu = self.run.mem.mmu_mut();
+        self.run.machine.cpu_mut_unjournaled().satp = satp_val;
+        let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
         mmu.set_scheme(scheme);
         mmu.satp = Satp::new(satp_val);
         mmu.force_translate = true;
@@ -1632,7 +1649,7 @@ impl App {
     pub(super) fn remove_last_cache_level(&mut self) {
         if !self.cache.extra_pending.is_empty() {
             self.cache.extra_pending.pop();
-            self.run.mem.remove_extra_level();
+            self.run.machine.mem_mut_unjournaled().remove_extra_level();
             let max_level = self.cache.extra_pending.len();
             if self.cache.selected_level > max_level {
                 self.cache.selected_level = max_level;
@@ -1673,7 +1690,7 @@ impl App {
     }
 
     pub(crate) fn active_imem_exec_region(&self) -> Option<crate::falcon::registers::ExecRegion> {
-        let pc = self.run.cpu.pc;
+        let pc = self.run.cpu().pc;
         let region = self.executable_region_containing(pc)?;
         if self.imem_in_range(pc) {
             None
@@ -1712,7 +1729,7 @@ impl App {
     }
 
     fn process_pending_exec_map_for_selected(&mut self) {
-        if let Some(region) = self.run.cpu.pending_exec_map.take() {
+        if let Some(region) = self.run.machine.cpu_mut_unjournaled().pending_exec_map.take() {
             self.register_exec_region(region);
         }
     }
@@ -1780,7 +1797,7 @@ impl App {
 
     /// Visual row of the current PC within the full instruction list.
     pub(super) fn imem_visual_row_of_pc(&self) -> Option<usize> {
-        let pc = self.run.cpu.pc;
+        let pc = self.run.cpu().pc;
         if let Some(region) = self.active_imem_exec_region() {
             return Some(((pc.saturating_sub(region.start)) / 4) as usize);
         }
@@ -1814,7 +1831,7 @@ impl App {
             return;
         }
         if let Some(region) = self.active_imem_exec_region() {
-            let pc_row = ((self.run.cpu.pc.saturating_sub(region.start)) / 4) as usize;
+            let pc_row = ((self.run.cpu().pc.saturating_sub(region.start)) / 4) as usize;
             let max_scroll = ((region.end.saturating_sub(region.start)) / 4) as usize;
             let max_scroll = max_scroll.saturating_sub(visible);
             let scroll = self.run.imem_scroll.min(max_scroll);
@@ -1969,11 +1986,11 @@ impl App {
         // regardless of execution path (sequential or pipeline).
         match self.run.mem_region {
             MemRegion::Stack => {
-                let sp = self.run.cpu.x[2];
+                let sp = self.run.cpu().x[2];
                 self.run.mem_view_addr = sp & !(self.run.mem_view_bytes - 1);
             }
             MemRegion::Heap => {
-                let hb = self.run.cpu.heap_break;
+                let hb = self.run.cpu().heap_break;
                 self.run.mem_view_addr = hb & !(self.run.mem_view_bytes - 1);
             }
             _ => {}
@@ -1993,14 +2010,14 @@ impl App {
     fn finalize_selected_core_after_step(&mut self) {
         self.process_pending_hart_start_for_selected();
         self.process_pending_exec_map_for_selected();
-        let heap_break = self.run.cpu.heap_break;
+        let heap_break = self.run.cpu().heap_break;
         self.propagate_heap_break(heap_break);
-        let program_exit = self.run.cpu.exit_code;
+        let program_exit = self.run.cpu().exit_code;
 
-        let lifecycle = if self.run.cpu.local_exit {
+        let lifecycle = if self.run.cpu().local_exit {
             // FALCON_HART_EXIT: exit only this hart, leave others running.
             HartLifecycle::Exited
-        } else if self.run.cpu.ebreak_hit {
+        } else if self.run.cpu().ebreak_hit {
             if self.run.halt_pcs.contains(&self.run.prev_pc) {
                 HartLifecycle::Exited
             } else {
@@ -2008,7 +2025,7 @@ impl App {
             }
         } else if self.run.faulted || self.pipeline.faulted {
             HartLifecycle::Faulted
-        } else if self.run.cpu.exit_code.is_some() || self.pipeline.halted {
+        } else if self.run.cpu().exit_code.is_some() || self.pipeline.halted {
             HartLifecycle::Exited
         } else {
             HartLifecycle::Running
@@ -2028,11 +2045,11 @@ impl App {
                     hart.cpu.exit_code = Some(code);
                 }
             }
-            self.run.mem.sync_to_ram();
+            self.run.machine.mem_mut_unjournaled().sync_to_ram();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Faulted) {
             // A fault in any hart stops the whole run.
-            self.run.mem.sync_to_ram();
+            self.run.machine.mem_mut_unjournaled().sync_to_ram();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Paused) {
             // In AllHarts scope: only stop the run when no other harts are still running.
@@ -2046,7 +2063,7 @@ impl App {
             }
         } else if !matches!(lifecycle, HartLifecycle::Running) && !self.any_running_harts() {
             // Last hart finished (halt/local-exit) — stop.
-            self.run.mem.sync_to_ram();
+            self.run.machine.mem_mut_unjournaled().sync_to_ram();
             self.run.is_running = false;
         }
     }
@@ -2105,8 +2122,8 @@ impl App {
                     h.cpu.exit_code = Some(code);
                 }
             }
-            self.run.cpu.exit_code = Some(code);
-            self.run.mem.sync_to_ram();
+            self.run.machine.cpu_mut_unjournaled().exit_code = Some(code);
+            self.run.machine.mem_mut_unjournaled().sync_to_ram();
             self.run.is_running = false;
             return;
         }
@@ -2115,7 +2132,7 @@ impl App {
         self.harts[core_idx].faulted = matches!(lifecycle, HartLifecycle::Faulted);
 
         if matches!(lifecycle, HartLifecycle::Faulted) {
-            self.run.mem.sync_to_ram();
+            self.run.machine.mem_mut_unjournaled().sync_to_ram();
             self.run.is_running = false;
         } else if matches!(lifecycle, HartLifecycle::Paused) {
             // step_all_cores_once is only called in AllHarts scope; keep running
@@ -2124,7 +2141,7 @@ impl App {
                 self.run.is_running = false;
             }
         } else if !matches!(lifecycle, HartLifecycle::Running) && !self.any_running_harts() {
-            self.run.mem.sync_to_ram();
+            self.run.machine.mem_mut_unjournaled().sync_to_ram();
             self.run.is_running = false;
         }
 
@@ -2157,7 +2174,7 @@ impl App {
         if self.core_status(self.selected_core) != HartLifecycle::Paused {
             return;
         }
-        self.run.cpu.ebreak_hit = false;
+        self.run.machine.cpu_mut_unjournaled().ebreak_hit = false;
         self.run.faulted = false;
         self.pipeline.halted = false;
         self.pipeline.faulted = false;
@@ -2177,11 +2194,11 @@ impl App {
         if self.pipeline.sequential_mode {
             let all_clear = self.pipeline.stages.iter().all(|s| s.is_none());
             if all_clear
-                && self.pipeline.fetch_pc != self.run.cpu.pc
+                && self.pipeline.fetch_pc != self.run.cpu().pc
                 && !self.pipeline.halted
                 && !self.pipeline.faulted
             {
-                self.pipeline.reset_stages(self.run.cpu.pc);
+                self.pipeline.reset_stages(self.run.cpu().pc);
             }
         }
 
@@ -2191,26 +2208,32 @@ impl App {
 
         // Restore the selected hart's satp/priv_mode into the shared MMU
         // before stepping its pipeline. See B18 in the bug audit.
-        crate::ui::app::hart::sync_mmu_to_cpu(&mut self.run.mem, &self.run.cpu);
+        {
+            let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
+            crate::ui::app::hart::sync_mmu_to_cpu(mem, cpu);
+        }
 
-        self.run.prev_x = self.run.cpu.x;
-        self.run.prev_f = self.run.cpu.f;
-        self.run.prev_pc = self.run.cpu.pc;
+        self.run.prev_x = self.run.cpu().x;
+        self.run.prev_f = self.run.cpu().f;
+        self.run.prev_pc = self.run.cpu().pc;
 
         // Clone CpiConfig to avoid borrow conflict (80 bytes, cheap)
         let cpi = self.run.cpi_config.clone();
 
-        let commit = crate::ui::pipeline::sim::pipeline_tick(
-            &mut self.pipeline,
-            &mut self.run.cpu,
-            &mut self.run.mem,
-            &cpi,
-            &mut self.console,
-        );
+        let commit = {
+            let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
+            crate::ui::pipeline::sim::pipeline_tick(
+                &mut self.pipeline,
+                cpu,
+                mem,
+                &cpi,
+                &mut self.console,
+            )
+        };
 
         let committed = if let Some(info) = commit {
             *self.run.exec_counts.entry(info.pc).or_insert(0) += 1;
-            let word = self.run.mem.peek32(info.pc).unwrap_or(0);
+            let word = self.run.mem().peek32(info.pc).unwrap_or(0);
             let disasm = {
                 match falcon::decoder::decode(word) {
                     Ok(instr) => format!("{instr:?}"),
@@ -2223,7 +2246,7 @@ impl App {
             }
 
             for i in 0..32usize {
-                if self.run.cpu.x[i] != self.run.prev_x[i] {
+                if self.run.cpu().x[i] != self.run.prev_x[i] {
                     self.run.reg_age[i] = 0;
                     self.run.reg_last_write_pc[i] = Some(info.pc);
                 } else {
@@ -2231,19 +2254,20 @@ impl App {
                 }
             }
             for i in 0..32usize {
-                if self.run.cpu.f[i] != self.run.prev_f[i] {
+                if self.run.cpu().f[i] != self.run.prev_f[i] {
                     self.run.f_age[i] = 0;
                     self.run.f_last_write_pc[i] = Some(info.pc);
                 } else {
                     self.run.f_age[i] = self.run.f_age[i].saturating_add(1).min(8);
                 }
             }
-            self.run.prev_x = self.run.cpu.x;
-            self.run.prev_f = self.run.cpu.f;
+            self.run.prev_x = self.run.cpu().x;
+            self.run.prev_f = self.run.cpu().f;
             self.run.prev_pc = info.pc;
 
-            self.run.mem.instruction_count = self.run.mem.instruction_count.saturating_add(1);
-            self.run.mem.snapshot_stats();
+            self.run.machine.mem_mut_unjournaled().instruction_count =
+                self.run.mem().instruction_count.saturating_add(1);
+            self.run.machine.mem_mut_unjournaled().snapshot_stats();
             !is_transparent_single_step_word(word)
         } else {
             false
@@ -2252,7 +2276,7 @@ impl App {
         if self.pipeline.faulted {
             self.run.faulted = true;
         }
-        if self.run.breakpoints.contains(&self.run.cpu.pc) {
+        if self.run.breakpoints.contains(&self.run.cpu().pc) {
             self.run.is_running = false;
         }
         self.finalize_selected_core_after_step();
@@ -2295,11 +2319,11 @@ impl App {
                 if self.harts[core_idx].lifecycle != HartLifecycle::Running {
                     continue;
                 }
-                // Disjoint field borrows: self.harts vs self.run.mem vs
+                // Disjoint field borrows: self.harts vs self.run.machine vs
                 // self.run.backend vs self.console.
                 let faulted = {
                     let hart = &mut self.harts[core_idx];
-                    let mem = &mut self.run.mem;
+                    let mem = self.run.machine.mem_mut_unjournaled();
                     let console = &mut self.console;
                     let backend = self.run.backend.as_mut();
                     step_hart_bg_inner(
@@ -2333,10 +2357,10 @@ impl App {
             .iter()
             .filter(|h| h.hart_id.is_some())
             .map(|h| h.cpu.heap_break)
-            .chain(std::iter::once(self.run.cpu.heap_break))
+            .chain(std::iter::once(self.run.cpu().heap_break))
             .max()
-            .unwrap_or(self.run.cpu.heap_break);
-        if max_break != self.run.cpu.heap_break {
+            .unwrap_or(self.run.cpu().heap_break);
+        if max_break != self.run.cpu().heap_break {
             self.propagate_heap_break(max_break);
         }
 
@@ -2344,7 +2368,7 @@ impl App {
         // exec_counts/exec_trace).  Keeps harts[selected].cpu current so that
         // UI code and tests that read it directly get a consistent view.
         if let Some(runtime) = self.harts.get_mut(original) {
-            runtime.cpu = self.run.cpu.clone();
+            runtime.cpu = self.run.cpu().clone();
             runtime.prev_pc = self.run.prev_pc;
             runtime.prev_x = self.run.prev_x;
             runtime.prev_f = self.run.prev_f;
@@ -2492,16 +2516,19 @@ impl App {
     fn single_step_selected_sequential(&mut self) {
         // Restore the selected hart's satp/priv_mode into the shared MMU —
         // a background hart may have just run with different page tables.
-        crate::ui::app::hart::sync_mmu_to_cpu(&mut self.run.mem, &self.run.cpu);
+        {
+            let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
+            crate::ui::app::hart::sync_mmu_to_cpu(mem, cpu);
+        }
         let go_mode = matches!(self.run.speed, RunSpeed::Instant);
         for _ in 0..16 {
             // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.
             if !go_mode {
-                self.run.prev_x = self.run.cpu.x;
-                self.run.prev_f = self.run.cpu.f;
+                self.run.prev_x = self.run.cpu().x;
+                self.run.prev_f = self.run.cpu().f;
             }
-            self.run.prev_pc = self.run.cpu.pc;
-            let step_pc = self.run.cpu.pc;
+            self.run.prev_pc = self.run.cpu().pc;
+            let step_pc = self.run.cpu().pc;
 
             if !self.pc_in_executable_region(step_pc) {
                 self.console.push_error(format!(
@@ -2512,20 +2539,17 @@ impl App {
                 return;
             }
 
-            let word = self.run.mem.peek32(step_pc).unwrap_or(0);
-            let cpi_cycles = classify_cpi_cycles(word, &self.run.cpu, &self.run.cpi_config);
+            let word = self.run.mem().peek32(step_pc).unwrap_or(0);
+            let cpi_cycles = classify_cpi_cycles(word, self.run.cpu(), &self.run.cpi_config);
             let mem_access = if go_mode {
                 None
             } else {
-                classify_mem_access(word, &self.run.cpu)
+                classify_mem_access(word, self.run.cpu())
             };
 
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut ctx = crate::falcon::jit::ExecCtx::new(
-                    &mut self.run.cpu,
-                    &mut self.run.mem,
-                    &mut self.console,
-                );
+                let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
+                let mut ctx = crate::falcon::jit::ExecCtx::new(cpu, mem, &mut self.console);
                 if go_mode {
                     // Run mode: usa o backend JIT completo (blocos compilados).
                     self.run.backend.run_until_yield(&mut ctx)
@@ -2568,8 +2592,8 @@ impl App {
                     (false, 1)
                 }
             };
-            self.run.mem.add_instruction_cycles(cpi_cycles);
-            self.run.mem.snapshot_stats();
+            self.run.machine.mem_mut_unjournaled().add_instruction_cycles(cpi_cycles);
+            self.run.machine.mem_mut_unjournaled().snapshot_stats();
 
             // Track every instruction the JIT block executed (not just block entry).
             // For the interpreter jit_instr_count == 1, so this is equivalent.
@@ -2597,7 +2621,7 @@ impl App {
                 }
 
                 for i in 0..32usize {
-                    if self.run.cpu.x[i] != self.run.prev_x[i] {
+                    if self.run.cpu().x[i] != self.run.prev_x[i] {
                         self.run.reg_age[i] = 0;
                         self.run.reg_last_write_pc[i] = Some(step_pc);
                     } else {
@@ -2605,7 +2629,7 @@ impl App {
                     }
                 }
                 for i in 0..32usize {
-                    if self.run.cpu.f[i] != self.run.prev_f[i] {
+                    if self.run.cpu().f[i] != self.run.prev_f[i] {
                         self.run.f_age[i] = 0;
                         self.run.f_last_write_pc[i] = Some(step_pc);
                     } else {
@@ -2628,14 +2652,14 @@ impl App {
                 }
             }
 
-            if alive && self.run.breakpoints.contains(&self.run.cpu.pc) {
+            if alive && self.run.breakpoints.contains(&self.run.cpu().pc) {
                 self.run.is_running = false;
             }
             if !alive {
                 if !self.console.reading {
-                    self.run.faulted = self.run.cpu.exit_code.is_none()
-                        && !self.run.cpu.ebreak_hit
-                        && !self.run.cpu.local_exit;
+                    self.run.faulted = self.run.cpu().exit_code.is_none()
+                        && !self.run.cpu().ebreak_hit
+                        && !self.run.cpu().local_exit;
                 } else {
                     self.run.is_running = false;
                 }

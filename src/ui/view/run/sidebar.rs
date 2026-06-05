@@ -147,17 +147,17 @@ fn age_style(age: u8) -> Style {
 /// Returns (label, value, age).
 fn register_entry(index: usize, app: &App) -> (String, String, u8) {
     if index == 0 {
-        let age = if app.run.cpu.pc != app.run.prev_pc {
+        let age = if app.run.cpu().pc != app.run.prev_pc {
             0
         } else {
             255
         };
-        let val = format_u32_value(app.run.cpu.pc, app.run.fmt_mode, app.run.show_signed);
+        let val = format_u32_value(app.run.cpu().pc, app.run.fmt_mode, app.run.show_signed);
         ("PC".to_string(), val, age)
     } else {
         let reg_index = (index - 1) as u8;
         let val = format_u32_value(
-            app.run.cpu.x[reg_index as usize],
+            app.run.cpu().x[reg_index as usize],
             app.run.fmt_mode,
             app.run.show_signed,
         );
@@ -172,7 +172,7 @@ fn register_entry(index: usize, app: &App) -> (String, String, u8) {
 /// Returns (label, value, age) for pinned register.
 fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
     let val = format_u32_value(
-        app.run.cpu.x[reg_idx as usize],
+        app.run.cpu().x[reg_idx as usize],
         app.run.fmt_mode,
         app.run.show_signed,
     );
@@ -201,7 +201,7 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
         .take(visible)
         .map(|i| {
             let age = app.run.f_age[i as usize];
-            let bits = app.run.cpu.f[i as usize];
+            let bits = app.run.cpu().f[i as usize];
             let val = f32::from_bits(bits);
             let label = format!("f{i:02} ({}) ", freg_name_short(i));
             let value = if val.is_nan() {
@@ -387,7 +387,7 @@ fn memory_title_section<'a>(app: &'a App, addr: u32) -> &'a str {
 }
 
 fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
-    let sp_aligned = app.run.cpu.x[2] & !(app.run.mem_view_bytes.saturating_sub(1));
+    let sp_aligned = app.run.cpu().x[2] & !(app.run.mem_view_bytes.saturating_sub(1));
     if addr >= sp_aligned && (addr as usize) < app.run.mem_size {
         return "stack";
     }
@@ -419,7 +419,7 @@ fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
     if addr >= data_end && addr < bss_end {
         return ".bss";
     }
-    if addr >= app.run.heap_start && addr < app.run.cpu.heap_break {
+    if addr >= app.run.heap_start && addr < app.run.cpu().heap_break {
         return "heap";
     }
 
@@ -457,28 +457,28 @@ fn mem_age_style(age: u8) -> Option<Style> {
 const HEAP_COLOR: Color = Color::Rgb(80, 200, 120);
 
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
-    let sp = app.run.cpu.x[2];
+    let sp = app.run.cpu().x[2];
     let sp_aligned = sp & !(app.run.mem_view_bytes - 1);
     let is_sp = addr == sp_aligned;
     let is_stack = app.run.mem_region == MemRegion::Stack;
 
-    let hb = app.run.cpu.heap_break;
+    let hb = app.run.cpu().heap_break;
     let hb_aligned = hb & !(app.run.mem_view_bytes - 1);
     let is_heap_mode = app.run.mem_region == MemRegion::Heap;
     let is_hb = addr == hb_aligned;
 
     let cache_presence = if app.run.cache_enabled {
-        cache_presence_label(&app.run.mem, addr)
+        cache_presence_label(app.run.mem(), addr)
     } else {
         None
     };
     let data_cache_loc = if app.run.cache_enabled {
-        app.run.mem.data_cache_location(addr)
+        app.run.mem().data_cache_location(addr)
     } else {
         None
     };
     let is_dirty =
-        app.run.cache_enabled && app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
+        app.run.cache_enabled && app.run.mem().is_dirty_cached(addr, app.run.mem_view_bytes);
 
     // Check if any recent memory access overlaps this row's byte range
     let row_end = addr.wrapping_add(app.run.mem_view_bytes);
@@ -659,7 +659,7 @@ fn cache_presence_label(mem: &crate::falcon::cache::CacheController, addr: u32) 
 #[allow(dead_code)]
 fn _unused_format(app: &App, addr: u32) -> String {
     format_u32_value(
-        app.run.mem.peek32(addr).unwrap_or(0),
+        app.run.mem().peek32(addr).unwrap_or(0),
         app.run.fmt_mode,
         app.run.show_signed,
     )
@@ -807,8 +807,8 @@ mod tests {
         app.run.base_pc = 0x0000;
         app.run.data_base = 0x1000;
         app.run.heap_start = 0x1040;
-        app.run.cpu.heap_break = 0x1080;
-        app.run.cpu.write(2, 0x2000);
+        app.run.machine.cpu_mut_unjournaled().heap_break = 0x1080;
+        app.run.machine.cpu_mut_unjournaled().write(2, 0x2000);
         app.run.mem_size = 0x2000;
         app.run.mem_view_bytes = 4;
         app
@@ -827,7 +827,7 @@ mod tests {
     #[test]
     fn stack_classification_uses_current_sp_boundary() {
         let mut app = make_app();
-        app.run.cpu.write(2, 0x1ff0);
+        app.run.machine.cpu_mut_unjournaled().write(2, 0x1ff0);
         assert_eq!(classify_memory_section(&app, 0x1ff0), "stack");
         assert_eq!(classify_memory_section(&app, 0x1fec), "free");
     }

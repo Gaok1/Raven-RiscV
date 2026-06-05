@@ -214,7 +214,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                             app.tlb.vm_settings_scroll.saturating_add(1).min(max);
                     }
                     VmSubtab::Tlb if matches!(app.tlb.subtab, TlbSubtab::Entries) => {
-                        let total = app.run.mem.mmu().tlb.entries.len();
+                        let total = app.run.mem().mmu().tlb.entries.len();
                         let next = app.tlb.entries_scroll.saturating_add(1);
                         app.tlb.entries_scroll = next.min(total.saturating_sub(1));
                     }
@@ -530,7 +530,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::Region => {
             match app.run.mem_region {
                 MemRegion::Data | MemRegion::Custom => {
-                    let sp = app.run.cpu.x[2];
+                    let sp = app.run.cpu().x[2];
                     app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
                     app.run.mem_region = MemRegion::Stack;
                 }
@@ -538,7 +538,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                     app.run.mem_region = MemRegion::Access;
                 }
                 MemRegion::Access => {
-                    let hb = app.run.cpu.heap_break;
+                    let hb = app.run.cpu().heap_break;
                     app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
                     app.run.mem_region = MemRegion::Heap;
                 }
@@ -1532,8 +1532,8 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row < inner.y + inner.height
     {
         if let Some(addr) = app.run.hover_imem_addr {
-            app.run.prev_pc = app.run.cpu.pc;
-            app.run.cpu.pc = addr;
+            app.run.prev_pc = app.run.cpu().pc;
+            app.run.machine.cpu_mut_unjournaled().pc = addr;
             if app.pipeline.enabled {
                 app.pipeline.redirect_pc(addr);
             }
@@ -2244,16 +2244,16 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
     let extra = app.cache.extra_pending.clone();
     if keep_history {
         app.cache.config_status = Some("Settings applied (history kept).".to_string());
-        let old_istats = std::mem::take(&mut app.run.mem.icache.stats);
-        let old_dstats = std::mem::take(&mut app.run.mem.dcache.stats);
-        app.run.mem.apply_config(icfg, dcfg, extra);
-        app.run.mem.icache.stats.history = old_istats.history;
-        app.run.mem.dcache.stats.history = old_dstats.history;
+        let old_istats = std::mem::take(&mut app.run.machine.mem_mut_unjournaled().icache.stats);
+        let old_dstats = std::mem::take(&mut app.run.machine.mem_mut_unjournaled().dcache.stats);
+        app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, extra);
+        app.run.machine.mem_mut_unjournaled().icache.stats.history = old_istats.history;
+        app.run.machine.mem_mut_unjournaled().dcache.stats.history = old_dstats.history;
     } else {
         app.cache.config_status = Some("Settings applied (stats reset).".to_string());
-        app.run.mem.apply_config(icfg, dcfg, extra);
+        app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, extra);
     }
-    app.run.mem.bypass = !app.run.cache_enabled;
+    app.run.machine.mem_mut_unjournaled().bypass = !app.run.cache_enabled;
     app.cache.view_scroll = 0;
     app.cache.view_scroll_d = 0;
     app.cache.stats_scroll = 0;
@@ -2319,23 +2319,26 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
     app.cache.config_error = None;
     if keep_history {
         app.cache.config_status = Some("Settings applied (history kept).".to_string());
-        let old_stats = if extra_idx < app.run.mem.extra_levels.len() {
+        let old_stats = if extra_idx < app.run.mem().extra_levels.len() {
             Some(std::mem::take(
-                &mut app.run.mem.extra_levels[extra_idx].stats,
+                &mut app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx].stats,
             ))
         } else {
             None
         };
-        if extra_idx < app.run.mem.extra_levels.len() {
-            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
+        if extra_idx < app.run.mem().extra_levels.len() {
+            app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx] =
+                crate::falcon::cache::Cache::new(cfg);
             if let Some(s) = old_stats {
-                app.run.mem.extra_levels[extra_idx].stats.history = s.history;
+                app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx].stats.history =
+                    s.history;
             }
         }
     } else {
         app.cache.config_status = Some("Settings applied (stats reset).".to_string());
-        if extra_idx < app.run.mem.extra_levels.len() {
-            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
+        if extra_idx < app.run.mem().extra_levels.len() {
+            app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx] =
+                crate::falcon::cache::Cache::new(cfg);
         }
     }
     app.cache.view_scroll = 0;

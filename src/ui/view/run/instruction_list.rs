@@ -252,9 +252,9 @@ fn heat_color(n: u64) -> Color {
 const HOVER_BG: Color = theme::BG_HOVER;
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
-    let word = app.run.mem.peek32(addr).unwrap_or(0);
+    let word = app.run.mem().peek32(addr).unwrap_or(0);
     let is_bp = app.run.breakpoints.contains(&addr);
-    let is_pc = addr == app.run.cpu.pc;
+    let is_pc = addr == app.run.cpu().pc;
     let is_hover = !is_pc && app.run.hover_imem_addr == Some(addr);
 
     // Collect non-selected harts that are currently at this address.
@@ -319,7 +319,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
 
     // Branch/jump indicator on current PC instruction
     if is_pc {
-        if let Some((taken, target)) = branch_outcome(word, addr, &app.run.cpu) {
+        if let Some((taken, target)) = branch_outcome(word, addr, app.run.cpu()) {
             let label = app
                 .run
                 .labels

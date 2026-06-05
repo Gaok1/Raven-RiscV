@@ -47,9 +47,9 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         "D-Cache Settings"
     };
     let current = if icache {
-        &app.run.mem.icache.config
+        &app.run.mem().icache.config
     } else {
-        &app.run.mem.dcache.config
+        &app.run.mem().dcache.config
     };
 
     // Determine which field (if any) is being edited in this panel
@@ -114,8 +114,8 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
     } else {
         return;
     };
-    let current = if extra_idx < app.run.mem.extra_levels.len() {
-        &app.run.mem.extra_levels[extra_idx].config
+    let current = if extra_idx < app.run.mem().extra_levels.len() {
+        &app.run.mem().extra_levels[extra_idx].config
     } else {
         pending
     };
