@@ -2724,22 +2724,28 @@ fn update_tlb_hover(app: &mut App, me: MouseEvent) {
 
     app.tlb.hover = None;
 
-    // VM-level header.
-    if point_in_btn(me, app.tlb.vm_status_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::VmStatus);
-    } else if point_in_btn(me, app.tlb.vm_tree_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::VmTree);
-    } else if point_in_btn(me, app.tlb.vm_settings_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::VmSettings);
-    } else if point_in_btn(me, app.tlb.vm_tlb_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::VmTlb);
+    // VM-level header — the bar maps a click column back to its VmSubtab.
+    let (vy, vx) = app.tlb.vm_header_origin.get();
+    if me.row == vy {
+        if let Some(sub) = crate::ui::view::tlb::build_vm_header_bar(app).hit(me.column, vx) {
+            app.tlb.hover = Some(match sub {
+                VmSubtab::Status => TlbHoverTarget::VmStatus,
+                VmSubtab::Tree => TlbHoverTarget::VmTree,
+                VmSubtab::Settings => TlbHoverTarget::VmSettings,
+                VmSubtab::Tlb => TlbHoverTarget::VmTlb,
+            });
+        }
+    }
     // TLB-level header.
-    } else if point_in_btn(me, app.tlb.tlb_stats_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::TlbStats);
-    } else if point_in_btn(me, app.tlb.tlb_entries_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::TlbEntries);
-    } else if point_in_btn(me, app.tlb.tlb_settings_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::TlbSettings);
+    let (ty, tx) = app.tlb.tlb_subheader_origin.get();
+    if app.tlb.hover.is_none() && me.row == ty {
+        if let Some(sub) = crate::ui::view::tlb::build_tlb_subheader_bar(app).hit(me.column, tx) {
+            app.tlb.hover = Some(match sub {
+                TlbSubtab::Stats => TlbHoverTarget::TlbStats,
+                TlbSubtab::Entries => TlbHoverTarget::TlbEntries,
+                TlbSubtab::Settings => TlbHoverTarget::TlbSettings,
+            });
+        }
     }
 
     // TLB Settings form.
@@ -2783,35 +2789,26 @@ fn handle_tlb_click(app: &mut App, me: MouseEvent) {
     use crate::ui::app::{TlbConfigField, TlbSubtab, VmSubtab};
     use crate::ui::input::keyboard::tlb_select;
 
-    // VM-level header.
-    if point_in_btn(me, app.tlb.vm_status_btn.get()) {
-        tlb_select(app, VmSubtab::Status, None);
-        return;
-    }
-    if point_in_btn(me, app.tlb.vm_tree_btn.get()) {
-        tlb_select(app, VmSubtab::Tree, None);
-        return;
-    }
-    if point_in_btn(me, app.tlb.vm_settings_btn.get()) {
-        tlb_select(app, VmSubtab::Settings, None);
-        return;
-    }
-    if point_in_btn(me, app.tlb.vm_tlb_btn.get()) {
-        tlb_select(app, VmSubtab::Tlb, Some(app.tlb.subtab));
-        return;
+    // VM-level header — same bar geometry as the renderer and the hover pass.
+    let (vy, vx) = app.tlb.vm_header_origin.get();
+    if me.row == vy {
+        if let Some(sub) = crate::ui::view::tlb::build_vm_header_bar(app).hit(me.column, vx) {
+            let nested = if matches!(sub, VmSubtab::Tlb) {
+                Some(app.tlb.subtab)
+            } else {
+                None
+            };
+            tlb_select(app, sub, nested);
+            return;
+        }
     }
     // TLB-level header.
-    if point_in_btn(me, app.tlb.tlb_stats_btn.get()) {
-        tlb_select(app, VmSubtab::Tlb, Some(TlbSubtab::Stats));
-        return;
-    }
-    if point_in_btn(me, app.tlb.tlb_entries_btn.get()) {
-        tlb_select(app, VmSubtab::Tlb, Some(TlbSubtab::Entries));
-        return;
-    }
-    if point_in_btn(me, app.tlb.tlb_settings_btn.get()) {
-        tlb_select(app, VmSubtab::Tlb, Some(TlbSubtab::Settings));
-        return;
+    let (ty, tx) = app.tlb.tlb_subheader_origin.get();
+    if me.row == ty {
+        if let Some(sub) = crate::ui::view::tlb::build_tlb_subheader_bar(app).hit(me.column, tx) {
+            tlb_select(app, VmSubtab::Tlb, Some(sub));
+            return;
+        }
     }
 
     // TLB Settings form.

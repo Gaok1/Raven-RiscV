@@ -13,6 +13,7 @@ use ratatui::{Frame, prelude::*, widgets::Paragraph};
 use crate::ui::app::{App, TlbHoverTarget, TlbSubtab, VmSubtab};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::{ControlState, Toolbar};
 use crate::ui::view::style;
 
 mod config;
@@ -45,11 +46,9 @@ pub(super) fn render_tlb_tab(f: &mut Frame, area: Rect, app: &App) {
 
     render_vm_header(f, layout[0], app);
 
-    // Clear TLB sub-header hitboxes when hidden so stale clicks can't fire.
+    // Clear the TLB sub-header origin when hidden so stale clicks can't fire.
     if !show_tlb_subheader {
-        app.tlb.tlb_stats_btn.set((0, 0, 0));
-        app.tlb.tlb_entries_btn.set((0, 0, 0));
-        app.tlb.tlb_settings_btn.set((0, 0, 0));
+        app.tlb.tlb_subheader_origin.set((0, 0));
     }
 
     let content = if show_tlb_subheader {
@@ -77,50 +76,29 @@ pub(super) fn render_tlb_tab(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// Top-level Virtual Memory header: [status] [tree] [TLB] + activity chip.
-fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
-    let status_style = btn_style(
-        matches!(app.tlb.vm_subtab, VmSubtab::Status),
-        matches!(app.tlb.hover, Some(TlbHoverTarget::VmStatus)),
-    );
-    let tree_style = btn_style(
-        matches!(app.tlb.vm_subtab, VmSubtab::Tree),
-        matches!(app.tlb.hover, Some(TlbHoverTarget::VmTree)),
-    );
-    let settings_style = btn_style(
-        matches!(app.tlb.vm_subtab, VmSubtab::Settings),
-        matches!(app.tlb.hover, Some(TlbHoverTarget::VmSettings)),
-    );
-    let tlb_style = btn_style(
-        matches!(app.tlb.vm_subtab, VmSubtab::Tlb),
-        matches!(app.tlb.hover, Some(TlbHoverTarget::VmTlb)),
-    );
+/// The Virtual Memory header bar — `[status] [tree] [settings] [TLB]` — as a
+/// [`Toolbar`]: the single source shared by the renderer and the mouse hit-test
+/// (`mouse::update_tlb_hover` / `handle_tlb_click`). The cell id is the
+/// [`VmSubtab`] the word selects.
+pub(crate) fn build_vm_header_bar(app: &App) -> Toolbar<VmSubtab> {
+    let st = |sub: VmSubtab, t: TlbHoverTarget| {
+        ControlState::chip(app.tlb.vm_subtab == sub, app.tlb.hover == Some(t))
+    };
+    let tlb_label = if app.run.tlb_enabled { "TLB" } else { "TLB(off)" };
+    let mut bar = Toolbar::new();
+    bar.value(VmSubtab::Status, "status", st(VmSubtab::Status, TlbHoverTarget::VmStatus), theme::ACCENT)
+        .value(VmSubtab::Tree, "tree", st(VmSubtab::Tree, TlbHoverTarget::VmTree), theme::ACCENT)
+        .value(VmSubtab::Settings, "settings", st(VmSubtab::Settings, TlbHoverTarget::VmSettings), theme::ACCENT)
+        .value(VmSubtab::Tlb, tlb_label, st(VmSubtab::Tlb, TlbHoverTarget::VmTlb), theme::ACCENT);
+    bar
+}
 
+/// Top-level Virtual Memory header: [status] [tree] [settings] [TLB] + activity chip.
+fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
     let block = panel::panel("Virtual Memory", PanelKind::Accent);
     let inner = block.inner(area);
-    let row_y = inner.y;
-    let mut x = inner.x + 1;
-    let status_x0 = x;
-    x += "status".len() as u16;
-    let status_x1 = x;
-    x += 3;
-    let tree_x0 = x;
-    x += "tree".len() as u16;
-    let tree_x1 = x;
-    x += 3;
-    let settings_x0 = x;
-    x += "settings".len() as u16;
-    let settings_x1 = x;
-    x += 3;
-    let tlb_x0 = x;
-    x += "TLB".len() as u16;
-    let tlb_x1 = x;
-    app.tlb.vm_status_btn.set((row_y, status_x0, status_x1));
-    app.tlb.vm_tree_btn.set((row_y, tree_x0, tree_x1));
-    app.tlb
-        .vm_settings_btn
-        .set((row_y, settings_x0, settings_x1));
-    app.tlb.vm_tlb_btn.set((row_y, tlb_x0, tlb_x1));
+    let origin_x = inner.x + 1;
+    app.tlb.vm_header_origin.set((inner.y, origin_x));
 
     use crate::falcon::mmu::VmMode;
     let active = translation_active(app);
@@ -140,23 +118,12 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
     } else {
         theme::PAUSED
     };
-    let tlb_label = if app.run.tlb_enabled {
-        "TLB"
-    } else {
-        "TLB(off)"
-    };
-    let line1 = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("status", status_style),
-        Span::raw("   "),
-        Span::styled("tree", tree_style),
-        Span::raw("   "),
-        Span::styled("settings", settings_style),
-        Span::raw("   "),
-        Span::styled(tlb_label, tlb_style),
-        Span::raw("   "),
-        Span::styled(chip_text, Style::default().fg(chip_color)),
-    ]);
+
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(build_vm_header_bar(app).spans());
+    spans.push(Span::raw("   "));
+    spans.push(Span::styled(chip_text, Style::default().fg(chip_color)));
+    let line1 = Line::from(spans);
     let line2 = Line::from(vec![
         Span::raw(" "),
         Span::styled("Tab to switch", style::label()),
@@ -166,53 +133,31 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(vec![line1, line2]), inner);
 }
 
+/// The nested TLB sub-header bar — `[stats] [entries] [settings]` — as a
+/// [`Toolbar`] keyed by [`TlbSubtab`]. Shared by render and mouse, like
+/// [`build_vm_header_bar`].
+pub(crate) fn build_tlb_subheader_bar(app: &App) -> Toolbar<TlbSubtab> {
+    let st = |sub: TlbSubtab, t: TlbHoverTarget| {
+        ControlState::chip(app.tlb.subtab == sub, app.tlb.hover == Some(t))
+    };
+    let mut bar = Toolbar::new();
+    bar.value(TlbSubtab::Stats, "stats", st(TlbSubtab::Stats, TlbHoverTarget::TlbStats), theme::ACCENT)
+        .value(TlbSubtab::Entries, "entries", st(TlbSubtab::Entries, TlbHoverTarget::TlbEntries), theme::ACCENT)
+        .value(TlbSubtab::Settings, "settings", st(TlbSubtab::Settings, TlbHoverTarget::TlbSettings), theme::ACCENT);
+    bar
+}
+
 /// Nested TLB sub-header: [stats] [entries] [settings] (mirrors the Cache tab).
 fn render_tlb_subheader(f: &mut Frame, area: Rect, app: &App) {
-    let stats_style = btn_style(
-        matches!(app.tlb.subtab, TlbSubtab::Stats),
-        matches!(app.tlb.hover, Some(TlbHoverTarget::TlbStats)),
-    );
-    let entries_style = btn_style(
-        matches!(app.tlb.subtab, TlbSubtab::Entries),
-        matches!(app.tlb.hover, Some(TlbHoverTarget::TlbEntries)),
-    );
-    let settings_style = btn_style(
-        matches!(app.tlb.subtab, TlbSubtab::Settings),
-        matches!(app.tlb.hover, Some(TlbHoverTarget::TlbSettings)),
-    );
-
     let block = panel::panel("Translation Lookaside Buffer", PanelKind::Plain);
     let inner = block.inner(area);
-    let row_y = inner.y;
-    let mut x = inner.x + 1;
-    let stats_x0 = x;
-    x += "stats".len() as u16;
-    let stats_x1 = x;
-    x += 3;
-    let entries_x0 = x;
-    x += "entries".len() as u16;
-    let entries_x1 = x;
-    x += 3;
-    let settings_x0 = x;
-    x += "settings".len() as u16;
-    let settings_x1 = x;
-    app.tlb.tlb_stats_btn.set((row_y, stats_x0, stats_x1));
-    app.tlb.tlb_entries_btn.set((row_y, entries_x0, entries_x1));
-    app.tlb
-        .tlb_settings_btn
-        .set((row_y, settings_x0, settings_x1));
+    app.tlb.tlb_subheader_origin.set((inner.y, inner.x + 1));
 
-    let line = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("stats", stats_style),
-        Span::raw("   "),
-        Span::styled("entries", entries_style),
-        Span::raw("   "),
-        Span::styled("settings", settings_style),
-    ]);
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(build_tlb_subheader_bar(app).spans());
 
     f.render_widget(block, area);
-    f.render_widget(Paragraph::new(line), inner);
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 /// Shown in the TLB world when the cache is disabled in Settings.
@@ -241,10 +186,6 @@ pub(super) fn translation_active(app: &App) -> bool {
     // translates, so the priv-level gate only applies otherwise.
     let priv_ok = mmu.priv_mode != PrivMode::M || mmu.force_translate;
     app.run.vm_enabled() && mmu.satp.mode() == SatpMode::Sv32 && priv_ok
-}
-
-fn btn_style(active: bool, hovered: bool) -> Style {
-    style::toggle(active, hovered, theme::TEXT)
 }
 
 pub(super) fn replacement_label(r: crate::falcon::cache::ReplacementPolicy) -> &'static str {

@@ -171,15 +171,10 @@ pub(crate) struct TlbState {
     /// Nested TLB subtab (only meaningful when `vm_subtab == Tlb`).
     pub(crate) subtab: TlbSubtab,
     pub(crate) hover: Option<TlbHoverTarget>,
-    // VM-level header hitboxes (y, x0, x1).
-    pub(crate) vm_status_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) vm_tree_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) vm_settings_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) vm_tlb_btn: std::cell::Cell<(u16, u16, u16)>,
-    // TLB-level header hitboxes.
-    pub(crate) tlb_stats_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) tlb_entries_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) tlb_settings_btn: std::cell::Cell<(u16, u16, u16)>,
+    // Subtab-bar origins `(row, first_col)`: the `Toolbar` in `view::tlb` maps a
+    // click column back to the subtab, so only the origin needs storing.
+    pub(crate) vm_header_origin: std::cell::Cell<(u16, u16)>,
+    pub(crate) tlb_subheader_origin: std::cell::Cell<(u16, u16)>,
     pub(crate) pending: TlbConfig,
     pub(crate) config_hitboxes: std::cell::Cell<[(u16, u16, u16); 5]>,
     pub(crate) preset_btns: std::cell::Cell<[(u16, u16, u16); 3]>,
@@ -224,13 +219,8 @@ impl Default for TlbState {
             vm_subtab: VmSubtab::Status,
             subtab: TlbSubtab::Stats,
             hover: None,
-            vm_status_btn: std::cell::Cell::new((0, 0, 0)),
-            vm_tree_btn: std::cell::Cell::new((0, 0, 0)),
-            vm_settings_btn: std::cell::Cell::new((0, 0, 0)),
-            vm_tlb_btn: std::cell::Cell::new((0, 0, 0)),
-            tlb_stats_btn: std::cell::Cell::new((0, 0, 0)),
-            tlb_entries_btn: std::cell::Cell::new((0, 0, 0)),
-            tlb_settings_btn: std::cell::Cell::new((0, 0, 0)),
+            vm_header_origin: std::cell::Cell::new((0, 0)),
+            tlb_subheader_origin: std::cell::Cell::new((0, 0)),
             pending: TlbConfig::default(),
             config_hitboxes: std::cell::Cell::new([(0, 0, 0); 5]),
             preset_btns: std::cell::Cell::new([(0, 0, 0); 3]),

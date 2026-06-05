@@ -21,7 +21,7 @@ pub(crate) mod run;
 mod settings;
 mod splash;
 pub(crate) mod style;
-mod tlb;
+pub(crate) mod tlb;
 
 use crate::guided_learning::view::render_guided_learning;
 
