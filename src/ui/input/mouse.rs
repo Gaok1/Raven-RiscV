@@ -1856,6 +1856,34 @@ fn unified_config_areas(content_area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
     (content_area, outer_inner, parts[0], parts[1], parts[2])
 }
 
+/// Click on the shared cache-config apply row; returns `Some(keep_history)` when
+/// one of the two apply buttons was hit.
+fn cache_apply_click(app: &App, me: MouseEvent) -> Option<bool> {
+    use crate::ui::view::cache::config::CacheApplyBtn;
+    let (ay, ax) = app.cache.config_apply_origin.get();
+    if me.row != ay {
+        return None;
+    }
+    match crate::ui::view::cache::config::build_cache_apply_bar(app).hit(me.column, ax) {
+        Some(CacheApplyBtn::Apply) => Some(false),
+        Some(CacheApplyBtn::ApplyKeep) => Some(true),
+        None => None,
+    }
+}
+
+/// Hover for the shared cache-config apply row (`apply` / `apply keep history`).
+fn cache_apply_hover(app: &mut App, me: MouseEvent) {
+    use crate::ui::view::cache::config::CacheApplyBtn;
+    let (ay, ax) = app.cache.config_apply_origin.get();
+    if me.row == ay {
+        match crate::ui::view::cache::config::build_cache_apply_bar(app).hit(me.column, ax) {
+            Some(CacheApplyBtn::Apply) => app.cache.hover = Some(CacheHoverTarget::Apply),
+            Some(CacheApplyBtn::ApplyKeep) => app.cache.hover = Some(CacheHoverTarget::ApplyKeep),
+            None => {}
+        }
+    }
+}
+
 fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
     let (level_area, _header_area, _, content_area, _controls_area) = cache_content_area(area);
 
@@ -1918,26 +1946,27 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
                     app.cache.hover = Some(CacheHoverTarget::ConfigField(is_icache, field));
                 }
 
-                let preset_btns = if is_icache {
-                    app.cache.config_preset_btns_i.get()
+                let (py, px) = if is_icache {
+                    app.cache.config_preset_origin_i.get()
                 } else {
-                    app.cache.config_preset_btns_d.get()
+                    app.cache.config_preset_origin_d.get()
                 };
-                if let Some(i) = point_in_any_btn(me, &preset_btns) {
-                    app.cache.hover = Some(if is_icache {
-                        CacheHoverTarget::PresetI(i)
-                    } else {
-                        CacheHoverTarget::PresetD(i)
-                    });
+                if me.row == py {
+                    if let Some(i) = crate::ui::view::cache::config::build_cache_preset_bar(
+                        app, is_icache,
+                    )
+                    .hit(me.column, px)
+                    {
+                        app.cache.hover = Some(if is_icache {
+                            CacheHoverTarget::PresetI(i)
+                        } else {
+                            CacheHoverTarget::PresetD(i)
+                        });
+                    }
                 }
 
                 if is_icache {
-                    let apply_btns = app.cache.config_apply_btns.get();
-                    if point_in_btn(me, apply_btns[0]) {
-                        app.cache.hover = Some(CacheHoverTarget::Apply);
-                    } else if point_in_btn(me, apply_btns[1]) {
-                        app.cache.hover = Some(CacheHoverTarget::ApplyKeep);
-                    }
+                    cache_apply_hover(app, me);
                 }
             }
         } else {
@@ -1949,15 +1978,16 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
                 app.cache.hover = Some(CacheHoverTarget::ConfigField(false, field));
             }
 
-            let apply_btns = app.cache.config_apply_btns.get();
-            if point_in_btn(me, apply_btns[0]) {
-                app.cache.hover = Some(CacheHoverTarget::Apply);
-            } else if point_in_btn(me, apply_btns[1]) {
-                app.cache.hover = Some(CacheHoverTarget::ApplyKeep);
-            }
+            cache_apply_hover(app, me);
 
-            if let Some(i) = point_in_any_btn(me, &app.cache.config_preset_btns_u.get()) {
-                app.cache.hover = Some(CacheHoverTarget::PresetD(i));
+            let (py, px) = app.cache.config_preset_origin_u.get();
+            if me.row == py {
+                if let Some(i) =
+                    crate::ui::view::cache::config::build_cache_unified_preset_bar(app)
+                        .hit(me.column, px)
+                {
+                    app.cache.hover = Some(CacheHoverTarget::PresetD(i));
+                }
             }
         }
     }
@@ -2139,30 +2169,36 @@ fn handle_l1_config_click(app: &mut App, me: MouseEvent, content_area: Rect) {
             return;
         }
 
-        let preset_btns = if is_icache {
-            app.cache.config_preset_btns_i.get()
+        let (py, px) = if is_icache {
+            app.cache.config_preset_origin_i.get()
         } else {
-            app.cache.config_preset_btns_d.get()
+            app.cache.config_preset_origin_d.get()
         };
         use crate::falcon::cache::cache_presets;
-        if let Some(idx) = point_in_any_btn(me, &preset_btns) {
-            if is_icache {
-                app.cache.pending_icache = cache_presets(true)[idx].clone();
-            } else {
-                app.cache.pending_dcache = cache_presets(false)[idx].clone();
+        if me.row == py {
+            if let Some(idx) =
+                crate::ui::view::cache::config::build_cache_preset_bar(app, is_icache)
+                    .hit(me.column, px)
+            {
+                if is_icache {
+                    app.cache.pending_icache = cache_presets(true)[idx].clone();
+                } else {
+                    app.cache.pending_dcache = cache_presets(false)[idx].clone();
+                }
+                app.cache.config_error = None;
+                app.cache.config_status = None;
+                return;
             }
-            app.cache.config_error = None;
-            app.cache.config_status = None;
-            return;
         }
 
-        if is_icache && point_in_btn(me, app.cache.config_apply_btns.get()[0]) {
-            apply_l1_config(app, false);
-            return;
-        }
-        if is_icache && point_in_btn(me, app.cache.config_apply_btns.get()[1]) {
-            apply_l1_config(app, true);
-            return;
+        if is_icache {
+            match cache_apply_click(app, me) {
+                Some(keep) => {
+                    apply_l1_config(app, keep);
+                    return;
+                }
+                None => {}
+            }
         }
     }
 
@@ -2227,23 +2263,24 @@ fn handle_unified_config_click(
     app.cache.edit_field = None;
     app.cache.edit_buf.clear();
 
-    // Apply buttons
-    if point_in_btn(me, app.cache.config_apply_btns.get()[0]) {
-        apply_extra_config(app, extra_idx, false);
-        return;
-    }
-    if point_in_btn(me, app.cache.config_apply_btns.get()[1]) {
-        apply_extra_config(app, extra_idx, true);
+    // Apply buttons (shared bar).
+    if let Some(keep) = cache_apply_click(app, me) {
+        apply_extra_config(app, extra_idx, keep);
         return;
     }
 
     use crate::falcon::cache::extra_level_presets;
     let presets = extra_level_presets();
-    if let Some(i) = point_in_any_btn(me, &app.cache.config_preset_btns_u.get()) {
-        if extra_idx < app.cache.extra_pending.len() {
-            app.cache.extra_pending[extra_idx] = presets[i].clone();
-            app.cache.config_error = None;
-            app.cache.config_status = None;
+    let (py, px) = app.cache.config_preset_origin_u.get();
+    if me.row == py {
+        if let Some(i) =
+            crate::ui::view::cache::config::build_cache_unified_preset_bar(app).hit(me.column, px)
+        {
+            if extra_idx < app.cache.extra_pending.len() {
+                app.cache.extra_pending[extra_idx] = presets[i].clone();
+                app.cache.config_error = None;
+                app.cache.config_status = None;
+            }
         }
     }
 }

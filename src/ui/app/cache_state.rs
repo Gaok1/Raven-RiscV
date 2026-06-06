@@ -275,10 +275,12 @@ pub(crate) struct CacheState {
     pub(crate) config_hitboxes_i: std::cell::Cell<[(u16, u16, u16); 11]>,
     pub(crate) config_hitboxes_d: std::cell::Cell<[(u16, u16, u16); 11]>,
     pub(crate) config_hitboxes_u: std::cell::Cell<[(u16, u16, u16); 11]>,
-    pub(crate) config_preset_btns_i: std::cell::Cell<[(u16, u16, u16); 3]>,
-    pub(crate) config_preset_btns_d: std::cell::Cell<[(u16, u16, u16); 3]>,
-    pub(crate) config_preset_btns_u: std::cell::Cell<[(u16, u16, u16); 3]>,
-    pub(crate) config_apply_btns: std::cell::Cell<[(u16, u16, u16); 2]>,
+    // Config preset/apply bar origins `(row, first_col)` — the `Toolbar`s in
+    // `view::cache::config` map a click column back to the button.
+    pub(crate) config_preset_origin_i: std::cell::Cell<(u16, u16)>,
+    pub(crate) config_preset_origin_d: std::cell::Cell<(u16, u16)>,
+    pub(crate) config_preset_origin_u: std::cell::Cell<(u16, u16)>,
+    pub(crate) config_apply_origin: std::cell::Cell<(u16, u16)>,
     // Config form (pending values before Apply)
     pub(crate) pending_icache: CacheConfig,
     pub(crate) pending_dcache: CacheConfig,

@@ -8,7 +8,7 @@ use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{ControlState, Toolbar};
 use crate::ui::view::style;
 
-mod config;
+pub(crate) mod config;
 mod stats;
 mod view;
 

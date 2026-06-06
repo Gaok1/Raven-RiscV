@@ -491,18 +491,20 @@ fn cache_config_hover_uses_rendered_preset_and_apply_hitboxes() {
     app.set_cache_enabled(true);
     app.tab = Tab::Cache;
     app.cache.subtab = CacheSubtab::Config;
-    app.cache
-        .config_preset_btns_i
-        .set([(12, 20, 25), (12, 26, 32), (12, 33, 38)]);
-    app.cache
-        .config_apply_btns
-        .set([(14, 20, 39), (14, 42, 60)]);
+    app.cache.config_preset_origin_i.set((12, 20));
+    app.cache.config_apply_origin.set((14, 20));
 
+    use crate::ui::view::cache::config::{
+        CacheApplyBtn, build_cache_apply_bar, build_cache_preset_bar,
+    };
+    let preset1_col = (20..160)
+        .find(|&c| build_cache_preset_bar(&app, true).hit(c, 20) == Some(1))
+        .expect("preset 1 present");
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Moved,
-            column: 27,
+            column: preset1_col,
             row: 12,
             modifiers: KeyModifiers::NONE,
         },
@@ -513,11 +515,14 @@ fn cache_config_hover_uses_rendered_preset_and_apply_hitboxes() {
         Some(crate::ui::app::CacheHoverTarget::PresetI(1))
     ));
 
+    let keep_col = (20..160)
+        .find(|&c| build_cache_apply_bar(&app).hit(c, 20) == Some(CacheApplyBtn::ApplyKeep))
+        .expect("apply-keep present");
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Moved,
-            column: 45,
+            column: keep_col,
             row: 14,
             modifiers: KeyModifiers::NONE,
         },
