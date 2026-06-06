@@ -2775,14 +2775,22 @@ fn update_tlb_hover(app: &mut App, me: MouseEvent) {
                 app.tlb.hover = Some(TlbHoverTarget::ConfigField(field));
             }
         }
-        let presets = app.tlb.preset_btns.get();
-        if let Some(i) = point_in_any_btn(me, &presets) {
-            app.tlb.hover = Some(TlbHoverTarget::Preset(i));
+        use crate::ui::view::tlb::config::TlbConfigBtn;
+        let (py, px) = app.tlb.preset_origin.get();
+        if me.row == py {
+            if let Some(TlbConfigBtn::Preset(i)) =
+                crate::ui::view::tlb::config::build_tlb_preset_bar(app).hit(me.column, px)
+            {
+                app.tlb.hover = Some(TlbHoverTarget::Preset(i));
+            }
         }
-        if point_in_btn(me, app.tlb.apply_btn.get()) {
-            app.tlb.hover = Some(TlbHoverTarget::Apply);
-        } else if point_in_btn(me, app.tlb.flush_btn.get()) {
-            app.tlb.hover = Some(TlbHoverTarget::Flush);
+        let (ay, ax) = app.tlb.apply_origin.get();
+        if me.row == ay {
+            match crate::ui::view::tlb::config::build_tlb_apply_bar(app).hit(me.column, ax) {
+                Some(TlbConfigBtn::Apply) => app.tlb.hover = Some(TlbHoverTarget::Apply),
+                Some(TlbConfigBtn::Flush) => app.tlb.hover = Some(TlbHoverTarget::Flush),
+                _ => {}
+            }
         }
     }
 
@@ -2845,20 +2853,31 @@ fn handle_tlb_click(app: &mut App, me: MouseEvent) {
                 return;
             }
         }
-        let presets = app.tlb.preset_btns.get();
-        if let Some(i) = point_in_any_btn(me, &presets) {
-            app.apply_tlb_preset(i);
-            app.tlb.config_error = None;
-            app.tlb.config_status = None;
-            return;
+        use crate::ui::view::tlb::config::TlbConfigBtn;
+        let (py, px) = app.tlb.preset_origin.get();
+        if me.row == py {
+            if let Some(TlbConfigBtn::Preset(i)) =
+                crate::ui::view::tlb::config::build_tlb_preset_bar(app).hit(me.column, px)
+            {
+                app.apply_tlb_preset(i);
+                app.tlb.config_error = None;
+                app.tlb.config_status = None;
+                return;
+            }
         }
-        if point_in_btn(me, app.tlb.apply_btn.get()) {
-            app.apply_tlb_config();
-            return;
-        }
-        if point_in_btn(me, app.tlb.flush_btn.get()) {
-            app.flush_tlb();
-            return;
+        let (ay, ax) = app.tlb.apply_origin.get();
+        if me.row == ay {
+            match crate::ui::view::tlb::config::build_tlb_apply_bar(app).hit(me.column, ax) {
+                Some(TlbConfigBtn::Apply) => {
+                    app.apply_tlb_config();
+                    return;
+                }
+                Some(TlbConfigBtn::Flush) => {
+                    app.flush_tlb();
+                    return;
+                }
+                _ => {}
+            }
         }
     }
 

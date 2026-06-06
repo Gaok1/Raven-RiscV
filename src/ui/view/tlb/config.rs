@@ -10,14 +10,59 @@ use ratatui::{
 use crate::ui::app::{App, TlbConfigField, TlbHoverTarget};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{dense_action, field_row};
+use crate::ui::view::components::{ControlState, Toolbar, field_row};
 use crate::ui::view::style;
+
+/// A button in the TLB config preset / apply rows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TlbConfigBtn {
+    Preset(usize),
+    Apply,
+    Flush,
+}
+
+/// The `presets` row — `small 16  med 32  large 64` (after a dim `presets `
+/// label). Keyed by [`TlbConfigBtn::Preset`].
+pub(crate) fn build_tlb_preset_bar(app: &App) -> Toolbar<TlbConfigBtn> {
+    let hovered = match &app.tlb.hover {
+        Some(TlbHoverTarget::Preset(i)) => Some(*i),
+        _ => None,
+    };
+    let labels = ["small 16", "med 32", "large 64"];
+    let mut bar = Toolbar::with_gap(1);
+    for (i, lbl) in labels.iter().enumerate() {
+        bar.action(
+            TlbConfigBtn::Preset(i),
+            lbl,
+            ControlState::chip(false, hovered == Some(i)),
+            theme::ACCENT,
+        );
+    }
+    bar
+}
+
+/// The `apply   flush tlb` row. Keyed by [`TlbConfigBtn`].
+pub(crate) fn build_tlb_apply_bar(app: &App) -> Toolbar<TlbConfigBtn> {
+    let mut bar = Toolbar::new();
+    bar.action(
+        TlbConfigBtn::Apply,
+        "apply",
+        ControlState::chip(false, matches!(app.tlb.hover, Some(TlbHoverTarget::Apply))),
+        theme::RUNNING,
+    )
+    .action(
+        TlbConfigBtn::Flush,
+        "flush tlb",
+        ControlState::chip(false, matches!(app.tlb.hover, Some(TlbHoverTarget::Flush))),
+        theme::DANGER,
+    );
+    bar
+}
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     app.tlb.config_hitboxes.set([(0, 0, 0); 5]);
-    app.tlb.preset_btns.set([(0, 0, 0); 3]);
-    app.tlb.apply_btn.set((0, 0, 0));
-    app.tlb.flush_btn.set((0, 0, 0));
+    app.tlb.preset_origin.set((0, 0));
+    app.tlb.apply_origin.set((0, 0));
 
     let col_w = area.width.min(60);
     let col_x = area.x + (area.width.saturating_sub(col_w)) / 2;
@@ -140,64 +185,31 @@ fn render_fields(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_presets(f: &mut Frame, area: Rect, app: &App) {
-    let hovered = match &app.tlb.hover {
-        Some(TlbHoverTarget::Preset(i)) => Some(*i),
-        _ => None,
-    };
-    let labels = ["small 16", "med 32", "large 64"];
-    let line = Line::from(vec![
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
+    // Bar starts right after the dim `presets ` label.
+    app.tlb.preset_origin.set((inner.y, inner.x + 9));
+    let mut spans = vec![
         Span::raw(" "),
         Span::styled("presets", style::idle()),
         Span::raw(" "),
-        dense_action(labels[0], theme::ACCENT, hovered == Some(0)),
-        Span::raw(" "),
-        dense_action(labels[1], theme::ACCENT, hovered == Some(1)),
-        Span::raw(" "),
-        dense_action(labels[2], theme::ACCENT, hovered == Some(2)),
-    ]);
-    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
-    let x0 = inner.x + 9;
-    let mut x = x0;
-    let mut btns = [(0u16, 0u16, 0u16); 3];
-    for (i, lbl) in labels.iter().enumerate() {
-        btns[i] = (inner.y, x, x + lbl.len() as u16);
-        x += lbl.len() as u16 + 1;
-    }
-    app.tlb.preset_btns.set(btns);
-    f.render_widget(ratatui::widgets::Paragraph::new(line), inner);
+    ];
+    spans.extend(build_tlb_preset_bar(app).spans());
+    f.render_widget(ratatui::widgets::Paragraph::new(Line::from(spans)), inner);
 }
 
 fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
-    let show_buttons = app.tlb.config_error.is_none() && app.tlb.config_status.is_none();
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let line = if let Some(ref err) = app.tlb.config_error {
+        app.tlb.apply_origin.set((0, 0));
         Line::from(Span::styled(format!(" ✗ {err}"), style::danger()))
     } else if let Some(ref status) = app.tlb.config_status {
+        app.tlb.apply_origin.set((0, 0));
         Line::from(Span::styled(format!(" ✓ {status}"), style::success()))
     } else {
-        Line::from(vec![
-            Span::raw(" "),
-            dense_action(
-                "apply",
-                theme::RUNNING,
-                matches!(app.tlb.hover, Some(TlbHoverTarget::Apply)),
-            ),
-            Span::raw("   "),
-            dense_action(
-                "flush tlb",
-                theme::DANGER,
-                matches!(app.tlb.hover, Some(TlbHoverTarget::Flush)),
-            ),
-        ])
+        app.tlb.apply_origin.set((inner.y, inner.x + 1));
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(build_tlb_apply_bar(app).spans());
+        Line::from(spans)
     };
-    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
-    if show_buttons {
-        app.tlb
-            .apply_btn
-            .set((inner.y, inner.x + 1, inner.x + 1 + "apply".len() as u16));
-        let flush_x0 = inner.x + 1 + "apply".len() as u16 + 3;
-        app.tlb
-            .flush_btn
-            .set((inner.y, flush_x0, flush_x0 + "flush tlb".len() as u16));
-    }
     f.render_widget(ratatui::widgets::Paragraph::new(line), inner);
 }
