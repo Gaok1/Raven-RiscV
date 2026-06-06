@@ -87,29 +87,17 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 }
             }
         } else if me.row == area.y {
-            let x = me.column.saturating_sub(area.x + 1);
-            let divider = 2u16; // "  "
-            let pad_left = 1u16;
-            let pad_right = 1u16;
-            let mut pos: u16 = 0;
-            let visible_tabs = app.visible_tabs();
-            for (i, &tab) in visible_tabs.iter().enumerate() {
-                let label = tab.label();
-                let w = pad_left + label.len() as u16 + pad_right;
-                if x >= pos && x < pos + w {
-                    app.hover_tab = Some(tab);
-                    if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                        if tab != app.tab && matches!(app.tab, Tab::Editor) && app.editor.dirty {
-                            app.assemble_and_load();
-                        }
-                        app.tab = tab;
-                        app.mode = EditorMode::Command;
+            // Same bar the renderer draws; origin is one column in from the edge.
+            if let Some(tab) =
+                crate::ui::view::build_main_tab_bar(app).hit(me.column, area.x + 1)
+            {
+                app.hover_tab = Some(tab);
+                if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    if tab != app.tab && matches!(app.tab, Tab::Editor) && app.editor.dirty {
+                        app.assemble_and_load();
                     }
-                    break;
-                }
-                pos += w;
-                if i + 1 < visible_tabs.len() {
-                    pos += divider;
+                    app.tab = tab;
+                    app.mode = EditorMode::Command;
                 }
             }
         }

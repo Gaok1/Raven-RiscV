@@ -9,6 +9,7 @@ pub(super) use super::editor::Editor;
 use crate::ui::theme;
 use crate::ui::view::components::layout;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
+use crate::ui::view::components::{ControlState, Toolbar};
 
 pub(crate) mod cache;
 pub(crate) mod components;
@@ -248,32 +249,38 @@ pub fn ui(f: &mut Frame, app: &App) {
     }
 }
 
+/// The top navigation tab bar as a [`Toolbar`] keyed by [`Tab`] (gap 2, each
+/// label padded ` x `). Shared by the renderer and `input::mouse` so the click
+/// targets follow the labels. The selected tab lights up in ACCENT (and is also
+/// underlined below).
+pub(crate) fn build_main_tab_bar(app: &App) -> Toolbar<Tab> {
+    let mut bar = Toolbar::with_gap(2);
+    for &tab in app.visible_tabs().iter() {
+        bar.value(
+            tab,
+            &format!(" {} ", tab.label()),
+            ControlState::chip(tab == app.tab, Some(tab) == app.hover_tab),
+            theme::ACCENT,
+        );
+    }
+    bar
+}
+
 fn render_main_tab_bar(f: &mut Frame, area: Rect, app: &App, tutorial_targeted: bool) {
-    let visible_tabs = app.visible_tabs();
+    let bar = build_main_tab_bar(app);
+
     let mut labels: Vec<Span<'static>> = vec![Span::raw(" ")];
+    labels.extend(bar.spans());
+
+    // Underline row, aligned to the bar's own per-cell widths (single source).
     let mut underlines: Vec<Span<'static>> = vec![Span::raw(" ")];
-
-    for (i, &tab) in visible_tabs.iter().enumerate() {
-        let label = format!(" {} ", tab.label());
-        let label_w = label.chars().count();
-        let text_w = tab.label().chars().count();
-        let label_style = if tab == app.tab {
-            Style::default()
-                .fg(theme::ACTIVE)
-                .add_modifier(Modifier::BOLD)
-        } else if Some(tab) == app.hover_tab {
-            style::value().add_modifier(Modifier::BOLD)
-        } else {
-            style::idle()
-        };
-        labels.push(Span::styled(label, label_style));
-
-        underlines.push(underline_cell(tab == app.tab, label_w, text_w));
-
-        if i + 1 < visible_tabs.len() {
-            labels.push(Span::raw("  "));
+    for (i, (tab, start, end)) in bar.cells().enumerate() {
+        if i > 0 {
             underlines.push(Span::raw("  "));
         }
+        let cell_w = (end - start) as usize;
+        let text_w = tab.label().chars().count();
+        underlines.push(underline_cell(tab == app.tab, cell_w, text_w));
     }
 
     let sep_style = if tutorial_targeted {

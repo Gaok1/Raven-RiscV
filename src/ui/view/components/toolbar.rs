@@ -26,7 +26,7 @@ use ratatui::prelude::*;
 use crate::ui::theme;
 use crate::ui::view::components::controls::{control_style, ControlState};
 
-/// Columns of blank space rendered between adjacent cells.
+/// Default columns of blank space rendered between adjacent cells.
 const GAP: u16 = 3;
 
 /// One control in a [`Toolbar`]: an optional dim `label` plus a pre-styled
@@ -49,6 +49,8 @@ pub(crate) struct Toolbar<Id> {
     cells: Vec<Cell<Id>>,
     /// Running column where the next cell starts (relative to the origin).
     cursor: u16,
+    /// Blank columns rendered between adjacent cells.
+    gap: u16,
 }
 
 impl<Id: Copy> Default for Toolbar<Id> {
@@ -59,9 +61,15 @@ impl<Id: Copy> Default for Toolbar<Id> {
 
 impl<Id: Copy> Toolbar<Id> {
     pub(crate) fn new() -> Self {
+        Self::with_gap(GAP)
+    }
+
+    /// A toolbar with a custom inter-cell gap (the main tab bar uses 2).
+    pub(crate) fn with_gap(gap: u16) -> Self {
         Self {
             cells: Vec::new(),
             cursor: 0,
+            gap,
         }
     }
 
@@ -125,7 +133,7 @@ impl<Id: Copy> Toolbar<Id> {
         enabled: bool,
     ) -> &mut Self {
         if !self.cells.is_empty() {
-            self.cursor += GAP;
+            self.cursor += self.gap;
         }
         // label + one space + value, or just the value.
         let label = label.map(str::to_string);
@@ -151,7 +159,7 @@ impl<Id: Copy> Toolbar<Id> {
         let mut spans = Vec::with_capacity(self.cells.len() * 4);
         for (i, cell) in self.cells.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::raw(" ".repeat(GAP as usize)));
+                spans.push(Span::raw(" ".repeat(self.gap as usize)));
             }
             if let Some(label) = &cell.label {
                 spans.push(Span::styled(label.clone(), Style::default().fg(theme::IDLE)));
@@ -166,6 +174,12 @@ impl<Id: Copy> Toolbar<Id> {
     /// after this one on the same line).
     pub(crate) fn width(&self) -> u16 {
         self.cursor
+    }
+
+    /// Per-cell `(id, start, end)` columns relative to the origin — used to align
+    /// a second row under each cell (the tab bar's underline).
+    pub(crate) fn cells(&self) -> impl Iterator<Item = (Id, u16, u16)> + '_ {
+        self.cells.iter().map(|c| (c.id, c.start, c.end))
     }
 
     /// The control under `col`, where `origin` is the toolbar's first rendered
