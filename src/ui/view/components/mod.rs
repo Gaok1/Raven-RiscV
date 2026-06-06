@@ -54,6 +54,35 @@
 //! ```ignore
 //! let (_tabs, body, _status) = layout::app_frame(area);
 //! ```
+//!
+//! ## Creating a button / control bar
+//!
+//! A horizontal row of clickable controls (subtabs, toggles, action words) is a
+//! [`Toolbar`]. Build it **once** from app state in a `build_*_bar(app)` function,
+//! keyed by a small `Copy` id enum. The renderer asks it for [`spans`] and the
+//! mouse code asks the *same* builder for [`hit`] — so a control appears in the
+//! view and becomes clickable from one edit, and the click target can never drift
+//! from the label. Selected controls light up in `ACCENT`; hover is bright `TEXT`.
+//!
+//! ```ignore
+//! // shared builder — the single source of geometry + style
+//! pub(crate) fn build_foo_bar(app: &App) -> Toolbar<FooBtn> {
+//!     let mut bar = Toolbar::new();
+//!     bar.value(FooBtn::Stats, "stats", ControlState::chip(active, hovered), theme::ACCENT)
+//!        .action(FooBtn::Reset, "reset", ControlState::chip(false, reset_hov), theme::DANGER);
+//!     bar
+//! }
+//! // renderer:  spans.extend(build_foo_bar(app).spans());  + store (row, first_col)
+//! // mouse:     build_foo_bar(app).hit(col, origin_col)  -> Option<FooBtn>
+//! ```
+//!
+//! Use `.toggle` for a `label value` pair, `.value` for a bare word, `.action`
+//! for an always-lit verb, and `.span` to push a pre-styled value (e.g. an
+//! editable field's `█` cursor). Vertical field forms are not toolbars — they use
+//! [`controls::field_row`] / [`controls::control_style`] instead.
+//!
+//! [`spans`]: Toolbar::spans
+//! [`hit`]: Toolbar::hit
 
 pub(super) mod build;
 pub(super) mod console;
@@ -71,7 +100,6 @@ pub(crate) use controls::{
     ControlState, bool_value, dense_action, dense_value, edit_value, field_row, label_span,
     push_dense_pair,
 };
-#[allow(unused_imports)]
 pub(crate) use toolbar::Toolbar;
 pub(crate) use lists::{
     horizontal_scrollbar, scroll_offset_from_pos, vertical_scrollbar, visible_window,

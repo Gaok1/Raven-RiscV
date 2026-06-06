@@ -21,10 +21,6 @@
 //! let hit   = bar.hit(col, origin);   // input
 //! ```
 
-// Phase 1 scaffolding: the builder methods are consumed by Phase 2 (the bar
-// migrations). The allow is removed in the final cleanup phase.
-#![allow(dead_code)]
-
 use ratatui::prelude::*;
 
 use crate::ui::theme;
