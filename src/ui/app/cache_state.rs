@@ -261,18 +261,12 @@ pub(crate) struct CacheState {
     /// Origin `(row, first_col)` of the subtab bar; the `Toolbar` in
     /// `view::cache` maps a click column back to the [`CacheSubtab`].
     pub(crate) subtab_header_origin: std::cell::Cell<(u16, u16)>,
-    pub(crate) level_btns: std::cell::RefCell<Vec<(u16, u16, u16)>>,
-    pub(crate) add_level_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) remove_level_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_results_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_import_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_export_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_scope_i_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_scope_d_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_scope_both_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_speed_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_state_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_reset_btn: std::cell::Cell<(u16, u16, u16)>,
+    // Bar origins `(row, first_col)` — the `Toolbar`s in `view::cache` map a
+    // click column back to the button (level / controls / scope / exec).
+    pub(crate) level_origin: std::cell::Cell<(u16, u16)>,
+    pub(crate) ctrl_origin: std::cell::Cell<(u16, u16)>,
+    pub(crate) ctrl_scope_origin: std::cell::Cell<(u16, u16)>,
+    pub(crate) exec_origin: std::cell::Cell<(u16, u16)>,
     // View legend button positions (set by render each frame, read by mouse)
     pub(crate) view_fmt_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
     pub(crate) view_group_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)

@@ -1770,22 +1770,9 @@ fn point_in_any_btn(me: MouseEvent, btns: &[(u16, u16, u16)]) -> Option<usize> {
 
 /// Hit-test for the cache exec-controls widget using render-recorded geometry.
 fn cache_exec_hit(app: &App, _status: Rect, col: u16) -> Option<RunButton> {
-    let y = app.cache.exec_speed_btn.get().0;
-    let probe = MouseEvent {
-        kind: MouseEventKind::Moved,
-        column: col,
-        row: y,
-        modifiers: crossterm::event::KeyModifiers::NONE,
-    };
-    if point_in_btn(probe, app.cache.exec_reset_btn.get()) {
-        Some(RunButton::Reset)
-    } else if point_in_btn(probe, app.cache.exec_speed_btn.get()) {
-        Some(RunButton::Speed)
-    } else if point_in_btn(probe, app.cache.exec_state_btn.get()) {
-        Some(RunButton::State)
-    } else {
-        None
-    }
+    // Same bar the renderer draws — one geometry for both.
+    let (_y, x) = app.cache.exec_origin.get();
+    crate::ui::view::cache::build_cache_exec_bar(app).hit(col, x)
 }
 
 fn cache_view_mouse_is_dcache(app: &App, me: MouseEvent, content_area: Rect) -> bool {
@@ -1904,18 +1891,26 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 
-    if point_in_btn(me, app.cache.ctrl_results_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::ExportResults);
-    } else if point_in_btn(me, app.cache.ctrl_import_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::ImportCfg);
-    } else if point_in_btn(me, app.cache.ctrl_export_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::ExportCfg);
-    } else if point_in_btn(me, app.cache.ctrl_scope_i_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::ScopeI);
-    } else if point_in_btn(me, app.cache.ctrl_scope_d_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::ScopeD);
-    } else if point_in_btn(me, app.cache.ctrl_scope_both_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::ScopeBoth);
+    // Shared controls bar — action group + (L1) scope selector.
+    let (ay, ax) = app.cache.ctrl_origin.get();
+    if me.row == ay {
+        use crate::ui::view::cache::CacheCtrlBtn;
+        match crate::ui::view::cache::build_cache_ctrl_bar(app).hit(me.column, ax) {
+            Some(CacheCtrlBtn::Results) => app.cache.hover = Some(CacheHoverTarget::ExportResults),
+            Some(CacheCtrlBtn::ImportCfg) => app.cache.hover = Some(CacheHoverTarget::ImportCfg),
+            Some(CacheCtrlBtn::ExportCfg) => app.cache.hover = Some(CacheHoverTarget::ExportCfg),
+            None => {}
+        }
+    }
+    let (sy, sx) = app.cache.ctrl_scope_origin.get();
+    if app.cache.hover.is_none() && me.row == sy {
+        use crate::ui::view::cache::CacheScopeBtn;
+        match crate::ui::view::cache::build_cache_scope_bar(app).hit(me.column, sx) {
+            Some(CacheScopeBtn::I) => app.cache.hover = Some(CacheHoverTarget::ScopeI),
+            Some(CacheScopeBtn::D) => app.cache.hover = Some(CacheHoverTarget::ScopeD),
+            Some(CacheScopeBtn::Both) => app.cache.hover = Some(CacheHoverTarget::ScopeBoth),
+            None => {}
+        }
     }
 
     // Config panel controls
@@ -2009,21 +2004,15 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
 }
 
 /// Update hover state for the level selector bar (row = level_area.y).
-fn update_level_selector_hover(app: &mut App, me: MouseEvent, level_area: Rect) {
-    if let Some(i) = point_in_any_btn(me, &app.cache.level_btns.borrow()) {
-        app.cache.hover = Some(CacheHoverTarget::Level(i));
-        return;
-    }
-    if point_in_btn(me, app.cache.add_level_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::AddLevel);
-        return;
-    }
-    if point_in_btn(me, app.cache.remove_level_btn.get()) {
-        app.cache.hover = Some(CacheHoverTarget::RemoveLevel);
-        return;
-    }
-    if me.row == level_area.y {
-        let _ = level_area;
+fn update_level_selector_hover(app: &mut App, me: MouseEvent, _level_area: Rect) {
+    use crate::ui::view::cache::CacheLevelBtn;
+    let (_y, x) = app.cache.level_origin.get();
+    if let Some(btn) = crate::ui::view::cache::build_cache_level_bar(app).hit(me.column, x) {
+        app.cache.hover = Some(match btn {
+            CacheLevelBtn::Level(i) => CacheHoverTarget::Level(i),
+            CacheLevelBtn::Add => CacheHoverTarget::AddLevel,
+            CacheLevelBtn::Remove => CacheHoverTarget::RemoveLevel,
+        });
     }
 }
 
@@ -2045,32 +2034,46 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 
-    // Shared controls bar — available in all subtabs
-    if point_in_btn(me, app.cache.ctrl_results_btn.get()) {
-        do_export_results(app);
-        return;
+    // Shared controls bar — action group + (L1) scope selector.
+    let (ay, ax) = app.cache.ctrl_origin.get();
+    if me.row == ay {
+        use crate::ui::view::cache::CacheCtrlBtn;
+        match crate::ui::view::cache::build_cache_ctrl_bar(app).hit(me.column, ax) {
+            Some(CacheCtrlBtn::Results) => {
+                do_export_results(app);
+                return;
+            }
+            Some(CacheCtrlBtn::ImportCfg) => {
+                do_import_cfg(app);
+                return;
+            }
+            Some(CacheCtrlBtn::ExportCfg) => {
+                do_export_cfg(app);
+                return;
+            }
+            None => {}
+        }
     }
-    if point_in_btn(me, app.cache.ctrl_import_btn.get()) {
-        do_import_cfg(app);
-        return;
-    }
-    if point_in_btn(me, app.cache.ctrl_export_btn.get()) {
-        do_export_cfg(app);
-        return;
-    }
-    if point_in_btn(me, app.cache.ctrl_scope_i_btn.get()) {
-        app.cache.scope = CacheScope::ICache;
-        app.cache.view_focus = CacheViewFocus::ICache;
-        return;
-    }
-    if point_in_btn(me, app.cache.ctrl_scope_d_btn.get()) {
-        app.cache.scope = CacheScope::DCache;
-        app.cache.view_focus = CacheViewFocus::DCache;
-        return;
-    }
-    if point_in_btn(me, app.cache.ctrl_scope_both_btn.get()) {
-        app.cache.scope = CacheScope::Both;
-        return;
+    let (sy, sx) = app.cache.ctrl_scope_origin.get();
+    if me.row == sy {
+        use crate::ui::view::cache::CacheScopeBtn;
+        match crate::ui::view::cache::build_cache_scope_bar(app).hit(me.column, sx) {
+            Some(CacheScopeBtn::I) => {
+                app.cache.scope = CacheScope::ICache;
+                app.cache.view_focus = CacheViewFocus::ICache;
+                return;
+            }
+            Some(CacheScopeBtn::D) => {
+                app.cache.scope = CacheScope::DCache;
+                app.cache.view_focus = CacheViewFocus::DCache;
+                return;
+            }
+            Some(CacheScopeBtn::Both) => {
+                app.cache.scope = CacheScope::Both;
+                return;
+            }
+            None => {}
+        }
     }
 
     // View legend bar button clicks: [FMT], [GROUP], and address mode
@@ -2107,24 +2110,19 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
-fn handle_level_selector_click(app: &mut App, me: MouseEvent, level_area: Rect) {
-    if let Some(i) = point_in_any_btn(me, &app.cache.level_btns.borrow()) {
-        app.cache.selected_level = i;
-        if i != 0 {
-            app.cache.view_focus = CacheViewFocus::ICache;
+fn handle_level_selector_click(app: &mut App, me: MouseEvent, _level_area: Rect) {
+    use crate::ui::view::cache::CacheLevelBtn;
+    let (_y, x) = app.cache.level_origin.get();
+    match crate::ui::view::cache::build_cache_level_bar(app).hit(me.column, x) {
+        Some(CacheLevelBtn::Level(i)) => {
+            app.cache.selected_level = i;
+            if i != 0 {
+                app.cache.view_focus = CacheViewFocus::ICache;
+            }
         }
-        return;
-    }
-    if point_in_btn(me, app.cache.add_level_btn.get()) {
-        app.add_cache_level();
-        return;
-    }
-    if point_in_btn(me, app.cache.remove_level_btn.get()) {
-        app.remove_last_cache_level();
-        return;
-    }
-    if me.row == level_area.y {
-        let _ = level_area;
+        Some(CacheLevelBtn::Add) => app.add_cache_level(),
+        Some(CacheLevelBtn::Remove) => app.remove_last_cache_level(),
+        None => {}
     }
 }
 

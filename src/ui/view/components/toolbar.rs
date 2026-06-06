@@ -166,6 +166,12 @@ impl<Id: Copy> Toolbar<Id> {
         spans
     }
 
+    /// Total rendered width in columns (handy to place a second bar or label
+    /// after this one on the same line).
+    pub(crate) fn width(&self) -> u16 {
+        self.cursor
+    }
+
     /// The control under `col`, where `origin` is the toolbar's first rendered
     /// column. Disabled cells are transparent to clicks.
     pub(crate) fn hit(&self, col: u16, origin: u16) -> Option<Id> {

@@ -100,10 +100,8 @@ fn run_status_hit_shows_region_and_bytes_when_dyn_is_displaying_memory() {
 fn cache_exec_hit_exposes_reset_speed_and_state() {
     let app = App::new(None);
     let status = cache_run_status_area(Rect::new(0, 0, 160, 40));
-    let y = status.y + 1;
-    app.cache.exec_speed_btn.set((y, 10, 12));
-    app.cache.exec_state_btn.set((y, 20, 25));
-    app.cache.exec_reset_btn.set((y, 30, 35));
+    // Place the exec bar at a known origin, as the renderer would.
+    app.cache.exec_origin.set((status.y + 1, status.x));
 
     let hits: Vec<RunButton> = (status.x..status.x + status.width)
         .filter_map(|col| cache_exec_hit(&app, status, col))
@@ -189,15 +187,19 @@ fn cache_execution_hover_uses_rendered_hitboxes() {
     let area = Rect::new(0, 0, 160, 40);
     let status = cache_run_status_area(area);
     let y = status.y + 1;
-    app.cache.exec_speed_btn.set((y, 10, 12));
-    app.cache.exec_state_btn.set((y, 20, 25));
-    app.cache.exec_reset_btn.set((y, 30, 35));
+    app.cache.exec_origin.set((y, status.x));
+
+    // Hover the rendered `state` control on the exec bar.
+    use crate::ui::view::cache::build_cache_exec_bar;
+    let state_col = (status.x..status.x + status.width)
+        .find(|&c| build_cache_exec_bar(&app).hit(c, status.x) == Some(RunButton::State))
+        .expect("state control present");
 
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Moved,
-            column: 21,
+            column: state_col,
             row: y,
             modifiers: KeyModifiers::NONE,
         },
@@ -532,55 +534,70 @@ fn cache_level_selector_uses_rendered_hitboxes() {
     let mut app = App::new(None);
     app.set_cache_enabled(true);
     app.tab = Tab::Cache;
-    *app.cache.level_btns.borrow_mut() = vec![(3, 10, 12), (3, 15, 17)];
-    app.cache.add_level_btn.set((3, 20, 23));
-    app.cache.remove_level_btn.set((3, 26, 32));
+    app.add_cache_level(); // one extra level → l1 l2 add remove
+    let area = Rect::new(0, 0, 160, 40);
+    let (level_area, ..) = cache_content_area(area);
+    let origin_x = level_area.x + "level ".len() as u16;
+    app.cache.level_origin.set((level_area.y, origin_x));
+
+    use crate::ui::view::cache::{CacheLevelBtn, build_cache_level_bar};
+    let l2_col = (origin_x..160)
+        .find(|&c| build_cache_level_bar(&app).hit(c, origin_x) == Some(CacheLevelBtn::Level(1)))
+        .expect("l2 present");
 
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Moved,
-            column: 16,
-            row: 3,
+            column: l2_col,
+            row: level_area.y,
             modifiers: KeyModifiers::NONE,
         },
-        Rect::new(0, 0, 160, 40),
+        area,
     );
     assert!(matches!(
         app.cache.hover,
         Some(crate::ui::app::CacheHoverTarget::Level(1))
     ));
 
+    let add_col = (origin_x..160)
+        .find(|&c| build_cache_level_bar(&app).hit(c, origin_x) == Some(CacheLevelBtn::Add))
+        .expect("add present");
+    let extras_before = app.cache.extra_pending.len();
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 21,
-            row: 3,
+            column: add_col,
+            row: level_area.y,
             modifiers: KeyModifiers::NONE,
         },
-        Rect::new(0, 0, 160, 40),
+        area,
     );
-    assert_eq!(app.cache.extra_pending.len(), 1);
+    assert_eq!(app.cache.extra_pending.len(), extras_before + 1);
 }
 
+#[test]
 fn cache_level_selector_help_text_is_not_clickable() {
     let mut app = App::new(None);
     app.set_cache_enabled(true);
     app.tab = Tab::Cache;
-    *app.cache.level_btns.borrow_mut() = vec![(3, 10, 12)];
-    app.cache.add_level_btn.set((3, 20, 23));
-    app.cache.remove_level_btn.set((0, 0, 0));
+    let area = Rect::new(0, 0, 160, 40);
+    let (level_area, ..) = cache_content_area(area);
+    app.cache
+        .level_origin
+        .set((level_area.y, level_area.x + "level ".len() as u16));
 
+    // Far right, over the `+/= add level` help text — no control there.
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Moved,
-            column: 40,
-            row: 3,
+            column: 60,
+            row: level_area.y,
             modifiers: KeyModifiers::NONE,
         },
-        Rect::new(0, 0, 160, 40),
+        area,
     );
     assert!(app.cache.hover.is_none());
 }
