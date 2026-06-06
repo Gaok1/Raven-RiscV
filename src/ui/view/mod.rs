@@ -324,15 +324,9 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
         Line::raw("Check your code is saved before exiting."),
         Line::raw(""),
         Line::from(vec![
-            Span::styled(
-                "[Exit]",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::DANGER),
-            ),
+            style::badge("[Exit]", style::Badge::Danger),
             Span::styled("  Enter/y  ", style::label()),
-            Span::styled(
-                "[Cancel]",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT),
-            ),
+            style::badge("[Cancel]", style::Badge::Accent),
             Span::styled("  Esc", style::label()),
         ]),
     ];
