@@ -507,6 +507,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[Ctrl+↑/↓]", "scroll console"),
                 ("[↑/↓]", "scroll memory or registers"),
                 ("[click]", "select instruction / register"),
+                ("[2×click/right]", "edit instruction word in place"),
                 ("[drag]", "resize sidebar / instruction panels"),
             ],
             vec![

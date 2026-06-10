@@ -251,6 +251,33 @@ fn heat_color(n: u64) -> Color {
 
 const HOVER_BG: Color = theme::BG_HOVER;
 
+/// The imem row while its instruction word is being inline-edited: the typed
+/// buffer with a cursor, plus a live preview of what the partial value decodes
+/// to — so the effect of the edit is visible before Enter commits it.
+fn instruction_edit_item(app: &App, addr: u32, marker: &str) -> ListItem<'static> {
+    use crate::falcon::machine::parse::parse_cell;
+    use crate::falcon::machine::types::MemWidth;
+    let preview = match parse_cell(
+        &app.run.run_edit_buf,
+        MemWidth::B4,
+        app.cell_format(),
+        app.run.show_signed,
+    ) {
+        Ok(value) => disasm_word(value as u32),
+        Err(_) => "?".to_string(),
+    };
+    ListItem::new(Line::from(vec![
+        Span::styled(
+            format!("{marker}0x{addr:08x}:  {}█", app.run.run_edit_buf),
+            Style::default().fg(theme::ACCENT).bold(),
+        ),
+        Span::styled(
+            format!(" → {preview}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]))
+}
+
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let word = app.run.mem().peek32(addr).unwrap_or(0);
     let is_bp = app.run.breakpoints.contains(&addr);
@@ -269,6 +296,15 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     } else {
         "  "
     };
+
+    // When this row's instruction word is the open inline editor, paint the
+    // typed buffer + cursor with a live decode preview instead of the word.
+    if let Some(crate::ui::app::RunEditTarget::Instr { addr: edit_addr }) = app.run.run_edit {
+        if edit_addr == addr {
+            return instruction_edit_item(app, addr, marker);
+        }
+    }
+
     let disasm = disasm_word(word);
 
     let exec_count = app.run.exec_counts.get(&addr).copied().unwrap_or(0);

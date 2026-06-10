@@ -171,6 +171,26 @@ fn instr_word_edit_visible_to_fetch() {
 }
 
 #[test]
+fn instr_word_edit_stepback_restores_original() {
+    // The imem inline editor commits through `write_mem`, so undoing past the
+    // edit must bring back the original instruction word and its effects.
+    let original = encode(Instruction::Addi { rd: 1, rs1: 0, imm: 5 }).unwrap();
+    let replacement = encode(Instruction::Addi { rd: 1, rs1: 0, imm: 9 }).unwrap();
+    let mut m = machine_with(&[Instruction::Addi { rd: 1, rs1: 0, imm: 5 }], write_through_dcache());
+    let mut console = Console::default();
+
+    m.write_mem(0, MemWidth::B4, replacement as u64).unwrap();
+    m.step_interpreted(&mut console).unwrap();
+    assert_eq!(m.cpu().read(1), 9, "edited instruction executed");
+
+    m.stepback(); // undo the step
+    m.stepback(); // undo the edit
+    assert_eq!(m.mem().peek32(0).unwrap(), original, "original word restored");
+    assert_eq!(m.cpu().read(1), 0, "register effect of the step undone");
+    assert_eq!(m.cpu().pc, 0);
+}
+
+#[test]
 fn checkpoint_restores_full_state() {
     // A checkpoint is the only way to rewind writes that bypass the byte log.
     let mut m = machine_with(&[], write_through_dcache());
