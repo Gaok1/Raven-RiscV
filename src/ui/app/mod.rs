@@ -398,6 +398,7 @@ impl App {
                 imem_width_start: 34,
                 imem_scroll: 0,
                 hover_imem_addr: None,
+                last_imem_click: None,
                 imem_inner_height: std::cell::Cell::new(16),
                 imem_collapsed: false,
                 imem_search_open: false,
@@ -2228,6 +2229,16 @@ impl App {
                         self.run.machine.write_mem(addr, width, value).map_err(|e| e.to_string())
                     })
             }
+            RunEditTarget::Instr { addr } => {
+                parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
+                    .map_err(|e| e.message())
+                    .and_then(|value| {
+                        self.run
+                            .machine
+                            .write_mem(addr, MemWidth::B4, value)
+                            .map_err(|e| e.to_string())
+                    })
+            }
         };
 
         match result {
@@ -2243,6 +2254,18 @@ impl App {
                     let pc = self.run.cpu().pc;
                     self.run.pipeline_mut().redirect_pc(pc);
                 }
+                if let RunEditTarget::Instr { addr } = target {
+                    // The JIT may hold a translation of the old word; drop it
+                    // so the next run re-translates from the edited memory.
+                    self.run.backend.invalidate(addr, addr.wrapping_add(4));
+                    // The pipeline may have already fetched the old word into
+                    // its latches; refetch from the current PC so the stale
+                    // instruction never executes.
+                    if self.run.pipeline().enabled {
+                        let pc = self.run.cpu().pc;
+                        self.run.pipeline_mut().redirect_pc(pc);
+                    }
+                }
                 self.cancel_run_edit();
                 self.refresh_after_edit(before_x, before_f, target);
             }
@@ -2251,7 +2274,7 @@ impl App {
     }
 
     /// Map the Run tab's display format to the parser's [`CellFormat`].
-    fn cell_format(&self) -> CellFormat {
+    pub(crate) fn cell_format(&self) -> CellFormat {
         match self.run.fmt_mode {
             FormatMode::Hex => CellFormat::Hex,
             FormatMode::Dec => CellFormat::Dec,
@@ -2288,6 +2311,8 @@ impl App {
                 };
                 plain_word(raw)
             }
+            // Seed from `peek32`, the same read the imem panel renders.
+            RunEditTarget::Instr { addr } => plain_word(self.run.mem().peek32(addr).unwrap_or(0)),
         }
     }
 
@@ -2307,8 +2332,14 @@ impl App {
                 self.run.f_last_write_pc[i] = Some(pc);
             }
         }
-        if let RunEditTarget::Mem { addr, width } = target {
-            self.run.mem_access_log.push((addr, width.bytes(), 0));
+        match target {
+            RunEditTarget::Mem { addr, width } => {
+                self.run.mem_access_log.push((addr, width.bytes(), 0));
+            }
+            RunEditTarget::Instr { addr } => {
+                self.run.mem_access_log.push((addr, MemWidth::B4.bytes(), 0));
+            }
+            _ => {}
         }
         self.ensure_pc_visible_in_imem();
     }

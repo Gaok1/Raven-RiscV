@@ -481,6 +481,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.run.imem_drag = false;
                 app.run.console_drag = false;
             }
+            MouseEventKind::Down(MouseButton::Right) => {
+                handle_imem_right_click(app, me, area);
+            }
             _ => {}
         }
     }
@@ -1426,11 +1429,49 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row < inner.y + inner.height
     {
         if let Some(addr) = app.run.hover_imem_addr {
+            // Double-click: a second click on the same row within the
+            // threshold opens the instruction editor instead. The first click
+            // of the pair has already redirected the PC, which is harmless —
+            // the user is about to edit that very instruction.
+            const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+            if let Some((last_addr, at)) = app.run.last_imem_click {
+                if last_addr == addr && at.elapsed() <= DOUBLE_CLICK {
+                    app.run.last_imem_click = None;
+                    app.begin_run_edit(RunEditTarget::Instr { addr });
+                    return;
+                }
+            }
+            app.run.last_imem_click = Some((addr, std::time::Instant::now()));
             app.run.prev_pc = app.run.cpu().pc;
             app.run.machine.cpu_mut_unjournaled().pc = addr;
             if app.run.pipeline().enabled {
                 app.run.pipeline_mut().redirect_pc(addr);
             }
+        }
+    }
+}
+
+/// Right-click on an imem row opens the inline instruction editor (left click
+/// keeps its PC-redirect meaning, the marker column keeps the breakpoint).
+fn handle_imem_right_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if app.run.imem_collapsed {
+        return;
+    }
+    let cols = run_cols(app, area);
+    let imem = cols[1];
+    let inner = Rect::new(
+        imem.x + 1,
+        imem.y + 1,
+        imem.width.saturating_sub(2),
+        imem.height.saturating_sub(2),
+    );
+    if me.column >= inner.x
+        && me.column < inner.x + inner.width
+        && me.row >= inner.y
+        && me.row < inner.y + inner.height
+    {
+        if let Some(addr) = app.run.hover_imem_addr {
+            app.begin_run_edit(RunEditTarget::Instr { addr });
         }
     }
 }

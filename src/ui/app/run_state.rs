@@ -20,6 +20,10 @@ pub(crate) enum RunEditTarget {
     FReg(FRegId),
     /// A `width`-byte memory cell at the (virtual) address `addr`.
     Mem { addr: u32, width: MemWidth },
+    /// The 32-bit instruction word at the (virtual) address `addr`, opened
+    /// from the imem panel (right-click or double-click). Committing also
+    /// invalidates the JIT range so stale translations never run.
+    Instr { addr: u32 },
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -252,6 +256,10 @@ pub(crate) struct RunState {
     // imem_scroll is now in VISUAL ROWS (not instruction count)
     pub(crate) imem_scroll: usize,
     pub(crate) hover_imem_addr: Option<u32>,
+    /// Last left-click on an imem row (`addr`, instant), for double-click
+    /// detection: a second click on the same row within the threshold opens
+    /// the instruction editor.
+    pub(crate) last_imem_click: Option<(u32, Instant)>,
     // Set each frame by render so scroll handlers use the correct height
     pub(crate) imem_inner_height: std::cell::Cell<usize>,
     pub(crate) imem_collapsed: bool,
