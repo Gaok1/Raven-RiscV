@@ -14,7 +14,7 @@ pub mod disasm;
 pub mod docs;
 mod editor;
 mod path_input_overlay;
-mod pipeline;
+pub(crate) mod pipeline;
 pub(crate) mod run;
 mod settings;
 mod splash;

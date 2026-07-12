@@ -3,6 +3,7 @@ mod cpi;
 mod docs_state;
 mod formatting;
 mod hart;
+mod instr_edit;
 mod run_loop;
 mod run_state;
 mod runtime;
@@ -29,6 +30,7 @@ pub(crate) use self::docs_state::{
 pub(crate) use self::hart::{
     HartCoreRuntime, HartLifecycle, is_transparent_single_step_word, step_hart_bg_inner,
 };
+pub(crate) use self::instr_edit::{EncFormat, InstrFieldKind, Seg, detect_format};
 pub(crate) use self::run_state::{
     BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunEditTarget, RunSpeed,
     RunState,
@@ -409,6 +411,10 @@ impl App {
                 imem_search_cursor: 0,
                 imem_search_match_count: 0,
                 details_collapsed: false,
+                details_addr: None,
+                last_details_click: None,
+                details_field_hitboxes: std::cell::RefCell::new(Vec::new()),
+                details_rendered_addr: std::cell::Cell::new(0),
                 console_height: 5,
                 hover_console_bar: false,
                 hover_console_clear: false,
@@ -674,6 +680,7 @@ impl App {
                 });
                 self.run.imem_scroll = 0;
                 self.run.hover_imem_addr = None;
+                self.clear_details_selection();
                 self.reset_exec_regions_to_loaded_text();
                 self.sync_pipeline_program_range();
 
@@ -887,6 +894,7 @@ impl App {
             self.rebuild_imem_vrow_cache();
             self.run.imem_scroll = 0;
             self.run.hover_imem_addr = None;
+            self.clear_details_selection();
             self.reset_exec_regions_to_loaded_text();
             self.sync_pipeline_program_range();
             // Reset pipeline stages so it picks up the reloaded program
@@ -1118,6 +1126,7 @@ impl App {
         self.editor.diag_line_text = None;
         self.run.imem_scroll = 0;
         self.run.hover_imem_addr = None;
+        self.clear_details_selection();
         self.reset_exec_regions_to_loaded_text();
         self.sync_pipeline_program_range();
         // Lock the editor when a binary is loaded; close any stale prompt.
@@ -2197,6 +2206,21 @@ impl App {
         self.run.run_edit_error = None;
     }
 
+    /// Drop the details panel's pinned instruction (it follows the PC again)
+    /// and close any instruction editor that referenced the old program.
+    /// Called when a (re)load replaces the instruction memory.
+    pub(crate) fn clear_details_selection(&mut self) {
+        self.run.details_addr = None;
+        self.run.last_details_click = None;
+        self.run.details_field_hitboxes.borrow_mut().clear();
+        if matches!(
+            self.run.run_edit,
+            Some(RunEditTarget::Instr { .. } | RunEditTarget::InstrField { .. })
+        ) {
+            self.cancel_run_edit();
+        }
+    }
+
     /// Commit the open inline edit: parse the buffer against the target's width
     /// and current display format, then write it through the journaling
     /// `Machine` mutator so step-back can undo it. On rejection the editor stays
@@ -2232,12 +2256,27 @@ impl App {
             RunEditTarget::Instr { addr } => {
                 parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
                     .map_err(|e| e.message())
-                    .and_then(|value| {
-                        self.run
-                            .machine
-                            .write_mem(addr, MemWidth::B4, value)
-                            .map_err(|e| e.to_string())
-                    })
+                    .and_then(|value| self.write_instr_word(addr, value as u32))
+            }
+            RunEditTarget::InstrField { addr, field } => {
+                let current = self.run.mem().peek32(addr).unwrap_or(0);
+                let new_word = match field {
+                    InstrFieldKind::Asm => match falcon::asm::assemble(&buf, addr) {
+                        Ok(prog) if prog.text.len() == 1 => Ok(prog.text[0]),
+                        Ok(prog) => Err(format!(
+                            "expands to {} instructions — only a single instruction fits here",
+                            prog.text.len()
+                        )),
+                        Err(e) => Err(e.msg),
+                    },
+                    _ if !instr_edit::field_available(current, field) => Err(format!(
+                        "{:?} is not a field of this instruction format",
+                        field
+                    )),
+                    _ => instr_edit::parse_field_value(field, &buf)
+                        .and_then(|v| instr_edit::splice_field(current, detect_format(current), field, v)),
+                };
+                new_word.and_then(|word| self.write_instr_word(addr, word))
             }
         };
 
@@ -2254,23 +2293,30 @@ impl App {
                     let pc = self.run.cpu().pc;
                     self.run.pipeline_mut().redirect_pc(pc);
                 }
-                if let RunEditTarget::Instr { addr } = target {
-                    // The JIT may hold a translation of the old word; drop it
-                    // so the next run re-translates from the edited memory.
-                    self.run.backend.invalidate(addr, addr.wrapping_add(4));
-                    // The pipeline may have already fetched the old word into
-                    // its latches; refetch from the current PC so the stale
-                    // instruction never executes.
-                    if self.run.pipeline().enabled {
-                        let pc = self.run.cpu().pc;
-                        self.run.pipeline_mut().redirect_pc(pc);
-                    }
-                }
                 self.cancel_run_edit();
                 self.refresh_after_edit(before_x, before_f, target);
             }
             Err(message) => self.run.run_edit_error = Some(message),
         }
+    }
+
+    /// Write a full instruction word through the journaled path shared by the
+    /// word editor and the per-field editors, so step-back undoes the edit.
+    fn write_instr_word(&mut self, addr: u32, word: u32) -> Result<(), String> {
+        self.run
+            .machine
+            .write_mem(addr, MemWidth::B4, word as u64)
+            .map_err(|e| e.to_string())?;
+        // The JIT may hold a translation of the old word; drop it so the next
+        // run re-translates from the edited memory.
+        self.run.backend.invalidate(addr, addr.wrapping_add(4));
+        // The pipeline may have already fetched the old word into its latches;
+        // refetch from the current PC so the stale instruction never executes.
+        if self.run.pipeline().enabled {
+            let pc = self.run.cpu().pc;
+            self.run.pipeline_mut().redirect_pc(pc);
+        }
+        Ok(())
     }
 
     /// Map the Run tab's display format to the parser's [`CellFormat`].
@@ -2311,8 +2357,11 @@ impl App {
                 };
                 plain_word(raw)
             }
-            // Seed from `peek32`, the same read the imem panel renders.
+            // Seed from `peek32`, the same read the details panel renders.
             RunEditTarget::Instr { addr } => plain_word(self.run.mem().peek32(addr).unwrap_or(0)),
+            RunEditTarget::InstrField { addr, field } => {
+                instr_edit::seed_field(self.run.mem().peek32(addr).unwrap_or(0), field)
+            }
         }
     }
 
@@ -2336,7 +2385,7 @@ impl App {
             RunEditTarget::Mem { addr, width } => {
                 self.run.mem_access_log.push((addr, width.bytes(), 0));
             }
-            RunEditTarget::Instr { addr } => {
+            RunEditTarget::Instr { addr } | RunEditTarget::InstrField { addr, .. } => {
                 self.run.mem_access_log.push((addr, MemWidth::B4.bytes(), 0));
             }
             _ => {}

@@ -1,4 +1,5 @@
 use super::CpiConfig;
+use super::instr_edit::InstrFieldKind;
 use crate::falcon::jit::ExecutionBackend;
 use crate::falcon::machine::Machine;
 use crate::falcon::machine::types::{FRegId, MemWidth, RegTarget};
@@ -21,9 +22,14 @@ pub(crate) enum RunEditTarget {
     /// A `width`-byte memory cell at the (virtual) address `addr`.
     Mem { addr: u32, width: MemWidth },
     /// The 32-bit instruction word at the (virtual) address `addr`, opened
-    /// from the imem panel (right-click or double-click). Committing also
-    /// invalidates the JIT range so stale translations never run.
+    /// from the details panel's word field. Committing also invalidates the
+    /// JIT range so stale translations never run.
     Instr { addr: u32 },
+    /// One field of the instruction word at `addr` (a register slot, the
+    /// immediate, funct bits, the binary view, or the whole mnemonic line as
+    /// assembly), opened by double-clicking it in the details panel. Commits
+    /// rewrite the full word through the same path as [`Self::Instr`].
+    InstrField { addr: u32, field: InstrFieldKind },
 }
 
 #[derive(PartialEq, Eq, Copy, Clone)]
@@ -257,8 +263,9 @@ pub(crate) struct RunState {
     pub(crate) imem_scroll: usize,
     pub(crate) hover_imem_addr: Option<u32>,
     /// Last left-click on an imem row (`addr`, instant), for double-click
-    /// detection: a second click on the same row within the threshold opens
-    /// the instruction editor.
+    /// detection: a second click on the same row within the threshold
+    /// redirects the PC there (a single click only selects the row for the
+    /// details panel).
     pub(crate) last_imem_click: Option<(u32, Instant)>,
     // Set each frame by render so scroll handlers use the correct height
     pub(crate) imem_inner_height: std::cell::Cell<usize>,
@@ -278,6 +285,18 @@ pub(crate) struct RunState {
 
     // Details panel (collapsible)
     pub(crate) details_collapsed: bool,
+    /// Click-selected instruction the details panel is pinned to; `None`
+    /// follows the PC.
+    pub(crate) details_addr: Option<u32>,
+    /// Last left-click on a details-panel field, for double-click detection:
+    /// a second click on the same field within the threshold opens its editor.
+    pub(crate) last_details_click: Option<(InstrFieldKind, Instant)>,
+    /// Editable-field hitboxes `(field, y, x0, x1)` recorded by the last
+    /// details render, consumed by the mouse handler.
+    pub(crate) details_field_hitboxes: std::cell::RefCell<Vec<(InstrFieldKind, u16, u16, u16)>>,
+    /// The address the details panel actually rendered last frame, so a click
+    /// edits exactly what the user saw.
+    pub(crate) details_rendered_addr: std::cell::Cell<u32>,
 
     // Console panel (resizable)
     pub(crate) console_height: u16,

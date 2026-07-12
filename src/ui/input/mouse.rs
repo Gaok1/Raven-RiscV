@@ -14,7 +14,8 @@ use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
-        EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, RunEditTarget,
+        EditorMode, FormatMode, InstrFieldKind, MemRegion, PathInputAction, RunButton,
+        RunEditTarget,
         SETTINGS_ROW_CACHE_ENABLED,
         SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
         SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED,
@@ -135,8 +136,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
+                // Bottom-anchored scroll: wheel-up moves into scrollback.
                 if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
-                    app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
+                    let max = app.run.pipeline().gantt_max_scroll_cache.get();
+                    app.run.pipeline_mut().gantt_scroll = (app.run.pipeline_mut().gantt_scroll + 1).min(max);
                 }
             }
             Tab::Docs => {
@@ -193,9 +196,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
+                // Bottom-anchored scroll: wheel-down moves back toward follow (0).
                 if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
-                    let max = app.run.pipeline().gantt_max_scroll_cache.get();
-                    app.run.pipeline_mut().gantt_scroll = (app.run.pipeline_mut().gantt_scroll + 1).min(max);
+                    app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
                 }
             }
             Tab::Docs => {
@@ -460,6 +463,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 start_imem_drag(app, me, area);
                 handle_imem_bp_click(app, me, area);
                 handle_imem_click(app, me, area);
+                handle_details_click(app, me, area);
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
                 handle_register_click(app, me, area);
@@ -1429,30 +1433,30 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row < inner.y + inner.height
     {
         if let Some(addr) = app.run.hover_imem_addr {
-            // Double-click: a second click on the same row within the
-            // threshold opens the instruction editor instead. The first click
-            // of the pair has already redirected the PC, which is harmless —
-            // the user is about to edit that very instruction.
+            // Single click pins the details panel to this row; a second click
+            // on the same row within the threshold redirects the PC there.
+            // The first click of the pair only selected, so a double-click
+            // never edits state the user didn't ask to change.
             const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+            app.run.details_addr = Some(addr);
             if let Some((last_addr, at)) = app.run.last_imem_click {
                 if last_addr == addr && at.elapsed() <= DOUBLE_CLICK {
                     app.run.last_imem_click = None;
-                    app.begin_run_edit(RunEditTarget::Instr { addr });
+                    app.run.prev_pc = app.run.cpu().pc;
+                    app.run.machine.cpu_mut_unjournaled().pc = addr;
+                    if app.run.pipeline().enabled {
+                        app.run.pipeline_mut().redirect_pc(addr);
+                    }
                     return;
                 }
             }
             app.run.last_imem_click = Some((addr, std::time::Instant::now()));
-            app.run.prev_pc = app.run.cpu().pc;
-            app.run.machine.cpu_mut_unjournaled().pc = addr;
-            if app.run.pipeline().enabled {
-                app.run.pipeline_mut().redirect_pc(addr);
-            }
         }
     }
 }
 
-/// Right-click on an imem row opens the inline instruction editor (left click
-/// keeps its PC-redirect meaning, the marker column keeps the breakpoint).
+/// Right-click on an imem row selects it for the details panel, same as a
+/// single left click (the marker column keeps the breakpoint toggle).
 fn handle_imem_right_click(app: &mut App, me: MouseEvent, area: Rect) {
     if app.run.imem_collapsed {
         return;
@@ -1471,9 +1475,52 @@ fn handle_imem_right_click(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row < inner.y + inner.height
     {
         if let Some(addr) = app.run.hover_imem_addr {
-            app.begin_run_edit(RunEditTarget::Instr { addr });
+            app.run.details_addr = Some(addr);
         }
     }
+}
+
+/// Double-click on an editable field of the Instruction Details panel opens
+/// the inline editor on it. Hitboxes are recorded by the details renderer
+/// each frame; the address comes from what that frame actually showed.
+fn handle_details_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if app.run.details_collapsed || app.run.is_running {
+        return;
+    }
+    let cols = run_cols(app, area);
+    let details = cols[2];
+    if me.column < details.x
+        || me.column >= details.x + details.width
+        || me.row < details.y
+        || me.row >= details.y + details.height
+    {
+        return;
+    }
+    let hit = app
+        .run
+        .details_field_hitboxes
+        .borrow()
+        .iter()
+        .find(|&&(_, y, x0, x1)| me.row == y && me.column >= x0 && me.column < x1)
+        .map(|&(field, ..)| field);
+    let Some(field) = hit else {
+        app.run.last_details_click = None;
+        return;
+    };
+    const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+    if let Some((last_field, at)) = app.run.last_details_click {
+        if last_field == field && at.elapsed() <= DOUBLE_CLICK {
+            app.run.last_details_click = None;
+            let addr = app.run.details_rendered_addr.get();
+            let target = match field {
+                InstrFieldKind::Word => RunEditTarget::Instr { addr },
+                _ => RunEditTarget::InstrField { addr, field },
+            };
+            app.begin_run_edit(target);
+            return;
+        }
+    }
+    app.run.last_details_click = Some((field, std::time::Instant::now()));
 }
 
 fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {

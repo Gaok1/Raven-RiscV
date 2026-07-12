@@ -758,7 +758,11 @@ pub(crate) fn gantt_view_rows<'a>(
     scroll: usize,
     visible_rows: usize,
 ) -> Vec<&'a GanttRow> {
-    rows.iter().skip(scroll).take(visible_rows.max(1)).collect()
+    let visible = visible_rows.max(1);
+    let scroll = scroll.min(gantt_max_scroll_for_len(rows.len(), visible));
+    let end = rows.len().saturating_sub(scroll);
+    let start = end.saturating_sub(visible);
+    rows.iter().skip(start).take(end - start).collect()
 }
 
 pub(crate) fn gantt_visible_rows(gantt_area_height: u16) -> usize {
@@ -772,24 +776,6 @@ pub(crate) fn gantt_max_scroll_for_len(len: usize, visible_rows: usize) -> usize
 
 pub(crate) fn gantt_max_scroll(state: &PipelineSimState, gantt_area_height: u16) -> usize {
     gantt_max_scroll_for_len(state.gantt.len(), gantt_visible_rows(gantt_area_height))
-}
-
-pub(crate) fn maybe_follow_gantt_tail(
-    current_scroll: usize,
-    visible_rows: usize,
-    prev_len: usize,
-) -> usize {
-    if visible_rows == 0 {
-        return current_scroll;
-    }
-
-    let prev_max_scroll = gantt_max_scroll_for_len(prev_len, visible_rows);
-    let was_showing_newest = current_scroll >= prev_max_scroll;
-    if was_showing_newest {
-        gantt_max_scroll_for_len(prev_len.saturating_add(1), visible_rows)
-    } else {
-        current_scroll
-    }
 }
 
 // ── Subtabs ───────────────────────────────────────────────────────────────────
@@ -1069,6 +1055,7 @@ pub struct PipelineSimState {
     // ── UI state ──
     pub subtab: PipelineSubtab,
     pub config_cursor: usize,
+    /// Scroll offset from the bottom (0 = pinned to the newest row, i.e. follow).
     pub gantt_scroll: usize,
     pub gantt_visible_rows_cache: Cell<usize>,
     pub gantt_max_scroll_cache: Cell<usize>,

@@ -298,6 +298,7 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
+    // Bottom-anchored scroll: 0 = follow newest; Up moves into scrollback.
     app.run.pipeline_mut().gantt_scroll = 2;
     app.run.pipeline().gantt_visible_rows_cache.set(4);
     app.run.pipeline().gantt_max_scroll_cache.set(9);
@@ -305,7 +306,7 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
         .expect("pipeline down handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 3);
+    assert_eq!(app.run.pipeline().gantt_scroll, 1);
 
     let outcome = handle_key(
         &mut app,
@@ -313,17 +314,27 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
     )
     .expect("pipeline page down handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 7);
+    assert_eq!(app.run.pipeline().gantt_scroll, 0);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
         .expect("pipeline page up handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 3);
+    assert_eq!(app.run.pipeline().gantt_scroll, 4);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
         .expect("pipeline up handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 2);
+    assert_eq!(app.run.pipeline().gantt_scroll, 5);
+
+    let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+        .expect("pipeline home handled");
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.run.pipeline().gantt_scroll, 9);
+
+    let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+        .expect("pipeline end handled");
+    assert_eq!(outcome, KeyOutcome::Handled);
+    assert_eq!(app.run.pipeline().gantt_scroll, 0);
 }
 
 #[test]
