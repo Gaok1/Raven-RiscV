@@ -1,8 +1,7 @@
 use super::{
     BranchPredict, BranchResolve, GanttCell, GanttRow, InstrClass, PipelineBypassConfig,
     PipelineConfig, PipelineMode, PipelineSimState, PipelineSpeed, Stage, gantt_max_scroll,
-    gantt_view_rows, gantt_window_bounds, maybe_follow_gantt_tail, parse_pipeline_config,
-    serialize_pipeline_config,
+    gantt_view_rows, gantt_window_bounds, parse_pipeline_config, serialize_pipeline_config,
 };
 use std::collections::VecDeque;
 
@@ -111,26 +110,74 @@ fn gantt_window_caps_to_requested_history_width_from_the_newest_cycles() {
     assert_eq!(end, 80);
 }
 
-#[test]
-fn gantt_window_follows_the_scrolled_viewport_not_the_global_tail() {
-    let rows: VecDeque<_> = (0..6)
+fn gantt_rows(n: usize) -> VecDeque<GanttRow> {
+    (0..n)
         .map(|i| GanttRow {
-            gantt_id: i + 1,
+            gantt_id: (i + 1) as u64,
             pc: (i * 4) as u32,
             disasm: format!("addi x{i}, x{i}, 1"),
             class: InstrClass::Alu,
             cells: VecDeque::from(vec![GanttCell::InStage(Stage::IF); 4]),
             first_cycle: (i * 10) as u64,
-            done: i < 5,
+            done: i + 1 < n,
             last_stage: None,
         })
+        .collect()
+}
+
+#[test]
+fn gantt_window_follows_the_scrolled_viewport_not_the_global_tail() {
+    let rows = gantt_rows(6);
+
+    // Bottom-anchored: scroll=1 hides only the newest row, showing rows 3..=5.
+    let refs = gantt_view_rows(&rows, 1, 3);
+    assert_eq!(
+        refs.iter().map(|r| r.gantt_id).collect::<Vec<_>>(),
+        vec![3, 4, 5]
+    );
+
+    let (start, end) = gantt_window_bounds(&refs, 12);
+    assert_eq!(start, 32);
+    assert_eq!(end, 44);
+}
+
+#[test]
+fn gantt_view_at_scroll_zero_shows_the_newest_rows() {
+    let rows = gantt_rows(6);
+    let refs = gantt_view_rows(&rows, 0, 3);
+    assert_eq!(
+        refs.iter().map(|r| r.gantt_id).collect::<Vec<_>>(),
+        vec![4, 5, 6]
+    );
+}
+
+#[test]
+fn gantt_view_scrollback_is_stable_across_front_eviction() {
+    let mut rows = gantt_rows(6);
+    let before: Vec<_> = gantt_view_rows(&rows, 2, 3)
+        .iter()
+        .map(|r| r.gantt_id)
         .collect();
 
-    let refs = gantt_view_rows(&rows, 1, 3);
-    let (start, end) = gantt_window_bounds(&refs, 12);
+    // Evicting the oldest row must not shift a bottom-anchored scrollback view.
+    rows.pop_front();
+    let after: Vec<_> = gantt_view_rows(&rows, 2, 3)
+        .iter()
+        .map(|r| r.gantt_id)
+        .collect();
 
-    assert_eq!(start, 22);
-    assert_eq!(end, 34);
+    assert_eq!(before, vec![2, 3, 4]);
+    assert_eq!(before, after);
+}
+
+#[test]
+fn gantt_view_clamps_oversized_scroll_to_the_oldest_rows() {
+    let rows = gantt_rows(6);
+    let refs = gantt_view_rows(&rows, 999, 3);
+    assert_eq!(
+        refs.iter().map(|r| r.gantt_id).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
 }
 
 #[test]
@@ -150,14 +197,4 @@ fn gantt_max_scroll_matches_visible_history_capacity() {
         .collect();
 
     assert_eq!(gantt_max_scroll(&state, 7), 7);
-}
-
-#[test]
-fn gantt_tail_follow_advances_when_newest_row_is_visible() {
-    assert_eq!(maybe_follow_gantt_tail(2, 3, 5), 3);
-}
-
-#[test]
-fn gantt_tail_follow_stays_put_when_newest_row_is_hidden() {
-    assert_eq!(maybe_follow_gantt_tail(1, 3, 5), 1);
 }

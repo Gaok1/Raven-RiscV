@@ -418,10 +418,11 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
         .set(gantt_max_scroll(&app.run.pipeline(), 20));
     app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_max_scroll_cache.get();
 
+    // Bottom-anchored: wheel-up digs into scrollback but clamps at the oldest row.
     handle_mouse(
         &mut app,
         MouseEvent {
-            kind: MouseEventKind::ScrollDown,
+            kind: MouseEventKind::ScrollUp,
             column: 20,
             row: 12,
             modifiers: KeyModifiers::NONE,
@@ -433,6 +434,22 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
         app.run.pipeline().gantt_scroll,
         app.run.pipeline().gantt_max_scroll_cache.get()
     );
+
+    // Wheel-down returns toward follow (0) and saturates there.
+    app.run.pipeline_mut().gantt_scroll = 1;
+    for _ in 0..2 {
+        handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 20,
+                row: 12,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 160, 20),
+        );
+    }
+    assert_eq!(app.run.pipeline().gantt_scroll, 0);
 }
 
 #[test]

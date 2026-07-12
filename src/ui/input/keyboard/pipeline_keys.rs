@@ -181,17 +181,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 (app.run.pipeline_mut().config_cursor + 1).min(PipelineBypassConfig::CONFIG_ROWS - 1);
             true
         }
+        // Gantt scroll is bottom-anchored: 0 = follow the newest row, so Up
+        // moves *into* scrollback (larger offset) and Down back toward follow.
         KeyCode::Up
-            if matches!(
-                app.run.pipeline().subtab,
-                crate::ui::pipeline::PipelineSubtab::Main
-            ) =>
-        {
-            app.run.pipeline_mut().clear_hover_state();
-            app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
-            true
-        }
-        KeyCode::Down
             if matches!(
                 app.run.pipeline().subtab,
                 crate::ui::pipeline::PipelineSubtab::Main
@@ -202,6 +194,16 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             app.run.pipeline_mut().gantt_scroll = (app.run.pipeline_mut().gantt_scroll + 1).min(max);
             true
         }
+        KeyCode::Down
+            if matches!(
+                app.run.pipeline().subtab,
+                crate::ui::pipeline::PipelineSubtab::Main
+            ) =>
+        {
+            app.run.pipeline_mut().clear_hover_state();
+            app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
+            true
+        }
         KeyCode::PageUp
             if matches!(
                 app.run.pipeline().subtab,
@@ -210,7 +212,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         {
             app.run.pipeline_mut().clear_hover_state();
             let page = app.run.pipeline().gantt_visible_rows_cache.get().max(1);
-            app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(page);
+            let max = app.run.pipeline().gantt_max_scroll_cache.get();
+            app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_add(page).min(max);
             true
         }
         KeyCode::PageDown
@@ -221,8 +224,28 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         {
             app.run.pipeline_mut().clear_hover_state();
             let page = app.run.pipeline().gantt_visible_rows_cache.get().max(1);
+            app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(page);
+            true
+        }
+        KeyCode::End | KeyCode::Char('G')
+            if matches!(
+                app.run.pipeline().subtab,
+                crate::ui::pipeline::PipelineSubtab::Main
+            ) =>
+        {
+            app.run.pipeline_mut().clear_hover_state();
+            app.run.pipeline_mut().gantt_scroll = 0;
+            true
+        }
+        KeyCode::Home | KeyCode::Char('g')
+            if matches!(
+                app.run.pipeline().subtab,
+                crate::ui::pipeline::PipelineSubtab::Main
+            ) =>
+        {
+            app.run.pipeline_mut().clear_hover_state();
             let max = app.run.pipeline().gantt_max_scroll_cache.get();
-            app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_add(page).min(max);
+            app.run.pipeline_mut().gantt_scroll = max;
             true
         }
         _ => false,

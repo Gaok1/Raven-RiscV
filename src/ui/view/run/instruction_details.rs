@@ -1,5 +1,7 @@
 use crate::falcon;
-use crate::ui::app::cpi_class_label;
+use crate::ui::app::{
+    EncFormat, InstrFieldKind, RunEditTarget, Seg, cpi_class_label, detect_format,
+};
 use crate::ui::theme;
 use ratatui::Frame;
 use ratatui::prelude::*;
@@ -12,10 +14,12 @@ use super::registers::reg_name;
 // ── Public entry point ───────────────────────────────────────────────────────
 
 pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
+    app.run.details_field_hitboxes.borrow_mut().clear();
     if area.width < 4 || area.height < 4 {
         return;
     }
     let ctx = detail_context(app);
+    app.run.details_rendered_addr.set(ctx.addr);
 
     // Split into 3 sections: header (3 lines + border), field map (4 lines + border), rest
     let header_h = 5u16;
@@ -31,7 +35,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     render_header(f, chunks[0], &ctx, app);
-    render_field_map(f, chunks[1], ctx.word, ctx.format);
+    render_field_map(f, chunks[1], ctx.word, ctx.format, app);
     render_decoded(
         f,
         chunks[2],
@@ -40,7 +44,44 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         &ctx.disasm,
         ctx.comment.as_deref(),
         Some(app.run.cpu()),
+        app,
+        &ctx,
     );
+}
+
+/// The field of `addr` the inline editor is currently open on, if any.
+/// `Word` stands for the full hex word (`RunEditTarget::Instr`).
+fn editing_field(app: &App, addr: u32) -> Option<InstrFieldKind> {
+    match app.run.run_edit {
+        Some(RunEditTarget::Instr { addr: a }) if a == addr => Some(InstrFieldKind::Word),
+        Some(RunEditTarget::InstrField { addr: a, field }) if a == addr => Some(field),
+        _ => None,
+    }
+}
+
+/// Record a clickable field span, clipped to the section's inner rect so a
+/// partially hidden value never produces a hitbox past the border.
+fn push_hitbox(app: &App, inner: Rect, field: InstrFieldKind, y: u16, x0: u16, len: usize) {
+    if y >= inner.y + inner.height || y < inner.y {
+        return;
+    }
+    let right = inner.x + inner.width;
+    if x0 >= right {
+        return;
+    }
+    let x1 = (x0 + len as u16).min(right);
+    app.run
+        .details_field_hitboxes
+        .borrow_mut()
+        .push((field, y, x0, x1));
+}
+
+/// The buffer + pseudo-cursor span of the open inline editor.
+fn edit_buf_span(app: &App) -> Span<'static> {
+    Span::styled(
+        format!("{}█", app.run.run_edit_buf),
+        Style::default().fg(theme::ACCENT).bold(),
+    )
 }
 
 pub(super) fn disasm_word(word: u32) -> String {
@@ -100,9 +141,13 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
 }
 
 fn detail_context(app: &App) -> DetailContext {
-    let (addr, word, origin) = if let Some(addr) = app.run.hover_imem_addr {
-        let word = app.run.mem().peek32(addr).unwrap_or(0);
-        (addr, word, "hover")
+    // A click-selected row pins the panel; otherwise it follows the PC.
+    let selected = app
+        .run
+        .details_addr
+        .and_then(|addr| app.run.mem().peek32(addr).ok().map(|word| (addr, word)));
+    let (addr, word, origin) = if let Some((addr, word)) = selected {
+        (addr, word, "selected")
     } else if exec_address_in_range(app, app.run.cpu().pc) {
         let word = app.run.mem().peek32(app.run.cpu().pc).unwrap_or(0);
         (app.run.cpu().pc, word, "PC")
@@ -147,18 +192,86 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    let editing = editing_field(app, ctx.addr);
     let origin_span = Span::styled(
         format!(" @ 0x{:08x} ({})", ctx.addr, ctx.origin),
         Style::default().fg(theme::LABEL),
     );
-    let word_span = Span::styled(
-        format!("0x{:08x}", ctx.word),
-        Style::default().fg(theme::IMM_COLOR),
-    );
-    let disasm_span = Span::styled(
-        ctx.disasm.clone(),
-        Style::default().fg(Color::Yellow).bold(),
-    );
+
+    // Line 0 — mnemonic, editable as one line of assembly. While editing,
+    // the typed buffer replaces the disasm and a dim preview shows what it
+    // assembles to before Enter commits it.
+    let mut mnemonic_line = vec![Span::styled("▶ ", Style::default().fg(Color::Green))];
+    if editing == Some(InstrFieldKind::Asm) {
+        mnemonic_line.push(edit_buf_span(app));
+        let preview = match falcon::asm::assemble(&app.run.run_edit_buf, ctx.addr) {
+            Ok(prog) if prog.text.len() == 1 => disasm_word(prog.text[0]),
+            _ => "?".to_string(),
+        };
+        mnemonic_line.push(Span::styled(
+            format!(" → {preview}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        push_hitbox(
+            app,
+            inner,
+            InstrFieldKind::Asm,
+            inner.y,
+            inner.x + 2,
+            ctx.disasm.chars().count(),
+        );
+        mnemonic_line.push(Span::styled(
+            ctx.disasm.clone(),
+            Style::default().fg(Color::Yellow).bold(),
+        ));
+        mnemonic_line.push(origin_span);
+    }
+
+    // Line 1 — the word in hex (edits through the full-word editor) and in
+    // binary (edits as a 32-bit binary value).
+    let mut word_line = vec![Span::styled("  word  ", Style::default().fg(theme::LABEL))];
+    match editing {
+        Some(InstrFieldKind::Word) => {
+            word_line.push(edit_buf_span(app));
+            let preview = match crate::falcon::machine::parse::parse_cell(
+                &app.run.run_edit_buf,
+                crate::falcon::machine::types::MemWidth::B4,
+                app.cell_format(),
+                app.run.show_signed,
+            ) {
+                Ok(value) => disasm_word(value as u32),
+                Err(_) => "?".to_string(),
+            };
+            word_line.push(Span::styled(
+                format!(" → {preview}"),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        Some(InstrFieldKind::Bin) => {
+            word_line.push(edit_buf_span(app));
+        }
+        _ => {
+            let word_x = inner.x + 8;
+            push_hitbox(app, inner, InstrFieldKind::Word, inner.y + 1, word_x, 10);
+            push_hitbox(
+                app,
+                inner,
+                InstrFieldKind::Bin,
+                inner.y + 1,
+                word_x + 10 + 3,
+                32,
+            );
+            word_line.push(Span::styled(
+                format!("0x{:08x}", ctx.word),
+                Style::default().fg(theme::IMM_COLOR),
+            ));
+            word_line.push(Span::styled(
+                format!("  ({:032b})", ctx.word),
+                Style::default().fg(Color::Rgb(80, 80, 100)),
+            ));
+        }
+    }
 
     // Compute base CPI cycles for current instruction
     let cpi = &app.run.cpi_config;
@@ -172,19 +285,8 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let class_label = cpi_class_label(ctx.word);
 
     let mut lines = vec![
-        Line::from(vec![
-            Span::styled("▶ ", Style::default().fg(Color::Green)),
-            disasm_span,
-            origin_span,
-        ]),
-        Line::from(vec![
-            Span::styled("  word  ", Style::default().fg(theme::LABEL)),
-            word_span,
-            Span::styled(
-                format!("  ({:032b})", ctx.word),
-                Style::default().fg(Color::Rgb(80, 80, 100)),
-            ),
-        ]),
+        Line::from(mnemonic_line),
+        Line::from(word_line),
         Line::from(vec![
             Span::styled("  cycles  ", Style::default().fg(theme::LABEL)),
             Span::styled(
@@ -257,7 +359,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
 
 // ── Section 2 : Field map ────────────────────────────────────────────────────
 
-fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
+fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat, app: &App) {
     let segs = format.segments();
     let block = Block::default()
         .borders(Borders::ALL)
@@ -268,6 +370,18 @@ fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // Each segment's bits row doubles as a click target for editing that
+    // field (the editor itself renders in the header/Decoded sections).
+    let bits_y = inner.y + 2;
+    let mut x = inner.x;
+    for seg in &segs {
+        let w = display_width(seg);
+        if let Some(field) = seg_field(seg.label) {
+            push_hitbox(app, inner, field, bits_y, x, w);
+        }
+        x = x.saturating_add(w as u16 + 1);
+    }
+
     // Row 1 — bit position markers
     let pos_line = bit_position_line(&segs);
     // Row 2 — colored label blocks (▮▮… label)
@@ -277,6 +391,21 @@ fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat) {
 
     let lines = vec![pos_line, label_line, bits_line];
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+/// Map a field-map segment label to its editable field. All immediate pieces
+/// (`imm[...]`, `i12`, `i10:5`, …) edit the one logical immediate.
+fn seg_field(label: &str) -> Option<InstrFieldKind> {
+    match label {
+        "funct7" => Some(InstrFieldKind::Funct7),
+        "rs2" => Some(InstrFieldKind::Rs2),
+        "rs1" => Some(InstrFieldKind::Rs1),
+        "fn3" => Some(InstrFieldKind::Funct3),
+        "rd" => Some(InstrFieldKind::Rd),
+        "opcode" => Some(InstrFieldKind::Opcode),
+        l if l.starts_with("imm") || l.starts_with('i') => Some(InstrFieldKind::Imm),
+        _ => None,
+    }
 }
 
 fn bit_position_line(segs: &[Seg]) -> Line<'static> {
@@ -355,6 +484,7 @@ fn display_width(seg: &Seg) -> usize {
 
 // ── Section 3 : Decoded fields + description ─────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn render_decoded(
     f: &mut Frame,
     area: Rect,
@@ -363,6 +493,8 @@ fn render_decoded(
     disasm: &str,
     comment: Option<&str>,
     cpu: Option<&crate::falcon::Cpu>,
+    app: &App,
+    ctx: &DetailContext,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -375,20 +507,32 @@ fn render_decoded(
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(c) = comment {
+        // Truncated to one row: a wrapped comment would shift every kv row
+        // below it and break the recorded hitbox positions.
+        let max = (inner.width as usize).saturating_sub(3);
+        let c_fit: String = c.chars().take(max).collect();
         lines.push(Line::from(vec![
             Span::styled("#! ", Style::default().fg(Color::Rgb(100, 200, 100))),
-            Span::styled(
-                c.to_string(),
-                Style::default().fg(Color::Rgb(180, 220, 130)),
-            ),
+            Span::styled(c_fit, Style::default().fg(Color::Rgb(180, 220, 130))),
         ]));
         lines.push(Line::from(""));
     }
-    push_fields(&mut lines, word, format, cpu);
+    let mut rows = DecodedRows {
+        lines: &mut lines,
+        hits: Vec::new(),
+        editing: editing_field(app, ctx.addr),
+        buf: &app.run.run_edit_buf,
+    };
+    push_fields(&mut rows, word, format, cpu);
+    let hits = rows.hits;
     // blank separator
     lines.push(Line::from(""));
     // Semantic description
     push_description(&mut lines, word, format, disasm);
+
+    for (field, idx, len) in hits {
+        push_hitbox(app, inner, field, inner.y + idx as u16, inner.x + 10, len);
+    }
 
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
 }
@@ -400,24 +544,55 @@ fn kv(key: &'static str, val: String, val_color: Color) -> Line<'static> {
     ])
 }
 
-fn reg_kv(key: &'static str, reg: u8) -> Line<'static> {
-    kv(
-        key,
-        format!("x{reg} ({})", reg_name(reg)),
-        Color::LightGreen,
-    )
+/// Collects the Decoded section's kv rows, remembering which row holds which
+/// editable field (for click hitboxes) and substituting the open editor's
+/// buffer into the row it is editing.
+struct DecodedRows<'a> {
+    lines: &'a mut Vec<Line<'static>>,
+    /// `(field, line index, value length)` for every editable row pushed.
+    hits: Vec<(InstrFieldKind, usize, usize)>,
+    editing: Option<InstrFieldKind>,
+    buf: &'a str,
 }
 
-fn imm_kv(key: &'static str, v: i32) -> Line<'static> {
-    kv(key, format!("{v}  (0x{v:x})"), theme::IMM_COLOR)
+impl DecodedRows<'_> {
+    fn field(&mut self, field: InstrFieldKind, key: &'static str, val: String, color: Color) {
+        if self.editing == Some(field) {
+            self.lines.push(Line::from(vec![
+                Span::styled(format!("{key:<10}"), Style::default().fg(theme::LABEL)),
+                Span::styled(
+                    format!("{}█", self.buf),
+                    Style::default().fg(theme::ACCENT).bold(),
+                ),
+            ]));
+        } else {
+            self.hits.push((field, self.lines.len(), val.chars().count()));
+            self.lines.push(kv(key, val, color));
+        }
+    }
+    fn plain(&mut self, key: &'static str, val: String, color: Color) {
+        self.lines.push(kv(key, val, color));
+    }
+    fn reg(&mut self, field: InstrFieldKind, key: &'static str, reg: u8) {
+        self.field(
+            field,
+            key,
+            format!("x{reg} ({})", reg_name(reg)),
+            Color::LightGreen,
+        );
+    }
+    fn imm(&mut self, field: InstrFieldKind, key: &'static str, v: i32) {
+        self.field(field, key, format!("{v}  (0x{v:x})"), theme::IMM_COLOR);
+    }
 }
 
 fn push_fields(
-    lines: &mut Vec<Line<'static>>,
+    rows: &mut DecodedRows<'_>,
     word: u32,
     format: EncFormat,
     cpu: Option<&crate::falcon::Cpu>,
 ) {
+    use InstrFieldKind::*;
     let opcode = word & 0x7f;
     match format {
         EncFormat::R => {
@@ -426,36 +601,32 @@ fn push_fields(
             let rs1 = ((word >> 15) & 0x1f) as u8;
             let funct3 = (word >> 12) & 0x7;
             let rd = ((word >> 7) & 0x1f) as u8;
-            lines.push(reg_kv("rd", rd));
-            lines.push(reg_kv("rs1", rs1));
-            lines.push(reg_kv("rs2", rs2));
-            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
-            lines.push(kv("funct7", format!("0x{funct7:02x}"), Color::Red));
+            rows.reg(Rd, "rd", rd);
+            rows.reg(Rs1, "rs1", rs1);
+            rows.reg(Rs2, "rs2", rs2);
+            rows.field(Funct3, "funct3", format!("0x{funct3:01x}"), Color::Yellow);
+            rows.field(Funct7, "funct7", format!("0x{funct7:02x}"), Color::Red);
         }
         EncFormat::I => {
             let imm = (((word >> 20) as i32) << 20) >> 20;
             let rs1 = ((word >> 15) & 0x1f) as u8;
             let funct3 = (word >> 12) & 0x7;
             let rd = ((word >> 7) & 0x1f) as u8;
-            lines.push(reg_kv("rd", rd));
-            lines.push(reg_kv("rs1", rs1));
-            lines.push(imm_kv("imm", imm));
-            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+            rows.reg(Rd, "rd", rd);
+            rows.reg(Rs1, "rs1", rs1);
+            rows.imm(Imm, "imm", imm);
+            rows.field(Funct3, "funct3", format!("0x{funct3:01x}"), Color::Yellow);
             if matches!(funct3, 0x1 | 0x5) {
                 let shamt = (word >> 20) & 0x1f;
                 let funct7 = (word >> 25) & 0x7f;
-                lines.push(kv("shamt", format!("{shamt}"), Color::LightRed));
-                lines.push(kv("funct7", format!("0x{funct7:02x}"), Color::Red));
+                rows.field(Shamt, "shamt", format!("{shamt}"), Color::LightRed);
+                rows.field(Funct7, "funct7", format!("0x{funct7:02x}"), Color::Red);
             }
             // Feature 5: effective address for loads (opcode 0x03)
             if opcode == 0x03 {
                 if let Some(cpu) = cpu {
                     let ea = cpu.x[rs1 as usize].wrapping_add(imm as u32);
-                    lines.push(kv(
-                        "\u{2192} addr",
-                        format!("0x{ea:08x}"),
-                        Color::Rgb(255, 180, 80),
-                    ));
+                    rows.plain("\u{2192} addr", format!("0x{ea:08x}"), Color::Rgb(255, 180, 80));
                 }
             }
         }
@@ -466,18 +637,14 @@ fn push_fields(
             let rs2 = ((word >> 20) & 0x1f) as u8;
             let imm_hi = (word >> 25) & 0x7f;
             let imm = (((((imm_hi << 5) | imm_lo) as i32) << 20) >> 20) as i32;
-            lines.push(reg_kv("rs1 (base)", rs1));
-            lines.push(reg_kv("rs2 (src)", rs2));
-            lines.push(imm_kv("offset", imm));
-            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+            rows.reg(Rs1, "rs1 (base)", rs1);
+            rows.reg(Rs2, "rs2 (src)", rs2);
+            rows.imm(Imm, "offset", imm);
+            rows.field(Funct3, "funct3", format!("0x{funct3:01x}"), Color::Yellow);
             // Feature 5: effective address for stores
             if let Some(cpu) = cpu {
                 let ea = cpu.x[rs1 as usize].wrapping_add(imm as u32);
-                lines.push(kv(
-                    "\u{2192} addr",
-                    format!("0x{ea:08x}"),
-                    Color::Rgb(255, 180, 80),
-                ));
+                rows.plain("\u{2192} addr", format!("0x{ea:08x}"), Color::Rgb(255, 180, 80));
             }
         }
         EncFormat::B => {
@@ -490,16 +657,16 @@ fn push_fields(
             let b11 = (word >> 7) & 1;
             let imm = (((((b12 << 12) | (b11 << 11) | (b10_5 << 5) | (b4_1 << 1)) as i32) << 19)
                 >> 19) as i32;
-            lines.push(reg_kv("rs1", rs1));
-            lines.push(reg_kv("rs2", rs2));
-            lines.push(imm_kv("offset", imm));
-            lines.push(kv("funct3", format!("0x{funct3:01x}"), Color::Yellow));
+            rows.reg(Rs1, "rs1", rs1);
+            rows.reg(Rs2, "rs2", rs2);
+            rows.imm(Imm, "offset", imm);
+            rows.field(Funct3, "funct3", format!("0x{funct3:01x}"), Color::Yellow);
         }
         EncFormat::U => {
             let rd = ((word >> 7) & 0x1f) as u8;
             let imm = ((word & 0xfffff000) as i32) >> 12;
-            lines.push(reg_kv("rd", rd));
-            lines.push(imm_kv("imm[31:12]", imm));
+            rows.reg(Rd, "rd", rd);
+            rows.imm(Imm, "imm[31:12]", imm);
         }
         EncFormat::J => {
             let b20 = (word >> 31) & 1;
@@ -509,10 +676,13 @@ fn push_fields(
             let rd = ((word >> 7) & 0x1f) as u8;
             let imm = (((((b20 << 20) | (b19_12 << 12) | (b11 << 11) | (b10_1 << 1)) as i32) << 11)
                 >> 11) as i32;
-            lines.push(reg_kv("rd", rd));
-            lines.push(imm_kv("offset", imm));
+            rows.reg(Rd, "rd", rd);
+            rows.imm(Imm, "offset", imm);
         }
     }
+    // The opcode selects the format itself; editing it morphs the whole row
+    // layout above, which is exactly the didactic point.
+    rows.field(Opcode, "opcode", format!("0x{opcode:02x}"), Color::Cyan);
 }
 
 fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncFormat, disasm: &str) {
@@ -600,112 +770,6 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
             Span::styled("⟹  ", Style::default().fg(theme::LABEL)),
             Span::styled(disasm.to_string(), Style::default().fg(theme::LABEL)),
         ]));
-    }
-}
-
-// ── Format detection + segments ──────────────────────────────────────────────
-
-#[derive(Copy, Clone)]
-enum EncFormat {
-    R,
-    I,
-    S,
-    B,
-    U,
-    J,
-}
-
-impl EncFormat {
-    fn name(self) -> &'static str {
-        match self {
-            EncFormat::R => "R-type",
-            EncFormat::I => "I-type",
-            EncFormat::S => "S-type",
-            EncFormat::B => "B-type",
-            EncFormat::U => "U-type",
-            EncFormat::J => "J-type",
-        }
-    }
-    fn segments(self) -> Vec<Seg> {
-        seg_list(self)
-    }
-}
-
-fn detect_format(word: u32) -> EncFormat {
-    match word & 0x7f {
-        0x03 | 0x13 | 0x1b | 0x67 | 0x73 => EncFormat::I,
-        0x23 => EncFormat::S,
-        0x63 => EncFormat::B,
-        0x37 | 0x17 => EncFormat::U,
-        0x6f => EncFormat::J,
-        _ => EncFormat::R,
-    }
-}
-
-struct Seg {
-    label: &'static str,
-    width: u8,
-    color: Color,
-}
-
-fn seg_list(format: EncFormat) -> Vec<Seg> {
-    macro_rules! s {
-        ($l:expr, $w:expr, $c:expr) => {
-            Seg {
-                label: $l,
-                width: $w,
-                color: $c,
-            }
-        };
-    }
-    use Color::*;
-    match format {
-        EncFormat::R => vec![
-            s!("funct7", 7, Red),
-            s!("rs2", 5, LightRed),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::I => vec![
-            s!("imm[11:0]", 12, Blue),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::S => vec![
-            s!("imm[11:5]", 7, Blue),
-            s!("rs2", 5, LightRed),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("imm[4:0]", 5, Blue),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::B => vec![
-            s!("i12", 1, Blue),
-            s!("i10:5", 6, Blue),
-            s!("rs2", 5, LightRed),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("i4:1", 4, Blue),
-            s!("i11", 1, Blue),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::U => vec![
-            s!("imm[31:12]", 20, Blue),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::J => vec![
-            s!("i20", 1, Blue),
-            s!("i10:1", 10, Blue),
-            s!("i11", 1, Blue),
-            s!("i19:12", 8, Blue),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
     }
 }
 
