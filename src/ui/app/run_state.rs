@@ -1,8 +1,36 @@
 use super::CpiConfig;
+use super::instr_edit::InstrFieldKind;
 use crate::falcon::jit::ExecutionBackend;
+use crate::falcon::machine::Machine;
+use crate::falcon::machine::types::{FRegId, MemWidth, RegTarget};
 use crate::falcon::{CacheController, Cpu, registers::ExecRegion};
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
+
+/// What the Run tab is editing inline, when [`RunState::run_edit`] is `Some`.
+///
+/// Every variant commits through a journaling `Machine` mutator
+/// ([`Machine::write_reg`] / [`Machine::write_freg`] / [`Machine::write_mem`]),
+/// so a manual edit is undoable by step-back exactly like an executed
+/// instruction.
+#[derive(Clone, Copy)]
+pub(crate) enum RunEditTarget {
+    /// An integer register `x1..=x31` or the PC. `x0` is rejected on commit.
+    Reg(RegTarget),
+    /// A float register `f0..=f31`, typed as a decimal value.
+    FReg(FRegId),
+    /// A `width`-byte memory cell at the (virtual) address `addr`.
+    Mem { addr: u32, width: MemWidth },
+    /// The 32-bit instruction word at the (virtual) address `addr`, opened
+    /// from the details panel's word field. Committing also invalidates the
+    /// JIT range so stale translations never run.
+    Instr { addr: u32 },
+    /// One field of the instruction word at `addr` (a register slot, the
+    /// immediate, funct bits, the binary view, or the whole mnemonic line as
+    /// assembly), opened by double-clicking it in the details panel. Commits
+    /// rewrite the full word through the same path as [`Self::Instr`].
+    InstrField { addr: u32, field: InstrFieldKind },
+}
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(crate) enum EditorMode {
@@ -23,6 +51,7 @@ pub(crate) enum MemRegion {
 pub(crate) enum FormatMode {
     Hex,
     Dec,
+    Bin,
     Str,
 }
 
@@ -75,6 +104,7 @@ pub(crate) enum RunButton {
     Speed,
     ExecCount,
     InstrType,
+    Stepback,
     Reset,
 }
 
@@ -139,13 +169,63 @@ impl RunState {
     pub(crate) fn vm_enabled(&self) -> bool {
         self.vm_mode != crate::falcon::mmu::VmMode::Off
     }
+
+    /// First address shown at the top of the memory view, given the panel's
+    /// inner height in rows. Auto-following regions (Stack/Access/Heap) center
+    /// `mem_view_addr`; others anchor it at the top. Shared by the renderer and
+    /// the click-to-edit hit test so both agree on each row's address.
+    pub(crate) fn visible_memory_base_addr(&self, lines_override: Option<u32>) -> u32 {
+        let bytes = self.mem_view_bytes.max(1);
+        let lines = lines_override.unwrap_or(0);
+        let center = self.mem_region == MemRegion::Stack
+            || self.mem_region == MemRegion::Access
+            || self.mem_region == MemRegion::Heap
+            || (self.show_dyn && matches!(self.dyn_mem_access, Some((_, _, true))));
+        let base = if center {
+            let half = lines / 2;
+            self.mem_view_addr.saturating_sub(half * bytes)
+        } else {
+            self.mem_view_addr
+        };
+        let align_mask = !(bytes - 1);
+        base & align_mask
+    }
+
+    /// Shared read access to the CPU. The `~117` `run.cpu` read sites borrow
+    /// through here; mutation must go through a `Machine` method.
+    pub(crate) fn cpu(&self) -> &Cpu {
+        self.machine.cpu()
+    }
+
+    /// Shared read access to the memory hierarchy. See [`RunState::cpu`].
+    pub(crate) fn mem(&self) -> &CacheController {
+        self.machine.mem()
+    }
+
+    /// Shared read access to the pipeline simulator. The pipeline lives inside
+    /// `Machine` so a clock cycle is journaled together with the CPU and memory
+    /// (see [`crate::falcon::machine::Machine::step_pipeline`]); reads borrow
+    /// through here.
+    pub(crate) fn pipeline(&self) -> &crate::ui::pipeline::PipelineSimState {
+        self.machine.pipeline()
+    }
+
+    /// Mutable pipeline access for UI/config changes (hover, scroll, subtab,
+    /// forwarding/branch config, reset). Does **not** journal and does **not**
+    /// clear history. Never use it to advance execution — that is
+    /// [`crate::falcon::machine::Machine::step_pipeline`].
+    pub(crate) fn pipeline_mut(&mut self) -> &mut crate::ui::pipeline::PipelineSimState {
+        self.machine.pipeline_mut()
+    }
 }
 
 pub(crate) struct RunState {
-    pub(crate) cpu: Cpu,
+    /// The simulator's CPU + memory hierarchy, owned behind the journaling
+    /// gateway. Reads go through [`RunState::cpu`] / [`RunState::mem`]; mutation
+    /// is only expressible via `Machine`'s methods (see its module docs).
+    pub(crate) machine: Machine<crate::ui::pipeline::PipelineSimState>,
     pub(crate) prev_x: [u32; 32],
     pub(crate) prev_pc: u32,
-    pub(crate) mem: CacheController,
     pub(crate) breakpoints: std::collections::HashSet<u32>,
     pub(crate) mem_size: usize,
     pub(crate) base_pc: u32,
@@ -182,6 +262,11 @@ pub(crate) struct RunState {
     // imem_scroll is now in VISUAL ROWS (not instruction count)
     pub(crate) imem_scroll: usize,
     pub(crate) hover_imem_addr: Option<u32>,
+    /// Last left-click on an imem row (`addr`, instant), for double-click
+    /// detection: a second click on the same row within the threshold
+    /// redirects the PC there (a single click only selects the row for the
+    /// details panel).
+    pub(crate) last_imem_click: Option<(u32, Instant)>,
     // Set each frame by render so scroll handlers use the correct height
     pub(crate) imem_inner_height: std::cell::Cell<usize>,
     pub(crate) imem_collapsed: bool,
@@ -200,6 +285,18 @@ pub(crate) struct RunState {
 
     // Details panel (collapsible)
     pub(crate) details_collapsed: bool,
+    /// Click-selected instruction the details panel is pinned to; `None`
+    /// follows the PC.
+    pub(crate) details_addr: Option<u32>,
+    /// Last left-click on a details-panel field, for double-click detection:
+    /// a second click on the same field within the threshold opens its editor.
+    pub(crate) last_details_click: Option<(InstrFieldKind, Instant)>,
+    /// Editable-field hitboxes `(field, y, x0, x1)` recorded by the last
+    /// details render, consumed by the mouse handler.
+    pub(crate) details_field_hitboxes: std::cell::RefCell<Vec<(InstrFieldKind, u16, u16, u16)>>,
+    /// The address the details panel actually rendered last frame, so a click
+    /// edits exactly what the user saw.
+    pub(crate) details_rendered_addr: std::cell::Cell<u32>,
 
     // Console panel (resizable)
     pub(crate) console_height: u16,
@@ -216,6 +313,19 @@ pub(crate) struct RunState {
     pub(crate) step_interval: Duration,
     pub(crate) faulted: bool,
     pub(crate) speed: RunSpeed,
+    /// One-shot guard: a full step-back checkpoint has been taken for the
+    /// current GO/Instant burst. Reset when the run stops. See `App::tick`.
+    pub(crate) go_checkpointed: bool,
+
+    // ── Inline editing of live state (registers / PC / floats / RAM) ──
+    /// The cell currently open for inline editing, or `None`. While `Some`,
+    /// keystrokes feed `run_edit_buf` instead of the normal Run shortcuts.
+    pub(crate) run_edit: Option<RunEditTarget>,
+    /// The text typed so far for the open edit (committed on Enter).
+    pub(crate) run_edit_buf: String,
+    /// The rejection message from the last failed commit; cleared on the next
+    /// keystroke. While set, the editor stays open so the user can fix the value.
+    pub(crate) run_edit_error: Option<String>,
 
     // Visible comments from source (#! text), keyed by instruction address
     pub(crate) comments: std::collections::HashMap<u32, String>,
