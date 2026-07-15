@@ -48,7 +48,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             } else if app.settings.selected == SETTINGS_ROW_RUN_SCOPE {
                 app.run_scope = app.run_scope.cycle();
             } else if app.settings.selected == SETTINGS_ROW_PIPELINE_ENABLED {
-                app.set_pipeline_enabled(!app.run.pipeline().enabled);
+                app.set_pipeline_enabled(!app.pipeline.enabled);
             } else if app.settings.selected == SETTINGS_ROW_VM_ENABLED {
                 app.set_vm_mode(app.vm_mode().cycle());
             } else if app.settings.selected == SETTINGS_ROW_TLB_ENABLED {

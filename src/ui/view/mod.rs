@@ -14,7 +14,7 @@ pub mod disasm;
 pub mod docs;
 mod editor;
 mod path_input_overlay;
-pub(crate) mod pipeline;
+mod pipeline;
 pub(crate) mod run;
 mod settings;
 mod splash;
@@ -138,9 +138,9 @@ pub fn ui(f: &mut Frame, app: &App) {
             Style::default().fg(theme::LABEL),
         ),
         Tab::Pipeline => {
-            if let Some(ref err) = app.run.pipeline().status_error {
+            if let Some(ref err) = app.pipeline.status_error {
                 (format!("✗  {err}"), Style::default().fg(theme::DANGER))
-            } else if let Some(ref ok) = app.run.pipeline().status_msg {
+            } else if let Some(ref ok) = app.pipeline.status_msg {
                 (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
             } else {
                 (
@@ -507,7 +507,6 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[Ctrl+↑/↓]", "scroll console"),
                 ("[↑/↓]", "scroll memory or registers"),
                 ("[click]", "select instruction / register"),
-                ("[2×click/right]", "edit instruction word in place"),
                 ("[drag]", "resize sidebar / instruction panels"),
             ],
             vec![

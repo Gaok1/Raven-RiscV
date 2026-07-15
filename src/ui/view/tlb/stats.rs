@@ -20,7 +20,7 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
-    let mmu = app.run.mem().mmu();
+    let mmu = app.run.mem.mmu();
     let stats = &mmu.tlb.stats;
     let total = stats.hits + stats.misses;
     let hit_rate = if total == 0 {
@@ -113,7 +113,7 @@ fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme::LABEL),
         ));
 
-    let pts: Vec<(f64, f64)> = app.run.mem().mmu().tlb.stats.history.iter().copied().collect();
+    let pts: Vec<(f64, f64)> = app.run.mem.mmu().tlb.stats.history.iter().copied().collect();
     if pts.is_empty() {
         let inner = block.inner(area);
         f.render_widget(block, area);

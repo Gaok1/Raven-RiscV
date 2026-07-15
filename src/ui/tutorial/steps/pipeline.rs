@@ -13,7 +13,8 @@ fn content_area(term: Rect) -> Rect {
 }
 
 struct PipelineLayout {
-    header: Rect,
+    subtab: Rect,
+    controls: Rect,
     content: Rect,
 }
 
@@ -21,72 +22,108 @@ fn pipeline_layout(term: Rect) -> PipelineLayout {
     let c = content_area(term);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Length(4),
+            Constraint::Min(0),
+            Constraint::Length(3),
+        ])
         .split(c);
     PipelineLayout {
-        header: chunks[0],
-        content: chunks[1],
+        subtab: chunks[0],
+        controls: chunks[1],
+        content: chunks[2],
     }
 }
 
 fn target_subtab(term: Rect, _app: &App) -> Option<Rect> {
-    Some(pipeline_layout(term).header)
+    Some(pipeline_layout(term).subtab)
 }
 
 fn target_controls(term: Rect, _app: &App) -> Option<Rect> {
-    Some(pipeline_layout(term).header)
-}
-
-fn main_plan(content: Rect, app: &App) -> crate::ui::view::pipeline::MainLayoutPlan {
-    crate::ui::view::pipeline::plan_main_layout(
-        content.height,
-        content.width,
-        app.run.pipeline().hazard_traces.len(),
-    )
+    Some(pipeline_layout(term).controls)
 }
 
 fn target_stages(term: Rect, app: &App) -> Option<Rect> {
     let content = pipeline_layout(term).content;
-    let plan = main_plan(content, app);
-    // Include the FU strip: it belongs to the stage/EX story.
-    let h = plan.stages_h + plan.fu_h;
+    let _ = app;
+    let stages_h = 9;
     Some(Rect {
         x: content.x,
         y: content.y,
         width: content.width,
-        height: h.min(content.height),
+        height: stages_h.min(content.height),
     })
 }
 
 fn target_hazards(term: Rect, app: &App) -> Option<Rect> {
     let content = pipeline_layout(term).content;
-    let plan = main_plan(content, app);
-    if plan.collapsed {
-        return target_stages(term, app);
-    }
-    let top = (plan.stages_h + plan.fu_h).min(content.height);
+    let stages_h = 9;
+    let max_trace_rows = content
+        .height
+        .saturating_sub(stages_h)
+        .saturating_sub(5)
+        .clamp(3, 8);
+    let trace_rows = app
+        .pipeline
+        .hazard_traces
+        .len()
+        .min(max_trace_rows as usize) as u16;
+    let legend_rows = if app.pipeline.hazard_traces.is_empty() {
+        0
+    } else {
+        1
+    };
+    let msg_rows = if app.pipeline.hazard_msgs.is_empty() {
+        1
+    } else {
+        app.pipeline.hazard_msgs.len().min(2) as u16
+    };
+    let hazards_h = (2 + trace_rows + legend_rows + msg_rows)
+        .min(content.height.saturating_sub(stages_h).saturating_sub(3))
+        .clamp(4, 13);
     Some(Rect {
         x: content.x,
-        y: content.y + top,
+        y: content.y + stages_h.min(content.height),
         width: content.width,
-        height: plan.hazards_h.min(content.height.saturating_sub(top)),
+        height: hazards_h.min(content.height.saturating_sub(stages_h.min(content.height))),
     })
 }
 
 fn target_gantt(term: Rect, app: &App) -> Option<Rect> {
     let content = pipeline_layout(term).content;
-    let plan = main_plan(content, app);
-    let top = if plan.collapsed {
-        plan.stages_h
+    let stages_h = 9;
+    let max_trace_rows = content
+        .height
+        .saturating_sub(stages_h)
+        .saturating_sub(5)
+        .clamp(3, 8);
+    let trace_rows = app
+        .pipeline
+        .hazard_traces
+        .len()
+        .min(max_trace_rows as usize) as u16;
+    let legend_rows = if app.pipeline.hazard_traces.is_empty() {
+        0
     } else {
-        plan.stages_h + plan.fu_h + plan.hazards_h
-    }
-    .min(content.height);
+        1
+    };
+    let msg_rows = if app.pipeline.hazard_msgs.is_empty() {
+        1
+    } else {
+        app.pipeline.hazard_msgs.len().min(2) as u16
+    };
+    let hazards_h = (2 + trace_rows + legend_rows + msg_rows)
+        .min(content.height.saturating_sub(stages_h).saturating_sub(3))
+        .clamp(4, 13);
     Some(Rect {
         x: content.x,
-        y: content.y + top,
+        y: content.y + stages_h.min(content.height) + hazards_h,
         width: content.width,
-        height: content.height.saturating_sub(top),
+        height: content
+            .height
+            .saturating_sub(stages_h.min(content.height))
+            .saturating_sub(hazards_h),
     })
 }
 
@@ -95,11 +132,11 @@ fn target_config(term: Rect, _app: &App) -> Option<Rect> {
 }
 
 fn setup_main(app: &mut App) {
-    app.run.pipeline_mut().subtab = PipelineSubtab::Main;
+    app.pipeline.subtab = PipelineSubtab::Main;
 }
 
 fn setup_config(app: &mut App) {
-    app.run.pipeline_mut().subtab = PipelineSubtab::Config;
+    app.pipeline.subtab = PipelineSubtab::Config;
 }
 
 pub static STEPS: &[TutorialStep] = &[
@@ -119,8 +156,6 @@ pub static STEPS: &[TutorialStep] = &[
 \nMain:\
 \n[↑/↓] :: scroll gantt and history\
 \n[PageUp/PageDown] :: page through gantt and history\
-\n[End/G] :: follow the newest instructions again\
-\n[Home/g] :: jump to the oldest recorded instruction\
 \n\
 \nSettings and files:\
 \n[↑/↓] :: move the settings cursor\
@@ -141,8 +176,6 @@ pub static STEPS: &[TutorialStep] = &[
 \nMain:\
 \n[↑/↓] :: rolam o gantt e o histórico\
 \n[PageUp/PageDown] :: avançam páginas no gantt e histórico\
-\n[End/G] :: volta a seguir as instruções mais novas\
-\n[Home/g] :: pula para a instrução mais antiga registrada\
 \n\
 \nSettings e arquivos:\
 \n[↑/↓] :: movem o cursor de configuração\
@@ -224,12 +257,12 @@ pub static STEPS: &[TutorialStep] = &[
 \n\nCtrl+e — export the current pipeline configuration as a .pcfg file.\
 \nCtrl+l — import a .pcfg file and apply it immediately.\
 \nCtrl+r — export simulation results (stage timings, hazard counts) as .pstats or .csv.\
-\n\nThese are also available as buttons in the header at the top of the Pipeline tab.",
+\n\nThese are also available as buttons in the controls bar at the bottom of the Pipeline tab.",
         body_pt: "Três atalhos gerenciam os dados do pipeline fora da sessão:\
 \n\nCtrl+e — exporta a configuração atual do pipeline como arquivo .pcfg.\
 \nCtrl+l — importa um arquivo .pcfg e aplica imediatamente.\
 \nCtrl+r — exporta os resultados da simulação (timings de estágios, contagem de hazards) em .pstats ou .csv.\
-\n\nEstes também estão disponíveis como botões no cabeçalho no topo da aba Pipeline.",
+\n\nEstes também estão disponíveis como botões na barra de controles na parte inferior da aba Pipeline.",
         target: target_controls,
         setup: Some(setup_config),
     },

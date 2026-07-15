@@ -186,7 +186,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let pipe_item = ListItem::new(Line::from(vec![
         Span::styled(format!("{:<20}", "  Pipeline Enabled"), label_style_pipe),
         Span::raw("  "),
-        bool_button(app.run.pipeline().enabled, app.settings.hover_pipeline_enabled),
+        bool_button(app.pipeline.enabled, app.settings.hover_pipeline_enabled),
     ]));
     items.push(pipe_item);
 

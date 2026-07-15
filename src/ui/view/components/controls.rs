@@ -1,53 +1,6 @@
-use std::cell::Cell;
-
 use ratatui::prelude::*;
-use unicode_width::UnicodeWidthStr;
 
 use crate::ui::theme;
-
-/// Span row that tracks the terminal x-cursor as spans are pushed, so button
-/// hitboxes can be recorded from real rendered widths instead of hand-counted
-/// character offsets.
-pub(crate) struct SpanRow {
-    spans: Vec<Span<'static>>,
-    x: u16,
-    y: u16,
-}
-
-impl SpanRow {
-    pub(crate) fn new(x: u16, y: u16) -> Self {
-        Self {
-            spans: Vec::new(),
-            x,
-            y,
-        }
-    }
-
-    pub(crate) fn push(&mut self, span: Span<'static>) {
-        self.x = self
-            .x
-            .saturating_add(UnicodeWidthStr::width(span.content.as_ref()) as u16);
-        self.spans.push(span);
-    }
-
-    pub(crate) fn gap(&mut self, n: u16) {
-        self.push(Span::raw(" ".repeat(n as usize)));
-    }
-
-    /// Current x-cursor; capture before pushing a button's spans and pass to
-    /// [`SpanRow::record_hitbox`] afterwards.
-    pub(crate) fn cursor(&self) -> u16 {
-        self.x
-    }
-
-    pub(crate) fn record_hitbox(&self, start: u16, rect: &Cell<(u16, u16, u16)>) {
-        rect.set((self.y, start, self.x));
-    }
-
-    pub(crate) fn into_line(self) -> Line<'static> {
-        Line::from(self.spans)
-    }
-}
 
 pub(crate) fn push_dense_pair(
     spans: &mut Vec<Span<'static>>,

@@ -18,7 +18,7 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
         render_l1_stats(f, area, app);
     } else {
         let idx = app.cache.selected_level - 1;
-        if idx < app.run.mem().extra_levels.len() {
+        if idx < app.run.mem.extra_levels.len() {
             render_unified_stats(f, area, app, idx);
         }
     }
@@ -81,14 +81,14 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         (cycles, cpi, ipc, committed)
     } else {
         (
-            app.run.mem().total_program_cycles(),
-            app.run.mem().overall_cpi(),
-            app.run.mem().ipc(),
-            app.run.mem().instruction_count,
+            app.run.mem.total_program_cycles(),
+            app.run.mem.overall_cpi(),
+            app.run.mem.ipc(),
+            app.run.mem.instruction_count,
         )
     };
-    let i_cyc = app.run.mem().icache.stats.total_cycles;
-    let d_cyc = app.run.mem().dcache.stats.total_cycles;
+    let i_cyc = app.run.mem.icache.stats.total_cycles;
+    let d_cyc = app.run.mem.dcache.stats.total_cycles;
 
     let mut spans = vec![
         Span::styled(
@@ -130,7 +130,7 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         ),
     ];
 
-    for (i, lvl) in app.run.mem().extra_levels.iter().enumerate() {
+    for (i, lvl) in app.run.mem.extra_levels.iter().enumerate() {
         let name = crate::falcon::cache::CacheController::extra_level_name(i);
         spans.push(Span::raw(" + "));
         spans.push(Span::styled(
@@ -166,14 +166,14 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let (label, cache, instructions) = if icache {
         (
             "I-Cache",
-            &app.run.mem().icache,
-            app.run.mem().instruction_count,
+            &app.run.mem.icache,
+            app.run.mem.instruction_count,
         )
     } else {
         (
             "D-Cache",
-            &app.run.mem().dcache,
-            app.run.mem().instruction_count,
+            &app.run.mem.dcache,
+            app.run.mem.instruction_count,
         )
     };
     let stats = &cache.stats;
@@ -325,9 +325,9 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     // Line 8: AMAT
     let amat = if icache {
-        app.run.mem().icache_amat()
+        app.run.mem.icache_amat()
     } else {
-        app.run.mem().dcache_amat()
+        app.run.mem.dcache_amat()
     };
     let line8 = format!("Avarage Memory Access Time: {amat:.2} cyc");
     f.render_widget(
@@ -436,8 +436,8 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let scope = app.cache.scope;
-    let i_data: Vec<(f64, f64)> = app.run.mem().icache.stats.history.iter().cloned().collect();
-    let d_data: Vec<(f64, f64)> = app.run.mem().dcache.stats.history.iter().cloned().collect();
+    let i_data: Vec<(f64, f64)> = app.run.mem.icache.stats.history.iter().cloned().collect();
+    let d_data: Vec<(f64, f64)> = app.run.mem.dcache.stats.history.iter().cloned().collect();
 
     if i_data.is_empty() && d_data.is_empty() {
         let msg = Paragraph::new("No data yet — run the program to collect cache statistics.")
@@ -518,12 +518,12 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let cache = &app.run.mem().extra_levels[extra_idx];
+    let cache = &app.run.mem.extra_levels[extra_idx];
     let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
     let label = format!("{level_name} (Unified)");
     let stats = &cache.stats;
     let cfg = &cache.config;
-    let instructions = app.run.mem().instruction_count;
+    let instructions = app.run.mem.instruction_count;
 
     let hit_rate = stats.hit_rate();
     let hit_color = if hit_rate >= 90.0 {
@@ -650,7 +650,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         return;
     }
 
-    let amat = app.run.mem().extra_level_amat(extra_idx);
+    let amat = app.run.mem.extra_level_amat(extra_idx);
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Avarage Memory Access Time: {amat:.2} cyc"),
@@ -673,7 +673,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
         return;
     }
 
-    let data: Vec<(f64, f64)> = app.run.mem().extra_levels[extra_idx]
+    let data: Vec<(f64, f64)> = app.run.mem.extra_levels[extra_idx]
         .stats
         .history
         .iter()

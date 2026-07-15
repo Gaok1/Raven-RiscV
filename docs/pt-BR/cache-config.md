@@ -195,43 +195,6 @@ Todos os valores são inteiros sem sinal ≥ 0.
 
 ---
 
-## TLB unificada (`tlb.*`)
-
-A MMU do Raven é fronteada por uma única TLB compartilhada pelas traduções de instrução e de dados. Sua geometria é salva no `.fcache` junto com os níveis de cache, então uma config pode levar um layout de TLB ao lado dos parâmetros de CPI e cache.
-
-```
-# Unified TLB
-tlb.entry_count=32
-tlb.associativity=4
-tlb.replacement=lru
-tlb.hit_latency=1
-tlb.miss_penalty=20
-```
-
-| Chave | Tipo | Faixa válida | Padrão | Notas |
-|-------|------|--------------|--------|-------|
-| `tlb.entry_count` | inteiro | potência de 2, ≥ `tlb.associativity` | `32` | Total de entradas da TLB. |
-| `tlb.associativity` | inteiro | ≥ 1, ≤ `tlb.entry_count` | `4` | Ways por set. `entry_count / associativity` = número de sets. |
-| `tlb.replacement` | enum | ver nota abaixo | `lru` | Política de substituição. |
-| `tlb.hit_latency` | inteiro (ciclos) | ≥ 1 | `1` | Ciclos cobrados em cada hit da TLB. |
-| `tlb.miss_penalty` | inteiro (ciclos) | ≥ 0 | `20` | Ciclos cobrados pelo walk da tabela de páginas num miss. |
-
-> **Atenção — a grafia difere da chave `replacement` do cache.** A política da TLB é em **minúsculas**: `lru`, `fifo`, `random`, `lfu`, `clock`, `mru`. (Os níveis de cache usam PascalCase `Lru`, `Fifo`, … — são chaves separadas.)
-
-### Modo de memória virtual (somente `.rcfg`)
-
-O *modo* de VM e o esquema de paginação Custom são configurações do simulador, não do cache, então vivem no arquivo `.rcfg` (sim settings), não no `.fcache`:
-
-| Chave | Tipo | Valores | Notas |
-|-------|------|---------|-------|
-| `vm_mode` | enum | `off` \| `sv32` \| `custom` \| `manual` | Qual modo de VM está ativo (minúsculas). |
-| `vm_offset_bits` | inteiro | 12–30 | Largura do offset de página no modo **Custom** (ignorado nos demais). |
-| `vm_level_bits` | lista por vírgula | ex.: `10,10` | Larguras de índice por nível, do topo para a folha, no modo **Custom**. `offset + Σ níveis` deve somar 32. |
-
-Veja o [guia de memória virtual](virtual-memory.md) para o que significam e como usá-los.
-
----
-
 ## Regras de validação
 
 O Raven rejeitará a config e mostrará um erro se qualquer uma delas falhar:
@@ -393,10 +356,4 @@ hit_latency      inteiro     1–999
 miss_penalty     inteiro     0–9999
 assoc_penalty    inteiro     0–99  (padrão 1)
 transfer_width   inteiro     1–512 (padrão 8)
-
-tlb.entry_count   inteiro    potência de 2, ≥ tlb.associativity (padrão 32)
-tlb.associativity inteiro    ≥ 1 (padrão 4)
-tlb.replacement   enum       lru | fifo | random | lfu | clock | mru   (minúsculas!)
-tlb.hit_latency   inteiro    ≥ 1 (padrão 1)
-tlb.miss_penalty  inteiro    ≥ 0 (padrão 20)
 ```

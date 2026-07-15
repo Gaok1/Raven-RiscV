@@ -17,7 +17,7 @@ const CONFIG_LABEL_W: usize = 18;
 const LATENCY_LABEL_W: usize = 8;
 
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
+    let p = &app.pipeline;
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -192,7 +192,7 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
             }
         }
     }
-    app.run.pipeline().config_row_rects.set(rects);
+    app.pipeline.config_row_rects.set(rects);
 
     let desc_row = p.config_cursor;
     let desc_lines = config_description_lines(desc_row);

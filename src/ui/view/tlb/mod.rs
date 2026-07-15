@@ -254,7 +254,7 @@ fn render_tlb_disabled_notice(f: &mut Frame, area: Rect) {
 
 pub(super) fn translation_active(app: &App) -> bool {
     use crate::falcon::mmu::{PrivMode, SatpMode};
-    let mmu = app.run.mem().mmu();
+    let mmu = app.run.mem.mmu();
     // Mirror `Mmu::translate`: in Auto mode (force_translate) even M-mode
     // translates, so the priv-level gate only applies otherwise.
     let priv_ok = mmu.priv_mode != PrivMode::M || mmu.force_translate;

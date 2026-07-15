@@ -6,10 +6,6 @@ use super::editor_shared::mark_editor_edited;
 use super::serialization::{apply_imem_search, apply_mem_search};
 
 pub fn paste_from_terminal(app: &mut App, text: &str) {
-    if matches!(app.tab, Tab::Run) && app.run.run_edit.is_some() {
-        paste_run_edit(app, text);
-        return;
-    }
     if matches!(app.tab, Tab::Run) && app.run.imem_search_open {
         paste_imem_search(app, text);
         return;
@@ -27,21 +23,6 @@ pub fn paste_from_terminal(app: &mut App, text: &str) {
 pub(super) fn paste_editor(app: &mut App, text: &str) {
     app.editor.buf.paste_text(text);
     mark_editor_edited(app);
-}
-
-/// Append pasted text to the open Run value editor, keeping only characters
-/// legal for the active format (so a trailing newline or stray spaces are
-/// dropped). Out-of-range values are still caught on commit.
-pub(crate) fn paste_run_edit(app: &mut App, text: &str) {
-    let sanitized: String = text
-        .chars()
-        .filter(|&c| super::run_keys::edit_char_allowed(app, c))
-        .collect();
-    if sanitized.is_empty() {
-        return;
-    }
-    app.run.run_edit_buf.push_str(&sanitized);
-    app.run.run_edit_error = None;
 }
 
 pub(crate) fn paste_imem_search(app: &mut App, text: &str) {

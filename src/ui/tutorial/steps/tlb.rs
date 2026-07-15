@@ -13,7 +13,7 @@ fn setup_stats(app: &mut App) {
 fn setup_config(app: &mut App) {
     app.tlb.vm_subtab = VmSubtab::Tlb;
     app.tlb.subtab = TlbSubtab::Settings;
-    app.tlb.pending = app.run.mem().mmu().tlb.config.clone();
+    app.tlb.pending = app.run.mem.mmu().tlb.config.clone();
 }
 fn setup_entries(app: &mut App) {
     app.tlb.vm_subtab = VmSubtab::Tlb;
@@ -209,12 +209,12 @@ A árvore é somente-leitura — edite o mapa e o esquema na subaba settings. \
 by setting the matching bit in medeleg (bit 13 = load fault, 15 = store) and pointing stvec at your handler. \
 When U-mode touches an unmapped page, the CPU vectors to stvec in S-mode (saving sepc/scause/stval), \
 the handler installs the missing PTE, runs sfence.vma, and `sret` returns to retry the faulting access — now it succeeds. \
-The full runnable kernel is laid out step by step in the virtual-memory guide.",
+The full runnable kernel lives in docs/virtual-memory.md and is exercised by tests/mmu_traps.rs.",
         body_pt: "O modo Manual libera o padrão clássico de SO. Delegue page faults de load/store ao modo supervisor \
 setando o bit correspondente em medeleg (bit 13 = load fault, 15 = store) e apontando stvec para seu handler. \
 Quando o U-mode toca uma página não-mapeada, a CPU vetoriza para stvec em S-mode (salvando sepc/scause/stval), \
 o handler instala a PTE faltante, roda sfence.vma, e `sret` retorna para repetir o acesso — agora ele funciona. \
-O kernel completo executável está detalhado passo a passo no guia de memória virtual.",
+O kernel completo executável está em docs/virtual-memory.md e é testado em tests/mmu_traps.rs.",
         target: whole,
         setup: Some(setup_page_tree),
     },

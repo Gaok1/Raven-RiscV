@@ -195,43 +195,6 @@ All values are unsigned integers ≥ 0.
 
 ---
 
-## Unified TLB (`tlb.*`)
-
-Raven's MMU is fronted by a single TLB shared by instruction and data translations. Its geometry is saved in the `.fcache` alongside the cache levels, so a config can ship a TLB layout next to the CPI and cache settings.
-
-```
-# Unified TLB
-tlb.entry_count=32
-tlb.associativity=4
-tlb.replacement=lru
-tlb.hit_latency=1
-tlb.miss_penalty=20
-```
-
-| Key | Type | Valid range | Default | Notes |
-|-----|------|-------------|---------|-------|
-| `tlb.entry_count` | integer | power of 2, ≥ `tlb.associativity` | `32` | Total TLB entries. |
-| `tlb.associativity` | integer | ≥ 1, ≤ `tlb.entry_count` | `4` | Ways per set. `entry_count / associativity` = number of sets. |
-| `tlb.replacement` | enum | see note below | `lru` | Eviction policy. |
-| `tlb.hit_latency` | integer (cycles) | ≥ 1 | `1` | Cycles charged on every TLB hit. |
-| `tlb.miss_penalty` | integer (cycles) | ≥ 0 | `20` | Cycles charged for a page-table walk on a miss. |
-
-> **Heads up — casing differs from the cache `replacement` key.** The TLB policy is **lowercase**: `lru`, `fifo`, `random`, `lfu`, `clock`, `mru`. (The cache levels use PascalCase `Lru`, `Fifo`, … — they are separate keys.)
-
-### Virtual-memory mode (`.rcfg` only)
-
-The VM *mode* and the Custom paging scheme are simulator settings, not cache settings, so they live in the `.rcfg` (sim settings) file rather than the `.fcache`:
-
-| Key | Type | Values | Notes |
-|-----|------|--------|-------|
-| `vm_mode` | enum | `off` \| `sv32` \| `custom` \| `manual` | Which VM mode is active (lowercase). |
-| `vm_offset_bits` | integer | 12–30 | Page-offset width for **Custom** mode (ignored otherwise). |
-| `vm_level_bits` | comma list | e.g. `10,10` | Per-level index widths, top level first, for **Custom** mode. `offset + Σ levels` must equal 32. |
-
-See the [virtual memory guide](virtual-memory.md) for what these mean and how to use them.
-
----
-
 ## Validation rules
 
 Raven will reject the config and show an error if any of these fail:
@@ -393,10 +356,4 @@ hit_latency      integer     1–999
 miss_penalty     integer     0–9999
 assoc_penalty    integer     0–99  (default 1)
 transfer_width   integer     1–512 (default 8)
-
-tlb.entry_count   integer    power of 2, ≥ tlb.associativity (default 32)
-tlb.associativity integer    ≥ 1 (default 4)
-tlb.replacement   enum       lru | fifo | random | lfu | clock | mru   (lowercase!)
-tlb.hit_latency   integer    ≥ 1 (default 1)
-tlb.miss_penalty  integer    ≥ 0 (default 20)
 ```

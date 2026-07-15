@@ -30,7 +30,7 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mmu = app.run.mem().mmu();
+    let mmu = app.run.mem.mmu();
     let satp_mode = mmu.satp.mode();
     let priv_mode = mmu.priv_mode;
     // Mirror Mmu::translate (falcon/mmu/mod.rs:97-104): M-mode bypass is

@@ -42,7 +42,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Down if in_entries(app) => {
-            let total = app.run.mem().mmu().tlb.entries.len();
+            let total = app.run.mem.mmu().tlb.entries.len();
             let next = app.tlb.entries_scroll.saturating_add(1);
             app.tlb.entries_scroll = next.min(total.saturating_sub(1));
             true
@@ -122,7 +122,7 @@ pub(crate) fn select(app: &mut App, vm: VmSubtab, sub: Option<TlbSubtab>) {
     // Entering either Settings panel snapshots the live TLB config so the
     // editor starts from the current geometry.
     if matches!(vm, VmSubtab::Settings) {
-        app.tlb.pending = app.run.mem().mmu().tlb.config.clone();
+        app.tlb.pending = app.run.mem.mmu().tlb.config.clone();
         app.tlb.vm_edit_field = None;
         app.tlb.vm_edit_buf.clear();
         app.tlb.map_status = None;
@@ -130,7 +130,7 @@ pub(crate) fn select(app: &mut App, vm: VmSubtab, sub: Option<TlbSubtab>) {
     if let Some(t) = sub {
         app.tlb.subtab = t;
         if matches!(t, TlbSubtab::Settings) {
-            app.tlb.pending = app.run.mem().mmu().tlb.config.clone();
+            app.tlb.pending = app.run.mem.mmu().tlb.config.clone();
         }
     }
 }

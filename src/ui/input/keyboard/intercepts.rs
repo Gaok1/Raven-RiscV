@@ -1,7 +1,7 @@
 use crate::ui::app::{App, EditorMode, Tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::paste::{paste_imem_search, paste_mem_search, paste_run_edit};
+use super::paste::{paste_imem_search, paste_mem_search};
 use super::serialization::{
     apply_imem_search, apply_mem_search, dispatch_path_input, refresh_path_completions,
 };
@@ -188,46 +188,6 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
 }
 
 pub(super) fn handle_post_find_intercepts(app: &mut App, key: KeyEvent) -> Option<bool> {
-    // An open Run inline editor owns every keystroke: Esc cancels, Enter
-    // commits, Ctrl+C copies the buffer, Ctrl+V pastes, and characters valid for
-    // the active format extend it. Handled here (rather than in `run_keys`) so
-    // key modifiers are visible and the editor pre-empts every Run shortcut.
-    if matches!(app.tab, Tab::Run) && app.run.run_edit.is_some() {
-        match key.code {
-            KeyCode::Esc => app.cancel_run_edit(),
-            KeyCode::Enter => app.commit_run_edit(),
-            KeyCode::Backspace => {
-                app.run.run_edit_buf.pop();
-                app.run.run_edit_error = None;
-            }
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(clip) = app.clipboard.as_mut() {
-                    let _ = clip.set_text(app.run.run_edit_buf.clone());
-                }
-            }
-            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let recent_bracketed = app
-                    .last_bracketed_paste
-                    .is_some_and(|t| t.elapsed().as_millis() < 100);
-                if !recent_bracketed {
-                    let text = app.clipboard.as_mut().and_then(|clip| clip.get_text().ok());
-                    if let Some(text) = text {
-                        paste_run_edit(app, &text);
-                    }
-                }
-            }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && super::run_keys::edit_char_allowed(app, c) =>
-            {
-                app.run.run_edit_buf.push(c);
-                app.run.run_edit_error = None;
-            }
-            _ => {}
-        }
-        return Some(false);
-    }
-
     if matches!(app.tab, Tab::Run) && app.run.imem_search_open {
         match key.code {
             KeyCode::Esc => {
@@ -362,7 +322,7 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
     }
 
     if key.code == KeyCode::F(9) && matches!(app.tab, Tab::Run) {
-        let addr = app.run.hover_imem_addr.unwrap_or(app.run.cpu().pc);
+        let addr = app.run.hover_imem_addr.unwrap_or(app.run.cpu.pc);
         if app.run.breakpoints.contains(&addr) {
             app.run.breakpoints.remove(&addr);
         } else {

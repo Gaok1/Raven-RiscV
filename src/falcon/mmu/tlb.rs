@@ -61,7 +61,7 @@ impl Default for TlbConfig {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct TlbStats {
     pub hits: u64,
     pub misses: u64,
@@ -83,7 +83,6 @@ impl TlbStats {
     }
 }
 
-#[derive(Clone)]
 pub struct Tlb {
     pub config: TlbConfig,
     pub entries: Vec<TlbEntry>,

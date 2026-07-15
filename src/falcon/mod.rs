@@ -4,7 +4,6 @@ pub mod errors;
 pub mod exec;
 pub mod instruction;
 pub mod jit;
-pub mod machine;
 pub mod memory;
 pub mod mmu;
 pub mod registers;

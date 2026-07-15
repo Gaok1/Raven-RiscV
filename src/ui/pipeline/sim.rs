@@ -3592,9 +3592,16 @@ fn update_gantt(state: &mut PipelineSimState) {
                     last_stage: initial_stage,
                 };
                 new_row.cells.push_back(cell);
+                let prev_len = state.gantt.len();
                 state.gantt.push_back(new_row);
+                state.gantt_scroll = super::maybe_follow_gantt_tail(
+                    state.gantt_scroll,
+                    state.gantt_visible_rows_cache.get(),
+                    prev_len,
+                );
                 while state.gantt.len() > MAX_GANTT_ROWS + 4 {
                     state.gantt.pop_front();
+                    state.gantt_scroll = state.gantt_scroll.saturating_sub(1);
                 }
             }
         }
@@ -3670,9 +3677,16 @@ fn update_gantt(state: &mut PipelineSimState) {
                     last_stage: cell_track(cell),
                 };
                 new_row.cells.push_back(cell);
+                let prev_len = state.gantt.len();
                 state.gantt.push_back(new_row);
+                state.gantt_scroll = super::maybe_follow_gantt_tail(
+                    state.gantt_scroll,
+                    state.gantt_visible_rows_cache.get(),
+                    prev_len,
+                );
                 while state.gantt.len() > MAX_GANTT_ROWS + 4 {
                     state.gantt.pop_front();
+                    state.gantt_scroll = state.gantt_scroll.saturating_sub(1);
                 }
             }
         }
@@ -3712,6 +3726,7 @@ fn update_gantt(state: &mut PipelineSimState) {
 
     while state.gantt.len() > MAX_GANTT_ROWS {
         state.gantt.pop_front();
+        state.gantt_scroll = state.gantt_scroll.saturating_sub(1);
     }
 }
 

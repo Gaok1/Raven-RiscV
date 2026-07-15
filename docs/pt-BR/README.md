@@ -63,14 +63,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Exportar resultados (`Ctrl+r`) para `.fstats` / `.csv`
 - Matriz visual de cache com scroll horizontal e drag por scrollbar
 
-### Aba Virtual Memory / TLB (Aba 4)
-- Quatro modos de VM: **Off**, **Sv32** (mapa identidade automático), **Custom** (esquema de paginação paramétrico que você desenha — níveis, bits de índice, tamanho de página), **Manual** (`satp` e tabelas dirigidos pelo programa)
-- TLB configurável: entradas, associatividade, seis políticas de substituição, hit latency, miss penalty — com hits/misses/evictions ao vivo e gráfico rolante de hit rate
-- Árvore da tabela de páginas ao vivo, tabela de entradas da TLB e painel de controle de VM sem código (esquema + page map + geometria da TLB)
-- Page faults Sv32, delegação de traps (`medeleg`/`stvec`), `sret` e demand paging
-- Veja o **[guia de Memória Virtual & TLB](virtual-memory.md)** para o passo a passo completo
-
-### Aba Pipeline (Aba 5)
+### Aba Pipeline (Aba 4)
 - Visualização de pipeline clássico de 5 estágios com execução ciclo a ciclo
 - Sub-abas Main e Config para hazards, histórico, bypass e predição de desvio
 - Exportação/importação de `.pcfg` e exportação de `.pstats` / `.csv` com `Ctrl+e`, `Ctrl+l` e `Ctrl+r`
@@ -79,7 +72,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Custos de ciclo por classe: ALU, MUL, DIV, LOAD, STORE, branch taken/not-taken, JUMP, SYSTEM, FP
 - Configurável diretamente na aba Cache → Config
 
-### Aba Docs (Aba 6)
+### Aba Docs (Aba 5)
 - Referência de instruções e guia da aba Run embutidos no app
 
 ---
@@ -179,8 +172,7 @@ Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 - [CLI Reference (EN)](../en/cli.md)
 - [Formatos de instrução (PT-BR)](format.md) — layouts de bits, encoding, pseudoinstruções
 - [Guia do simulador de cache (PT-BR)](cache.md) — configuração, métricas, exportação
-- [Memória Virtual & TLB (PT-BR)](virtual-memory.md) — Sv32, os quatro modos de VM, a TLB, page faults, demand paging
-- [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md) | [Virtual memory (EN)](../en/virtual-memory.md)
+- [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md)
 - `threads-plan.md` — plano de design para execução multi-core futura, usando o termo `hart` ("hardware thread") para manter a modelagem em nível de hardware, não de SO
 - `Program Examples/hart_spawn_visual_demo.fas` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
 

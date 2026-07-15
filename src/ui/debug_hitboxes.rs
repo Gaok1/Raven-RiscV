@@ -128,7 +128,6 @@ pub fn debug_run_controls_dump(opts: DebugRunControlsOptions) -> String {
             RunButton::Speed => "Speed",
             RunButton::ExecCount => "ExecCount",
             RunButton::InstrType => "InstrType",
-            RunButton::Stepback => "Stepback",
             RunButton::Reset => "Reset",
         };
         out.push_str(&format!("  {:<10} cols [{}..{})\n", name, start, end));

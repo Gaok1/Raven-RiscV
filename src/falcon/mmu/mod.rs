@@ -275,7 +275,6 @@ fn perm_bits(p: PtePerms) -> u32 {
     b
 }
 
-#[derive(Clone)]
 pub struct Mmu {
     pub tlb: Tlb,
     pub satp: Satp,

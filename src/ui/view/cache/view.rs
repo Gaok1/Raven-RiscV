@@ -83,7 +83,7 @@ pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
         render_l1_view(f, area, app);
     } else {
         let idx = app.cache.selected_level - 1;
-        if idx < app.run.mem().extra_levels.len() {
+        if idx < app.run.mem.extra_levels.len() {
             render_unified_view(f, area, app, idx);
         }
     }
@@ -127,7 +127,7 @@ fn render_unified_view(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
 // ── Legend bar (outside the matrix block, 1 line, no border) ─────────────────
 
 fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let cfg = &app.run.mem().extra_levels[extra_idx].config;
+    let cfg = &app.run.mem.extra_levels[extra_idx].config;
     let scroll_hint = vertical_scroll_hint(app);
     let policy_hint = policy_hint_str(cfg.replacement);
 
@@ -168,8 +168,8 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
 
 fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     let scope = app.cache.scope;
-    let icfg = &app.run.mem().icache.config;
-    let dcfg = &app.run.mem().dcache.config;
+    let icfg = &app.run.mem.icache.config;
+    let dcfg = &app.run.mem.dcache.config;
 
     // Policy-specific hint — if both caches have the same policy, show once
     let policy_hint: String = match scope {
@@ -370,7 +370,7 @@ fn policy_hint_short(p: ReplacementPolicy) -> &'static str {
 // ── Cache matrix ──────────────────────────────────────────────────────────────
 
 fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let cache = &app.run.mem().extra_levels[extra_idx];
+    let cache = &app.run.mem.extra_levels[extra_idx];
     let level_name = CacheController::extra_level_name(extra_idx);
     let cfg = &cache.config;
 
@@ -595,9 +595,9 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
 
 fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let cache = if icache {
-        &app.run.mem().icache
+        &app.run.mem.icache
     } else {
-        &app.run.mem().dcache
+        &app.run.mem.dcache
     };
     let label = if icache { "I-Cache" } else { "D-Cache" };
     let cfg = &cache.config;
