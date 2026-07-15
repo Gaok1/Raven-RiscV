@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CacheStats {
     pub hits: u64,
     pub misses: u64,

@@ -4,6 +4,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use super::{App, FormatMode, MemRegion, RunButton};
 use crate::ui::theme;
+use crate::ui::view::components::Toolbar;
 
 pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
@@ -24,27 +25,49 @@ pub(crate) fn run_controls_plain_text(app: &App) -> String {
 }
 
 fn status_lines(app: &App) -> Vec<Line<'static>> {
-    let hint = Line::from(""); // hints removed — use [?] help button
-    vec![Line::from(status_spans(app)), cycle_line(app), hint]
+    vec![
+        Line::from(status_spans(app)),
+        cycle_line(app),
+        edit_status_line(app),
+    ]
+}
+
+/// Third status row: while an inline edit is open it shows the commit/cancel
+/// prompt, or the rejection message when the last commit was out of range.
+/// Otherwise blank (the old hints moved to the `[?]` help button).
+fn edit_status_line(app: &App) -> Line<'static> {
+    if let Some(error) = &app.run.run_edit_error {
+        Line::from(Span::styled(
+            format!("  ✗ {error}"),
+            Style::default().fg(Color::Red).bold(),
+        ))
+    } else if app.run.run_edit.is_some() {
+        Line::from(Span::styled(
+            "  editing — Enter=commit  Esc=cancel  ⌫=delete",
+            Style::default().fg(theme::ACCENT),
+        ))
+    } else {
+        Line::from("")
+    }
 }
 
 fn cycle_line(app: &App) -> Line<'static> {
-    let (total, cpi, instr) = if app.pipeline.enabled || app.pipeline.sequential_mode {
-        let cycles = app.pipeline.cycle_count;
-        let cpi = if app.pipeline.instr_committed > 0 {
-            cycles as f64 / app.pipeline.instr_committed as f64
+    let (total, cpi, instr) = if app.run.pipeline().enabled || app.run.pipeline().sequential_mode {
+        let cycles = app.run.pipeline().cycle_count;
+        let cpi = if app.run.pipeline().instr_committed > 0 {
+            cycles as f64 / app.run.pipeline().instr_committed as f64
         } else {
             0.0
         };
-        (cycles, cpi, app.pipeline.instr_committed)
+        (cycles, cpi, app.run.pipeline().instr_committed)
     } else {
         (
-            app.run.mem.total_program_cycles(),
-            app.run.mem.overall_cpi(),
-            app.run.mem.instruction_count,
+            app.run.mem().total_program_cycles(),
+            app.run.mem().overall_cpi(),
+            app.run.mem().instruction_count,
         )
     };
-    let scope_label = if app.pipeline.enabled || app.pipeline.sequential_mode {
+    let scope_label = if app.run.pipeline().enabled || app.run.pipeline().sequential_mode {
         "Scope:selected"
     } else {
         "Scope:program"
@@ -79,128 +102,135 @@ fn cycle_line(app: &App) -> Line<'static> {
 }
 
 fn status_spans(app: &App) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
+    build_run_toolbar(app).spans()
+}
 
-    push_dense_pair(
-        &mut spans,
+/// The run-controls bar as a [`Toolbar`] — the single source of truth shared by
+/// the renderer ([`status_spans`]) and the mouse hit-test
+/// (`mouse::run_status_hit`). Add a control here and it shows up in the view and
+/// becomes clickable in one edit.
+pub(crate) fn build_run_toolbar(app: &App) -> Toolbar<RunButton> {
+    let hov = |b: RunButton| app.hover_run_button == Some(b);
+    let multi_core = app.max_cores > 1;
+    let signed = sign_enabled(app);
+
+    let mut bar = Toolbar::new();
+    bar.pair(
+        RunButton::Core,
         "core",
         &format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1)),
-        app.max_cores > 1 && app.hover_run_button == Some(RunButton::Core),
-        app.max_cores > 1,
-        if app.max_cores > 1 {
-            theme::TEXT
-        } else {
-            theme::IDLE
-        },
-    );
-
-    push_dense_pair(
-        &mut spans,
+        multi_core && hov(RunButton::Core),
+        multi_core,
+        multi_core,
+        theme::TEXT,
+    )
+    .pair(
+        RunButton::View,
         "view",
         view_text(app),
-        app.hover_run_button == Some(RunButton::View),
+        hov(RunButton::View),
         view_active(app),
+        true,
         theme::TEXT,
     );
 
     if app.run_sidebar_shows_memory() {
-        push_dense_pair(
-            &mut spans,
+        bar.pair(
+            RunButton::Region,
             "region",
             region_text(app),
-            app.hover_run_button == Some(RunButton::Region),
+            hov(RunButton::Region),
+            true,
             true,
             theme::TEXT,
         );
     }
 
-    push_dense_pair(
-        &mut spans,
+    bar.pair(
+        RunButton::Format,
         "fmt",
         format_text(app),
-        app.hover_run_button == Some(RunButton::Format),
+        hov(RunButton::Format),
+        true,
         true,
         theme::TEXT,
-    );
-
-    push_dense_pair(
-        &mut spans,
+    )
+    .pair(
+        RunButton::Sign,
         "sign",
         sign_text(app),
-        sign_enabled(app) && app.hover_run_button == Some(RunButton::Sign),
-        sign_enabled(app),
-        if sign_enabled(app) {
-            theme::TEXT
-        } else {
-            theme::IDLE
-        },
+        signed && hov(RunButton::Sign),
+        signed,
+        signed,
+        theme::TEXT,
     );
 
     if app.run_sidebar_shows_memory() {
-        push_dense_pair(
-            &mut spans,
+        bar.pair(
+            RunButton::Bytes,
             "bytes",
             bytes_text(app),
-            app.hover_run_button == Some(RunButton::Bytes),
+            hov(RunButton::Bytes),
+            true,
             true,
             theme::TEXT,
         );
     }
 
-    push_dense_pair(
-        &mut spans,
+    bar.pair(
+        RunButton::Speed,
         "speed",
         speed_text(app),
-        app.hover_run_button == Some(RunButton::Speed),
+        hov(RunButton::Speed),
+        true,
+        true,
+        theme::TEXT,
+    )
+    .pair(
+        RunButton::State,
+        "state",
+        &state_text(app),
+        hov(RunButton::State),
+        true,
+        true,
+        state_color(app),
+    )
+    .pair(
+        RunButton::ExecCount,
+        "count",
+        if app.run.show_exec_count { "on" } else { "off" },
+        hov(RunButton::ExecCount),
+        app.run.show_exec_count,
+        true,
+        theme::TEXT,
+    )
+    .pair(
+        RunButton::InstrType,
+        "type",
+        if app.run.show_instr_type { "on" } else { "off" },
+        hov(RunButton::InstrType),
+        app.run.show_instr_type,
         true,
         theme::TEXT,
     );
 
-    push_dense_pair(
-        &mut spans,
-        "state",
-        &state_text(app),
-        app.hover_run_button == Some(RunButton::State),
-        true,
-        state_color(app),
-    );
-
-    push_dense_pair(
-        &mut spans,
-        "count",
-        if app.run.show_exec_count { "on" } else { "off" },
-        app.hover_run_button == Some(RunButton::ExecCount),
-        app.run.show_exec_count,
-        if app.run.show_exec_count {
-            theme::TEXT
-        } else {
-            theme::IDLE
-        },
-    );
-
-    push_dense_pair(
-        &mut spans,
-        "type",
-        if app.run.show_instr_type { "on" } else { "off" },
-        app.hover_run_button == Some(RunButton::InstrType),
-        app.run.show_instr_type,
-        if app.run.show_instr_type {
-            theme::TEXT
-        } else {
-            theme::IDLE
-        },
-    );
-
-    if !spans.is_empty() {
-        spans.push(Span::raw("   "));
-    }
-    spans.push(action_btn(
+    let can_stepback = app.can_stepback_now();
+    bar.action(
+        RunButton::Stepback,
+        "step-back",
+        can_stepback && hov(RunButton::Stepback),
+        can_stepback,
+        theme::ACCENT,
+    )
+    .action(
+        RunButton::Reset,
         "reset",
+        hov(RunButton::Reset),
+        true,
         theme::DANGER,
-        app.hover_run_button == Some(RunButton::Reset),
-    ));
+    );
 
-    spans
+    bar
 }
 
 // ── Text helpers ────────────────────────────────────────────────────────────
@@ -233,6 +263,7 @@ fn format_text(app: &App) -> &'static str {
     match app.run.fmt_mode {
         FormatMode::Hex => "hex",
         FormatMode::Dec => "dec",
+        FormatMode::Bin => "bin",
         FormatMode::Str => "str",
     }
 }
@@ -269,14 +300,14 @@ pub(crate) fn state_text(app: &App) -> String {
         crate::ui::app::HartLifecycle::Free => "free".to_string(),
         crate::ui::app::HartLifecycle::Running => "run".to_string(),
         crate::ui::app::HartLifecycle::Paused => {
-            if app.run.cpu.ebreak_hit {
+            if app.run.cpu().ebreak_hit {
                 "ebrk".to_string()
             } else {
                 "pause".to_string()
             }
         }
         crate::ui::app::HartLifecycle::Exited => {
-            if app.run.cpu.local_exit {
+            if app.run.cpu().local_exit {
                 "halt".to_string()
             } else {
                 "exit".to_string()
@@ -292,7 +323,7 @@ fn state_color(app: &App) -> Color {
         crate::ui::app::HartLifecycle::Running => theme::RUNNING,
         crate::ui::app::HartLifecycle::Paused => theme::PAUSED,
         crate::ui::app::HartLifecycle::Exited => {
-            if app.run.cpu.local_exit {
+            if app.run.cpu().local_exit {
                 theme::DANGER
             } else {
                 theme::LABEL
@@ -302,45 +333,3 @@ fn state_color(app: &App) -> Color {
     }
 }
 
-fn push_dense_pair(
-    spans: &mut Vec<Span<'static>>,
-    label: &str,
-    value: &str,
-    hovered: bool,
-    active: bool,
-    active_color: Color,
-) {
-    if !spans.is_empty() {
-        spans.push(Span::raw("   "));
-    }
-    spans.push(Span::styled(
-        label.to_string(),
-        Style::default().fg(theme::IDLE),
-    ));
-    spans.push(Span::raw(" "));
-    spans.push(value_btn(value, hovered, active, active_color));
-}
-
-fn value_btn(text: &str, hovered: bool, active: bool, color: Color) -> Span<'static> {
-    let style = if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
-    } else if active {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::IDLE)
-    };
-    Span::styled(text.to_string(), style)
-}
-
-fn action_btn(text: &str, color: Color, hovered: bool) -> Span<'static> {
-    let style = if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    };
-    Span::styled(text.to_string(), style)
-}

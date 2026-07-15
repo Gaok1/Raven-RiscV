@@ -5,17 +5,17 @@ pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
     // so write-back stores are visible in the RUN tab memory view.
     match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.run.mem.effective_read32(addr).unwrap_or(0),
+            app.run.mem().effective_read32(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.run.mem.effective_read16(addr).unwrap_or(0),
+            app.run.mem().effective_read16(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.run.mem.effective_read8(addr).unwrap_or(0),
+            app.run.mem().effective_read8(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
@@ -26,17 +26,17 @@ pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
 pub(super) fn format_stale_value(app: &App, addr: u32) -> String {
     match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.run.mem.peek32(addr).unwrap_or(0),
+            app.run.mem().peek32(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.run.mem.peek16(addr).unwrap_or(0),
+            app.run.mem().peek16(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.run.mem.peek8(addr).unwrap_or(0),
+            app.run.mem().peek8(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
@@ -50,6 +50,7 @@ pub(super) fn format_u32_value(value: u32, fmt: FormatMode, show_signed: bool) -
             true => format!("{}", value as i32),
             false => format!("{value}"),
         },
+        FormatMode::Bin => format!("0b{value:032b}"),
         FormatMode::Str => ascii_bytes(&value.to_le_bytes()),
     }
 }
@@ -61,6 +62,7 @@ pub(super) fn format_u16_value(value: u16, fmt: FormatMode, show_signed: bool) -
             true => format!("{}", value as i16),
             false => format!("{value}"),
         },
+        FormatMode::Bin => format!("0b{value:016b}"),
         FormatMode::Str => ascii_bytes(&value.to_le_bytes()),
     }
 }
@@ -72,6 +74,7 @@ pub(super) fn format_u8_value(value: u8, fmt: FormatMode, show_signed: bool) -> 
             true => format!("{}", value as i8),
             false => format!("{value}"),
         },
+        FormatMode::Bin => format!("0b{value:08b}"),
         FormatMode::Str => ascii_bytes(&[value]),
     }
 }
