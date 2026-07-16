@@ -18,8 +18,8 @@ use crate::ui::{
         RunEditTarget,
         SETTINGS_ROW_CACHE_ENABLED,
         SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
-        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED,
-        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
+        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET,
+        SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
     },
     editor::Editor,
 };
@@ -460,23 +460,30 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 
     // Run tab interactions
     if let Tab::Run = app.tab {
+        // Screen sub-view: the CPU panels aren't rendered, so skip their
+        // hover/click hit-tests — only the status bar and console stay live.
+        let screen_view = app.run.show_screen && app.console.screen.is_some();
         update_run_status_hover(app, me, area);
-        update_imem_hover(app, me, area);
+        if !screen_view {
+            update_imem_hover(app, me, area);
+            update_sidebar_hover(app, me, area);
+        }
         update_console_hover(app, me, area);
-        update_sidebar_hover(app, me, area);
         match me.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 handle_run_status_click(app, me, area);
-                handle_panel_title_click(app, me, area);
-                start_sidebar_drag(app, me, area);
-                start_imem_drag(app, me, area);
-                handle_imem_bp_click(app, me, area);
-                handle_imem_click(app, me, area);
-                handle_details_click(app, me, area);
+                if !screen_view {
+                    handle_panel_title_click(app, me, area);
+                    start_sidebar_drag(app, me, area);
+                    start_imem_drag(app, me, area);
+                    handle_imem_bp_click(app, me, area);
+                    handle_imem_click(app, me, area);
+                    handle_details_click(app, me, area);
+                    handle_register_click(app, me, area);
+                    handle_memory_click(app, me, area);
+                }
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
-                handle_register_click(app, me, area);
-                handle_memory_click(app, me, area);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if app.run.sidebar_drag {
@@ -495,7 +502,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.run.console_drag = false;
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                handle_imem_right_click(app, me, area);
+                if !screen_view {
+                    handle_imem_right_click(app, me, area);
+                }
             }
             _ => {}
         }
@@ -570,6 +579,9 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             app.run.show_registers = false;
             app.run.show_dyn = false;
             app.sync_mem_focus_for_active_sidebar_mode();
+        }
+        RunButton::Screen => {
+            app.run.show_screen = !app.run.show_screen;
         }
         RunButton::Speed => {
             app.run.speed = app.run.speed.cycle();
@@ -2443,6 +2455,7 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     app.settings.hover_vm_enabled = false;
     app.settings.hover_tlb_enabled = false;
     app.settings.hover_trace_syscalls = false;
+    app.settings.hover_screen_target = false;
     app.settings.hover_run_scope = false;
     app.settings.hover_import_rcfg = false;
     app.settings.hover_export_rcfg = false;
@@ -2486,6 +2499,8 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
         app.settings.hover_row = Some(SETTINGS_ROW_JIT_MODE);
     } else if me.row == btn_y.saturating_add(8) {
         app.settings.hover_row = Some(SETTINGS_ROW_TRACE_SYSCALLS);
+    } else if me.row == btn_y.saturating_add(9) {
+        app.settings.hover_row = Some(SETTINGS_ROW_SCREEN_TARGET);
     }
     if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
         app.settings.hover_cache_enabled = true;
@@ -2511,6 +2526,10 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     let (trace_y, trace_x0, trace_x1) = app.settings.bool_btn_trace_syscalls_rect.get();
     if me.row == trace_y && me.column >= trace_x0 && me.column < trace_x1 {
         app.settings.hover_trace_syscalls = true;
+    }
+    let (screen_y, screen_x0, screen_x1) = app.settings.screen_target_rect.get();
+    if me.row == screen_y && me.column >= screen_x0 && me.column < screen_x1 {
+        app.settings.hover_screen_target = true;
     }
 
     if me.row == btn_y.saturating_add(1) {
@@ -2592,6 +2611,13 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     if me.row == trace_y {
         app.set_trace_syscalls(!app.run.trace_syscalls);
         app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
+        return;
+    }
+
+    let (screen_y, _, _) = app.settings.screen_target_rect.get();
+    if me.row == screen_y {
+        app.console.screen_target = app.console.screen_target.cycle();
+        app.settings.selected = SETTINGS_ROW_SCREEN_TARGET;
         return;
     }
 

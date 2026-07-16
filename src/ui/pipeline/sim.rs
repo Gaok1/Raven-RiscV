@@ -1406,6 +1406,10 @@ fn stage_wb(
                 Some(cycle_count),
             ) {
                 Ok(cont) => {
+                    if cont && cpu.sleep_until.is_some() {
+                        cpu.pc = slot.pc; // rewind: parked on screen_sleep_ms
+                        return false;
+                    }
                     if !cont && console.reading {
                         cpu.pc = slot.pc; // rewind for blocking stdin
                         return false;
@@ -1664,7 +1668,7 @@ fn commit_wb(
         }
     };
 
-    if !alive && !console.reading {
+    if !alive && !console.reading && cpu.sleep_until.is_none() {
         state.halted = true;
     }
 

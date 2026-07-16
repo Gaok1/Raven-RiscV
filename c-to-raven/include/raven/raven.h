@@ -19,6 +19,7 @@
  *      <raven/str.h>     strlen / strcmp / strcpy / ...
  *      <raven/mem.h>     malloc / free / memset / memcpy / ...
  *      <raven/io.h>      print / read / println / eprint
+ *      <raven/gfx.h>     host framebuffer graphics / key polling / frame pacing
  *      <raven/fmt.h>     printf / scanf / snprintf / sscanf
  *      <raven/hart.h>    multi-hart spawn / join / detach
  *      <raven/coro.h>    cooperative stackful coroutines (resume / yield)
@@ -34,6 +35,7 @@
 #include <raven/str.h>
 #include <raven/mem.h>
 #include <raven/io.h>
+#include <raven/gfx.h>
 #include <raven/fmt.h>
 #include <raven/hart.h>
 #include <raven/coro.h>

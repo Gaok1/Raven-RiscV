@@ -1,0 +1,330 @@
+# snake.fas — Snake game on the Raven graphics syscalls (2000+)
+#
+# A complete game using only raw ecalls, the way a student compiler would
+# emit them.  Controls: WASD or arrow keys.  Eat the red food, don't hit
+# the walls or yourself.  On game over: r = restart, q = quit.
+#
+# Graphics ABI used here (a7 = syscall, args in a0.., result in a0):
+#   2000 screen_init(w, h)          create the 80x60 screen
+#   2001 screen_clear(rgb)          fill the back buffer
+#   2003 screen_fill_rect(x,y,w,h,rgb)
+#   2004 screen_present()           publish the frame
+#   2005 screen_poll_key()          key code or 0 (non-blocking)
+#   2006 screen_time_ms()           wall-clock ms since screen_init
+#   2007 screen_sleep_ms(ms)        frame pacing
+# Key codes: 'a'..'z' as lowercase ASCII, arrows = 256/257/258/259 (U/D/L/R).
+#
+# Board: 20x15 cells, 4px per cell -> 80x60 pixels.
+# Snake body lives in a ring buffer of packed cells (x | y<<8); a 300-byte
+# occupancy grid gives O(1) self-collision tests.
+#
+# Register roles (whole program):
+#   s0 = head x        s1 = head y
+#   s2 = dx            s3 = dy
+#   s4 = length        s5 = head ring index
+#   s6 = tail ring index                 s7 = food (x | y<<8)
+
+.data
+ring:      .space 1200              # 300 cells x 4 bytes (20*15 max body)
+occ:       .space 300               # 1 byte per board cell (0 = free)
+rnd:       .space 4                 # getrandom scratch
+msg_over:  .asciz "Game over! Score: "
+msg_hint:  .asciz "   (r = restart, q = quit)"
+
+.text
+    # screen_init(80, 60)
+    li   a0, 80
+    li   a1, 60
+    li   a7, 2000
+    ecall
+
+# ── (Re)start: empty board, 3-cell snake heading right, one food ────────────
+new_game:
+    # Clear the occupancy grid (300 bytes)
+    la   t0, occ
+    li   t1, 300
+clear_occ:
+    sb   x0, 0(t0)
+    addi t0, t0, 1
+    addi t1, t1, -1
+    bgt  t1, x0, clear_occ
+
+    # Body cells (8,7) (9,7) (10,7): ring[0..2], tail=0, head=2
+    li   s6, 0                      # tail_idx
+    li   s5, 2                      # head_idx
+    li   s4, 3                      # length
+    li   s0, 10                     # head x
+    li   s1, 7                      # head y
+    li   s2, 1                      # dx = right
+    li   s3, 0                      # dy
+
+    la   t0, ring
+    li   t1, 1800                   # (7<<8)|8
+    sw   t1, 0(t0)
+    li   t1, 1801                   # (7<<8)|9
+    sw   t1, 4(t0)
+    li   t1, 1802                   # (7<<8)|10
+    sw   t1, 8(t0)
+
+    la   t0, occ                    # occ[7*20 + 8..10] = 1
+    addi t0, t0, 148
+    li   t1, 1
+    sb   t1, 0(t0)
+    sb   t1, 1(t0)
+    sb   t1, 2(t0)
+
+    jal  ra, spawn_food
+
+# ── Main loop: one iteration per game tick (~130 ms) ────────────────────────
+game_loop:
+    li   a7, 2006                   # t6 = time_ms() at tick start
+    ecall
+    mv   t6, a0
+
+    # Drain the key queue; the last direction key wins.
+read_keys:
+    li   a7, 2005                   # poll_key
+    ecall
+    beq  a0, x0, keys_done
+
+    li   t0, 113                    # 'q' -> quit
+    beq  a0, t0, quit
+
+    li   t0, 119                    # 'w'
+    beq  a0, t0, go_up
+    li   t0, 256                    # arrow up
+    beq  a0, t0, go_up
+    li   t0, 115                    # 's'
+    beq  a0, t0, go_down
+    li   t0, 257                    # arrow down
+    beq  a0, t0, go_down
+    li   t0, 97                     # 'a'
+    beq  a0, t0, go_left
+    li   t0, 258                    # arrow left
+    beq  a0, t0, go_left
+    li   t0, 100                    # 'd'
+    beq  a0, t0, go_right
+    li   t0, 259                    # arrow right
+    beq  a0, t0, go_right
+    j    read_keys
+
+go_up:                              # forbid reversing into yourself
+    li   t0, 1
+    beq  s3, t0, read_keys
+    li   s2, 0
+    li   s3, -1
+    j    read_keys
+go_down:
+    li   t0, -1
+    beq  s3, t0, read_keys
+    li   s2, 0
+    li   s3, 1
+    j    read_keys
+go_left:
+    li   t0, 1
+    beq  s2, t0, read_keys
+    li   s2, -1
+    li   s3, 0
+    j    read_keys
+go_right:
+    li   t0, -1
+    beq  s2, t0, read_keys
+    li   s2, 1
+    li   s3, 0
+    j    read_keys
+
+keys_done:
+    # New head cell
+    add  s0, s0, s2
+    add  s1, s1, s3
+
+    # Wall collision
+    blt  s0, x0, game_over
+    li   t0, 20
+    bge  s0, t0, game_over
+    blt  s1, x0, game_over
+    li   t0, 15
+    bge  s1, t0, game_over
+
+    # t5 = 1 when this move eats the food
+    slli t0, s1, 8
+    or   t0, t0, s0                 # packed new head
+    li   t5, 0
+    bne  t0, s7, no_food
+    li   t5, 1
+no_food:
+    # Not eating: free the tail cell first, so chasing your own tail is legal
+    bne  t5, x0, skip_tail
+    la   t0, ring
+    slli t1, s6, 2
+    add  t0, t0, t1
+    lw   t1, 0(t0)                  # packed tail cell
+    andi t2, t1, 255                # tail x
+    srli t1, t1, 8                  # tail y
+    li   t3, 20
+    mul  t1, t1, t3
+    add  t1, t1, t2
+    la   t2, occ
+    add  t2, t2, t1
+    sb   x0, 0(t2)                  # occ[tail] = 0
+    addi s6, s6, 1                  # tail_idx = (tail_idx + 1) % 300
+    li   t0, 300
+    blt  s6, t0, skip_tail
+    li   s6, 0
+skip_tail:
+    # Self collision on the (possibly freed) grid
+    li   t0, 20
+    mul  t1, s1, t0
+    add  t1, t1, s0
+    la   t2, occ
+    add  t2, t2, t1
+    lb   t3, 0(t2)
+    bne  t3, x0, game_over
+
+    # Push the new head into the ring + occupancy grid
+    li   t3, 1
+    sb   t3, 0(t2)                  # occ[head] = 1
+    addi s5, s5, 1                  # head_idx = (head_idx + 1) % 300
+    li   t0, 300
+    blt  s5, t0, head_idx_ok
+    li   s5, 0
+head_idx_ok:
+    la   t0, ring
+    slli t1, s5, 2
+    add  t0, t0, t1
+    slli t1, s1, 8
+    or   t1, t1, s0
+    sw   t1, 0(t0)
+
+    beq  t5, x0, draw               # grow + respawn food only when eating
+    addi s4, s4, 1
+    jal  ra, spawn_food
+
+# ── Draw the frame ──────────────────────────────────────────────────────────
+draw:
+    li   a0, 0x101820               # dark background
+    li   a7, 2001                   # screen_clear
+    ecall
+
+    # Food (red cell)
+    andi a0, s7, 255
+    slli a0, a0, 2
+    srli a1, s7, 8
+    slli a1, a1, 2
+    li   a2, 4
+    li   a3, 4
+    li   a4, 0xFF4040
+    li   a7, 2003                   # screen_fill_rect
+    ecall
+
+    # Body: walk the ring from tail to head (s4 cells)
+    mv   t4, s6                     # idx = tail
+    mv   t5, s4                     # remaining
+draw_body:
+    beq  t5, x0, draw_head
+    la   t0, ring
+    slli t1, t4, 2
+    add  t0, t0, t1
+    lw   t1, 0(t0)
+    andi a0, t1, 255
+    slli a0, a0, 2
+    srli a1, t1, 8
+    slli a1, a1, 2
+    li   a2, 4
+    li   a3, 4
+    li   a4, 0x30C060               # body green
+    li   a7, 2003
+    ecall
+    addi t4, t4, 1
+    li   t0, 300
+    blt  t4, t0, no_wrap
+    li   t4, 0
+no_wrap:
+    addi t5, t5, -1
+    j    draw_body
+
+draw_head:                          # head in a brighter green, on top
+    slli a0, s0, 2
+    slli a1, s1, 2
+    li   a2, 4
+    li   a3, 4
+    li   a4, 0x90FF90
+    li   a7, 2003
+    ecall
+
+    li   a7, 2004                   # screen_present
+    ecall
+
+    # Frame pacing: sleep the rest of the 130 ms tick
+    li   a7, 2006                   # time_ms
+    ecall
+    sub  t0, a0, t6                 # elapsed
+    li   t1, 130
+    bge  t0, t1, game_loop
+    sub  a0, t1, t0
+    li   a7, 2007                   # sleep_ms(130 - elapsed)
+    ecall
+    j    game_loop
+
+# ── Food placement: random free cell ────────────────────────────────────────
+# clobbers a0-a2, a7, t0-t3; sets s7
+spawn_food:
+    la   a0, rnd                    # getrandom(rnd, 4, 0) — Linux syscall 278
+    li   a1, 4
+    li   a2, 0
+    li   a7, 278
+    ecall
+    la   t0, rnd
+    lw   t1, 0(t0)
+    li   t0, 20
+    remu t2, t1, t0                 # x = r % 20
+    srli t1, t1, 8
+    li   t0, 15
+    remu t3, t1, t0                 # y = (r >> 8) % 15
+    li   t0, 20
+    mul  t1, t3, t0
+    add  t1, t1, t2
+    la   t0, occ
+    add  t0, t0, t1
+    lb   t1, 0(t0)
+    bne  t1, x0, spawn_food         # occupied -> roll again
+    slli s7, t3, 8
+    or   s7, s7, t2                 # food = x | y<<8
+    jalr x0, ra, 0
+
+# ── Game over: red flash, score on the console, wait for r / q ─────────────
+game_over:
+    li   a0, 0x801010
+    li   a7, 2001                   # clear to dark red
+    ecall
+    li   a7, 2004                   # present
+    ecall
+
+    la   a0, msg_over               # "Game over! Score: "
+    li   a7, 1001
+    ecall
+    addi a0, s4, -3                 # score = length - initial 3
+    li   a7, 1000
+    ecall
+    la   a0, msg_hint
+    li   a7, 1001
+    ecall
+    li   a7, 1008                   # newline
+    ecall
+
+wait_key:
+    li   a7, 2005                   # poll_key
+    ecall
+    li   t0, 114                    # 'r' -> restart
+    beq  a0, t0, new_game
+    li   t0, 113                    # 'q' -> quit
+    beq  a0, t0, quit
+    li   a0, 50
+    li   a7, 2007                   # sleep_ms(50) — don't spin
+    ecall
+    j    wait_key
+
+quit:
+    li   a0, 0
+    li   a7, 93                     # exit(0)
+    ecall

@@ -134,6 +134,18 @@ pub(crate) fn build_run_toolbar(app: &App) -> Toolbar<RunButton> {
         theme::TEXT,
     );
 
+    if app.console.screen.is_some() {
+        bar.pair(
+            RunButton::Screen,
+            "screen",
+            if app.run.show_screen { "on" } else { "off" },
+            hov(RunButton::Screen),
+            app.run.show_screen,
+            true,
+            theme::TEXT,
+        );
+    }
+
     if app.run_sidebar_shows_memory() {
         bar.pair(
             RunButton::Region,

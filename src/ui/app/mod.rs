@@ -36,8 +36,9 @@ pub(crate) use self::run_state::{
 pub(crate) use self::settings_state::{
     RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
-    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState, nearest_pow2_clamp,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
+    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState,
+    nearest_pow2_clamp,
 };
 
 use super::{
@@ -451,6 +452,8 @@ impl App {
                 cpi_config: CpiConfig::default(),
                 show_exec_count: true,
                 show_instr_type: true,
+                show_screen: false,
+                screen_seen: false,
                 mem_access_log: Vec::new(),
                 cache_enabled: false,
                 vm_mode: crate::falcon::mmu::VmMode::Off,
@@ -793,6 +796,7 @@ impl App {
     }
 
     fn load_last_ok_program(&mut self) {
+        self.reset_screen_device();
         // ELF path: re-parse the original bytes so all segments are restored correctly.
         if let Some(elf_bytes) = self.editor.last_ok_elf_bytes.clone() {
             self.load_binary(&elf_bytes);
@@ -925,7 +929,17 @@ impl App {
         self.rebuild_backend();
     }
 
+    /// Drop the screen device from the previous run (closes any OS window) and
+    /// re-arm the Screen sub-view auto-open for the next `screen_init`.
+    fn reset_screen_device(&mut self) {
+        self.console.screen = None;
+        self.console.screen_uninit_warned = false;
+        self.run.show_screen = false;
+        self.run.screen_seen = false;
+    }
+
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
+        self.reset_screen_device();
         self.run.prev_x = self.run.cpu().x;
         self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024); // default 16 MB for ELF (heap support)
         *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
@@ -1932,6 +1946,16 @@ impl App {
                 }
             }
         }
+        // Auto-open the Screen sub-view the first time this program calls
+        // screen_init (2000). One-shot so Esc can close it afterwards. When
+        // the screen went to an OS window, don't mirror it in the TUI — the
+        // toolbar toggle still opens the sub-view manually if wanted.
+        if let Some(screen) = &self.console.screen {
+            if !self.run.screen_seen {
+                self.run.screen_seen = true;
+                self.run.show_screen = !screen.has_window();
+            }
+        }
         // Arm the next GO burst's one-shot checkpoint once the run has stopped.
         if !self.run.is_running {
             self.run.go_checkpointed = false;
@@ -2432,6 +2456,16 @@ impl App {
     /// Execute one pipeline tick using shared cpu/mem state.
     /// Execute one pipeline cycle. Returns true if an instruction was committed.
     fn pipeline_step(&mut self) -> bool {
+        // screen_sleep_ms parking: don't burn pipeline cycles refetching the
+        // parked ecall; the tick loop retries once the deadline passes.
+        if self
+            .run
+            .cpu()
+            .sleep_until
+            .is_some_and(|t| Instant::now() < t)
+        {
+            return false;
+        }
         // Sequential mode: if the CPU advanced outside the pipeline (e.g. the
         // user stepped in the Run tab), auto-reset so the visualization starts
         // fresh from the current PC.
@@ -2758,6 +2792,16 @@ impl App {
         self.run.machine.sync_mmu();
         let go_mode = matches!(self.run.speed, RunSpeed::Instant);
         for _ in 0..16 {
+            // screen_sleep_ms parking: leave the hart on its ecall until the
+            // wall-clock deadline passes (the tick loop retries every ~10ms).
+            if self
+                .run
+                .cpu()
+                .sleep_until
+                .is_some_and(|t| Instant::now() < t)
+            {
+                return;
+            }
             // In GO mode skip the 256-byte register snapshot — reg_age not updated mid-run.
             if !go_mode {
                 self.run.prev_x = self.run.cpu().x;

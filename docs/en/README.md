@@ -151,20 +151,22 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 
 ## Included Examples
 
-`Program Examples/` contains ready-to-run programs:
+`Program Examples/` contains ready-to-run programs, grouped by topic
+(`basics/`, `algorithms/`, `cache/`, `pipeline/`, `syscalls/`, `harts/`, `graphics/`):
 
 | File | Demonstrates |
 |------|-------------|
-| `fib.fas` | Recursion, stack frames, calling convention |
-| `bubble_sort_20.fas` | Loops, pointer arithmetic, in-place swap |
-| `quick_sort_20_push_pop.fas` | Recursive quicksort with `push`/`pop` |
-| `binary_search_tree.fas` | Heap allocation, pointer chasing |
-| `gcd_euclid.fas` | Iterative algorithm, branch-heavy |
-| `cache_locality.fas` | Cache-friendly vs cache-hostile access patterns |
-| `pipeline_forwarding_demo.fas` | RAW chains and forwarding paths |
-| `pipeline_load_use_demo.fas` | Load-use stalls and replays |
-| `pipeline_branch_flush_demo.fas` | Prediction, redirect, and wrong-path squash |
-| `pipeline_cache_stall_demo.fas` | MEM stalls from cache latency |
+| `algorithms/fib.fas` | Recursion, stack frames, calling convention |
+| `algorithms/bubble_sort_20.fas` | Loops, pointer arithmetic, in-place swap |
+| `algorithms/quick_sort_20_push_pop.fas` | Recursive quicksort with `push`/`pop` |
+| `algorithms/binary_search_tree.fas` | Heap allocation, pointer chasing |
+| `algorithms/gcd_euclid.fas` | Iterative algorithm, branch-heavy |
+| `cache/cache_locality.fas` | Cache-friendly vs cache-hostile access patterns |
+| `pipeline/pipeline_forwarding_demo.fas` | RAW chains and forwarding paths |
+| `pipeline/pipeline_load_use_demo.fas` | Load-use stalls and replays |
+| `pipeline/pipeline_branch_flush_demo.fas` | Prediction, redirect, and wrong-path squash |
+| `pipeline/pipeline_cache_stall_demo.fas` | MEM stalls from cache latency |
+| `graphics/snake.fas` | Complete snake game on the graphics syscalls (2000+) |
 
 ---
 
@@ -197,7 +199,7 @@ See the **[CLI Reference](cli.md)** for all subcommands and flags.
 - [Cache config file reference](cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
 - [Virtual memory & TLB guide](virtual-memory.md) — Sv32, the four VM modes, the TLB, page faults, demand paging
 - `threads-plan.md` — design plan for future multi-core execution using the term `hart` ("hardware thread") to keep the model bare metal and avoid OS-thread semantics
-- `Program Examples/hart_spawn_visual_demo.fas` — multi-hart example to stress Run/Pipeline views across cores
+- `Program Examples/harts/hart_spawn_visual_demo.fas` — multi-hart example to stress Run/Pipeline views across cores
 
 ---
 

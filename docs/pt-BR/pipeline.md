@@ -221,10 +221,10 @@ A barra lateral da RAM também distingue a presença do cache por fonte:
 
 Os seguintes programas de exemplo são destinados especificamente para inspeção de pipeline:
 
-- `Program Examples/pipeline_forwarding_demo.fas`
-- `Program Examples/pipeline_load_use_demo.fas`
-- `Program Examples/pipeline_branch_flush_demo.fas`
-- `Program Examples/pipeline_cache_stall_demo.fas`
+- `Program Examples/pipeline/pipeline_forwarding_demo.fas`
+- `Program Examples/pipeline/pipeline_load_use_demo.fas`
+- `Program Examples/pipeline/pipeline_branch_flush_demo.fas`
+- `Program Examples/pipeline/pipeline_cache_stall_demo.fas`
 
 Fluxo sugerido:
 

@@ -46,6 +46,12 @@ pub struct Console {
     pub current: String,
     /// When true, non-I/O syscalls emit yellow debug lines in the console.
     pub trace_syscalls: bool,
+    /// Screen device created by `screen_init` (graphics syscalls 2000+).
+    pub screen: Option<crate::ui::screen::Screen>,
+    /// Where the next `screen_init` shows up (Run-tab sub-view or OS window).
+    pub screen_target: crate::ui::screen::ScreenTarget,
+    /// One-shot guard so "draw before screen_init" warns once, not per frame.
+    pub screen_uninit_warned: bool,
 }
 
 impl Console {

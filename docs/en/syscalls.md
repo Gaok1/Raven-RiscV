@@ -690,6 +690,159 @@ Compare NUL-terminated strings at `a0` and `a1`.
 
 ---
 
+## Graphics syscalls (2000+)
+
+A minimal host-side framebuffer so a compiled program can be a game (see
+`Program Examples/graphics/snake.fas` for a complete one). The model is deliberately
+simple, UXN-style: draw into a back buffer with pixel/rect calls, then
+`screen_present` publishes the frame.
+
+Where the screen shows up:
+
+- **TUI**: the *Screen* sub-view of the Run tab opens automatically on
+  `screen_init`. While it is focused, every key goes to the program
+  (`screen_poll_key`); **Esc is reserved** — it returns to the CPU view and is
+  never delivered to the program. Switch between TUI and OS window in
+  *Settings → Screen Output*.
+- **CLI**: `raven run game.fas --screen` opens a native OS window. Without
+  `--screen` the syscalls still work against the in-memory buffer (nothing is
+  displayed) — deterministic and CI-safe.
+- The OS window is not available on macOS (windowing must own the main
+  thread); the TUI sub-view works everywhere.
+
+Colors are `0x00RRGGBB`. Every call except `screen_init` returns `-EINVAL`
+until a screen exists. The framebuffer lives on the host, **not** in guest RAM,
+and is not rewound by step-back.
+
+### `2000` — screen_init
+
+Create (or recreate) the screen.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2000` |
+| `a0`     | width in pixels (8..=1024) |
+| `a1`     | height in pixels (8..=1024) |
+| **`a0` (ret)** | `0`, or `-EINVAL` for a bad size |
+
+### `2001` — screen_clear
+
+Fill the whole back buffer with one color.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2001` |
+| `a0`     | color `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2002` — screen_set_pixel
+
+Draw one pixel into the back buffer.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2002` |
+| `a0`     | x |
+| `a1`     | y |
+| `a2`     | color `0xRRGGBB` |
+| **`a0` (ret)** | `0`, or `-EINVAL` when out of bounds (never faults) |
+
+### `2003` — screen_fill_rect
+
+Draw a filled rectangle, clipped at the screen edges.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2003` |
+| `a0`     | x |
+| `a1`     | y |
+| `a2`     | width |
+| `a3`     | height |
+| `a4`     | color `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2004` — screen_present
+
+Publish the back buffer. Nothing is visible until the first present — draw the
+whole frame, then present once (classic double buffering).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2004` |
+| **`a0` (ret)** | `0` |
+
+### `2005` — screen_poll_key
+
+Pop the oldest pending key press. Non-blocking: returns `0` when the queue is
+empty.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2005` |
+| **`a0` (ret)** | key code, or `0` |
+
+Key codes:
+
+| Key | Code |
+|-----|------|
+| letters / digits / space | lowercase ASCII (`'a'` = 97, `'0'` = 48, `' '` = 32) |
+| Backspace | 8 |
+| Enter | 13 |
+| Up / Down / Left / Right | 256 / 257 / 258 / 259 |
+
+Esc (27) is only delivered in OS-window mode; in the TUI it closes the Screen
+sub-view instead. Don't build your game around Esc — use `q`.
+
+### `2006` — screen_time_ms
+
+Wall-clock milliseconds since `screen_init` (u32, wraps after ~49 days). Use it
+for frame pacing; `clock_gettime` (403) is instruction-count based and does not
+track real time.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2006` |
+| **`a0` (ret)** | elapsed ms |
+
+### `2007` — screen_sleep_ms
+
+Sleep for `a0` real milliseconds. The hart parks on the `ecall` without
+burning simulated cycles or blocking the TUI; other harts keep running.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2007` |
+| `a0`     | milliseconds |
+| **`a0` (ret)** | `0` |
+
+### Game loop skeleton
+
+```asm
+    li   a0, 80
+    li   a1, 60
+    li   a7, 2000       ; screen_init(80, 60)
+    ecall
+
+loop:
+    li   a7, 2005       ; key = screen_poll_key()
+    ecall
+    ; ... react to the key, update state ...
+
+    li   a0, 0x101820
+    li   a7, 2001       ; screen_clear(bg)
+    ecall
+    ; ... screen_fill_rect / screen_set_pixel calls ...
+    li   a7, 2004       ; screen_present()
+    ecall
+
+    li   a0, 33
+    li   a7, 2007       ; screen_sleep_ms(33)  → ~30 fps
+    ecall
+    j    loop
+```
+
+---
+
 ## Pseudo-instructions that use ecall
 
 | Pseudo | Expands to | Syscall(s) | Clobbers |
@@ -763,4 +916,13 @@ Num   Name             a0          a1          a2          ret
 1100  hart_start       entry pc    stack ptr   arg         hart id / -err
 1101  hart_exit        —           —           —           (no return)
 1102  map_exec         addr        len         —           0 / -err
+
+2000  screen_init      width       height      —           0 / -err
+2001  screen_clear     rgb         —           —           0
+2002  screen_set_pixel x           y           rgb         0 / -err
+2003  screen_fill_rect x           y           w (a3=h, a4=rgb)  0
+2004  screen_present   —           —           —           0
+2005  screen_poll_key  —           —           —           key / 0
+2006  screen_time_ms   —           —           —           ms since init
+2007  screen_sleep_ms  ms          —           —           0
 ```

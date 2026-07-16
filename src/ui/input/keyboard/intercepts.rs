@@ -188,6 +188,34 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
 }
 
 pub(super) fn handle_post_find_intercepts(app: &mut App, key: KeyEvent) -> Option<bool> {
+    // Screen sub-view: keys feed the guest program's key queue (poll_key,
+    // syscall 2005) so games get clean input — no Run shortcuts fire while the
+    // screen is focused. Esc is reserved: it closes the view (never delivered
+    // to the program in the TUI). Ctrl-modified keys pass through so app-level
+    // shortcuts keep working.
+    if matches!(app.tab, Tab::Run)
+        && app.run.show_screen
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        if let Some(screen) = app.console.screen.as_mut() {
+            use crate::ui::screen;
+            match key.code {
+                KeyCode::Esc => app.run.show_screen = false,
+                KeyCode::Up => screen.push_key(screen::KEY_UP),
+                KeyCode::Down => screen.push_key(screen::KEY_DOWN),
+                KeyCode::Left => screen.push_key(screen::KEY_LEFT),
+                KeyCode::Right => screen.push_key(screen::KEY_RIGHT),
+                KeyCode::Enter => screen.push_key(screen::KEY_ENTER),
+                KeyCode::Backspace => screen.push_key(screen::KEY_BACKSPACE),
+                KeyCode::Char(c) if c.is_ascii() => {
+                    screen.push_key(c.to_ascii_lowercase() as u32)
+                }
+                _ => {}
+            }
+            return Some(false);
+        }
+    }
+
     // An open Run inline editor owns every keystroke: Esc cancels, Enter
     // commits, Ctrl+C copies the buffer, Ctrl+V pastes, and characters valid for
     // the active format extend it. Handled here (rather than in `run_keys`) so

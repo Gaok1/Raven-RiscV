@@ -246,7 +246,7 @@ Use **Ctrl+e** (export) and **Ctrl+l** (import) in the Cache tab to save and res
 
 ## Example programs
 
-All examples are in `Program Examples/`:
+All examples are in `Program Examples/cache/`:
 
 - `cache_locality.fas` — sequential vs stride access; watch hit rate change as access patterns vary.
 - `cache_conflict.fas` — two addresses sharing a set that evict each other even when free capacity exists elsewhere.

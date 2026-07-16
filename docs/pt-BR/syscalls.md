@@ -389,6 +389,159 @@ Retorna o total de ciclos decorridos no modo de execução atual.
 
 ---
 
+## Syscalls gráficas (2000+)
+
+Um framebuffer mínimo no host para que um programa compilado possa ser um jogo
+(veja `Program Examples/graphics/snake.fas` para um exemplo completo). O modelo é
+deliberadamente simples, estilo UXN: desenhe num back buffer com chamadas de
+pixel/retângulo e `screen_present` publica o quadro.
+
+Onde a tela aparece:
+
+- **TUI**: a sub-aba *Screen* da aba Run abre automaticamente no
+  `screen_init`. Enquanto ela está em foco, toda tecla vai para o programa
+  (`screen_poll_key`); **Esc é reservado** — volta para a visão da CPU e nunca
+  é entregue ao programa. Alterne entre TUI e janela do OS em
+  *Settings → Screen Output*.
+- **CLI**: `raven run jogo.fas --screen` abre uma janela nativa do OS. Sem
+  `--screen` as syscalls continuam funcionando contra o buffer em memória
+  (nada é exibido) — determinístico e seguro para CI.
+- A janela do OS não está disponível no macOS (a janela precisa da thread
+  principal); a sub-aba do TUI funciona em qualquer plataforma.
+
+Cores são `0x00RRGGBB`. Toda chamada exceto `screen_init` retorna `-EINVAL`
+enquanto a tela não existir. O framebuffer vive no host, **não** na RAM do
+convidado, e não é revertido pelo step-back.
+
+### `2000` — screen_init
+
+Cria (ou recria) a tela.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2000` |
+| `a0`       | largura em pixels (8..=1024) |
+| `a1`       | altura em pixels (8..=1024) |
+| **`a0` (ret)** | `0`, ou `-EINVAL` para tamanho inválido |
+
+### `2001` — screen_clear
+
+Preenche todo o back buffer com uma cor.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2001` |
+| `a0`       | cor `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2002` — screen_set_pixel
+
+Desenha um pixel no back buffer.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2002` |
+| `a0`       | x |
+| `a1`       | y |
+| `a2`       | cor `0xRRGGBB` |
+| **`a0` (ret)** | `0`, ou `-EINVAL` fora dos limites (nunca gera fault) |
+
+### `2003` — screen_fill_rect
+
+Desenha um retângulo preenchido, recortado nas bordas da tela.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2003` |
+| `a0`       | x |
+| `a1`       | y |
+| `a2`       | largura |
+| `a3`       | altura |
+| `a4`       | cor `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2004` — screen_present
+
+Publica o back buffer. Nada fica visível antes do primeiro present — desenhe o
+quadro inteiro e chame present uma vez (double buffering clássico).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2004` |
+| **`a0` (ret)** | `0` |
+
+### `2005` — screen_poll_key
+
+Retira a tecla pendente mais antiga. Não bloqueia: retorna `0` com a fila
+vazia.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2005` |
+| **`a0` (ret)** | código da tecla, ou `0` |
+
+Códigos de tecla:
+
+| Tecla | Código |
+|-------|--------|
+| letras / dígitos / espaço | ASCII minúsculo (`'a'` = 97, `'0'` = 48, `' '` = 32) |
+| Backspace | 8 |
+| Enter | 13 |
+| Cima / Baixo / Esquerda / Direita | 256 / 257 / 258 / 259 |
+
+Esc (27) só é entregue no modo janela do OS; no TUI ele fecha a sub-aba
+Screen. Não construa seu jogo em torno do Esc — use `q`.
+
+### `2006` — screen_time_ms
+
+Milissegundos de relógio real desde o `screen_init` (u32, dá a volta após ~49
+dias). Use para ritmo de quadros; `clock_gettime` (403) é baseado em contagem
+de instruções e não acompanha o tempo real.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2006` |
+| **`a0` (ret)** | ms decorridos |
+
+### `2007` — screen_sleep_ms
+
+Dorme `a0` milissegundos reais. O hart fica estacionado no `ecall` sem queimar
+ciclos simulados nem travar o TUI; os outros harts continuam rodando.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2007` |
+| `a0`       | milissegundos |
+| **`a0` (ret)** | `0` |
+
+### Esqueleto de game loop
+
+```asm
+    li   a0, 80
+    li   a1, 60
+    li   a7, 2000       ; screen_init(80, 60)
+    ecall
+
+loop:
+    li   a7, 2005       ; tecla = screen_poll_key()
+    ecall
+    ; ... reage à tecla, atualiza o estado ...
+
+    li   a0, 0x101820
+    li   a7, 2001       ; screen_clear(fundo)
+    ecall
+    ; ... chamadas screen_fill_rect / screen_set_pixel ...
+    li   a7, 2004       ; screen_present()
+    ecall
+
+    li   a0, 33
+    li   a7, 2007       ; screen_sleep_ms(33)  → ~30 fps
+    ecall
+    j    loop
+```
+
+---
+
 ## Pseudo-instruções que usam ecall
 
 | Pseudo | Expansão | Syscall(s) | Corrompe |
@@ -444,4 +597,13 @@ Num   Nome             a0        a1        a2        retorno
 1100  hart_start       entry pc  stack ptr arg       hart id / -err
 1101  hart_exit        —         —         —         (não retorna)
 1102  map_exec         endereço  tamanho   —         0 / -err
+
+2000  screen_init      largura   altura    —         0 / -err
+2001  screen_clear     rgb       —         —         0
+2002  screen_set_pixel x         y         rgb       0 / -err
+2003  screen_fill_rect x         y         w (a3=h, a4=rgb)  0
+2004  screen_present   —         —         —         0
+2005  screen_poll_key  —         —         —         tecla / 0
+2006  screen_time_ms   —         —         —         ms desde o init
+2007  screen_sleep_ms  ms        —         —         0
 ```
