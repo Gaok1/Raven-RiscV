@@ -1071,6 +1071,10 @@ impl CacheController {
 }
 
 impl Bus for CacheController {
+    fn mem_len(&self) -> u32 {
+        self.ram.data_len().min(u32::MAX as usize) as u32
+    }
+
     // load* = cache-aware reads: dirty D-cache lines take priority over RAM.
     // This is the correct view for all runtime code (syscalls, decoders, etc.).
     // For raw RAM (UI diff display), use peek8/peek16/peek32 directly on CacheController.

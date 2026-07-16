@@ -26,10 +26,10 @@ a0      = valor de retorno  (valor negativo = -errno como u32)
             │  heap_ptr →                  │    (ex.: guarde heap_ptr em um label .data)
             │                              │
             ├  ─  ─  ─  ─  ─  ─  ─  ─  ─ ┤
-            │  pilha  (cresce ↓)           │  ← sp = 0x00020000 (um além do fim da RAM)
+            │  pilha  (cresce ↓)           │  ← sp = RAM_SIZE (um além da RAM configurada)
             │                              │    push:  addi sp, sp, -4 / sw rs, 0(sp)
 0x0001FFFF  └──────────────────────────────┘    pop:   lw rd, 0(sp)  / addi sp, sp, 4
-            sp (0x00020000) — primeiro push → sp = 0x0001FFFC
+            sp (RAM_SIZE) - primeiro push -> sp = RAM_SIZE - 4
 ```
 
 ### Endereços importantes
@@ -39,13 +39,11 @@ a0      = valor de retorno  (valor negativo = -errno como u32)
 | `base_pc`  | `0x00000000` | Início do `.text` (configurável na aba Run) |
 | `data_base`| `0x00001000` | Início do `.data` / `.bss`                 |
 | `bss_end`  | dinâmico     | Primeiro byte após o `.bss`                |
-| `sp` inicial | `0x00020000` | Um além do fim da RAM (convenção ABI RISC-V); primeiro `push` escreve em `0x0001FFFC` |
+| `sp` inicial | `RAM_SIZE` | Um além do tamanho de RAM configurado (padrão `0x01000000`, 16 MiB); primeiro `push` escreve em `RAM_SIZE - 4` |
 
 ### Heap manual — padrão bump allocator
 
-O RAVEN **não tem `malloc`/`free`**. A região livre entre `bss_end` e o fundo da
-pilha é RAM comum. Para alocar memória dinamicamente, guarde um ponteiro em `.data`
-e avance-o manualmente:
+No nível de assembly/syscall bruto, o RAVEN **não tem função `malloc`/`free` embutida**. A região livre entre `bss_end` e o fundo da pilha é RAM comum. Para um alocador manual mínimo, guarde um ponteiro em `.data` e avance-o você mesmo. Se quiser crescimento de heap gerenciado pelo simulador, use `brk` (214) ou `mmap` anônimo (222) abaixo.
 
 ```asm
 .data
@@ -192,6 +190,107 @@ rng_buf: .space 4
     la   t0, rng_buf
     lw   t1, 0(t0)      ; t1 = palavra aleatória
 ```
+
+---
+
+### `writev` — syscall 66
+
+Escreve dados a partir de vários buffers (`scatter write`).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `66` |
+| `a0`       | fd (1=stdout, 2=stderr) |
+| `a1`       | ponteiro para array `iovec[]` |
+| `a2`       | número de entradas |
+| **`a0` (ret)** | total de bytes escritos, ou `-errno` |
+
+Cada entrada `iovec` é `{ u32 base, u32 len }` (8 bytes, little-endian).
+
+**Restrições:** as mesmas de `write` (`fd=1` ou `fd=2`).
+
+---
+
+### `getpid` — syscall 172
+
+Retorna o ID de processo simulado (sempre `1`).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `172` |
+| **`a0` (ret)** | `1` |
+
+---
+
+### `getuid` — syscall 174 / `getgid` — syscall 176
+
+Retorna o ID de usuário/grupo simulado (sempre `0`).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `174` ou `176` |
+| **`a0` (ret)** | `0` |
+
+---
+
+### `brk` — syscall 214
+
+Consulta ou estende o *program break*, o topo do heap gerenciado pelo simulador.
+É a primitiva usada para construir alocadores estilo `sbrk`/`malloc`; ela **não**
+é uma syscall `malloc` por si só.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `214` |
+| `a0`       | novo endereço do break, ou `0` para consultar |
+| **`a0` (ret)** | break atual/novo; break antigo sem alteração se o pedido exceder a RAM |
+
+---
+
+### `mmap` — syscall 222
+
+Aloca um bloco de memória anônima a partir do heap.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `222` |
+| `a0`       | endereço hint (ignorado; passe 0) |
+| `a1`       | tamanho em bytes |
+| `a2`       | prot (ignorado) |
+| `a3`       | flags — deve incluir `MAP_ANONYMOUS` (0x20) |
+| `a4`       | fd — deve ser `-1` para mapeamentos anônimos |
+| `a5`       | offset (ignorado) |
+| **`a0` (ret)** | ponteiro alocado, ou `-EINVAL` / `-ENOMEM` |
+
+**Restrições:** somente mapeamentos anônimos (`MAP_ANONYMOUS=0x20`, `fd=-1`) são suportados.
+A memória vem do mesmo heap gerenciado pelo simulador usado por `brk`; internamente
+o heap break avança pelo tamanho pedido arredondado para 4 bytes. `munmap` é no-op.
+
+---
+
+### `munmap` — syscall 215
+
+No-op no RAVEN (sempre retorna 0). A memória não é liberada.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `215` |
+| **`a0` (ret)** | `0` |
+
+---
+
+### `clock_gettime` — syscall 403
+
+Preenche um `timespec` com o tempo simulado (derivado da contagem de instruções).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `403` |
+| `a0`       | ID do clock (ignorado; todos retornam tempo baseado em instruções) |
+| `a1`       | ponteiro para `timespec { u32 tv_sec, u32 tv_nsec }` |
+| **`a0` (ret)** | `0`, ou `-EFAULT` |
+
+O tempo é aproximado como 10 ns por instrução (equivalente a 100 MHz).
 
 ---
 
@@ -581,9 +680,17 @@ Num   Nome             a0        a1        a2        retorno
 ────  ───────────────  ────────  ────────  ────────  ────────────────
  63   read             fd=0      end. buf  máx bytes bytes lidos / -err
  64   write            fd=1/2    end. buf  qtd       bytes escritos / -err
+ 66   writev           fd=1/2    iov[]     iovcnt   bytes escritos / -err
  93   exit             código    —         —         (não retorna)
  94   exit_group       código    —         —         (não retorna)
+172   getpid           -         -         -         1
+174   getuid           -         -         -         0
+176   getgid           -         -         -         0
+214   brk              novo brk  -         -         break real / antigo
+215   munmap           end.      tam       -         0 (nop)
+222   mmap             hint=0    tam       prot      ptr / -err
 278   getrandom        end. buf  len       flags     len / -err
+403   clock_gettime    clockid   *timespec -         0 / -err
 
 1000  print_int        inteiro   —         —         —
 1001  print_str        end. str  —         —         —

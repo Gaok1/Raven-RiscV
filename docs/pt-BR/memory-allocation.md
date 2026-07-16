@@ -22,10 +22,10 @@ Na maioria dos ambientes você tem `malloc` e `free`. No RAVEN não existe bibli
             │        espaço livre          │  ← pilha cresce ↓
             │                              │
 0x0001FFFF  └──────────────────────────────┘
-            sp (0x00020000) — primeiro push → 0x0001FFFC
+            sp (RAM_SIZE) - primeiro push -> RAM_SIZE - 4
 ```
 
-**RAM total: 128 KiB.** O heap e a pilha compartilham essa zona livre e crescem em direção um ao outro. O Raven não detecta automaticamente uma colisão — planeje o uso de memória com cuidado.
+**A RAM é configurável** (`16 MiB` por padrão na UI/CLI). O heap e a pilha compartilham a zona livre entre `bss_end` e `RAM_SIZE`; alocadores manuais do tipo bump pointer não detectam automaticamente uma colisão, então planeje o uso de memória com cuidado.
 
 ---
 
@@ -172,13 +172,13 @@ Antes de sbrk(256):              Depois de sbrk(256):
 | **+** | Sem `heap_ptr` estático — o Raven rastreia o break |
 | **+** | Idiomático — espelha como alocadores reais funcionam |
 | **−** | Sem `free` — memória só cresce, nunca diminui |
-| **−** | Misturar `brk` e `mmap` no mesmo programa corrompe ambos |
+| **-** | Misturar `brk` e `mmap` em alocadores improvisados separados pode quebrar as suposições do alocador; prefira uma estratégia ou um alocador central |
 
 ---
 
 ## Abordagem 3 — `mmap` anônimo
 
-`mmap` aloca um bloco independente de memória sem mover o program break. No Raven apenas mapeamentos **anônimos** são suportados (sem arquivo, sem memória compartilhada).
+`mmap` aloca um bloco anônimo a partir do heap gerenciado pelo simulador. No Raven apenas mapeamentos **anônimos** são suportados (sem arquivo, sem memória compartilhada); internamente ele avança o mesmo heap break usado por `brk`.
 
 ### Referência da syscall
 
@@ -215,11 +215,11 @@ Antes de sbrk(256):              Depois de sbrk(256):
     ecall               ; a0 = ponteiro, ou valor negativo em caso de erro
 
     ; verifica erro: mmap retorna -ENOMEM (-12) ou -EINVAL (-22) em caso de falha
-    li   t0, -1
-    bge  a0, t0, .mmap_ok   ; se a0 >= -1 → trata como ponteiro (positivo)
-    ; trata erro...
-.mmap_ok:
+    blt  a0, zero, .mmap_error
     ; a0 é o ponteiro utilizável
+    j    .mmap_ok
+.mmap_error:
+    ; trata erro...
 ```
 
 > **Verificando erros:** os códigos de erro do `mmap` são retornados como valores
@@ -245,10 +245,10 @@ Antes de sbrk(256):              Depois de sbrk(256):
 | | |
 |---|---|
 | **+** | API familiar — igual ao `mmap` do Linux |
-| **+** | Cada chamada retorna um bloco independente (sem aritmética de ponteiros) |
+| **+** | Cada chamada retorna o início de um bloco recém-reservado |
 | **+** | OOM é detectável (valor de retorno negativo) |
 | **−** | Sem `free` — `munmap` é no-op |
-| **−** | Usa internamente a mesma região de heap que `brk` — **não misture os dois no mesmo programa** |
+| **-** | Usa internamente o mesmo heap break que `brk` - não misture alocadores separados sem coordenação |
 
 ---
 
@@ -259,8 +259,8 @@ Antes de sbrk(256):              Depois de sbrk(256):
 | **Sem `free`** | Nem `brk` nem `mmap` liberam memória. Projete programas para alocar uma única vez. |
 | **`munmap` é no-op** | Sempre retorna 0; memória não é recuperada. |
 | **Sem syscall `sbrk`** | Emule com duas chamadas a `brk` (veja Abordagem 2). |
-| **`brk` e `mmap` compartilham o mesmo heap** | Se você chamar os dois, eles alocam da mesma região e vão corromper um ao outro. Escolha um. |
-| **128 KiB de RAM total** | Heap + pilha precisam caber juntos. Um heap grande deixa pouco espaço para pilhas de chamada profundas. |
+| **`brk` e `mmap` compartilham o mesmo heap break** | Eles só devem coexistir se um alocador coordenar ambos. Em programas assembly simples, escolha uma estratégia. |
+| **RAM configurável** | Heap + pilha precisam caber juntos em `RAM_SIZE` (padrão 16 MiB). Um heap grande deixa pouco espaço para pilhas de chamada profundas. |
 | **OOM = Raven diz não** | Se `brk` retorna menos que o solicitado, ou `mmap` retorna valor negativo, o Raven negou a alocação — você atingiu o limite de memória. |
 
 ---
@@ -273,8 +273,8 @@ Antes de sbrk(256):              Depois de sbrk(256):
 | Liberar memória | Não | Não | Não (`munmap` = nop) |
 | Detecção de OOM | Manual (sem guarda) | Sim — verifica retorno | Sim — verifica retorno |
 | Cresce continuamente | Sim | Sim | Por bloco |
-| Pode misturar com outra? | Sim (ela É a outra) | Não — conflita com mmap | Não — conflita com brk |
-| Melhor para | Programas pequenos, alocadores didáticos | Crescer um buffer passo a passo | Alocar blocos independentes de tamanho fixo |
+| Pode misturar com outra? | Manual apenas | Só com alocador coordenado | Só com alocador coordenado |
+| Melhor para | Programas pequenos, alocadores didáticos | Crescer um buffer passo a passo | Reservar blocos de tamanho fixo por uma API parecida com Linux |
 
 ---
 
