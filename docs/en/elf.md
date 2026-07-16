@@ -164,7 +164,7 @@ The kept symbols become a table mapping each address to a name — the same kind
 
 ## 6. Memory layout in Raven
 
-After loading a typical ELF from `hello-raven`, the 128 KB memory looks like this:
+After loading a typical ELF from `hello-raven`, memory (16 MiB by default, configurable) looks like this:
 
 ```
 Address         Contents
@@ -177,8 +177,8 @@ Address         Contents
                 heap (grows upward via brk)
 ...             (free space)
 ...
-0x0001FFFC      stack (grows downward; sp = 0x20000 at init)
-0x00020000      (end of RAM — 128 KB)
+RAM_SIZE-4      stack (grows downward; sp = RAM_SIZE at init)
+RAM_SIZE        (end of configured RAM)
 ```
 
 The `.text` code segment goes to a separate address because the default RISC-V linker places rodata/data at `0x10000` and `.text` at `0x110xx` (right after, on another page).

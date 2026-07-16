@@ -88,6 +88,9 @@ fn amo_apply(op: AmoOp, old: u32, operand: u32) -> u32 {
 /// | `dcache_read*`  | Leitura com tracking de stats de D-cache       | exec.rs loads     |
 /// | `peek*` (CC)    | RAM bruta — apenas no `CacheController`, para UI |                 |
 pub trait Bus {
+    /// Total addressable RAM bytes behind this bus.
+    fn mem_len(&self) -> u32;
+
     /// Leitura cache-aware: retorna o valor mais atual no endereço.
     /// Implementações com cache devem verificar linhas sujas antes da RAM.
     fn load8(&self, addr: u32) -> Result<u8, FalconError>;
@@ -247,6 +250,10 @@ impl Ram {
 }
 
 impl Bus for Ram {
+    fn mem_len(&self) -> u32 {
+        self.data.len().min(u32::MAX as usize) as u32
+    }
+
     fn load8(&self, a: u32) -> Result<u8, FalconError> {
         self.data
             .get(a as usize)
