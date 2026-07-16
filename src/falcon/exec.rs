@@ -317,6 +317,13 @@ fn step_inner<B: Bus>(
             let old_pc = pc;
             let code = cpu.read(17);
             let cont = handle_syscall(code, cpu, mem, console)?;
+            if cont && cpu.sleep_until.is_some() {
+                // screen_sleep_ms: hart stays alive but parked on this ecall;
+                // it re-executes until the deadline passes (mirrors the
+                // console.reading parking below, without stopping the run).
+                cpu.pc = old_pc;
+                return Ok(true);
+            }
             if !cont && console.reading {
                 cpu.pc = old_pc;
                 return Ok(false);

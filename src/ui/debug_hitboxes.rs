@@ -120,6 +120,7 @@ pub fn debug_run_controls_dump(opts: DebugRunControlsOptions) -> String {
         let name = match btn {
             RunButton::Core => "Core",
             RunButton::View => "View",
+            RunButton::Screen => "Screen",
             RunButton::Format => "Format",
             RunButton::Sign => "Sign",
             RunButton::Bytes => "Bytes",

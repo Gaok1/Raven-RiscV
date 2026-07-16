@@ -8,8 +8,8 @@ use ratatui::{
 use crate::ui::app::{
     App, CpiConfig, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
-    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
+    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crate::ui::theme;
 use crate::ui::view::components::{dense_action, dense_value};
@@ -290,7 +290,29 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     ]));
     items.push(trace_item);
 
-    // Row 6: blank separator
+    // Row 9: screen output selector (graphics syscalls 2000+)
+    let is_sel_screen = sel == SETTINGS_ROW_SCREEN_TARGET;
+    let is_hov_screen = app.settings.hover_row == Some(SETTINGS_ROW_SCREEN_TARGET);
+    let label_style_screen = if is_sel_screen {
+        Style::default().fg(theme::ACCENT).bold()
+    } else if is_hov_screen {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::LABEL)
+    };
+    let screen_item = ListItem::new(Line::from(vec![
+        Span::styled(format!("{:<20}", "  Screen Output"), label_style_screen),
+        Span::raw("  "),
+        dense_value(
+            app.console.screen_target.label(),
+            app.settings.hover_screen_target,
+            true,
+            theme::LABEL_Y,
+        ),
+    ]));
+    items.push(screen_item);
+
+    // Row 10: blank separator
     items.push(ListItem::new(Line::raw("")));
 
     // ── Section: CPI Config ──────────────────────────────────────────────
@@ -368,6 +390,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         area.y + 8,
         bool_btn_x,
         bool_btn_x + bool_btn_label_w,
+    ));
+    app.settings.screen_target_rect.set((
+        area.y + 9,
+        bool_btn_x,
+        bool_btn_x + 6, // "WINDOW"
     ));
     app.settings.cpi_rows_y.set(rows_y);
 
@@ -530,6 +557,41 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled("Hover", Style::default().fg(theme::LABEL_Y)),
                 Span::styled(" = show this help", Style::default().fg(theme::LABEL)),
             ]),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
+    } else if sel == SETTINGS_ROW_SCREEN_TARGET {
+        vec![
+            Line::from(Span::styled(
+                "Screen Output",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Where a program's screen (graphics",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "syscalls 2000+) is displayed.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "TUI: Screen sub-view of the Run tab.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::from(Span::styled(
+                "WINDOW: native OS window (not on macOS).",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Applies at the next screen_init / reset.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
             Line::from(vec![
                 Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
                 Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),

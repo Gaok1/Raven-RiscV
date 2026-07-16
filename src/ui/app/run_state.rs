@@ -96,6 +96,7 @@ impl RunSpeed {
 pub(crate) enum RunButton {
     Core,
     View,
+    Screen,
     Format,
     Sign,
     Bytes,
@@ -368,6 +369,13 @@ pub(crate) struct RunState {
     // Instruction list display toggles
     pub(crate) show_exec_count: bool,
     pub(crate) show_instr_type: bool,
+
+    // Screen sub-view (graphics syscalls 2000+): replaces the Run tab's main
+    // columns with the program's framebuffer while true.
+    pub(crate) show_screen: bool,
+    /// One-shot: the current program's screen_init already auto-opened the
+    /// Screen sub-view (so Esc doesn't get overridden on the next frame).
+    pub(crate) screen_seen: bool,
 
     // RV32F: float register sidebar
     pub(crate) show_float_regs: bool, // toggle between int / float register view

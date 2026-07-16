@@ -1,4 +1,5 @@
-// ui/view/tlb/stats.rs — TLB metrics + hit-rate history chart.
+// ui/view/tlb/stats.rs — TLB metrics + hit-rate history chart + the shared
+// session-snapshot history (captured with `s`, same list as the Cache tab).
 
 use ratatui::{
     Frame,
@@ -10,13 +11,100 @@ use crate::ui::app::App;
 use crate::ui::theme;
 
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
+    let history_h = if app.cache.session_history.is_empty() {
+        0
+    } else {
+        (app.cache.session_history.len() as u16 + 2).min(6)
+    };
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(9), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(9),
+            Constraint::Min(8),
+            Constraint::Length(history_h), // snapshot history (0 = hidden)
+        ])
         .split(area);
 
     render_stats_metrics(f, layout[0], app);
     render_hit_chart(f, layout[1], app);
+    if history_h > 0 {
+        render_history_table(f, layout[2], app);
+    }
+}
+
+/// Session snapshots, TLB lens: same shared list as the Cache tab, but the
+/// columns show the translation-side numbers.
+fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
+    let is_running = app.run.is_running;
+    let title = if is_running {
+        " Snapshots (\u{23f8} to view) "
+    } else {
+        " Snapshots (\u{2191}\u{2193} \u{b7} Enter=view \u{b7} D=delete) "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(title, Style::default().fg(theme::LABEL)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let history = &app.cache.session_history;
+    let scroll = app.cache.history_scroll;
+    let visible = inner.height as usize;
+
+    // Scroll the view so the selected entry is always visible.
+    let start = if scroll + 1 > visible {
+        scroll + 1 - visible
+    } else {
+        0
+    };
+
+    for (i, snap) in history.iter().enumerate().skip(start).take(visible) {
+        let row = (i - start) as u16;
+        if row >= inner.height {
+            break;
+        }
+
+        let text = match &snap.tlb {
+            Some(t) => format!(
+                "  {:<14}  TLB: {:.1}%  Hits: {}  Misses: {}  Page Faults: {}  Evictions: {}",
+                snap.label,
+                t.hit_rate(),
+                t.hits,
+                t.misses,
+                t.page_faults,
+                t.evictions
+            ),
+            None => format!("  {:<14}  (VM was off during this window)", snap.label),
+        };
+
+        let is_selected = i == scroll;
+        let style = if is_running {
+            // Entries are greyed out while running — Enter is disabled.
+            if is_selected {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            }
+        } else if is_selected {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().fg(theme::TEXT)
+        };
+
+        f.render_widget(
+            Paragraph::new(Span::styled(text, style)),
+            Rect::new(inner.x, inner.y + row, inner.width, 1),
+        );
+    }
 }
 
 fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {

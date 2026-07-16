@@ -182,6 +182,15 @@ unsafe extern "C" fn jit_handle_ecall(
     let code = unsafe { (*cpu).read(17) };
     match unsafe { handle_syscall(code, &mut *cpu, &mut *mem, &mut *console) } {
         Ok(true) => {
+            // screen_sleep_ms: compiled blocks never re-execute the ecall, so
+            // finish the sleep inline. ponytail: blocks this thread — JIT is
+            // opt-in and meant for batch runs, not the interactive TUI.
+            if let Some(deadline) = unsafe { (*cpu).sleep_until.take() } {
+                let now = std::time::Instant::now();
+                if deadline > now {
+                    std::thread::sleep(deadline - now);
+                }
+            }
             if unsafe { (*console).reading } {
                 exit::AWAIT_INPUT
             } else {

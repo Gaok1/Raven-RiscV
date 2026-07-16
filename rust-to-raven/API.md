@@ -1,7 +1,7 @@
 # rust-to-raven — API Reference
 
 `rust-to-raven` is a `no_std` Rust crate that lets you write programs targeting the Raven RISC-V simulator without any OS or libc dependency.
-It provides I/O macros, syscall wrappers, a heap allocator, random utilities, multi-hart support, and cooperative coroutines.
+It provides I/O macros, syscall wrappers, host-framebuffer graphics, a heap allocator, random utilities, multi-hart support, and cooperative coroutines.
 
 ---
 
@@ -144,6 +144,37 @@ These execute in the simulator without running a loop — useful for benchmarkin
 | `strcmp(s1, s2) -> i32` | 1053 | Compare NUL-terminated strings |
 
 All four are `unsafe`.
+
+---
+
+## Graphics
+
+`raven_api::graphics` wraps Raven's host-side framebuffer syscalls. Drawing
+writes to a back buffer; call `screen_present()` once per frame. Colors are `u32` `0x00RRGGBB`, `rgb(r,g,b)`, or the `Color` enum (`Rgb`, `Bytes`, `Raw`).
+
+| Function / constant | Syscall | Description |
+|---|---:|---|
+| `screen_init(w, h) -> i32` | 2000 | Create the screen |
+| `screen_clear(rgb) -> i32` / `screen_clear_color(Color)` | 2001 | Fill the back buffer |
+| `screen_set_pixel(x,y,rgb) -> i32` / `_color(...)` | 2002 | Set one pixel |
+| `screen_fill_rect(x,y,w,h,rgb) -> i32` / `_color(...)` | 2003 | Fill clipped rectangle |
+| `screen_present() -> i32` | 2004 | Publish the frame |
+| `screen_poll_key() -> u32` | 2005 | Non-blocking key poll, 0 if none |
+| `screen_time_ms() -> u32` | 2006 | Wall-clock ms since init |
+| `screen_sleep_ms(ms) -> i32` | 2007 | Frame pacing / park hart |
+| `KEY_UP/DOWN/LEFT/RIGHT` | n/a | Arrow key constants |
+| `Color::Rgb`, `Color::Bytes`, `Color::Raw` | n/a | Color enum variants |
+| `rgb(r,g,b) -> u32`, `Color::to_u32()` | n/a | Pack 8-bit RGB channels |
+
+```rust
+use raven_api::{screen_clear_color, screen_fill_rect_color, screen_init, screen_present, screen_sleep_ms, Color};
+
+screen_init(80, 60);
+screen_clear_color(Color::Rgb { r: 16, g: 24, b: 32 });
+screen_fill_rect_color(8, 8, 16, 16, Color::Bytes([0, 255, 0]));
+screen_present();
+screen_sleep_ms(33);
+```
 
 ---
 

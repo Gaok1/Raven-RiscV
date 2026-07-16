@@ -98,6 +98,56 @@ fn single_step_advances_from_ebreak_pause_pipeline() {
 }
 
 #[test]
+fn screen_sleep_then_exit_parks_on_the_ecall() {
+    // Regression: a game loop that sleeps (screen_sleep_ms) and then exits
+    // must park on the exit ecall — never run past the end of .text
+    // ("outside any executable region").
+    let mut app = App::new(None);
+    load_program(
+        &mut app,
+        &[
+            ".text",
+            "li a0, 32",
+            "li a1, 32",
+            "li a7, 2000", // screen_init(32, 32)
+            "ecall",
+            "li a0, 5",
+            "li a7, 2007", // screen_sleep_ms(5)
+            "ecall",
+            "li a0, 0",
+            "li a7, 93", // exit(0)
+            "ecall",
+        ],
+    );
+    app.run.speed = super::RunSpeed::X8;
+    app.run.is_running = true;
+    for _ in 0..500 {
+        app.tick();
+        if app.run.cpu().exit_code.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(
+        app.run.cpu().exit_code,
+        Some(0),
+        "console: {}\ntrace: {}",
+        console_tail(&app),
+        trace_tail(&app)
+    );
+
+    // The bug showed up on ticks after the exit: keep ticking.
+    for _ in 0..20 {
+        app.tick();
+    }
+    let tail = console_tail(&app);
+    assert!(
+        !tail.contains("outside any executable region"),
+        "executed past the exit ecall:\n{tail}"
+    );
+}
+
+#[test]
 fn pipeline_tab_single_step_without_cache_stall_advances_one_cycle() {
     let mut app = App::new(None);
     app.run.pipeline_mut().enabled = true;

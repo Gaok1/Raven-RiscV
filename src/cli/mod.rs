@@ -44,6 +44,9 @@ pub struct RunArgs {
     pub expect_mems: Vec<(u32, u32)>,
     /// Execution backend (`--jit=none|hot|full`). Defaults to `None`.
     pub jit_mode: BackendKind,
+    /// `--screen`: show programs that use the graphics syscalls (2000+) in an
+    /// OS window. Without it the screen stays in-memory only (CI-safe).
+    pub screen_window: bool,
 }
 
 pub enum OutputFormat {
@@ -255,6 +258,9 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     mem.mmu.enabled = vm_enabled;
     mem.mmu.force_translate = vm_enabled;
     let mut console = Console::default();
+    if args.screen_window {
+        console.screen_target = crate::ui::screen::ScreenTarget::Window;
+    }
     let mut captured_stdout: Vec<u8> = Vec::new();
 
     // SP = top of RAM
@@ -375,6 +381,16 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     for line in &console.lines {
         if line.is_error() {
             eprintln!("raven: {}", line.text);
+        }
+    }
+
+    // --screen: keep the final frame visible until the user closes the window.
+    if let Some(screen) = &console.screen {
+        if screen.window_alive() {
+            eprintln!("raven: program exited — close the window to quit");
+            while screen.window_alive() {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
     }
 
@@ -658,7 +674,16 @@ fn run_headless_sequential(
             backend.run_until_yield(&mut ctx)
         };
         match outcome {
-            Ok(ExecOutcome::Stepped { .. }) => {}
+            Ok(ExecOutcome::Stepped { .. }) => {
+                // screen_sleep_ms: single hart, nothing else to do — sleep the
+                // remaining time instead of busy re-executing the parked ecall.
+                if let Some(deadline) = cpu.sleep_until {
+                    let now = std::time::Instant::now();
+                    if deadline > now {
+                        std::thread::sleep(deadline - now);
+                    }
+                }
+            }
             Ok(ExecOutcome::AwaitingInput) => {
                 flush_cpu_stdout(cpu, captured_stdout);
                 let mut line = String::new();
@@ -792,6 +817,20 @@ fn run_headless_multihart_sequential(
         }
         if global_exit_hart.is_some() {
             break;
+        }
+        // screen_sleep_ms: when every runnable hart is parked, sleep until the
+        // earliest deadline instead of busy re-executing parked ecalls.
+        let runnable = harts.iter().filter(|h| h.active && !h.paused);
+        if let Some(deadline) = runnable
+            .clone()
+            .map(|h| h.cpu.sleep_until)
+            .collect::<Option<Vec<_>>>()
+            .and_then(|d| d.into_iter().min())
+        {
+            let now = std::time::Instant::now();
+            if deadline > now {
+                std::thread::sleep(deadline - now);
+            }
         }
         cycles = cycles.saturating_add(1);
     }

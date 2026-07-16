@@ -727,7 +727,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     f.render_widget(chart, inner);
 }
 
-pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
+pub(in crate::ui::view) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
     let idx = match app.cache.viewing_snapshot {
         Some(i) => i,
         None => return,
@@ -870,6 +870,60 @@ pub(super) fn render_snapshot_popup(f: &mut Frame, area: Rect, app: &App) {
         for l in level_lines(extra, &name) {
             lines.push(l);
         }
+    }
+
+    // ── TLB / virtual memory ──────────────────────────────────────────────────
+    if let Some(t) = &snap.tlb {
+        let hit_pct = t.hit_rate();
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::styled("TLB      ", Style::default().fg(theme::ACCENT)),
+            Span::styled(
+                format!("Hit: {hit_pct:.1}%"),
+                Style::default().fg(if hit_pct >= 90.0 {
+                    theme::RUNNING
+                } else if hit_pct >= 70.0 {
+                    theme::PAUSED
+                } else {
+                    theme::DANGER
+                }),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("Hits: {}  Misses: {}", t.hits, t.misses),
+                Style::default().fg(theme::TEXT),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("Page Faults: {}", t.page_faults),
+                Style::default().fg(if t.page_faults > 0 {
+                    theme::DANGER
+                } else {
+                    theme::LABEL
+                }),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("Evictions: {}", t.evictions),
+                Style::default().fg(theme::LABEL),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("          "),
+            Span::styled(
+                format!(
+                    "vm={} · page {}  · {} levels · {} entries {}-way {} · Svc Cycles: {}",
+                    t.vm_mode,
+                    fmt_bytes(t.page_size),
+                    t.levels,
+                    t.entry_count,
+                    t.associativity,
+                    t.replacement,
+                    t.total_cycles
+                ),
+                Style::default().fg(theme::LABEL),
+            ),
+        ]));
     }
 
     // ── Miss hotspots ─────────────────────────────────────────────────────────
