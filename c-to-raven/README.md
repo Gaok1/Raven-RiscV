@@ -44,6 +44,7 @@ c-to-raven/
 │   ├── version.h         RAVEN_API_VERSION
 │   ├── types.h           raven_u8/16/32/64, raven_size_t, size_t, NULL
 │   ├── io.h              raven_print_*, raven_read_*, raven_println, raven_eprint_*
+│   ├── gfx.h             raven_screen_*, RAVEN_KEY_*, RAVEN_RGB
 │   ├── mem.h             raven_malloc/free/calloc/realloc, memset/memcpy/...
 │   ├── str.h             raven_strlen/strcmp/strcpy/...
 │   ├── math.h            raven_abs/min/max/clamp/ipow

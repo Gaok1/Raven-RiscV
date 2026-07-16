@@ -7,6 +7,7 @@ pub mod editor;
 mod input;
 pub mod pipeline;
 mod platform;
+pub mod screen;
 pub mod theme;
 pub mod tutorial;
 pub mod view;

@@ -330,6 +330,86 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
     );
     lines.extend([
         blank(),
+        h2("RAVEN graphics  (a7 ≥ 2000)"),
+        blank(),
+        note("A host-side framebuffer for games (e.g. snake.fas): draw to a back buffer,"),
+        note("present publishes the frame. Shown in the Run tab's Screen sub-view, or in an"),
+        note("OS window (Settings → Screen Output, or `raven run --screen` on the CLI)."),
+        note("Colors are 0xRRGGBB. All calls except screen_init return -EINVAL before init."),
+        blank(),
+        thead(),
+        tsep(),
+    ]);
+    add_row(
+        &mut lines,
+        "2000",
+        "screen_init",
+        "a0=width, a1=height",
+        "a0=0 / -err",
+        "creates the screen; 8..=1024 per side",
+    );
+    add_row(
+        &mut lines,
+        "2001",
+        "screen_clear",
+        "a0=rgb",
+        "a0=0",
+        "fills the back buffer with one color",
+    );
+    add_row(
+        &mut lines,
+        "2002",
+        "screen_set_pixel",
+        "a0=x, a1=y, a2=rgb",
+        "a0=0 / -err",
+        "draws one pixel; out of bounds = -EINVAL, no fault",
+    );
+    add_row(
+        &mut lines,
+        "2003",
+        "screen_fill_rect",
+        "a0=x, a1=y, a2=w, a3=h, a4=rgb",
+        "a0=0",
+        "filled rectangle, clipped at the edges",
+    );
+    add_row(
+        &mut lines,
+        "2004",
+        "screen_present",
+        "—",
+        "a0=0",
+        "publishes the back buffer (nothing shows before this)",
+    );
+    add_row(
+        &mut lines,
+        "2005",
+        "screen_poll_key",
+        "—",
+        "a0=key / 0",
+        "oldest pending key press, non-blocking; 0 = none",
+    );
+    add_row(
+        &mut lines,
+        "2006",
+        "screen_time_ms",
+        "—",
+        "a0=ms",
+        "wall-clock ms since screen_init (for frame pacing)",
+    );
+    add_row(
+        &mut lines,
+        "2007",
+        "screen_sleep_ms",
+        "a0=ms",
+        "a0=0",
+        "waits without burning cycles; other harts keep running",
+    );
+    lines.extend([
+        blank(),
+        note("Key codes: letters/digits/space as lowercase ASCII, 8=Backspace, 13=Enter,"),
+        note("arrows Up/Down/Left/Right = 256/257/258/259. Esc is reserved by the TUI"),
+        note("(it leaves the Screen sub-view) — use 'q' to quit your game."),
+        blank(),
         h2("Example — write(1, buf, 5) via raw ecall"),
         blank(),
         mono("  .data"),
@@ -636,6 +716,86 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         "compara strings; <0 / 0 / >0",
     );
     lines.extend([
+        blank(),
+        h2("Gráficos do RAVEN  (a7 ≥ 2000)"),
+        blank(),
+        note("Framebuffer no host para jogos (ex.: snake.fas): desenhe no back buffer e"),
+        note("present publica o quadro. Aparece na sub-aba Screen da aba Run, ou em janela"),
+        note("do OS (Settings → Screen Output, ou `raven run --screen` no CLI)."),
+        note("Cores são 0xRRGGBB. Tudo exceto screen_init retorna -EINVAL antes do init."),
+        blank(),
+        thead(),
+        tsep(),
+    ]);
+    add_row(
+        &mut lines,
+        "2000",
+        "screen_init",
+        "a0=largura, a1=altura",
+        "a0=0 / -erro",
+        "cria a tela; 8..=1024 por lado",
+    );
+    add_row(
+        &mut lines,
+        "2001",
+        "screen_clear",
+        "a0=rgb",
+        "a0=0",
+        "preenche o back buffer com uma cor",
+    );
+    add_row(
+        &mut lines,
+        "2002",
+        "screen_set_pixel",
+        "a0=x, a1=y, a2=rgb",
+        "a0=0 / -erro",
+        "desenha um pixel; fora da tela = -EINVAL, sem fault",
+    );
+    add_row(
+        &mut lines,
+        "2003",
+        "screen_fill_rect",
+        "a0=x, a1=y, a2=w, a3=h, a4=rgb",
+        "a0=0",
+        "retângulo preenchido, recortado nas bordas",
+    );
+    add_row(
+        &mut lines,
+        "2004",
+        "screen_present",
+        "—",
+        "a0=0",
+        "publica o back buffer (nada aparece antes disso)",
+    );
+    add_row(
+        &mut lines,
+        "2005",
+        "screen_poll_key",
+        "—",
+        "a0=tecla / 0",
+        "tecla pendente mais antiga, não bloqueia; 0 = nenhuma",
+    );
+    add_row(
+        &mut lines,
+        "2006",
+        "screen_time_ms",
+        "—",
+        "a0=ms",
+        "ms de relógio real desde screen_init (para ritmo de quadros)",
+    );
+    add_row(
+        &mut lines,
+        "2007",
+        "screen_sleep_ms",
+        "a0=ms",
+        "a0=0",
+        "espera sem queimar ciclos; outros harts continuam",
+    );
+    lines.extend([
+        blank(),
+        note("Códigos de tecla: letras/dígitos/espaço em ASCII minúsculo, 8=Backspace,"),
+        note("13=Enter, setas Cima/Baixo/Esq/Dir = 256/257/258/259. Esc é reservado pelo"),
+        note("TUI (sai da sub-aba Screen) — use 'q' para sair do seu jogo."),
         blank(),
         h2("Exemplo — write(1, buf, 5) via ecall direto"),
         blank(),

@@ -58,6 +58,16 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     render_run_status(f, layout[0], app);
 
     let main = layout[1];
+
+    // Screen sub-view: the program's framebuffer replaces the CPU columns
+    // (status bar and console stay visible for controls and prints).
+    if app.run.show_screen {
+        if let Some(screen) = &app.console.screen {
+            render_screen_canvas(f, main, screen);
+            render_console(f, layout[2], app);
+            return;
+        }
+    }
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(run_panel_constraints(app))
@@ -114,6 +124,63 @@ pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
     }
 
     render_console(f, layout[2], app);
+}
+
+/// Draw the front buffer with half-block cells (▀: fg = top pixel, bg = bottom
+/// pixel → two vertical pixels per terminal cell), nearest-neighbor downscaled
+/// to fit and centered. Keys go to the program while this view is open (Esc
+/// returns to the CPU view).
+fn render_screen_canvas(f: &mut Frame, area: Rect, screen: &crate::ui::screen::Screen) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::ACCENT))
+        .title(format!(
+            "Screen {}x{} — keys go to the program, Esc returns",
+            screen.width, screen.height
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    // One terminal cell = 1 pixel wide x 2 pixels tall. Scale down (never up)
+    // preserving aspect, nearest neighbor.
+    let (sw, sh) = (screen.width as u64, screen.height as u64);
+    let (aw, ah) = (inner.width as u64, (inner.height as u64) * 2);
+    let num = sw.max(1).div_ceil(aw.max(1)).max(sh.max(1).div_ceil(ah.max(1)));
+    let step = num.max(1); // guest pixels per cell-pixel
+    let out_w = (sw / step).max(1).min(aw) as u16;
+    let out_h_px = (sh / step).max(1).min(ah);
+    let out_h = out_h_px.div_ceil(2) as u16; // terminal rows
+
+    let x0 = inner.x + (inner.width - out_w) / 2;
+    let y0 = inner.y + (inner.height - out_h) / 2;
+    let px = |x: u64, y: u64| -> Color {
+        if x >= sw || y >= sh {
+            return Color::Black;
+        }
+        let c = screen.front[(y * sw + x) as usize];
+        Color::Rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+    };
+
+    let buf = f.buffer_mut();
+    for row in 0..out_h {
+        for col in 0..out_w {
+            let gx = col as u64 * step;
+            let gy_top = (row as u64 * 2) * step;
+            let gy_bot = (row as u64 * 2 + 1) * step;
+            let cell = &mut buf[(x0 + col, y0 + row)];
+            cell.set_symbol("▀");
+            cell.set_fg(px(gx, gy_top));
+            cell.set_bg(if (row as u64 * 2 + 1) < out_h_px {
+                px(gx, gy_bot)
+            } else {
+                Color::Black
+            });
+        }
+    }
 }
 
 fn render_collapsed(

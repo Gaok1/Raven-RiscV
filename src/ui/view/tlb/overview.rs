@@ -1,9 +1,10 @@
-// ui/view/tlb/status.rs — Live Sv32 / privilege / VM-active surface.
+// ui/view/tlb/overview.rs — the Virtual Memory landing subtab.
 //
-// Exists specifically to explain why the TLB looks idle after toggling
-// Virtual Memory on: translation only runs when satp.mode=Sv32 and the hart
-// is not in M-mode (see falcon/mmu/mod.rs:80-83). Without this view the
-// Settings toggle appears to do nothing.
+// Two jobs: give a beginner one-click controls (VM mode + TLB toggle) so the
+// MMU can be enabled without touching the Settings panel, and explain why the
+// TLB looks idle after toggling Virtual Memory on: translation only runs when
+// satp.mode=Sv32 and the hart is not in M-mode (see falcon/mmu/mod.rs).
+// Without this view the mode toggle appears to do nothing.
 
 use ratatui::{
     Frame,
@@ -12,16 +13,17 @@ use ratatui::{
 };
 
 use crate::falcon::mmu::{PrivMode, SatpMode};
-use crate::ui::app::App;
+use crate::ui::app::{App, TlbHoverTarget};
 use crate::ui::theme;
+use crate::ui::view::components::dense_value;
 
-pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
+pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme::BORDER))
         .title(Span::styled(
-            "Virtual Memory State",
+            "Virtual Memory Overview",
             Style::default().fg(theme::LABEL),
         ));
     let inner = block.inner(area);
@@ -33,18 +35,52 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
     let mmu = app.run.mem().mmu();
     let satp_mode = mmu.satp.mode();
     let priv_mode = mmu.priv_mode;
-    // Mirror Mmu::translate (falcon/mmu/mod.rs:97-104): M-mode bypass is
-    // skipped when force_translate is on (didactic standard mode), so the
-    // panel must consult it too or it will lie after Assemble.
+    // Mirror Mmu::translate: M-mode bypass is skipped when force_translate is
+    // on (didactic auto modes), so the panel must consult it too or it will
+    // lie after Assemble.
     let active = app.run.vm_enabled()
         && satp_mode == SatpMode::Sv32
         && (priv_mode != PrivMode::M || mmu.force_translate);
 
-    let vm_color = if app.run.vm_enabled() {
-        theme::RUNNING
-    } else {
-        theme::PAUSED
-    };
+    // ── Quick controls (row 0) ───────────────────────────────────────────────
+    let mode_label = format!("< {} >", app.vm_mode().as_str());
+    let tlb_label = if app.run.tlb_enabled { "[on]" } else { "[off]" };
+    let row_y = inner.y;
+    let mut x = inner.x + 1;
+    x += "Mode ".len() as u16;
+    app.tlb
+        .quick_mode_btn
+        .set((row_y, x, x + mode_label.len() as u16));
+    x += mode_label.len() as u16;
+    x += "     TLB ".len() as u16;
+    app.tlb
+        .quick_tlb_btn
+        .set((row_y, x, x + tlb_label.len() as u16));
+
+    let quick_line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("Mode ", Style::default().fg(theme::LABEL)),
+        dense_value(
+            &mode_label,
+            matches!(app.tlb.hover, Some(TlbHoverTarget::QuickMode)),
+            true,
+            theme::TEXT,
+        ),
+        Span::raw("     "),
+        Span::styled("TLB ", Style::default().fg(theme::LABEL)),
+        dense_value(
+            tlb_label,
+            matches!(app.tlb.hover, Some(TlbHoverTarget::QuickTlb)),
+            app.run.tlb_enabled,
+            theme::RUNNING,
+        ),
+        Span::styled(
+            "     (click to change — sv32 is the easy didactic default)",
+            Style::default().fg(theme::IDLE),
+        ),
+    ]);
+
+    // ── Live state ───────────────────────────────────────────────────────────
     let satp_color = match satp_mode {
         SatpMode::Sv32 => theme::RUNNING,
         SatpMode::Bare => theme::PAUSED,
@@ -67,7 +103,8 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
     let root_pt = (mmu.satp.ppn() as u64) << 12;
 
     let mut lines: Vec<Line<'static>> = vec![
-        kv(" VM mode (Settings):           ", app.vm_mode().as_str().to_string(), vm_color),
+        quick_line,
+        Line::raw(""),
         kv(" satp.mode:                    ", satp_mode_label.to_string(), satp_color),
         kv(
             " satp.asid:                    ",
@@ -91,17 +128,21 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
     if !app.run.vm_enabled() {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
-            " VM is disabled — every access is identity-mapped.",
+            " VM is off — every access is identity-mapped.",
             Style::default().fg(theme::LABEL),
         )));
         lines.push(Line::from(Span::styled(
-            " Toggle \"Virtual Memory\" in the Settings tab to enable the MMU.",
+            " Click Mode above and pick sv32, then Assemble: the simulator installs",
+            Style::default().fg(theme::LABEL),
+        )));
+        lines.push(Line::from(Span::styled(
+            " a page map for you and every access goes through the MMU.",
             Style::default().fg(theme::LABEL),
         )));
     } else if !active {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
-            " VM toggle is ON but no translation is happening yet.",
+            " VM is ON but no translation is happening yet.",
             Style::default().fg(theme::DANGER).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::raw(""));
@@ -127,7 +168,7 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme::LABEL),
         )));
         lines.push(Line::from(Span::styled(
-            " Until then the TLB counters on Stats stay at zero.",
+            " Until then the TLB counters on stats stay at zero.",
             Style::default().fg(theme::LABEL),
         )));
     } else {
@@ -135,6 +176,14 @@ pub(super) fn render_status(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(Span::styled(
             " Every fetch/load/store is being translated through the TLB.",
             Style::default().fg(theme::RUNNING),
+        )));
+        lines.push(Line::from(Span::styled(
+            " Watch it work: map shows the page table, tlb the cached translations,",
+            Style::default().fg(theme::LABEL),
+        )));
+        lines.push(Line::from(Span::styled(
+            " stats the hit/miss counters (press s there to capture a snapshot).",
+            Style::default().fg(theme::LABEL),
         )));
     }
 

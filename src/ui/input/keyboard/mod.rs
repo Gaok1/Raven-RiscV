@@ -102,11 +102,11 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
 
     if ctrl {
         match (key.code, app.tab) {
-            (KeyCode::Char('e'), Tab::Cache) => {
+            (KeyCode::Char('e'), Tab::Cache | Tab::Tlb) => {
                 serialization::do_export_cfg(app);
                 return true;
             }
-            (KeyCode::Char('l'), Tab::Cache) => {
+            (KeyCode::Char('l'), Tab::Cache | Tab::Tlb) => {
                 serialization::do_import_cfg(app);
                 return true;
             }
@@ -126,7 +126,7 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
                 serialization::do_import_pcfg(app);
                 return true;
             }
-            (KeyCode::Char('r'), Tab::Cache) => {
+            (KeyCode::Char('r'), Tab::Cache | Tab::Tlb) => {
                 serialization::do_export_results(app);
                 return true;
             }

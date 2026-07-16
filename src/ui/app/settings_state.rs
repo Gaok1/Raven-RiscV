@@ -35,9 +35,11 @@ pub(crate) const SETTINGS_ROW_TLB_ENABLED: usize = 6;
 pub(crate) const SETTINGS_ROW_JIT_MODE: usize = 7;
 /// Row index of the syscall tracing toggle.
 pub(crate) const SETTINGS_ROW_TRACE_SYSCALLS: usize = 8;
-/// First CPI row index in the settings list (9 rows + 1 blank separator).
-pub(crate) const SETTINGS_ROW_CPI_START: usize = 10;
-/// Total number of settings rows (9 rows + 1 blank + 11 CPI fields).
+/// Row index of the screen output selector (graphics syscalls: TUI / window).
+pub(crate) const SETTINGS_ROW_SCREEN_TARGET: usize = 9;
+/// First CPI row index in the settings list (10 rows + 1 blank separator).
+pub(crate) const SETTINGS_ROW_CPI_START: usize = 11;
+/// Total number of settings rows (10 rows + 1 blank + 11 CPI fields).
 pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_CPI_START + 11;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
@@ -85,6 +87,8 @@ pub(crate) struct SettingsState {
     pub(crate) hover_jit_mode: bool,
     /// Mouse hover over the syscall tracing bool button
     pub(crate) hover_trace_syscalls: bool,
+    /// Mouse hover over the screen output selector button
+    pub(crate) hover_screen_target: bool,
     /// Mouse hover over the run_scope selector
     pub(crate) hover_run_scope: bool,
     /// Mouse hover over the config import button
@@ -103,6 +107,8 @@ pub(crate) struct SettingsState {
     pub(crate) jit_mode_btn_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the syscall tracing bool button (y, x_start, x_end)
     pub(crate) bool_btn_trace_syscalls_rect: std::cell::Cell<(u16, u16, u16)>,
+    /// Geometry of the screen output selector button (y, x_start, x_end)
+    pub(crate) screen_target_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the run scope button (y, x_start, x_end)
     pub(crate) run_scope_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the import rcfg button (y, x_start, x_end)
@@ -129,6 +135,7 @@ impl Default for SettingsState {
             hover_tlb_enabled: false,
             hover_jit_mode: false,
             hover_trace_syscalls: false,
+            hover_screen_target: false,
             hover_run_scope: false,
             hover_import_rcfg: false,
             hover_export_rcfg: false,
@@ -138,6 +145,7 @@ impl Default for SettingsState {
             bool_btn_tlb_rect: std::cell::Cell::new((0, 0, 0)),
             jit_mode_btn_rect: std::cell::Cell::new((0, 0, 0)),
             bool_btn_trace_syscalls_rect: std::cell::Cell::new((0, 0, 0)),
+            screen_target_rect: std::cell::Cell::new((0, 0, 0)),
             run_scope_rect: std::cell::Cell::new((0, 0, 0)),
             import_rcfg_rect: std::cell::Cell::new((0, 0, 0)),
             export_rcfg_rect: std::cell::Cell::new((0, 0, 0)),

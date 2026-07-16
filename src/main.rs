@@ -425,6 +425,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         expect_regs,
         expect_mems,
         jit_mode,
+        screen_window: has_flag(args, "--screen"),
     })
 }
 
@@ -626,6 +627,7 @@ OPTIONS  run:
     --pipeline                  Run using the pipeline simulator instead of sequential exec
     --pipeline-config <file>    Load pipeline config from a .pcfg file
     --pipeline-trace-out <file> Write per-cycle pipeline trace JSON (requires --pipeline)
+    --screen                    Show programs that use the graphics syscalls (2000+) in an OS window
     --cores <n>                 Max physical cores / harts for the run (default: settings or 1)
     --mem <size>                RAM size, e.g. 16mb, 256kb, 1gb   (default: sim-settings or 16mb)
     --max-cycles <n>            Execution budget: steps (sequential), rounds (multi-hart), or pipeline cycles (default: 1000000000)

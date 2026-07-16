@@ -113,6 +113,14 @@ pub(crate) fn step_hart_bg_inner(
     // page table leak into this hart's loads/stores.
     sync_mmu_to_cpu(mem, &hart.cpu);
     for _ in 0..16 {
+        // screen_sleep_ms parking: this hart waits on its ecall; others run.
+        if hart
+            .cpu
+            .sleep_until
+            .is_some_and(|t| std::time::Instant::now() < t)
+        {
+            return false;
+        }
         hart.prev_pc = hart.cpu.pc;
 
         // ── Pipeline mode ─────────────────────────────────────────────────────

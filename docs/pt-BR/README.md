@@ -148,8 +148,11 @@ Requer Rust 1.75+. Sem dependências externas além da toolchain Rust.
 
 ## Programas de Exemplo
 
-O diretório `Program Examples/` inclui:
-`fib.fas`, `bubble_sort_20.fas`, `quick_sort_20_push_pop.fas`, `binary_search_tree.fas`, `gcd_euclid.fas`, `fatorial.fas`, `cache_locality.fas` e mais.
+O diretório `Program Examples/` está organizado por tema — `basics/`,
+`algorithms/`, `cache/`, `pipeline/`, `syscalls/`, `harts/` e `graphics/` — e
+inclui `algorithms/fib.fas`, `algorithms/bubble_sort_20.fas`,
+`algorithms/binary_search_tree.fas`, `cache/cache_locality.fas`,
+`graphics/snake.fas` (jogo completo nas syscalls gráficas) e mais.
 
 ---
 
@@ -182,7 +185,7 @@ Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 - [Memória Virtual & TLB (PT-BR)](virtual-memory.md) — Sv32, os quatro modos de VM, a TLB, page faults, demand paging
 - [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md) | [Virtual memory (EN)](../en/virtual-memory.md)
 - `threads-plan.md` — plano de design para execução multi-core futura, usando o termo `hart` ("hardware thread") para manter a modelagem em nível de hardware, não de SO
-- `Program Examples/hart_spawn_visual_demo.fas` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
+- `Program Examples/harts/hart_spawn_visual_demo.fas` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
 
 ---
 
