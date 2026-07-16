@@ -19,11 +19,9 @@ use self::formatting::{classify_mem_access, word_at};
 pub(crate) use self::cache_state::{
     CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheResultsSnapshot,
     CacheScope, CacheState, CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot,
-    PipelineResultsSnapshot,
+    PipelineResultsSnapshot, TlbSnapshot,
 };
-pub(crate) use self::tlb_state::{
-    TlbConfigField, TlbHoverTarget, TlbState, TlbSubtab, VmSettingsField, VmSubtab,
-};
+pub(crate) use self::tlb_state::{TlbHoverTarget, TlbState, VmSettingsField, VmSubtab};
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, TutorialState,
 };
@@ -1343,121 +1341,7 @@ impl App {
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
     }
 
-    // ── TLB config editing helpers ─────────────────────────────────────────
-
-    pub(crate) fn commit_tlb_edit(&mut self) {
-        let Some(field) = self.tlb.edit_field else {
-            return;
-        };
-        self.tlb.config_error = None;
-        self.tlb.config_status = None;
-        if !field.is_numeric() {
-            self.tlb.edit_field = None;
-            self.tlb.edit_buf.clear();
-            return;
-        }
-        let s = self.tlb.edit_buf.trim().to_string();
-        let cfg = &mut self.tlb.pending;
-        let parse_result: Result<(), String> = match field {
-            TlbConfigField::EntryCount => match s.parse::<u16>() {
-                Ok(v) => {
-                    cfg.entry_count = v.clamp(1, 4096);
-                    Ok(())
-                }
-                Err(_) => Err(format!("expected number 1..=4096, got {s:?}")),
-            },
-            TlbConfigField::Associativity => match s.parse::<u8>() {
-                Ok(v) => {
-                    cfg.associativity = v.clamp(1, 64);
-                    Ok(())
-                }
-                Err(_) => Err(format!("expected number 1..=64, got {s:?}")),
-            },
-            TlbConfigField::HitLatency => match s.parse::<u8>() {
-                Ok(v) => {
-                    cfg.hit_latency = v;
-                    Ok(())
-                }
-                Err(_) => Err(format!("expected number 0..=255, got {s:?}")),
-            },
-            TlbConfigField::MissPenalty => match s.parse::<u8>() {
-                Ok(v) => {
-                    cfg.miss_penalty = v;
-                    Ok(())
-                }
-                Err(_) => Err(format!("expected number 0..=255, got {s:?}")),
-            },
-            TlbConfigField::Replacement => Ok(()),
-        };
-        match parse_result {
-            Ok(()) => {
-                self.tlb.edit_field = None;
-                self.tlb.edit_buf.clear();
-            }
-            Err(msg) => {
-                // Keep editor open so the user can correct the value.
-                self.tlb.config_error = Some(msg);
-            }
-        }
-    }
-
-    pub(crate) fn cycle_tlb_field(&mut self, field: TlbConfigField, forward: bool) {
-        use crate::falcon::cache::ReplacementPolicy;
-        self.tlb.config_error = None;
-        self.tlb.config_status = None;
-        let cfg = &mut self.tlb.pending;
-        if let TlbConfigField::Replacement = field {
-            cfg.replacement = if forward {
-                match cfg.replacement {
-                    ReplacementPolicy::Lru => ReplacementPolicy::Mru,
-                    ReplacementPolicy::Mru => ReplacementPolicy::Fifo,
-                    ReplacementPolicy::Fifo => ReplacementPolicy::Random,
-                    ReplacementPolicy::Random => ReplacementPolicy::Lfu,
-                    ReplacementPolicy::Lfu => ReplacementPolicy::Clock,
-                    ReplacementPolicy::Clock => ReplacementPolicy::Lru,
-                }
-            } else {
-                match cfg.replacement {
-                    ReplacementPolicy::Lru => ReplacementPolicy::Clock,
-                    ReplacementPolicy::Mru => ReplacementPolicy::Lru,
-                    ReplacementPolicy::Fifo => ReplacementPolicy::Mru,
-                    ReplacementPolicy::Random => ReplacementPolicy::Fifo,
-                    ReplacementPolicy::Lfu => ReplacementPolicy::Random,
-                    ReplacementPolicy::Clock => ReplacementPolicy::Lfu,
-                }
-            };
-        }
-    }
-
-    pub(crate) fn tlb_field_value_str(&self, field: TlbConfigField) -> String {
-        let cfg = &self.tlb.pending;
-        match field {
-            TlbConfigField::EntryCount => cfg.entry_count.to_string(),
-            TlbConfigField::Associativity => cfg.associativity.to_string(),
-            TlbConfigField::HitLatency => cfg.hit_latency.to_string(),
-            TlbConfigField::MissPenalty => cfg.miss_penalty.to_string(),
-            TlbConfigField::Replacement => String::new(),
-        }
-    }
-
-    pub(crate) fn apply_tlb_config(&mut self) {
-        let cfg = self.tlb.pending.clone();
-        if cfg.entry_count == 0 {
-            self.tlb.config_error = Some("entry count must be ≥ 1".into());
-            return;
-        }
-        if cfg.associativity == 0 {
-            self.tlb.config_error = Some("associativity must be ≥ 1".into());
-            return;
-        }
-        if cfg.entry_count < cfg.associativity as u16 {
-            self.tlb.config_error = Some("entry count must be ≥ associativity".into());
-            return;
-        }
-        self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
-        self.tlb.config_error = None;
-        self.tlb.config_status = Some("Applied (TLB reset)".into());
-    }
+    // ── TLB helpers ─────────────────────────────────────────────────────────
 
     pub(crate) fn flush_tlb(&mut self) {
         self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.flush();
@@ -1610,10 +1494,17 @@ impl App {
     /// paging scheme (in the didactic auto modes).
     pub(crate) fn apply_vm_settings(&mut self) {
         let cfg = self.tlb.pending.clone();
-        if cfg.entry_count >= cfg.associativity as u16 && cfg.associativity >= 1 {
-            self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
+        if cfg.associativity < 1 || cfg.entry_count < cfg.associativity as u16 {
+            self.tlb.map_status = Some("TLB: entry count must be ≥ associativity ≥ 1".into());
+            return;
         }
-        self.apply_page_map();
+        self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
+        if self.run.vm_mode.is_auto() {
+            self.apply_page_map();
+        } else {
+            // Manual / Off: the map is program-driven; only the TLB applies.
+            self.tlb.map_status = Some("TLB applied (map is program-driven in this mode)".into());
+        }
     }
 
     /// Apply the pending paging scheme + map: rewrite the root page table in
@@ -1663,6 +1554,34 @@ impl App {
         self.tlb.pending.entry_count = entries;
         self.tlb.pending.associativity = assoc;
         self.tlb.pending.replacement = ReplacementPolicy::Lru;
+    }
+
+    /// Delete the currently selected session snapshot, fixing up the scroll
+    /// position and any open popup. Shared by the Cache and VM Stats subtabs.
+    pub(crate) fn delete_selected_snapshot(&mut self) {
+        if self.cache.session_history.is_empty() {
+            return;
+        }
+        let idx = self
+            .cache
+            .history_scroll
+            .min(self.cache.session_history.len() - 1);
+        self.cache.session_history.remove(idx);
+        if !self.cache.session_history.is_empty() {
+            self.cache.history_scroll = idx.min(self.cache.session_history.len() - 1);
+        } else {
+            self.cache.history_scroll = 0;
+        }
+        if let Some(v) = self.cache.viewing_snapshot {
+            if v == idx {
+                self.cache.viewing_snapshot = None;
+            } else if v > idx {
+                self.cache.viewing_snapshot = Some(v - 1);
+            }
+        }
+        if self.cache.session_history.is_empty() {
+            self.cache.viewing_snapshot = None;
+        }
     }
 
     /// Remove the last extra cache level.

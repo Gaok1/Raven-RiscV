@@ -326,7 +326,7 @@ pub(super) fn handle_post_find_intercepts(app: &mut App, key: KeyEvent) -> Optio
         return Some(false);
     }
 
-    if app.cache.viewing_snapshot.is_some() && matches!(app.tab, Tab::Cache) {
+    if app.cache.viewing_snapshot.is_some() && matches!(app.tab, Tab::Cache | Tab::Tlb) {
         if key.code == KeyCode::Esc {
             app.cache.viewing_snapshot = None;
         }

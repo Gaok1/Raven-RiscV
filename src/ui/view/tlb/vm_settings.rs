@@ -21,6 +21,8 @@ use crate::ui::view::components::{dense_action, dense_value};
 #[derive(Clone)]
 enum Hit {
     Field(VmSettingsField),
+    /// TLB geometry preset (0=small, 1=med, 2=large).
+    Preset(usize),
     Apply,
     Flush,
 }
@@ -82,6 +84,7 @@ pub(super) fn render_vm_settings(f: &mut Frame, area: Rect, app: &App) {
 
     // Register hitboxes for the visible rows at their real screen y.
     let mut field_hits: Vec<(VmSettingsField, u16, u16, u16)> = Vec::new();
+    let mut preset_hits = [(0u16, 0u16, 0u16); 3];
     app.tlb.vm_apply_btn.set((0, 0, 0));
     app.tlb.vm_flush_btn.set((0, 0, 0));
     let mut lines: Vec<Line> = Vec::with_capacity(visible);
@@ -90,6 +93,7 @@ pub(super) fn render_vm_settings(f: &mut Frame, area: Rect, app: &App) {
         for (hit, x0, x1) in &row.hits {
             match hit {
                 Hit::Field(field) => field_hits.push((*field, y, *x0, *x1)),
+                Hit::Preset(p) => preset_hits[*p] = (y, *x0, *x1),
                 Hit::Apply => app.tlb.vm_apply_btn.set((y, *x0, *x1)),
                 Hit::Flush => app.tlb.vm_flush_btn.set((y, *x0, *x1)),
             }
@@ -97,6 +101,7 @@ pub(super) fn render_vm_settings(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(row.spans.clone()));
     }
     *app.tlb.vm_field_hitboxes.borrow_mut() = field_hits;
+    app.tlb.preset_btns.set(preset_hits);
 
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -381,6 +386,19 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         );
         rows.push(r);
     }
+    {
+        let mut r = RowBuilder::new(x0);
+        r.styled("  presets     ", label);
+        let hov_preset =
+            |i: usize| matches!(&app.tlb.hover, Some(TlbHoverTarget::Preset(p)) if *p == i);
+        for (i, label) in ["small 16", "med 32", "large 64"].iter().enumerate() {
+            if i > 0 {
+                r.raw("  ");
+            }
+            r.hit(Hit::Preset(i), dense_action(label, theme::ACCENT, hov_preset(i)));
+        }
+        rows.push(r);
+    }
 
     rows.push(blank());
 
@@ -400,9 +418,9 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     {
         let mut r = RowBuilder::new(x0);
         let hint = if app.tlb.vm_edit_field.is_some() {
-            "Enter=confirm  Esc=cancel"
+            "Enter=confirm  Esc=cancel  Tab/↑↓=next field"
         } else {
-            "Click to edit/toggle · Tab cycles subtabs"
+            "Click to edit/toggle · apply commits the pending values"
         };
         r.styled(hint, Style::default().fg(theme::IDLE));
         rows.push(r);

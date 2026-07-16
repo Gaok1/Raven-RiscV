@@ -536,6 +536,37 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         .cloned()
         .collect();
 
+    // TLB / VM state travels with the snapshot when VM is on.
+    let tlb = if app.run.vm_enabled() {
+        let mmu = mem.mmu();
+        let t = &mmu.tlb;
+        Some(crate::ui::app::TlbSnapshot {
+            entry_count: t.config.entry_count,
+            associativity: t.config.associativity,
+            replacement: format!("{:?}", t.config.replacement),
+            hit_latency: t.config.hit_latency,
+            miss_penalty: t.config.miss_penalty,
+            hits: t.stats.hits,
+            misses: t.stats.misses,
+            evictions: t.stats.evictions,
+            page_faults: t.stats.page_faults,
+            total_cycles: t.stats.total_cycles,
+            valid_entries: t.entries.iter().filter(|e| e.valid).count(),
+            vm_mode: app.vm_mode().as_str().to_string(),
+            page_size: 1u64 << mmu.scheme.offset_bits,
+            levels: mmu.scheme.num_levels(),
+            hit_rate_history: t
+                .stats
+                .history
+                .iter()
+                .filter(|(x, _)| *x >= start_f)
+                .cloned()
+                .collect(),
+        })
+    } else {
+        None
+    };
+
     let (instruction_count, total_cycles, base_cycles, cpi, ipc) = if let Some(p) = &pipeline {
         let ipc = if p.cycles > 0 {
             p.committed as f64 / p.cycles as f64
@@ -565,12 +596,25 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         icache: icache_snap,
         dcache: dcache_snap,
         extra_levels: extra_snaps,
+        tlb,
         cpi_config: app.run.cpi_config.clone(),
         miss_hotspots: hotspots,
         hit_rate_history_i: history_i,
         hit_rate_history_d: history_d,
         pipeline,
     }
+}
+
+/// Capture the current stats window into the shared session history. Both the
+/// Cache and Virtual Memory Stats subtabs call this on `s`.
+pub(super) fn capture_session_snapshot(app: &mut App) {
+    let snap = capture_snapshot(app);
+    let label = snap.label.clone();
+    let instr_end = snap.instr_end;
+    app.cache.session_history.push(snap);
+    app.cache.history_scroll = app.cache.session_history.len().saturating_sub(1);
+    app.cache.window_start_instr = instr_end;
+    app.cache.config_status = Some(format!("Captured {label}"));
 }
 
 fn capture_pipeline_snapshot(app: &App) -> Option<PipelineResultsSnapshot> {
@@ -990,6 +1034,26 @@ pub(super) fn serialize_results_fstats(
     for (i, lvl) in snap.extra_levels.iter().enumerate() {
         write_level_snap(&mut s, &format!("l{}", i + 2), lvl);
     }
+    if let Some(t) = &snap.tlb {
+        s.push_str("tlb.enabled=true\n");
+        s.push_str(&format!("tlb.vm_mode={}\n", t.vm_mode));
+        s.push_str(&format!("tlb.page_size={}\n", t.page_size));
+        s.push_str(&format!("tlb.levels={}\n", t.levels));
+        s.push_str(&format!("tlb.entry_count={}\n", t.entry_count));
+        s.push_str(&format!("tlb.associativity={}\n", t.associativity));
+        s.push_str(&format!("tlb.replacement={}\n", t.replacement));
+        s.push_str(&format!("tlb.hit_latency={}\n", t.hit_latency));
+        s.push_str(&format!("tlb.miss_penalty={}\n", t.miss_penalty));
+        s.push_str(&format!("tlb.hits={}\n", t.hits));
+        s.push_str(&format!("tlb.misses={}\n", t.misses));
+        s.push_str(&format!("tlb.hit_rate={:.4}\n", t.hit_rate()));
+        s.push_str(&format!("tlb.evictions={}\n", t.evictions));
+        s.push_str(&format!("tlb.page_faults={}\n", t.page_faults));
+        s.push_str(&format!("tlb.total_cycles={}\n", t.total_cycles));
+        s.push_str(&format!("tlb.valid_entries={}\n", t.valid_entries));
+    } else {
+        s.push_str("tlb.enabled=false\n");
+    }
     let cpi = &snap.cpi_config;
     s.push_str(&format!(
         "cpi.alu={}\ncpi.mul={}\ncpi.div={}\n",
@@ -1064,6 +1128,13 @@ pub(super) fn serialize_results_fstats(
                 s.push_str(&format!("window.{n}.extra.{k}.misses={}\n", lvl.misses));
                 s.push_str(&format!("window.{n}.extra.{k}.amat={:.4}\n", lvl.amat));
             }
+        }
+        if let Some(t) = &w.tlb {
+            s.push_str(&format!("window.{n}.tlb.hits={}\n", t.hits));
+            s.push_str(&format!("window.{n}.tlb.misses={}\n", t.misses));
+            s.push_str(&format!("window.{n}.tlb.hit_rate={:.4}\n", t.hit_rate()));
+            s.push_str(&format!("window.{n}.tlb.page_faults={}\n", t.page_faults));
+            s.push_str(&format!("window.{n}.tlb.evictions={}\n", t.evictions));
         }
     }
     s
@@ -1155,6 +1226,26 @@ pub(super) fn serialize_results_csv(
         csv_level_row(&mut s, &lvl.name, lvl, snap.instruction_count);
     }
     s.push('\n');
+    if let Some(t) = &snap.tlb {
+        s.push_str("TLB (VIRTUAL MEMORY)\n");
+        s.push_str("VM Mode,Page Size (B),Levels,Entries,Associativity,Replacement,Hits,Misses,Hit Rate (%),Evictions,Page Faults,Svc Cycles,Valid Entries\n");
+        s.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{:.1},{},{},{},{}\n\n",
+            t.vm_mode,
+            t.page_size,
+            t.levels,
+            t.entry_count,
+            t.associativity,
+            t.replacement,
+            t.hits,
+            t.misses,
+            t.hit_rate(),
+            t.evictions,
+            t.page_faults,
+            t.total_cycles,
+            t.valid_entries,
+        ));
+    }
     s.push_str("MISS HOTSPOTS (I-Cache)\n");
     s.push_str("PC,Miss Count\n");
     for (pc, count) in &snap.miss_hotspots {
@@ -1193,6 +1284,24 @@ pub(super) fn serialize_results_csv(
                 w.total_cycles,
                 w.cpi,
             ));
+        }
+        if windows.iter().any(|w| w.tlb.is_some()) {
+            s.push('\n');
+            s.push_str("WINDOW SNAPSHOTS (TLB)\n");
+            s.push_str("Window,TLB Hits,TLB Misses,TLB Hit Rate (%),Evictions,Page Faults\n");
+            for w in windows {
+                if let Some(t) = &w.tlb {
+                    s.push_str(&format!(
+                        "{},{},{},{:.1},{},{}\n",
+                        w.label,
+                        t.hits,
+                        t.misses,
+                        t.hit_rate(),
+                        t.evictions,
+                        t.page_faults,
+                    ));
+                }
+            }
         }
     }
     s

@@ -2,7 +2,7 @@ use crate::ui::app::{App, CacheDataFmt, CacheScope, CacheSubtab, CacheViewFocus}
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::run_keys::cycle_memory_region;
-use super::serialization::capture_snapshot;
+use super::serialization::capture_session_snapshot;
 
 pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
     if matches!(app.cache.subtab, CacheSubtab::Config) && app.cache.edit_field.is_some() {
@@ -97,13 +97,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('s') if matches!(app.cache.subtab, CacheSubtab::Stats) => {
-            let snap = capture_snapshot(app);
-            let label = snap.label.clone();
-            let instr_end = snap.instr_end;
-            app.cache.session_history.push(snap);
-            app.cache.history_scroll = app.cache.session_history.len().saturating_sub(1);
-            app.cache.window_start_instr = instr_end;
-            app.cache.config_status = Some(format!("Captured {label}"));
+            capture_session_snapshot(app);
             true
         }
         KeyCode::Char('s') if matches!(app.cache.subtab, CacheSubtab::View) => {
@@ -116,30 +110,12 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             app.run.speed = app.run.speed.cycle();
             true
         }
-        KeyCode::Char('d')
+        // Capital D: lowercase 'd' is taken by the d-cache scope shortcut above.
+        KeyCode::Char('D')
             if matches!(app.cache.subtab, CacheSubtab::Stats)
                 && !app.cache.session_history.is_empty() =>
         {
-            let idx = app
-                .cache
-                .history_scroll
-                .min(app.cache.session_history.len() - 1);
-            app.cache.session_history.remove(idx);
-            if !app.cache.session_history.is_empty() {
-                app.cache.history_scroll = idx.min(app.cache.session_history.len() - 1);
-            } else {
-                app.cache.history_scroll = 0;
-            }
-            if let Some(v) = app.cache.viewing_snapshot {
-                if v == idx {
-                    app.cache.viewing_snapshot = None;
-                } else if v > idx {
-                    app.cache.viewing_snapshot = Some(v - 1);
-                }
-            }
-            if app.cache.session_history.is_empty() {
-                app.cache.viewing_snapshot = None;
-            }
+            app.delete_selected_snapshot();
             true
         }
         KeyCode::Enter
