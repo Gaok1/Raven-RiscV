@@ -1,8 +1,10 @@
-//! Boot splash — a cinematic, fixed-length power-on sequence for the Raven core.
+//! Boot splash — a cinematic power-on sequence for the Raven core.
 //!
-//! No key is required: the run loop clears `splash_start` after [`SPLASH_SECS`]
-//! (any key skips early, Esc opens the exit popup). Every frame is a pure
-//! function of the elapsed time, drawn onto a cell [`Canvas`] in layers:
+//! The sequence plays through by itself ([`SPLASH_SECS`]); once the core is
+//! online it holds on the final frame with a pulsing PRESS ANY KEY prompt.
+//! Any key dismisses it at any point (skipping mid-animation), Esc opens the
+//! exit popup. Every frame is a pure function of the elapsed time, drawn onto
+//! a cell [`Canvas`] in layers:
 //!
 //! 1. power surge — two beams race in from the screen edges and meet;
 //! 2. circuit fabric — pins and solder dots energize toward the die;
@@ -10,7 +12,8 @@
 //! 4. logo ignition — RAVEN materializes as a white-hot wave that cools
 //!    into the theme violet, with sparks riding the wavefront;
 //! 5. POST log + stage chips + power bar — the machine reports in;
-//! 6. flash — one white-hot pulse, then hand-off to the console.
+//! 6. flash — one white-hot pulse, then the PRESS ANY KEY prompt breathes
+//!    until the operator takes over.
 
 use crate::ui::theme;
 use ratatui::{
@@ -20,8 +23,9 @@ use ratatui::{
 };
 use std::time::Instant;
 
-/// Total splash duration; the run loop dismisses the splash after this long.
-pub(crate) const SPLASH_SECS: f64 = 5.2;
+/// Length of the animated part; after this the splash holds on its final
+/// frame, prompting for a key.
+const SPLASH_SECS: f64 = 5.2;
 
 // ── Phase timeline (seconds) ──────────────────────────────────────────────────
 const SURGE: (f64, f64) = (0.05, 0.70);
@@ -33,6 +37,7 @@ const STAGES_T0: f64 = 3.20;
 const LOG_T0: f64 = 1.90;
 const BAR: (f64, f64) = (0.70, 4.45);
 const FLASH: (f64, f64) = (4.55, 4.90);
+const PROMPT_T0: f64 = SPLASH_SECS - 0.15;
 
 // ── Entry points ──────────────────────────────────────────────────────────────
 
@@ -213,7 +218,35 @@ fn draw_full(cv: &mut Canvas, t: f64, mem_size: usize) {
     draw_stages(cv, t, die_x, die_y + 9);
     draw_log(cv, t, die_x, die_y + DIE_H as i64 + 1);
     draw_bar(cv, t, die_x, die_y + DIE_H as i64 + 1 + LOG_LINES as i64 + 1);
+    let prompt_y = (die_y + TOTAL_H as i64 + 1).min(h as i64 - 1);
+    draw_prompt(cv, t, die_x, prompt_y);
     draw_surge(cv, t, die_y + DIE_H as i64 / 2);
+}
+
+/// After the core comes online, the key prompt breathes until a key arrives.
+fn draw_prompt(cv: &mut Canvas, t: f64, die_x: i64, y: i64) {
+    if t < PROMPT_T0 {
+        return;
+    }
+    let fade = clamp01((t - PROMPT_T0) / 0.4);
+    // A slow breath between resting violet and white-hot.
+    let breath = 0.62 + 0.38 * (0.5 + 0.5 * ((t - PROMPT_T0) * 2.4).sin());
+    let words = "  PRESS ANY KEY  ";
+    let rule_w = ((DIE_W - words.len()) / 2) as i64;
+    let x0 = die_x + (DIE_W as i64 - words.len() as i64) / 2 - rule_w;
+    let rule = Style::default().fg(theme::BORDER);
+    for i in 0..rule_w {
+        cv.put(x0 + i, y, '─', rule);
+        cv.put(x0 + rule_w + words.len() as i64 + i, y, '─', rule);
+    }
+    cv.text(
+        x0 + rule_w,
+        y,
+        words,
+        Style::default()
+            .fg(ramp(breath * fade))
+            .add_modifier(Modifier::BOLD),
+    );
 }
 
 /// Phase 0 — two power beams race in from the edges and meet at the die.
@@ -653,6 +686,16 @@ fn draw_compact(cv: &mut Canvas, t: f64, mem_size: usize) {
         };
         cv.put(bx + i as i64, cy + 4, c, s);
     }
+    if t >= PROMPT_T0 {
+        let breath = 0.62 + 0.38 * (0.5 + 0.5 * ((t - PROMPT_T0) * 2.4).sin());
+        let prompt = "PRESS ANY KEY";
+        cv.text(
+            (cv.w as i64 - prompt.len() as i64) / 2,
+            cy + 6,
+            prompt,
+            Style::default().fg(ramp(breath)).add_modifier(Modifier::BOLD),
+        );
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -707,6 +750,14 @@ mod tests {
         assert!(text.contains("RAVEN CORE"), "die should be titled RAVEN CORE");
         assert!(text.contains("[IF]"), "stage chips should be online");
         assert!(text.contains("PRIMED"), "POST log should be complete");
+    }
+
+    #[test]
+    fn splash_holds_with_a_key_prompt_after_the_animation() {
+        let text = buffer_text(&render_at(6.0, 100, 30));
+        assert!(text.contains("PRESS ANY KEY"), "prompt should breathe on hold");
+        let compact = buffer_text(&render_at(6.0, 60, 18));
+        assert!(compact.contains("PRESS ANY KEY"), "compact prompt too");
     }
 
     #[test]

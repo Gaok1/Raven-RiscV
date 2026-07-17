@@ -34,7 +34,6 @@ use pipeline::render_pipeline;
 use run::render_run;
 use settings::render_settings;
 use splash::render_splash;
-pub(crate) use splash::SPLASH_SECS;
 use tlb::render_tlb_tab;
 
 pub(crate) const HELP_BTN_W: u16 = 5;
