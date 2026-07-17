@@ -80,6 +80,12 @@ fn run_inner(
         if app.should_quit {
             break;
         }
+        // The boot splash is fixed-length: hand off to the console by itself.
+        if let Some(started) = app.splash_start {
+            if started.elapsed().as_secs_f64() >= crate::ui::view::SPLASH_SECS {
+                app.splash_start = None;
+            }
+        }
         app.tick();
         if last_draw.elapsed() >= Duration::from_millis(16) {
             terminal.draw(|f| ui(f, app))?;
