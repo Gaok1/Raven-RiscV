@@ -91,8 +91,16 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
 
     f.render_widget(table.build(), table_area);
 
+    // Register the bar's track for mouse click-to-jump + drag (cleared by the
+    // tab root each frame, so it only hits while actually rendered).
     if needs_sb {
         let sb_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
         vertical_scrollbar(f, sb_area, total, visible, scroll);
+        app.tlb.entries_sb.set(Some((
+            sb_area.y,
+            sb_area.height,
+            inner.x + inner.width.saturating_sub(1),
+            total - visible,
+        )));
     }
 }

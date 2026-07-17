@@ -812,3 +812,87 @@ fn clicking_collapsed_details_rail_reopens_panel() {
 
     assert!(!app.run.details_collapsed);
 }
+
+#[test]
+fn tlb_entries_scrollbar_click_jumps_and_drag_follows() {
+    use crate::ui::view::components::scroll_offset_from_pos;
+    let mut app = App::new(None);
+    app.tab = Tab::Tlb;
+    // Track registered by the Entries renderer: (y_start, len, cross_x, max).
+    app.tlb.entries_sb.set(Some((5, 20, 100, 40)));
+
+    // Down on the track jumps to the click position and starts the drag.
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 100,
+            row: 15,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+    assert!(app.tlb.entries_sb_drag);
+    assert_eq!(app.tlb.entries_scroll, scroll_offset_from_pos(15, 5, 20, 40));
+
+    // Dragging tracks the cursor with the same absolute mapping (no snap-back).
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            column: 90,
+            row: 24,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+    assert_eq!(app.tlb.entries_scroll, scroll_offset_from_pos(24, 5, 20, 40));
+
+    // Up ends the drag; further drags are ignored.
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            column: 90,
+            row: 24,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+    assert!(!app.tlb.entries_sb_drag);
+}
+
+#[test]
+fn cache_history_scrollbar_click_moves_selection() {
+    use crate::ui::view::components::scroll_offset_from_pos;
+    let mut app = App::new(None);
+    app.tab = Tab::Cache;
+    app.cache.subtab = CacheSubtab::Stats;
+    // Track registered by the Snapshots renderer; max = last selectable index.
+    app.cache.history_sb.set(Some((6, 10, 120, 7)));
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 120,
+            row: 12,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+    assert!(app.cache.history_sb_drag);
+    assert_eq!(app.cache.history_scroll, scroll_offset_from_pos(12, 6, 10, 7));
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            column: 120,
+            row: 15,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+    assert_eq!(app.cache.history_scroll, scroll_offset_from_pos(15, 6, 10, 7));
+}

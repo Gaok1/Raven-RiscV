@@ -409,8 +409,16 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         );
     }
 
+    // Register the bar's track for mouse click-to-jump + drag; the mapped
+    // position drives the *selection* (the window follows it, like ↑↓).
     if needs_sb {
         vertical_scrollbar(f, inner, history.len(), visible, start);
+        app.cache.history_sb.set(Some((
+            inner.y,
+            inner.height,
+            inner.x + inner.width.saturating_sub(1),
+            history.len() - 1,
+        )));
     }
 }
 

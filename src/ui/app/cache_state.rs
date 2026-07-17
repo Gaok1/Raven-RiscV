@@ -299,6 +299,10 @@ pub(crate) struct CacheState {
     // Session run history (captured with `s` key)
     pub(crate) session_history: Vec<CacheResultsSnapshot>,
     pub(crate) history_scroll: usize,
+    /// Vertical-scrollbar track of the snapshot history `(y_start, len, cross_x, max)`
+    /// — set by render, hit-tested by mouse; dragging moves the selection.
+    pub(crate) history_sb: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
+    pub(crate) history_sb_drag: bool,
     pub(crate) viewing_snapshot: Option<usize>, // index into session_history, Some = popup open
     pub(crate) window_start_instr: u64,         // start of current capture window, reset on restart
     // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse

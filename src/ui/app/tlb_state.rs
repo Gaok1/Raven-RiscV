@@ -141,6 +141,10 @@ pub(crate) struct TlbState {
     pub(crate) config_error: Option<String>,
     pub(crate) config_status: Option<String>,
     pub(crate) entries_scroll: usize,
+    /// Vertical-scrollbar track of the Entries table `(y_start, len, cross_x, max)`
+    /// — set by render, hit-tested by mouse for click-to-jump + drag.
+    pub(crate) entries_sb: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
+    pub(crate) entries_sb_drag: bool,
     pub(crate) page_tree_scroll: usize,
     /// Max valid `page_tree_scroll`, recomputed each render so input handlers
     /// can clamp without re-walking the page table.
@@ -189,6 +193,8 @@ impl Default for TlbState {
             config_error: None,
             config_status: None,
             entries_scroll: 0,
+            entries_sb: std::cell::Cell::new(None),
+            entries_sb_drag: false,
             page_tree_scroll: 0,
             page_tree_max_scroll: std::cell::Cell::new(0),
             pending_scheme: PagingScheme::sv32(),

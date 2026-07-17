@@ -16,6 +16,10 @@ mod view;
 pub(in crate::ui::view) use stats::render_snapshot_popup;
 
 pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
+    // Cleared every frame; the Stats history renderer re-registers its
+    // scrollbar track when (and only when) the bar is actually drawn.
+    app.cache.history_sb.set(None);
+
     // When cache is disabled, show a notice and skip all cache-specific content.
     if !app.run.cache_enabled {
         let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));

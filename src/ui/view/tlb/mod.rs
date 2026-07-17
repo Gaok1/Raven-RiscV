@@ -26,6 +26,10 @@ mod stats;
 mod vm_settings;
 
 pub(super) fn render_tlb_tab(f: &mut Frame, area: Rect, app: &App) {
+    // Cleared every frame; the Entries renderer re-registers its scrollbar
+    // track when (and only when) the bar is actually drawn.
+    app.tlb.entries_sb.set(None);
+
     // Layout mirrors the Cache tab: header | exec controls | content | bar.
     let layout = Layout::default()
         .direction(Direction::Vertical)

@@ -294,12 +294,15 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.cache.hscroll_drag_track_x = track_x;
                 app.cache.hscroll_drag_max = max_scroll;
                 app.cache.hscroll_drag_track_w = track_w;
+            } else if start_cache_history_scrollbar_drag(app, me) {
+                // Click landed on the Snapshots scrollbar: jumped + drag started.
             } else {
                 handle_cache_click(app, me, area);
             }
         }
         if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
             app.cache.hscroll_drag = false;
+            app.cache.history_sb_drag = false;
         }
         if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.hscroll_drag {
             let new_scroll = scroll_offset_from_pos(
@@ -314,12 +317,27 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.cache.view_h_scroll = new_scroll;
             }
         }
+        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.history_sb_drag {
+            if let Some((start, len, _, max)) = app.cache.history_sb.get() {
+                app.cache.history_scroll = scroll_offset_from_pos(me.row, start, len, max);
+            }
+        }
     }
 
     if let Tab::Tlb = app.tab {
         update_tlb_hover(app, me);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-            handle_tlb_click(app, me);
+            if !start_tlb_entries_scrollbar_drag(app, me) {
+                handle_tlb_click(app, me);
+            }
+        }
+        if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
+            app.tlb.entries_sb_drag = false;
+        }
+        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.tlb.entries_sb_drag {
+            if let Some((start, len, _, max)) = app.tlb.entries_sb.get() {
+                app.tlb.entries_scroll = scroll_offset_from_pos(me.row, start, len, max);
+            }
         }
     }
 
@@ -867,6 +885,33 @@ fn update_docs_hover(app: &mut App, me: MouseEvent) {
 /// On left-down over a Docs scrollbar track, begin dragging it and jump to the
 /// click position. Returns true if a bar was hit (caller then skips the normal
 /// click handling). Tracks are `(start, len, cross, max_offset)`, set by render.
+/// Down on the Snapshots (cache stats) scrollbar: jump the selection to the
+/// click position and begin dragging. Returns `true` when the click was on the
+/// bar's track.
+fn start_cache_history_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
+    if let Some((start, len, cross, max)) = app.cache.history_sb.get() {
+        if me.column == cross && me.row >= start && me.row < start + len {
+            app.cache.history_sb_drag = true;
+            app.cache.history_scroll = scroll_offset_from_pos(me.row, start, len, max);
+            return true;
+        }
+    }
+    false
+}
+
+/// Down on the TLB Entries scrollbar: jump the view to the click position and
+/// begin dragging. Returns `true` when the click was on the bar's track.
+fn start_tlb_entries_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
+    if let Some((start, len, cross, max)) = app.tlb.entries_sb.get() {
+        if me.column == cross && me.row >= start && me.row < start + len {
+            app.tlb.entries_sb_drag = true;
+            app.tlb.entries_scroll = scroll_offset_from_pos(me.row, start, len, max);
+            return true;
+        }
+    }
+    false
+}
+
 fn start_docs_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
     if let Some((start, len, cross, max)) = app.docs.sb_v.get() {
         if me.column == cross && me.row >= start && me.row < start + len {

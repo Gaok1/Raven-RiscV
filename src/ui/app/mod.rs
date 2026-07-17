@@ -521,6 +521,8 @@ impl App {
                 cpi_edit_buf: String::new(),
                 session_history: Vec::new(),
                 history_scroll: 0,
+                history_sb: std::cell::Cell::new(None),
+                history_sb_drag: false,
                 viewing_snapshot: None,
                 window_start_instr: 0,
                 hscroll_drag: false,
