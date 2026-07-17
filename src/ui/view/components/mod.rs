@@ -104,4 +104,4 @@ pub(crate) use toolbar::Toolbar;
 pub(crate) use lists::{
     horizontal_scrollbar, scroll_offset_from_pos, vertical_scrollbar, visible_window,
 };
-pub(crate) use tables::{Align, Col, DataTable};
+pub(crate) use tables::{Align, Col, DataTable, kv_styled};

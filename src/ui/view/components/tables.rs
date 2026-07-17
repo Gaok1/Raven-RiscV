@@ -6,12 +6,8 @@
 //!
 //! - [`DataTable`] when the data is genuinely columnar and benefits from a
 //!   styled header row, zebra striping and per-column alignment.
-//! - [`kv_table`] / [`kv_styled`] for the two-column "key: value" blocks that
-//!   show up in the reference pages.
-
-// Toolkit surface: some builders are offered ahead of every consumer (as the
-// didactic reference pages keep their bespoke colouring). Mirrors `style.rs`.
-#![allow(dead_code)]
+//! - [`kv_styled`] for the two-column "key: value" blocks (e.g. the Virtual
+//!   Memory overview readout).
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell, Row, Table};
@@ -134,21 +130,8 @@ impl DataTable {
     }
 }
 
-/// A two-column "key: value" block rendered as plain `Line`s, with the key
-/// left-padded to `key_w`. Keys use the muted label style, values the body style.
-pub(crate) fn kv_table(pairs: &[(&str, &str)], key_w: usize) -> Vec<Line<'static>> {
-    pairs
-        .iter()
-        .map(|(k, v)| {
-            Line::from(vec![
-                Span::styled(format!("{k:<key_w$}"), style::label()),
-                Span::styled(v.to_string(), style::value()),
-            ])
-        })
-        .collect()
-}
-
-/// Like [`kv_table`] but the caller supplies already-styled spans per side.
+/// A two-column "key: value" block rendered as plain `Line`s; the caller
+/// supplies already-styled spans per side and this owns the line + separator.
 pub(crate) fn kv_styled(pairs: Vec<(Span<'static>, Span<'static>)>) -> Vec<Line<'static>> {
     pairs
         .into_iter()

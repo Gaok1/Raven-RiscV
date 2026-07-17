@@ -16,6 +16,8 @@ use crate::falcon::mmu::{PrivMode, SatpMode};
 use crate::ui::app::{App, TlbHoverTarget};
 use crate::ui::theme;
 use crate::ui::view::components::dense_value;
+use crate::ui::view::components::kv_styled;
+use crate::ui::view::style;
 
 pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
@@ -102,28 +104,37 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
     };
     let root_pt = (mmu.satp.ppn() as u64) << 12;
 
-    let mut lines: Vec<Line<'static>> = vec![
-        quick_line,
-        Line::raw(""),
-        kv(" satp.mode:                    ", satp_mode_label.to_string(), satp_color),
-        kv(
-            " satp.asid:                    ",
-            format!("{}", mmu.satp.asid()),
-            theme::TEXT,
+    // Key/value readout via the toolkit's `kv_styled` (it owns the line and the
+    // key–value separator; we own the span styling).
+    let key = |s: &'static str| Span::styled(s, style::label());
+    let val = |s: String, c: Color| {
+        Span::styled(s, Style::default().fg(c).add_modifier(Modifier::BOLD))
+    };
+
+    let mut lines: Vec<Line<'static>> = vec![quick_line, Line::raw("")];
+    lines.extend(kv_styled(vec![
+        (
+            key(" satp.mode:                   "),
+            val(satp_mode_label.to_string(), satp_color),
         ),
-        kv(
-            " satp.ppn (root PT @):         ",
-            format!("0x{:08x}", root_pt),
-            theme::TEXT,
+        (
+            key(" satp.asid:                   "),
+            val(format!("{}", mmu.satp.asid()), theme::TEXT),
         ),
-        kv(" Privilege mode:               ", priv_label.to_string(), priv_color),
-        Line::raw(""),
-        kv(
-            " Translation active?           ",
-            if active { "YES" } else { "no" }.to_string(),
-            active_color,
+        (
+            key(" satp.ppn (root PT @):        "),
+            val(format!("0x{:08x}", root_pt), theme::TEXT),
         ),
-    ];
+        (
+            key(" Privilege mode:              "),
+            val(priv_label.to_string(), priv_color),
+        ),
+    ]));
+    lines.push(Line::raw(""));
+    lines.extend(kv_styled(vec![(
+        key(" Translation active?          "),
+        val(if active { "YES" } else { "no" }.to_string(), active_color),
+    )]));
 
     if !app.run.vm_enabled() {
         lines.push(Line::raw(""));
@@ -191,11 +202,4 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         inner,
     );
-}
-
-fn kv(label: &'static str, value: String, value_color: Color) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(label, Style::default().fg(theme::LABEL)),
-        Span::styled(value, Style::default().fg(value_color).add_modifier(Modifier::BOLD)),
-    ])
 }
