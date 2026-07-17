@@ -9,6 +9,7 @@ use crate::falcon::machine::types::{RegId, RegTarget};
 use crate::ui::app::RunEditTarget;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::vertical_scrollbar;
 use crate::ui::view::style;
 
 /// The cursor-suffixed edit buffer to paint in a cell, when it is the target of
@@ -85,6 +86,26 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
     let rows = build_register_rows(inner, app);
     let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]).block(block);
     f.render_widget(table, area);
+
+    // Draggable scrollbar over the regular (non-pinned) section; window math
+    // mirrors `build_register_rows`.
+    let total = 33usize;
+    let visible = inner.height.saturating_sub(2) as usize;
+    let pins = app.run.pinned_regs.len();
+    let offset = if pins == 0 { 0 } else { pins + 1 };
+    let viewport = visible.saturating_sub(offset);
+    if total > viewport && viewport > 0 {
+        let max_scroll = total - viewport;
+        let start = app.run.regs_scroll.min(max_scroll);
+        let sb_area = Rect::new(inner.x, inner.y + offset as u16, inner.width, viewport as u16);
+        vertical_scrollbar(f, sb_area, total, viewport, start);
+        app.run.regs_sb.set(Some((
+            sb_area.y,
+            sb_area.height,
+            inner.x + inner.width.saturating_sub(1),
+            max_scroll,
+        )));
+    }
 }
 
 fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
@@ -279,6 +300,19 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
 
     let table = Table::new(rows, [Constraint::Length(13), Constraint::Min(0)]).block(block);
     f.render_widget(table, area);
+
+    // Draggable scrollbar (shares `regs_scroll` with the int register table).
+    if 32usize > visible && visible > 0 {
+        let max_scroll = 32usize - visible;
+        let sb_area = Rect::new(inner.x, inner.y, inner.width, visible as u16);
+        vertical_scrollbar(f, sb_area, 32, visible, scroll);
+        app.run.regs_sb.set(Some((
+            sb_area.y,
+            sb_area.height,
+            inner.x + inner.width.saturating_sub(1),
+            max_scroll,
+        )));
+    }
 }
 
 fn freg_name_short(i: u8) -> &'static str {

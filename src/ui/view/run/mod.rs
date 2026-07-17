@@ -48,6 +48,10 @@ pub(crate) fn run_panel_constraints(app: &App) -> [Constraint; 3] {
 }
 
 pub(super) fn render_run(f: &mut Frame, area: Rect, app: &App) {
+    // Cleared every frame; the sidebar register tables re-register their
+    // scrollbar track when (and only when) the bar is actually drawn.
+    app.run.regs_sb.set(None);
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

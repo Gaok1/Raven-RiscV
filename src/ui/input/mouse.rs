@@ -477,8 +477,13 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     handle_imem_bp_click(app, me, area);
                     handle_imem_click(app, me, area);
                     handle_details_click(app, me, area);
-                    handle_register_click(app, me, area);
-                    handle_memory_click(app, me, area);
+                    if start_regs_scrollbar_drag(app, me) {
+                        // Consumed by the register scrollbar — don't treat the
+                        // same click as a register edit.
+                    } else {
+                        handle_register_click(app, me, area);
+                        handle_memory_click(app, me, area);
+                    }
                 }
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
@@ -493,11 +498,17 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 if app.run.console_drag {
                     handle_console_drag(app, me, area);
                 }
+                if app.run.regs_sb_drag {
+                    if let Some((start, len, _, max)) = app.run.regs_sb.get() {
+                        app.run.regs_scroll = scroll_offset_from_pos(me.row, start, len, max);
+                    }
+                }
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 app.run.sidebar_drag = false;
                 app.run.imem_drag = false;
                 app.run.console_drag = false;
+                app.run.regs_sb_drag = false;
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 if !screen_view {
@@ -885,6 +896,19 @@ fn update_docs_hover(app: &mut App, me: MouseEvent) {
 /// On left-down over a Docs scrollbar track, begin dragging it and jump to the
 /// click position. Returns true if a bar was hit (caller then skips the normal
 /// click handling). Tracks are `(start, len, cross, max_offset)`, set by render.
+/// Down on the run-sidebar register scrollbar: jump the view to the click
+/// position and begin dragging. Returns `true` when the click was on the track.
+fn start_regs_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
+    if let Some((start, len, cross, max)) = app.run.regs_sb.get() {
+        if me.column == cross && me.row >= start && me.row < start + len {
+            app.run.regs_sb_drag = true;
+            app.run.regs_scroll = scroll_offset_from_pos(me.row, start, len, max);
+            return true;
+        }
+    }
+    false
+}
+
 /// Down on the Snapshots (cache stats) scrollbar: jump the selection to the
 /// click position and begin dragging. Returns `true` when the click was on the
 /// bar's track.

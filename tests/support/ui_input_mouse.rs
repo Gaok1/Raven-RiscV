@@ -896,3 +896,39 @@ fn cache_history_scrollbar_click_moves_selection() {
     );
     assert_eq!(app.cache.history_scroll, scroll_offset_from_pos(15, 6, 10, 7));
 }
+
+#[test]
+fn run_sidebar_register_scrollbar_click_scrolls_instead_of_editing() {
+    use crate::ui::view::components::scroll_offset_from_pos;
+    let mut app = App::new(None);
+    app.tab = Tab::Run;
+    // Track registered by the register-table renderer: (y_start, len, cross_x, max).
+    app.run.regs_sb.set(Some((6, 18, 36, 12)));
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 36,
+            row: 14,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+    assert!(app.run.regs_sb_drag);
+    assert_eq!(app.run.regs_scroll, scroll_offset_from_pos(14, 6, 18, 12));
+    // The click was consumed by the bar — no inline register editor opened.
+    assert!(app.run.run_edit.is_none());
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            column: 30,
+            row: 22,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+    assert_eq!(app.run.regs_scroll, scroll_offset_from_pos(22, 6, 18, 12));
+}

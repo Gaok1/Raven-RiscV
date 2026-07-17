@@ -309,6 +309,10 @@ pub(crate) struct RunState {
 
     // Execution
     pub(crate) regs_scroll: usize,
+    /// Vertical-scrollbar track of the sidebar register list `(y_start, len,
+    /// cross_x, max)` — set by render, hit-tested by mouse for click + drag.
+    pub(crate) regs_sb: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
+    pub(crate) regs_sb_drag: bool,
     pub(crate) is_running: bool,
     pub(crate) last_step_time: Instant,
     pub(crate) step_interval: Duration,

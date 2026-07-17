@@ -421,6 +421,8 @@ impl App {
                 console_drag_start_y: 0,
                 console_height_start: 5,
                 regs_scroll: 0,
+                regs_sb: std::cell::Cell::new(None),
+                regs_sb_drag: false,
                 is_running: false,
                 last_step_time: Instant::now(),
                 step_interval: Duration::from_millis(80),
