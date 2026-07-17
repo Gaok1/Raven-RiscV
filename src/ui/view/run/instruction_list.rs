@@ -1,11 +1,13 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, List, ListItem, Paragraph};
 
 use super::App;
 use super::instruction_details::disasm_word;
 use super::memory::{exec_address_in_range, imem_address_in_range};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
     let block = instruction_block(app);
@@ -53,7 +55,7 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
                 "  →  {match_count} match{}",
                 if match_count == 1 { "" } else { "es" }
             ),
-            Style::default().fg(theme::RUNNING).bg(bg),
+            style::success().bg(bg),
         )
     } else {
         Span::styled("  ✗ no match", Style::default().fg(Color::Red).bg(bg))
@@ -63,8 +65,8 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" Label: ", Style::default().fg(theme::ACCENT).bg(bg).bold()),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         result_span,
-        Span::styled("  Ctrl+v=paste", Style::default().fg(theme::IDLE).bg(bg)),
-        Span::styled("  Esc=close", Style::default().fg(theme::IDLE).bg(bg)),
+        Span::styled("  Ctrl+v=paste", style::idle().bg(bg)),
+        Span::styled("  Esc=close", style::idle().bg(bg)),
     ]);
 
     f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
@@ -78,17 +80,12 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn instruction_block(app: &App) -> Block<'static> {
-    let border_style = if app.run.hover_imem_bar {
-        Style::default().fg(theme::HOVER_BG)
+    let border = if app.run.hover_imem_bar {
+        theme::HOVER_BG
     } else {
-        Style::default().fg(theme::BORDER)
+        theme::BORDER
     };
-
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .border_type(BorderType::Rounded)
-        .title("Instruction Memory")
+    panel::panel_frame(PanelKind::Custom(border)).title("Instruction Memory")
 }
 
 fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -389,16 +386,11 @@ fn render_instruction_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
 
 /// Render the execution trace panel (last N executed instructions).
 pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Trace (last executed)",
-            Style::default().fg(theme::ACCENT),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let block = panel::panel_frame(PanelKind::Plain).title(Span::styled(
+        "Trace (last executed)",
+        Style::default().fg(theme::ACCENT),
+    ));
+    let inner = render_panel(f, area, block);
 
     let visible = inner.height as usize;
     let total = app.run.exec_trace.len();
@@ -415,7 +407,7 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
                 // Most recent entry
                 Style::default().fg(theme::LABEL_Y)
             } else {
-                Style::default().fg(theme::LABEL)
+                style::label()
             };
             let lbl = app
                 .run

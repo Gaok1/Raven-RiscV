@@ -3,13 +3,15 @@ use crate::ui::app::{
     EncFormat, InstrFieldKind, RunEditTarget, Seg, cpi_class_label, detect_format,
 };
 use crate::ui::theme;
+use crate::ui::view::style;
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::App;
 use super::memory::exec_address_in_range;
 use super::registers::reg_name;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
@@ -182,20 +184,15 @@ fn detail_context(app: &App) -> DetailContext {
 fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     let fmt_name = ctx.format.name();
     let title = format!("Instruction  [{fmt_name}]");
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(title, Style::default().fg(theme::TEXT)))
+    let block = panel::panel_frame(PanelKind::Plain)
+        .title(Span::styled(title, style::value()))
         .title_alignment(Alignment::Left);
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, block);
 
     let editing = editing_field(app, ctx.addr);
     let origin_span = Span::styled(
         format!(" @ 0x{:08x} ({})", ctx.addr, ctx.origin),
-        Style::default().fg(theme::LABEL),
+        style::label(),
     );
 
     // Line 0 — mnemonic, editable as one line of assembly. While editing,
@@ -288,21 +285,18 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
         Line::from(mnemonic_line),
         Line::from(word_line),
         Line::from(vec![
-            Span::styled("  cycles  ", Style::default().fg(theme::LABEL)),
+            Span::styled("  cycles  ", style::label()),
             Span::styled(
                 format!("~{base_cycles}"),
                 Style::default().fg(theme::CPI_PANEL).bold(),
             ),
-            Span::styled(
-                format!("  [{class_label}]"),
-                Style::default().fg(theme::LABEL),
-            ),
+            Span::styled(format!("  [{class_label}]"), style::label()),
         ]),
     ];
 
     if let Some(ref comment) = ctx.comment {
         lines.push(Line::from(vec![
-            Span::styled("  comment  ", Style::default().fg(theme::LABEL)),
+            Span::styled("  comment  ", style::label()),
             Span::styled(
                 comment.clone(),
                 Style::default().fg(Color::Rgb(180, 220, 130)),
@@ -333,23 +327,23 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             .copied()
             .unwrap_or(0);
         lines.push(Line::from(vec![
-            Span::styled("  target   ", Style::default().fg(theme::LABEL)),
+            Span::styled("  target   ", style::label()),
             Span::styled(arrow, Style::default().fg(color)),
         ]));
         if exec_count > 0 {
             lines.push(Line::from(vec![
-                Span::styled("  executions ", Style::default().fg(theme::LABEL)),
+                Span::styled("  executions ", style::label()),
                 Span::styled(
                     format!("×{exec_count}"),
-                    Style::default().fg(theme::METRIC_CYC),
+                    style::metric(style::Metric::Cycles),
                 ),
             ]));
         }
     } else if let Some(&count) = app.run.exec_counts.get(&ctx.addr) {
         if count > 0 {
             lines.push(Line::from(vec![
-                Span::styled("  executions ", Style::default().fg(theme::LABEL)),
-                Span::styled(format!("×{count}"), Style::default().fg(theme::METRIC_CYC)),
+                Span::styled("  executions ", style::label()),
+                Span::styled(format!("×{count}"), style::metric(style::Metric::Cycles)),
             ]));
         }
     }
@@ -361,14 +355,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
 
 fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat, app: &App) {
     let segs = format.segments();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Field Map", Style::default().fg(theme::LABEL)));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Field Map", PanelKind::Plain));
 
     // Each segment's bits row doubles as a click target for editing that
     // field (the editor itself renders in the header/Decoded sections).
@@ -496,14 +483,7 @@ fn render_decoded(
     app: &App,
     ctx: &DetailContext,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Decoded", Style::default().fg(theme::LABEL)));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Decoded", PanelKind::Plain));
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(c) = comment {
@@ -539,7 +519,7 @@ fn render_decoded(
 
 fn kv(key: &'static str, val: String, val_color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{key:<10}"), Style::default().fg(theme::LABEL)),
+        Span::styled(format!("{key:<10}"), style::label()),
         Span::styled(val, Style::default().fg(val_color)),
     ])
 }
@@ -762,13 +742,13 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
 
     if !desc.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("⟹  ", Style::default().fg(theme::LABEL)),
-            Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
+            Span::styled("⟹  ", style::label()),
+            Span::styled(desc.to_string(), style::value()),
         ]));
     } else if !disasm.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("⟹  ", Style::default().fg(theme::LABEL)),
-            Span::styled(disasm.to_string(), Style::default().fg(theme::LABEL)),
+            Span::styled("⟹  ", style::label()),
+            Span::styled(disasm.to_string(), style::label()),
         ]));
     }
 }

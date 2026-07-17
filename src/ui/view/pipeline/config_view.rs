@@ -3,14 +3,23 @@ use crate::ui::pipeline::{
     BranchPredict, BranchResolve, InstrClass, PipelineBypassConfig, fu_latency_for_class,
 };
 use crate::ui::theme;
-use crate::ui::view::components::dense_value;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::{ControlState, bool_value, dense_value, label_span};
+use crate::ui::view::style;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
+
+/// A pipeline config-row value: a boolean (rendered true/false green/red) or a
+/// neutral selector/count string.
+enum Val {
+    Bool(bool),
+    Text(String),
+}
 
 const CONFIG_CONTENT_W: u16 = 52;
 const CONFIG_LABEL_W: usize = 18;
@@ -19,18 +28,11 @@ const LATENCY_LABEL_W: usize = 8;
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
     let p = &app.run.pipeline();
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            " Pipeline Settings ",
-            Style::default()
-                .fg(theme::ACCENT)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel(" Pipeline Settings ", PanelKind::Accent),
+    );
 
     let content_width = inner.width.min(CONFIG_CONTENT_W);
     let cols = Layout::default()
@@ -50,140 +52,70 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
         .constraints(vec![Constraint::Length(1); row_count])
         .split(content);
 
-    let bool_span = |v: bool| {
-        if v {
-            Span::styled(
-                "on",
-                Style::default()
-                    .fg(theme::RUNNING)
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            Span::styled("off", Style::default().fg(theme::PAUSED))
-        }
-    };
+    let uf = |k: crate::ui::pipeline::FuKind| Val::Text(p.fu_capacity[k.index()].to_string());
 
-    let rows_data: Vec<(usize, &str, Vec<Span<'_>>)> = vec![
-        (0, "EX->EX", vec![bool_span(p.bypass.ex_to_ex)]),
-        (1, "MEM->EX", vec![bool_span(p.bypass.mem_to_ex)]),
-        (2, "WB->ID", vec![bool_span(p.bypass.wb_to_id)]),
-        (3, "Store->Load", vec![bool_span(p.bypass.store_to_load)]),
-        (
-            4,
-            "Execution",
-            vec![Span::styled(
-                p.mode.label(),
-                Style::default().fg(theme::LABEL_Y),
-            )],
-        ),
+    let rows_data: Vec<(usize, &str, Val)> = vec![
+        (0, "EX->EX", Val::Bool(p.bypass.ex_to_ex)),
+        (1, "MEM->EX", Val::Bool(p.bypass.mem_to_ex)),
+        (2, "WB->ID", Val::Bool(p.bypass.wb_to_id)),
+        (3, "Store->Load", Val::Bool(p.bypass.store_to_load)),
+        (4, "Execution", Val::Text(p.mode.label().to_string())),
         (
             5,
             "Branch resolve",
-            vec![Span::styled(
+            Val::Text(
                 match p.branch_resolve {
                     BranchResolve::Id => "ID  (+1 flush)",
                     BranchResolve::Ex => "EX  (+2 flush)",
                     BranchResolve::Mem => "MEM (+3 flush)",
-                },
-                Style::default().fg(theme::LABEL_Y),
-            )],
+                }
+                .to_string(),
+            ),
         ),
         (
             6,
             "Branch predict",
-            vec![Span::styled(
+            Val::Text(
                 match p.predict {
                     BranchPredict::NotTaken => "Not-Taken",
                     BranchPredict::Taken => "Always-Taken",
                     BranchPredict::Btfnt => "BTFNT",
                     BranchPredict::TwoBit => "2-bit Dynamic",
-                },
-                Style::default().fg(theme::LABEL_Y),
-            )],
+                }
+                .to_string(),
+            ),
         ),
-        (
-            7,
-            "ALU UFs",
-            vec![Span::styled(
-                p.fu_capacity[crate::ui::pipeline::FuKind::Alu.index()].to_string(),
-                Style::default().fg(theme::LABEL_Y),
-            )],
-        ),
-        (
-            8,
-            "MUL UFs",
-            vec![Span::styled(
-                p.fu_capacity[crate::ui::pipeline::FuKind::Mul.index()].to_string(),
-                Style::default().fg(theme::LABEL_Y),
-            )],
-        ),
-        (
-            9,
-            "DIV UFs",
-            vec![Span::styled(
-                p.fu_capacity[crate::ui::pipeline::FuKind::Div.index()].to_string(),
-                Style::default().fg(theme::LABEL_Y),
-            )],
-        ),
-        (
-            10,
-            "FPU UFs",
-            vec![Span::styled(
-                p.fu_capacity[crate::ui::pipeline::FuKind::Fpu.index()].to_string(),
-                Style::default().fg(theme::LABEL_Y),
-            )],
-        ),
-        (
-            11,
-            "LSU UFs",
-            vec![Span::styled(
-                p.fu_capacity[crate::ui::pipeline::FuKind::Lsu.index()].to_string(),
-                Style::default().fg(theme::LABEL_Y),
-            )],
-        ),
-        (
-            12,
-            "SYS UFs",
-            vec![Span::styled(
-                p.fu_capacity[crate::ui::pipeline::FuKind::Sys.index()].to_string(),
-                Style::default().fg(theme::LABEL_Y),
-            )],
-        ),
+        (7, "ALU UFs", uf(crate::ui::pipeline::FuKind::Alu)),
+        (8, "MUL UFs", uf(crate::ui::pipeline::FuKind::Mul)),
+        (9, "DIV UFs", uf(crate::ui::pipeline::FuKind::Div)),
+        (10, "FPU UFs", uf(crate::ui::pipeline::FuKind::Fpu)),
+        (11, "LSU UFs", uf(crate::ui::pipeline::FuKind::Lsu)),
+        (12, "SYS UFs", uf(crate::ui::pipeline::FuKind::Sys)),
     ];
 
     let mut rects = [(0u16, 0u16, 0u16); PipelineBypassConfig::CONFIG_ROWS];
-    for (idx, label, spans) in &rows_data {
+    for (idx, label, val) in &rows_data {
         let highlight = p.config_cursor == *idx;
         let hovered = p.hover_config_row == Some(*idx);
-        let label_style = if highlight {
-            Style::default()
-                .fg(theme::ACCENT)
-                .add_modifier(Modifier::BOLD)
-        } else if hovered {
-            Style::default()
-                .fg(theme::TEXT)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme::IDLE)
-        };
-        let mut line_spans = vec![Span::styled(
-            format!("{:<width$}", label, width = CONFIG_LABEL_W),
-            label_style,
-        )];
-        line_spans.push(Span::raw("  "));
-        for span in spans.iter().cloned() {
-            let text = span.content.to_string();
-            line_spans.push(dense_value(
-                &text,
+        let state = ControlState::from(highlight, hovered);
+        let value = match val {
+            Val::Bool(b) => bool_value(*b, hovered),
+            Val::Text(s) => dense_value(
+                s,
                 hovered,
                 true,
-                if highlight {
-                    theme::LABEL_Y
-                } else {
-                    theme::TEXT
-                },
-            ));
-        }
+                if highlight { theme::LABEL_Y } else { theme::TEXT },
+            ),
+        };
+        let line_spans = vec![
+            label_span(
+                format!("{:<width$}", label, width = CONFIG_LABEL_W),
+                state,
+                theme::IDLE,
+            ),
+            Span::raw("  "),
+            value,
+        ];
         if rows.len() > *idx {
             let r = rows[*idx];
             f.render_widget(Paragraph::new(Line::from(line_spans)), r);
@@ -199,10 +131,7 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
     if rows.len() > 16 {
         for (i, line) in desc_lines.into_iter().enumerate() {
             f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    line,
-                    Style::default().fg(theme::LABEL),
-                ))),
+                Paragraph::new(Line::from(Span::styled(line, style::label()))),
                 rows[15 + i],
             );
         }
@@ -234,13 +163,10 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
                     Paragraph::new(Line::from(vec![
                         Span::styled(
                             format!("{:<width$}", name, width = LATENCY_LABEL_W),
-                            Style::default().fg(theme::LABEL),
+                            style::label(),
                         ),
                         Span::raw("  "),
-                        Span::styled(
-                            format!("{} cycle(s)", lat),
-                            Style::default().fg(theme::TEXT),
-                        ),
+                        Span::styled(format!("{} cycle(s)", lat), style::value()),
                     ])),
                     rows[20 + i],
                 );

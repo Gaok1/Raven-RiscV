@@ -12,17 +12,15 @@
 // In Manual mode the program's real (sparse) table shows in full. Editing the
 // map / scheme lives in the Virtual Memory → settings panel.
 
-use ratatui::{
-    Frame,
-    prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
-};
+use ratatui::{Frame, prelude::*, widgets::Paragraph};
 
 use crate::falcon::memory::Bus;
 use crate::falcon::mmu::walker::Pte;
 use crate::falcon::mmu::{Mmu, SatpMode};
 use crate::ui::app::App;
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 /// Minimum length of an identity-megapage run before it collapses to one line.
 const IDENTITY_COLLAPSE_THRESHOLD: usize = 4;
@@ -34,13 +32,7 @@ pub(super) fn render_page_tree(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_tree(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Page Table Tree", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel("Page Table Tree", PanelKind::Plain));
     if inner.height == 0 {
         return;
     }
@@ -51,17 +43,14 @@ fn render_tree(f: &mut Frame, area: Rect, app: &App) {
     if !app.run.vm_enabled() || mmu.satp.mode() != SatpMode::Sv32 {
         let msg = vec![
             Line::raw(""),
-            Line::from(Span::styled(
-                " No Sv32 page table to show.",
-                Style::default().fg(theme::LABEL),
-            )),
+            Line::from(Span::styled(" No Sv32 page table to show.", style::label())),
             Line::from(Span::styled(
                 " Pick Sv32/Custom/Manual in the settings subtab; in Manual mode",
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )),
             Line::from(Span::styled(
                 " the program writes satp (csrw satp, <ppn|mode>) to install one.",
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )),
         ];
         f.render_widget(Paragraph::new(msg), inner);
@@ -88,7 +77,7 @@ fn build_tree_lines(app: &App, mmu: &Mmu) -> Vec<Line<'static>> {
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::from(vec![
-        Span::styled("root @ ", Style::default().fg(theme::LABEL)),
+        Span::styled("root @ ", style::label()),
         Span::styled(
             format!("0x{root_pa:08x}"),
             Style::default().fg(theme::ACCENT).bold(),
@@ -105,13 +94,23 @@ fn build_tree_lines(app: &App, mmu: &Mmu) -> Vec<Line<'static>> {
     ]));
 
     let mut valid_seen = false;
-    walk_table(&mut lines, ram, scheme, mmu, root_pa, 0, 0, asid, &mut valid_seen);
+    walk_table(
+        &mut lines,
+        ram,
+        scheme,
+        mmu,
+        root_pa,
+        0,
+        0,
+        asid,
+        &mut valid_seen,
+    );
 
     if !valid_seen {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " Root table has no valid entries yet.",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
     }
     lines
@@ -179,14 +178,8 @@ fn walk_table(
                     format!("0x{va_lo:08x}–0x{va_hi:08x} "),
                     Style::default().fg(theme::BORDER),
                 ),
-                Span::styled(
-                    format!("{} ×{size} pages", run.len()),
-                    Style::default().fg(theme::IDLE),
-                ),
-                Span::styled(
-                    format!("  {map_desc} · {perms}"),
-                    Style::default().fg(theme::IDLE),
-                ),
+                Span::styled(format!("{} ×{size} pages", run.len()), style::idle()),
+                Span::styled(format!("  {map_desc} · {perms}"), style::idle()),
             ]));
         } else {
             for (idx, va, pa, perms, cached) in run.drain(..) {
@@ -230,11 +223,21 @@ fn walk_table(
         let child_pa = pte.ppn() << 12;
         lines.push(Line::from(vec![
             Span::raw(format!("{indent}├─ ")),
-            Span::styled(format!("L{level}[{idx}] "), Style::default().fg(theme::LABEL)),
+            Span::styled(format!("L{level}[{idx}] "), style::label()),
             Span::styled("→ table @ ", Style::default().fg(theme::BORDER)),
-            Span::styled(format!("0x{child_pa:08x}"), Style::default().fg(theme::TEXT)),
+            Span::styled(format!("0x{child_pa:08x}"), style::value()),
         ]));
-        walk_table(lines, ram, scheme, mmu, child_pa, level + 1, va, asid, valid_seen);
+        walk_table(
+            lines,
+            ram,
+            scheme,
+            mmu,
+            child_pa,
+            level + 1,
+            va,
+            asid,
+            valid_seen,
+        );
     }
     flush(lines, &mut run, &mut run_sig);
 }
@@ -265,16 +268,24 @@ struct PtePerms {
 
 impl PtePerms {
     fn from(p: crate::falcon::mmu::PtePerms, g: bool, a: bool, d: bool) -> Self {
-        Self { r: p.r, w: p.w, x: p.x, u: p.u, g, a, d }
+        Self {
+            r: p.r,
+            w: p.w,
+            x: p.x,
+            u: p.u,
+            g,
+            a,
+            d,
+        }
     }
 }
 
 fn perm_spans(p: &PtePerms) -> Vec<Span<'static>> {
     let mark = |on: bool, c: char| {
         if on {
-            Span::styled(c.to_string(), Style::default().fg(theme::RUNNING))
+            Span::styled(c.to_string(), style::success())
         } else {
-            Span::styled("-".to_string(), Style::default().fg(theme::IDLE))
+            Span::styled("-".to_string(), style::idle())
         }
     };
     vec![
@@ -291,7 +302,7 @@ fn perm_spans(p: &PtePerms) -> Vec<Span<'static>> {
 
 fn cached_marker(cached: bool) -> Span<'static> {
     if cached {
-        Span::styled(" ●TLB", Style::default().fg(theme::RUNNING))
+        Span::styled(" ●TLB", style::success())
     } else {
         Span::raw("")
     }
@@ -311,10 +322,10 @@ fn leaf_line(
 ) -> Line<'static> {
     let mut spans = vec![
         Span::raw(format!("{indent}└─ ")),
-        Span::styled(format!("L{level}[{idx}] "), Style::default().fg(theme::LABEL)),
-        Span::styled(format!("0x{va:08x} "), Style::default().fg(theme::TEXT)),
+        Span::styled(format!("L{level}[{idx}] "), style::label()),
+        Span::styled(format!("0x{va:08x} "), style::value()),
         Span::styled("→ ", Style::default().fg(theme::BORDER)),
-        Span::styled(format!("0x{pa:08x} "), Style::default().fg(theme::TEXT)),
+        Span::styled(format!("0x{pa:08x} "), style::value()),
         Span::styled(format!("[{size}] "), Style::default().fg(theme::ACCENT)),
     ];
     spans.extend(perm_spans(&p));

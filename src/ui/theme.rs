@@ -25,6 +25,12 @@ pub const BG_RAISED: Color = Color::Rgb(44, 44, 50);
 pub const BG_HOVER: Color = Color::Rgb(50, 46, 66);
 /// Subtle separator
 pub const BG_SEP: Color = Color::Rgb(46, 46, 52);
+/// Selected / cursor row background in scrollable lists (registers, …)
+pub const SEL_ROW_BG: Color = Color::Rgb(50, 50, 80);
+/// Hovered row background in scrollable lists
+pub const HOVER_ROW_BG: Color = Color::Rgb(40, 60, 40);
+/// Hovered pinned-row background (registers)
+pub const PIN_HOVER_BG: Color = Color::Rgb(60, 80, 60);
 
 // ── Interactive controls ──────────────────────────────────────────────────────
 /// Idle/inactive — neutral muted gray

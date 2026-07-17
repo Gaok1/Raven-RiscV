@@ -1,15 +1,18 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
 pub(super) use super::editor::Editor;
 use crate::ui::theme;
+use crate::ui::view::components::layout;
+use crate::ui::view::components::overlay::{self, OverlayStyle};
+use crate::ui::view::components::{ControlState, Toolbar};
 
-mod cache;
-mod components;
+pub(crate) mod cache;
+pub(crate) mod components;
 pub mod disasm;
 pub mod docs;
 mod editor;
@@ -18,7 +21,8 @@ pub(crate) mod pipeline;
 pub(crate) mod run;
 mod settings;
 mod splash;
-mod tlb;
+pub(crate) mod style;
+pub(crate) mod tlb;
 
 use crate::guided_learning::view::render_guided_learning;
 
@@ -47,14 +51,7 @@ pub fn ui(f: &mut Frame, app: &App) {
     );
 
     let size = f.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(size);
+    let chunks = layout::app_frame_chunks(size);
 
     // Tab bar: tabs on left, [?] help button on right
     let tab_row = chunks[0];
@@ -125,77 +122,114 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Activity => render_guided_learning(f, chunks[1], app),
     }
 
-    let (footer_text, footer_style) = match app.tab {
+    let footer_line = match app.tab {
         Tab::Editor => {
-            let mode = match app.mode { EditorMode::Insert => "INSERT", EditorMode::Command => "COMMAND" };
-            (
-                format!("{mode}  │  Ctrl+o=Open  Ctrl+s=Save  Ctrl+z=Undo  Ctrl+f=Find  Ctrl+g=Goto  Ctrl+/=Comment  [?]=Help"),
-                Style::default().fg(theme::LABEL),
-            )
+            let mode = match app.mode {
+                EditorMode::Insert => "INSERT",
+                EditorMode::Command => "COMMAND",
+            };
+            let mut line = style::hint_bar(&[
+                ("Ctrl+o", "Open"),
+                ("Ctrl+s", "Save"),
+                ("Ctrl+z", "Undo"),
+                ("Ctrl+f", "Find"),
+                ("Ctrl+g", "Goto"),
+                ("Ctrl+/", "Comment"),
+                ("[?]", "Help"),
+            ]);
+            line.spans.insert(0, Span::styled("  │  ", style::label()));
+            line.spans.insert(0, Span::styled(mode, style::key()));
+            line
         }
-        Tab::Run => (
-            "s=Step  r=Restart  p/Space=Run/Pause  f=Speed  v=Sidebar  k=Region  Ctrl+f=Jump RAM  Ctrl+g=Label  [?]=Help".to_string(),
-            Style::default().fg(theme::LABEL),
-        ),
+        Tab::Run => style::hint_bar(&[
+            ("s", "Step"),
+            ("r", "Restart"),
+            ("p/Space", "Run/Pause"),
+            ("f", "Speed"),
+            ("v", "Sidebar"),
+            ("k", "Region"),
+            ("Ctrl+f", "Jump RAM"),
+            ("Ctrl+g", "Label"),
+            ("[?]", "Help"),
+        ]),
         Tab::Pipeline => {
             if let Some(ref err) = app.run.pipeline().status_error {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.run.pipeline().status_msg {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "s=Step  p/Space=Run/Pause  r=Reset  f=Speed  Tab=Subtab  ↑/↓=Settings  Ctrl+e/l=Settings  Ctrl+r=Results  [?]=Help".to_string(),
-                    Style::default().fg(theme::LABEL),
-                )
+                style::hint_bar(&[
+                    ("s", "Step"),
+                    ("p/Space", "Run/Pause"),
+                    ("r", "Reset"),
+                    ("f", "Speed"),
+                    ("Tab", "Subtab"),
+                    ("↑/↓", "Settings"),
+                    ("Ctrl+e/l", "Settings"),
+                    ("Ctrl+r", "Results"),
+                    ("[?]", "Help"),
+                ])
             }
         }
         Tab::Cache => {
             if let Some(ref err) = app.cache.config_error {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.cache.config_status {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "Tab=Subtabs  Ctrl+e=Export config  Ctrl+l=Import config  Ctrl+r=Results  [?]=Help".to_string(),
-                    Style::default().fg(theme::LABEL),
-                )
+                style::hint_bar(&[
+                    ("Tab", "Subtabs"),
+                    ("Ctrl+e", "Export config"),
+                    ("Ctrl+l", "Import config"),
+                    ("Ctrl+r", "Results"),
+                    ("[?]", "Help"),
+                ])
             }
         }
-        Tab::Docs => (
-            "Ctrl+f=Search  ←/→=Filter  Space=Toggle filter  ↑/↓=Scroll  PgUp/PgDn=Fast scroll  l=Language  [?]=Help".to_string(),
-            Style::default().fg(theme::LABEL),
-        ),
-        Tab::Settings => (
-            "↑/↓=Navigate  Enter=Edit/Toggle  Esc=Cancel  Click=Toggle bool  Tab=Next field  [?]=Help".to_string(),
-            Style::default().fg(theme::LABEL),
-        ),
+        Tab::Docs => style::hint_bar(&[
+            ("Ctrl+f", "Search"),
+            ("←/→", "Filter"),
+            ("Space", "Toggle filter"),
+            ("↑/↓", "Scroll"),
+            ("PgUp/PgDn", "Fast scroll"),
+            ("l", "Language"),
+            ("[?]", "Help"),
+        ]),
+        Tab::Settings => style::hint_bar(&[
+            ("↑/↓", "Navigate"),
+            ("Enter", "Edit/Toggle"),
+            ("Esc", "Cancel"),
+            ("Click", "Toggle bool"),
+            ("Tab", "Next field"),
+            ("[?]", "Help"),
+        ]),
         Tab::Tlb => {
             if let Some(ref err) = app.tlb.config_error {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.tlb.config_status {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "Tab=Subtabs  Ctrl+e=Export config  Ctrl+l=Import config  Ctrl+r=Results  [?]=Help".to_string(),
-                    Style::default().fg(theme::LABEL),
-                )
+                style::hint_bar(&[
+                    ("Tab", "Subtabs"),
+                    ("Ctrl+e", "Export config"),
+                    ("Ctrl+l", "Import config"),
+                    ("Ctrl+r", "Results"),
+                    ("[?]", "Help"),
+                ])
             }
         }
         Tab::Activity => {
             if let Some(ref err) = app.activity.status_err {
-                (format!("✗  {err}"), Style::default().fg(theme::DANGER))
+                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.activity.status_msg {
-                (format!("✓  {ok}"), Style::default().fg(theme::RUNNING))
+                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
-                (
-                    "↑/↓=Selecionar  Enter=Aplicar preset".to_string(),
-                    Style::default().fg(theme::LABEL),
-                )
+                style::hint_bar(&[("↑/↓", "Selecionar"), ("Enter", "Aplicar preset")])
             }
         }
     };
 
-    f.render_widget(Paragraph::new(footer_text).style(footer_style), chunks[2]);
+    f.render_widget(Paragraph::new(footer_line), chunks[2]);
 
     if app.show_exit_popup {
         render_exit_popup(f, size);
@@ -216,34 +250,38 @@ pub fn ui(f: &mut Frame, app: &App) {
     }
 }
 
+/// The top navigation tab bar as a [`Toolbar`] keyed by [`Tab`] (gap 2, each
+/// label padded ` x `). Shared by the renderer and `input::mouse` so the click
+/// targets follow the labels. The selected tab lights up in ACCENT (and is also
+/// underlined below).
+pub(crate) fn build_main_tab_bar(app: &App) -> Toolbar<Tab> {
+    let mut bar = Toolbar::with_gap(2);
+    for &tab in app.visible_tabs().iter() {
+        bar.value(
+            tab,
+            &format!(" {} ", tab.label()),
+            ControlState::chip(tab == app.tab, Some(tab) == app.hover_tab),
+            theme::ACCENT,
+        );
+    }
+    bar
+}
+
 fn render_main_tab_bar(f: &mut Frame, area: Rect, app: &App, tutorial_targeted: bool) {
-    let visible_tabs = app.visible_tabs();
+    let bar = build_main_tab_bar(app);
+
     let mut labels: Vec<Span<'static>> = vec![Span::raw(" ")];
+    labels.extend(bar.spans());
+
+    // Underline row, aligned to the bar's own per-cell widths (single source).
     let mut underlines: Vec<Span<'static>> = vec![Span::raw(" ")];
-
-    for (i, &tab) in visible_tabs.iter().enumerate() {
-        let label = format!(" {} ", tab.label());
-        let label_w = label.chars().count();
-        let text_w = tab.label().chars().count();
-        let label_style = if tab == app.tab {
-            Style::default()
-                .fg(theme::ACTIVE)
-                .add_modifier(Modifier::BOLD)
-        } else if Some(tab) == app.hover_tab {
-            Style::default()
-                .fg(theme::TEXT)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme::IDLE)
-        };
-        labels.push(Span::styled(label, label_style));
-
-        underlines.push(underline_cell(tab == app.tab, label_w, text_w));
-
-        if i + 1 < visible_tabs.len() {
-            labels.push(Span::raw("  "));
+    for (i, (tab, start, end)) in bar.cells().enumerate() {
+        if i > 0 {
             underlines.push(Span::raw("  "));
         }
+        let cell_w = (end - start) as usize;
+        let text_w = tab.label().chars().count();
+        underlines.push(underline_cell(tab == app.tab, cell_w, text_w));
     }
 
     let sep_style = if tutorial_targeted {
@@ -277,36 +315,24 @@ fn underline_cell(active: bool, total_width: usize, line_width: usize) -> Span<'
 
 fn render_exit_popup(f: &mut Frame, area: Rect) {
     let popup = centered_rect(area.width / 3, area.height / 4, area);
-    f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(theme::DANGER))
-        .title(Span::styled(
-            "Confirm Exit",
-            Style::default().fg(theme::DANGER),
-        ));
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(theme::DANGER, Span::styled("Confirm Exit", style::danger())),
+    );
     let lines = vec![
         Line::raw("Do you wish to exit?"),
         Line::raw("Check your code is saved before exiting."),
         Line::raw(""),
         Line::from(vec![
-            Span::styled(
-                "[Exit]",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::DANGER),
-            ),
-            Span::styled("  Enter/y  ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                "[Cancel]",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(theme::ACCENT),
-            ),
-            Span::styled("  Esc", Style::default().fg(theme::LABEL)),
+            style::badge("[Exit]", style::Badge::Danger),
+            Span::styled("  Enter/y  ", style::label()),
+            style::badge("[Cancel]", style::Badge::Accent),
+            Span::styled("  Esc", style::label()),
         ]),
     ];
-    let para = Paragraph::new(lines)
-        .block(block)
-        .alignment(Alignment::Center);
-    f.render_widget(para, popup);
+    let para = Paragraph::new(lines).alignment(Alignment::Center);
+    f.render_widget(para, inner);
 }
 
 // ── ELF prompt popup ─────────────────────────────────────────────────────────
@@ -321,7 +347,6 @@ pub(super) const ELF_BTN_ROW: u16 = 4; // inner_y of the button row (0-indexed)
 fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
     let popup_w = ELF_POPUP_W.min(area.width.saturating_sub(4));
     let popup = centered_rect(popup_w, ELF_POPUP_H, area);
-    f.render_widget(Clear, popup);
 
     let btn_y = popup.y + 1 + ELF_BTN_ROW; // absolute row of the button line
     let inner_w = popup_w.saturating_sub(2);
@@ -335,28 +360,29 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         + ELF_BTN_DISCARD.len() as u16;
     let btn_x0 = popup.x + 1 + inner_w.saturating_sub(total_btns) / 2;
 
-    let btn_style = |label: &str, x: u16| {
+    let btn = |label: &str, x: u16| {
         let hovered =
             app.mouse_y == btn_y && app.mouse_x >= x && app.mouse_x < x + label.len() as u16;
-        if hovered {
-            Style::default().fg(Color::Black).bg(theme::ACCENT)
+        let kind = if hovered {
+            style::Badge::Accent
         } else {
-            Style::default().fg(Color::Black).bg(theme::IDLE)
-        }
+            style::Badge::Idle
+        };
+        style::badge(label, kind)
     };
 
     let x_cancel = btn_x0;
     let x_edit = x_cancel + ELF_BTN_CANCEL.len() as u16 + GAP;
     let x_discard = x_edit + ELF_BTN_EDIT.len() as u16 + GAP;
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(theme::PAUSED))
-        .title(Span::styled(
-            " ELF Binary ",
-            Style::default().fg(theme::PAUSED).bold(),
-        ));
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(
+            theme::PAUSED,
+            Span::styled(" ELF Binary ", style::warning().bold()),
+        ),
+    );
 
     let lines = vec![
         Line::raw(""),
@@ -365,21 +391,20 @@ fn render_elf_prompt(f: &mut Frame, area: Rect, app: &App) {
         Line::raw(""),
         Line::from(vec![
             Span::raw(" ".repeat(inner_w.saturating_sub(total_btns) as usize / 2)),
-            Span::styled(ELF_BTN_CANCEL, btn_style(ELF_BTN_CANCEL, x_cancel)),
+            btn(ELF_BTN_CANCEL, x_cancel),
             Span::raw("  "),
-            Span::styled(ELF_BTN_EDIT, btn_style(ELF_BTN_EDIT, x_edit)),
+            btn(ELF_BTN_EDIT, x_edit),
             Span::raw("  "),
-            Span::styled(ELF_BTN_DISCARD, btn_style(ELF_BTN_DISCARD, x_discard)),
+            btn(ELF_BTN_DISCARD, x_discard),
         ]),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("  Esc", Style::default().fg(theme::LABEL)),
-            Span::styled(" = Cancel", Style::default().fg(theme::LABEL)),
+            Span::styled("  Esc", style::label()),
+            Span::styled(" = Cancel", style::label()),
         ]),
     ];
 
-    let para = Paragraph::new(lines).block(block);
-    f.render_widget(para, popup);
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 // ── Help popup ───────────────────────────────────────────────────────────────
@@ -391,8 +416,6 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
     let page = app.help_page.min(total.saturating_sub(1));
     let content = &pages[page];
 
-    f.render_widget(Clear, popup);
-
     let tab_label = app.tab.label();
     let title = if total > 1 {
         format!("Help — {tab_label}  [{}/{total}]", page + 1)
@@ -400,16 +423,14 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
         format!("Help — {tab_label}")
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::ACCENT))
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(
+            theme::ACCENT,
+            Span::styled(title, Style::default().fg(theme::ACCENT).bold()),
+        ),
+    );
 
     let mut lines: Vec<Line<'static>> = content
         .iter()
@@ -422,7 +443,7 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
                         format!("{key:<18}"),
                         Style::default().fg(theme::LABEL_Y).bold(),
                     ),
-                    Span::styled(desc.to_string(), Style::default().fg(theme::TEXT)),
+                    Span::styled(desc.to_string(), style::value()),
                 ])
             }
         })
@@ -431,19 +452,16 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
     if total > 1 {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("← → ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                format!("page {}/{total}   ", page + 1),
-                Style::default().fg(theme::LABEL),
-            ),
-            Span::styled("Esc", Style::default().fg(theme::LABEL)),
-            Span::styled(" close", Style::default().fg(theme::LABEL)),
+            Span::styled("← → ", style::label()),
+            Span::styled(format!("page {}/{total}   ", page + 1), style::label()),
+            Span::styled("Esc", style::label()),
+            Span::styled(" close", style::label()),
         ]));
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("Esc", Style::default().fg(theme::LABEL)),
-            Span::styled(" close", Style::default().fg(theme::LABEL)),
+            Span::styled("Esc", style::label()),
+            Span::styled(" close", style::label()),
         ]));
     }
 
@@ -451,14 +469,7 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
 }
 
 pub(crate) fn help_button_area(area: Rect) -> Rect {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let chunks = layout::app_frame_chunks(area);
     let tab_row = chunks[0];
     Rect::new(
         tab_row.x + tab_row.width.saturating_sub(HELP_BTN_W),
@@ -703,12 +714,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
 }
 
 fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
-    Rect::new(
-        r.x + (r.width.saturating_sub(width)) / 2,
-        r.y + (r.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    )
+    layout::centered_rect(width, height, r)
 }
 
 pub(crate) fn best_popup_rect(target: Rect, pw: u16, ph: u16, term: Rect) -> Rect {

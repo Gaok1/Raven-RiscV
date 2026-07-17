@@ -2,12 +2,14 @@ use ratatui::{
     Frame,
     prelude::*,
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    widgets::Paragraph,
 };
 
 use super::get_steps;
 use crate::ui::app::{App, DocsLang};
 use crate::ui::theme;
+use crate::ui::view::components::overlay::{self, OverlayStyle};
+use crate::ui::view::components::panel::{self, PanelKind};
 
 pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     let steps = get_steps(app.tutorial.tab);
@@ -24,10 +26,7 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     let target = (step.target)(term, app);
     if let Some(t) = target {
         if t.height > 3 {
-            let highlight = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Yellow));
+            let highlight = panel::panel_frame(PanelKind::Custom(Color::Yellow));
             f.render_widget(highlight, t);
         }
     }
@@ -48,20 +47,15 @@ pub fn render_tutorial_overlay(f: &mut Frame, term: Rect, app: &App) {
     // Position popup
     let popup_rect = tutorial_popup_rect(target, popup_w, popup_h, term);
 
-    f.render_widget(Clear, popup_rect);
-
     let title_str = format!(" ▶ {} ", title);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Yellow))
-        .title(Span::styled(
-            title_str,
-            Style::default().fg(Color::Yellow).bold(),
-        ));
-
-    let inner = block.inner(popup_rect);
-    f.render_widget(block, popup_rect);
+    let inner = overlay::overlay(
+        f,
+        popup_rect,
+        OverlayStyle::new(
+            Color::Yellow,
+            Span::styled(title_str, Style::default().fg(Color::Yellow).bold()),
+        ),
+    );
 
     // Body text
     let body_area = Rect {

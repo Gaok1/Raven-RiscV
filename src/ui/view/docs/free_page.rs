@@ -2,6 +2,7 @@ use super::chrome::{render_page_tabs, render_tab_hint, separator_line};
 use super::content::{fcache_ref, memory_map, syscalls};
 use crate::ui::app::{DocsLang, DocsPage};
 use crate::ui::view::App;
+use crate::ui::view::components::visible_window;
 use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, Wrap};
 
@@ -30,9 +31,7 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App, lines: Vec<Line<'stat
     }
 
     let viewport_h = content_area.height as usize;
-    let max_start = lines.len().saturating_sub(viewport_h);
-    let start = app.docs.scroll.min(max_start);
-    let end = (start + viewport_h).min(lines.len());
+    let (start, end) = visible_window(lines.len(), viewport_h, app.docs.scroll);
     f.render_widget(
         Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
         content_area,

@@ -7,6 +7,7 @@ use crate::ui::app::App;
 use crate::ui::pipeline::PipelineSubtab;
 use crate::ui::theme;
 use crate::ui::view::components::{SpanRow, dense_action, dense_value};
+use crate::ui::view::style;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -37,11 +38,11 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
             Line::raw(""),
             Line::from(Span::styled(
                 "  No program loaded.",
-                Style::default().fg(theme::PAUSED).bold(),
+                style::warning().bold(),
             )),
             Line::from(Span::styled(
                 "  Compile in the Editor tab to load one.",
-                Style::default().fg(theme::LABEL),
+                style::label(),
             )),
         ]);
         f.render_widget(p, layout[1]);

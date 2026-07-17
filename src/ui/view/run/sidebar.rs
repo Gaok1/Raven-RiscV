@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Cell, List, ListItem, Paragraph, Row, Table};
 
 use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
@@ -8,6 +8,8 @@ use super::{App, MemRegion};
 use crate::falcon::machine::types::{RegId, RegTarget};
 use crate::ui::app::RunEditTarget;
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 /// The cursor-suffixed edit buffer to paint in a cell, when it is the target of
 /// the open inline editor. `None` means render the cell's value normally.
@@ -74,15 +76,11 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         String::new()
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title(if app.run.show_dyn {
-            format!("Registers [Dyn]{cursor_info}")
-        } else {
-            format!("Registers  [P]=pin  [Tab]=float{cursor_info}")
-        });
+    let block = panel::panel_frame(PanelKind::Plain).title(if app.run.show_dyn {
+        format!("Registers [Dyn]{cursor_info}")
+    } else {
+        format!("Registers  [P]=pin  [Tab]=float{cursor_info}")
+    });
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
     let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]).block(block);
@@ -105,7 +103,7 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         let pin_label = format!("◉ {label}");
         let base = age_style(age).add_modifier(Modifier::BOLD);
         let style = if is_hover {
-            base.bg(Color::Rgb(60, 80, 60))
+            base.bg(theme::PIN_HOVER_BG)
         } else {
             base
         };
@@ -154,9 +152,9 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         let full_label = format!("{marker}{label}");
         let base_style = age_style(age);
         let row_style = if is_cursor {
-            base_style.bg(Color::Rgb(50, 50, 80))
+            base_style.bg(theme::SEL_ROW_BG)
         } else if is_hover {
-            base_style.bg(Color::Rgb(40, 60, 40))
+            base_style.bg(theme::HOVER_ROW_BG)
         } else {
             base_style
         };
@@ -242,11 +240,7 @@ fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
 // ── Float register table (RV32F) ──────────────────────────────────────────────
 
 fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title("Float Regs (f0–f31)  [Tab]=int regs");
+    let block = panel::panel_frame(PanelKind::Plain).title("Float Regs (f0–f31)  [Tab]=int regs");
     let inner = block.inner(area);
 
     let visible = inner.height.saturating_sub(2) as usize;
@@ -358,10 +352,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let parsed = u32::from_str_radix(q.trim_start_matches("0x").trim_start_matches("0X"), 16).ok();
 
     let valid_span = if let Some(addr) = parsed {
-        Span::styled(
-            format!("  →  0x{addr:08X}"),
-            Style::default().fg(theme::RUNNING).bg(bg),
-        )
+        Span::styled(format!("  →  0x{addr:08X}"), style::success().bg(bg))
     } else if !q.is_empty() {
         Span::styled("  ✗", Style::default().fg(Color::Red).bg(bg))
     } else {
@@ -375,10 +366,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         valid_span,
-        Span::styled(
-            "  Ctrl+v=paste  Esc=close  Enter=ok",
-            Style::default().fg(theme::IDLE).bg(bg),
-        ),
+        Span::styled("  Ctrl+v=paste  Esc=close  Enter=ok", style::idle().bg(bg)),
     ]);
 
     f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
@@ -397,18 +385,14 @@ fn memory_block(app: &App) -> Block<'static> {
     let section = memory_title_section(app, base_addr);
     let accent = memory_accent_color(app, section);
     let title = Line::from(vec![
-        Span::styled("Memory", Style::default().fg(theme::TEXT).bold()),
+        Span::styled("Memory", style::value().bold()),
         Span::styled(
             format!("  0x{base_addr:08x}"),
             Style::default().fg(accent).bold(),
         ),
         Span::styled(format!(" [{}]", section), Style::default().fg(accent)),
     ]);
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent))
-        .border_type(BorderType::Rounded)
-        .title(title)
+    panel::panel_frame(PanelKind::Custom(accent)).title(title)
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -569,7 +553,7 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let marker: Option<ratatui::text::Span<'static>> = if is_sp {
         Some(ratatui::text::Span::styled(
             "\u{25b6}SP ".to_string(),
-            Style::default().fg(theme::PAUSED).bold(),
+            style::warning().bold(),
         ))
     } else if is_hb {
         Some(ratatui::text::Span::styled(
@@ -744,13 +728,11 @@ fn elf_sections_height(app: &App) -> u16 {
 }
 
 fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title("ELF Sections");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel_frame(PanelKind::Plain).title("ELF Sections"),
+    );
 
     let mut items: Vec<ListItem<'static>> = Vec::new();
     for sec in &app.run.elf_sections {
@@ -776,7 +758,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
             }
             items.push(
                 ListItem::new(format!("  0x{:08x}: (zeroed, {} B)", sec.addr, sec.size))
-                    .style(Style::default().fg(theme::LABEL)),
+                    .style(style::label()),
             );
         } else {
             let chunks = sec.bytes.chunks(4).take(MAX_LINES_PER_SECTION);
@@ -799,7 +781,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
                 let hint = type_hint(chunk);
                 items.push(
                     ListItem::new(format!("  0x{addr:08x}: {hex:<11} │ {hint}"))
-                        .style(Style::default().fg(theme::TEXT)),
+                        .style(style::value()),
                 );
             }
             if sec.bytes.len() / 4 > MAX_LINES_PER_SECTION {
@@ -808,7 +790,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
                         "  … {} more bytes",
                         sec.bytes.len() - MAX_LINES_PER_SECTION * 4
                     ))
-                    .style(Style::default().fg(theme::LABEL)),
+                    .style(style::label()),
                 );
             }
         }

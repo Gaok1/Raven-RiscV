@@ -1,8 +1,10 @@
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind};
+use crate::ui::view::style;
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Paragraph},
 };
 use std::time::Instant;
 
@@ -114,7 +116,7 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64, mem_si
     if status_y < area.height {
         let status_x = area.width.saturating_sub(status.len() as u16) / 2;
         f.render_widget(
-            Paragraph::new(Span::styled(status, Style::default().fg(theme::LABEL))),
+            Paragraph::new(Span::styled(status, style::label())),
             Rect::new(status_x, status_y, status.len() as u16, 1),
         );
     }
@@ -134,13 +136,11 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64, mem_si
             .bg(theme::BG_PANEL)
             .add_modifier(Modifier::BOLD)
     };
-    let prompt_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if pulse_on {
-            theme::ACTIVE
-        } else {
-            theme::BORDER_HOV
-        }));
+    let prompt_block = panel::panel_frame(PanelKind::Custom(if pulse_on {
+        theme::ACTIVE
+    } else {
+        theme::BORDER_HOV
+    }));
     if prompt_y + 2 < area.height {
         f.render_widget(
             Paragraph::new("   ENTER TO START   ")
@@ -156,7 +156,7 @@ pub fn render_splash(f: &mut Frame, started: Instant, duration_secs: f64, mem_si
     if hint_y < area.height {
         let hint_x = area.width.saturating_sub(hint.len() as u16) / 2;
         f.render_widget(
-            Paragraph::new(Span::styled(hint, Style::default().fg(theme::IDLE))),
+            Paragraph::new(Span::styled(hint, style::idle())),
             Rect::new(hint_x, hint_y, hint.len() as u16, 1),
         );
     }
@@ -249,9 +249,9 @@ fn style_inside(c: char, row: usize, inner_col: usize, anim: &AnimState) -> Styl
                 .fg(theme::RUNNING)
                 .add_modifier(Modifier::BOLD)
         } else if stage_idx <= anim.stage_gate {
-            Style::default().fg(theme::RUNNING)
+            style::success()
         } else {
-            Style::default().fg(theme::IDLE)
+            style::idle()
         };
         return style;
     }
