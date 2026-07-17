@@ -1,20 +1,19 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
+use super::panel::{self, PanelKind};
 use crate::ui::app::App;
-use crate::ui::theme;
+use crate::ui::view::style;
 
 const CLEAR_LABEL: &str = "x clear";
 const CLEAR_WIDTH: u16 = 7;
 
 fn clear_style(hovered: bool) -> Style {
     if hovered {
-        Style::default()
-            .fg(theme::DANGER)
-            .add_modifier(Modifier::BOLD | Modifier::ITALIC)
+        style::danger().add_modifier(Modifier::BOLD | Modifier::ITALIC)
     } else {
-        Style::default().fg(theme::LABEL)
+        style::label()
     }
 }
 
@@ -22,14 +21,11 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
     // Collapsed bar: keep a visible one-line bar with an upward arrow and [CLR]
     if area.height <= 1 {
         // Draw a top border line as a handle bar
-        let bar =
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(if app.run.hover_console_bar {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                });
+        let bar = panel::handle_bar(if app.run.hover_console_bar {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        });
         f.render_widget(bar, area);
 
         // Up arrow in the middle to suggest expanding upwards
@@ -50,10 +46,10 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let border_style = if app.run.hover_console_bar {
-        Style::default().fg(Color::Yellow)
+    let border = if app.run.hover_console_bar {
+        Color::Yellow
     } else {
-        Style::default().fg(Color::DarkGray)
+        Color::DarkGray
     };
     // Title with optional waiting flag
     let mut title_spans: Vec<Span> = vec![Span::raw("Console - Ctrl+Up/Down scroll")];
@@ -66,11 +62,7 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .title(Line::from(title_spans))
-        .border_style(border_style);
+    let block = panel::panel_frame(PanelKind::Custom(border)).title(Line::from(title_spans));
 
     let inner = block.inner(area);
     let h = inner.height.saturating_sub(1) as usize;

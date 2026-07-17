@@ -1,18 +1,15 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::{App, FormatMode, MemRegion, RunButton};
 use crate::ui::theme;
-use crate::ui::view::components::Toolbar;
+use crate::ui::view::components::panel::{self, PanelKind};
+use crate::ui::view::components::{ControlState, Toolbar};
+use crate::ui::view::style::{self, Metric};
 
 pub(crate) fn render_run_status(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title("Run Controls");
-
+    let block = panel::panel_frame(PanelKind::Plain).title("Run Controls");
     let para = Paragraph::new(status_lines(app)).block(block);
     f.render_widget(para, area);
 }
@@ -85,19 +82,13 @@ fn cycle_line(app: &App) -> Line<'static> {
             Style::default().fg(theme::ACCENT),
         ),
         Span::raw("  "),
-        Span::styled(
-            format!("Cycles:{total}"),
-            Style::default().fg(theme::METRIC_CYC),
-        ),
+        style::metric_span("Cycles:", total, Metric::Cycles),
         Span::raw("  "),
-        Span::styled(
-            format!("CPI:{cpi:.2}"),
-            Style::default().fg(theme::METRIC_CPI),
-        ),
+        style::metric_span("CPI:", format!("{cpi:.2}"), Metric::Cpi),
         Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
+        Span::styled(format!("Instrs:{instr}"), style::label()),
         Span::raw("  "),
-        Span::styled(scope_label, Style::default().fg(theme::LABEL)),
+        Span::styled(scope_label, style::label()),
     ])
 }
 
@@ -115,114 +106,92 @@ pub(crate) fn build_run_toolbar(app: &App) -> Toolbar<RunButton> {
     let signed = sign_enabled(app);
 
     let mut bar = Toolbar::new();
-    bar.pair(
+    bar.toggle(
         RunButton::Core,
         "core",
         &format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1)),
-        multi_core && hov(RunButton::Core),
-        multi_core,
-        multi_core,
+        ControlState::chip(multi_core, hov(RunButton::Core)).disabled_if(!multi_core),
         theme::TEXT,
     )
-    .pair(
+    .toggle(
         RunButton::View,
         "view",
         view_text(app),
-        hov(RunButton::View),
-        view_active(app),
-        true,
+        ControlState::chip(view_active(app), hov(RunButton::View)),
         theme::TEXT,
     );
 
     if app.console.screen.is_some() {
-        bar.pair(
+        bar.toggle(
             RunButton::Screen,
             "screen",
             if app.run.show_screen { "on" } else { "off" },
-            hov(RunButton::Screen),
-            app.run.show_screen,
-            true,
+            ControlState::chip(app.run.show_screen, hov(RunButton::Screen)),
             theme::TEXT,
         );
     }
 
     if app.run_sidebar_shows_memory() {
-        bar.pair(
+        bar.toggle(
             RunButton::Region,
             "region",
             region_text(app),
-            hov(RunButton::Region),
-            true,
-            true,
+            ControlState::chip(true, hov(RunButton::Region)),
             theme::TEXT,
         );
     }
 
-    bar.pair(
+    bar.toggle(
         RunButton::Format,
         "fmt",
         format_text(app),
-        hov(RunButton::Format),
-        true,
-        true,
+        ControlState::chip(true, hov(RunButton::Format)),
         theme::TEXT,
     )
-    .pair(
+    .toggle(
         RunButton::Sign,
         "sign",
         sign_text(app),
-        signed && hov(RunButton::Sign),
-        signed,
-        signed,
+        ControlState::chip(signed, hov(RunButton::Sign)).disabled_if(!signed),
         theme::TEXT,
     );
 
     if app.run_sidebar_shows_memory() {
-        bar.pair(
+        bar.toggle(
             RunButton::Bytes,
             "bytes",
             bytes_text(app),
-            hov(RunButton::Bytes),
-            true,
-            true,
+            ControlState::chip(true, hov(RunButton::Bytes)),
             theme::TEXT,
         );
     }
 
-    bar.pair(
+    bar.toggle(
         RunButton::Speed,
         "speed",
         speed_text(app),
-        hov(RunButton::Speed),
-        true,
-        true,
+        ControlState::chip(true, hov(RunButton::Speed)),
         theme::TEXT,
     )
-    .pair(
+    .toggle(
         RunButton::State,
         "state",
         &state_text(app),
-        hov(RunButton::State),
-        true,
-        true,
+        ControlState::chip(true, hov(RunButton::State)),
         state_color(app),
     )
-    .pair(
+    .toggle(
         RunButton::ExecCount,
         "count",
         if app.run.show_exec_count { "on" } else { "off" },
-        hov(RunButton::ExecCount),
-        app.run.show_exec_count,
-        true,
+        ControlState::chip(app.run.show_exec_count, hov(RunButton::ExecCount)),
         theme::TEXT,
     )
-    .pair(
+    .toggle(
         RunButton::InstrType,
         "type",
         if app.run.show_instr_type { "on" } else { "off" },
-        hov(RunButton::InstrType),
-        app.run.show_instr_type,
-        true,
+        ControlState::chip(app.run.show_instr_type, hov(RunButton::InstrType)),
         theme::TEXT,
     );
 
@@ -230,15 +199,13 @@ pub(crate) fn build_run_toolbar(app: &App) -> Toolbar<RunButton> {
     bar.action(
         RunButton::Stepback,
         "step-back",
-        can_stepback && hov(RunButton::Stepback),
-        can_stepback,
+        ControlState::chip(false, hov(RunButton::Stepback)).disabled_if(!can_stepback),
         theme::ACCENT,
     )
     .action(
         RunButton::Reset,
         "reset",
-        hov(RunButton::Reset),
-        true,
+        ControlState::chip(false, hov(RunButton::Reset)),
         theme::DANGER,
     );
 

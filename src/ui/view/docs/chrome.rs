@@ -1,6 +1,7 @@
 use crate::ui::app::DocsPage;
 use crate::ui::theme;
 use crate::ui::view::App;
+use crate::ui::view::style;
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 
@@ -92,11 +93,9 @@ pub(super) fn render_page_tabs(f: &mut Frame, area: Rect, app: &App) {
                 .fg(theme::ACTIVE)
                 .add_modifier(Modifier::BOLD)
         } else if app.docs.hover_page == Some(*page) {
-            Style::default()
-                .fg(theme::TEXT)
-                .add_modifier(Modifier::BOLD)
+            style::value().add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::LABEL)
+            style::label()
         };
         xs[i] = (cursor_x, cursor_x + label_w);
         cursor_x += label_w;
@@ -150,7 +149,7 @@ pub(super) fn render_tab_hint(
         1,
     );
     f.render_widget(
-        Paragraph::new(Span::styled(hint.into(), Style::default().fg(theme::LABEL))),
+        Paragraph::new(Span::styled(hint.into(), style::label())),
         hint_area,
     );
 }

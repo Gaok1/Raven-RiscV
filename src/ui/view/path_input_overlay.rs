@@ -1,9 +1,11 @@
 use ratatui::Frame;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::ui::app::{App, PathInputAction};
 use crate::ui::theme;
+use crate::ui::view::components::overlay::{self, OverlayStyle};
+use crate::ui::view::style;
 
 pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
     if !app.path_input.open {
@@ -31,19 +33,14 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
         popup_h,
     );
 
-    f.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::ACCENT))
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle::new(
+            theme::ACCENT,
+            Span::styled(title, Style::default().fg(theme::ACCENT).bold()),
+        ),
+    );
 
     // Split: 1 line for input, rest for completions
     let (input_area, comp_area) = if inner.height > 1 {
@@ -71,7 +68,7 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
     };
     let input_line = Line::from(vec![
         Span::styled("> ", Style::default().fg(theme::ACCENT).bold()),
-        Span::styled(display_q, Style::default().fg(theme::TEXT)),
+        Span::styled(display_q, style::value()),
     ]);
     f.render_widget(Paragraph::new(input_line), input_area);
 
@@ -106,7 +103,7 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
                 let style = if i == sel {
                     Style::default().fg(Color::Black).bg(theme::ACCENT)
                 } else {
-                    Style::default().fg(theme::LABEL)
+                    style::label()
                 };
                 // Show just the filename part, truncated to fit
                 let display = std::path::Path::new(c)

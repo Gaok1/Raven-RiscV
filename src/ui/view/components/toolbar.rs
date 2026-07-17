@@ -1,19 +1,22 @@
 //! A dense horizontal toolbar: a row of small labeled controls that is the
 //! **single source of truth** for both rendering and mouse hit-testing.
 //!
-//! The status bars used to compute their layout twice — once to emit the spans
-//! in the view, and again, by hand with parallel column arithmetic, to map a
-//! click column back to a button. The two drifted apart every time a control
+//! Status/subtab bars used to compute their layout twice — once to emit the
+//! spans in the view, and again, by hand with parallel column arithmetic, to map
+//! a click column back to a button. The two drifted apart every time a control
 //! was added or reordered. [`Toolbar`] closes that gap: build the row once from
 //! your button-id type, then ask it for [`spans`](Toolbar::spans) *or* for the
 //! control under a column ([`hit`](Toolbar::hit)). Both read the same per-cell
 //! geometry, so a new button appears in the view and becomes clickable from one
 //! edit.
 //!
+//! Every value is styled through [`controls::control_style`], so a hovered,
+//! selected or disabled control looks identical across every toolbar.
+//!
 //! ```ignore
 //! let mut bar = Toolbar::new();
-//! bar.pair(Btn::Fmt, "fmt", "hex", hovered, /*active*/ true, /*enabled*/ true, theme::TEXT)
-//!    .action(Btn::Reset, "reset", reset_hovered, /*enabled*/ true, theme::DANGER);
+//! bar.toggle(Btn::Fmt, "fmt", "hex", ControlState::chip(active, hovered), theme::ACCENT)
+//!    .action(Btn::Reset, "reset", ControlState::chip(false, reset_hov), theme::DANGER);
 //! let spans = bar.spans();            // view
 //! let hit   = bar.hit(col, origin);   // input
 //! ```
@@ -21,24 +24,21 @@
 use ratatui::prelude::*;
 
 use crate::ui::theme;
+use crate::ui::view::components::controls::{control_style, ControlState};
 
-/// Columns of blank space rendered between adjacent cells.
+/// Default columns of blank space rendered between adjacent cells.
 const GAP: u16 = 3;
 
-/// One control in a [`Toolbar`]: either a `label value` pair or a standalone
-/// action word. `start..end` are columns relative to the toolbar origin, filled
+/// One control in a [`Toolbar`]: an optional dim `label` plus a pre-styled
+/// `value` span. `start..end` are columns relative to the toolbar origin, filled
 /// in as the cell is pushed.
 struct Cell<Id> {
     id: Id,
-    /// `Some` for a `label value` pair, `None` for a bare action word.
+    /// `Some` for a `label value` pair, `None` for a bare value/action word.
     label: Option<String>,
-    value: String,
-    hovered: bool,
-    /// Drives the lit (vs dimmed) style when not hovered.
-    active: bool,
-    /// When `false` the cell renders dimmed and is transparent to clicks.
+    value: Span<'static>,
+    /// When `false` the cell is transparent to clicks (a `Disabled` control).
     enabled: bool,
-    color: Color,
     start: u16,
     end: u16,
 }
@@ -49,6 +49,8 @@ pub(crate) struct Toolbar<Id> {
     cells: Vec<Cell<Id>>,
     /// Running column where the next cell starts (relative to the origin).
     cursor: u16,
+    /// Blank columns rendered between adjacent cells.
+    gap: u16,
 }
 
 impl<Id: Copy> Default for Toolbar<Id> {
@@ -59,80 +61,93 @@ impl<Id: Copy> Default for Toolbar<Id> {
 
 impl<Id: Copy> Toolbar<Id> {
     pub(crate) fn new() -> Self {
+        Self::with_gap(GAP)
+    }
+
+    /// A toolbar with a custom inter-cell gap (the main tab bar uses 2).
+    pub(crate) fn with_gap(gap: u16) -> Self {
         Self {
             cells: Vec::new(),
             cursor: 0,
+            gap,
         }
     }
 
-    /// Append a `label value` control (e.g. `fmt hex`). The whole `label value`
-    /// span — label included — is hit-testable, matching how a user aims at the
-    /// word they read.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn pair(
+    /// A `label value` control (e.g. `fmt hex`): a dim `label`, a space, then the
+    /// `value` lit per `state`/`color`. The whole span — label included — is
+    /// hit-testable, matching how a user aims at the word they read.
+    pub(crate) fn toggle(
         &mut self,
         id: Id,
         label: &str,
         value: &str,
-        hovered: bool,
-        active: bool,
-        enabled: bool,
+        state: ControlState,
         color: Color,
     ) -> &mut Self {
-        self.push(
-            id,
-            Some(label.to_string()),
-            value.to_string(),
-            hovered,
-            active,
-            enabled,
-            color,
-        )
+        let span = Span::styled(value.to_string(), control_style(state, color, theme::IDLE));
+        self.span(id, Some(label), span, state != ControlState::Disabled)
     }
 
-    /// Append a standalone action word (e.g. `reset`). A disabled action renders
-    /// dimmed and is not clickable.
+    /// A value-only control with no label (subtab / scope word): dim when
+    /// `Normal`, `color` when `Selected`, bright `TEXT` when `Hovered`.
+    pub(crate) fn value(
+        &mut self,
+        id: Id,
+        text: &str,
+        state: ControlState,
+        color: Color,
+    ) -> &mut Self {
+        let span = Span::styled(text.to_string(), control_style(state, color, theme::IDLE));
+        self.span(id, None, span, state != ControlState::Disabled)
+    }
+
+    /// A standalone action word (e.g. `reset`, `apply`): always lit in `color`,
+    /// bright when hovered. There is no dim/inactive rendering — a `Normal` state
+    /// is treated as lit. A `Disabled` action renders dimmed and is not clickable.
     pub(crate) fn action(
         &mut self,
         id: Id,
         text: &str,
-        hovered: bool,
-        enabled: bool,
+        state: ControlState,
         color: Color,
     ) -> &mut Self {
-        // An action is lit whenever it is enabled (there is no separate on/off).
-        self.push(id, None, text.to_string(), hovered, enabled, enabled, color)
+        // Actions are lit whenever enabled, so collapse Normal → Selected.
+        let lit = match state {
+            ControlState::Disabled => ControlState::Disabled,
+            ControlState::Hovered => ControlState::Hovered,
+            _ => ControlState::Selected,
+        };
+        let span = Span::styled(text.to_string(), control_style(lit, color, theme::IDLE));
+        self.span(id, None, span, state != ControlState::Disabled)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn push(
+    /// The low-level escape hatch: push a pre-styled `value` span (e.g. an
+    /// editable field with its `█` cursor, or a `< enum >` selector built by
+    /// [`controls`](super::controls)). The toolbar only owns geometry and the
+    /// dim `label`; the caller owns the value's appearance.
+    pub(crate) fn span(
         &mut self,
         id: Id,
-        label: Option<String>,
-        value: String,
-        hovered: bool,
-        active: bool,
+        label: Option<&str>,
+        value: Span<'static>,
         enabled: bool,
-        color: Color,
     ) -> &mut Self {
         if !self.cells.is_empty() {
-            self.cursor += GAP;
+            self.cursor += self.gap;
         }
+        // label + one space + value, or just the value.
+        let label = label.map(str::to_string);
         let width = match &label {
-            // label + one space + value
-            Some(l) => l.chars().count() + 1 + value.chars().count(),
-            None => value.chars().count(),
-        } as u16;
+            Some(l) => l.chars().count() as u16 + 1 + value.width() as u16,
+            None => value.width() as u16,
+        };
         let start = self.cursor;
         self.cursor += width;
         self.cells.push(Cell {
             id,
             label,
             value,
-            hovered,
-            active,
             enabled,
-            color,
             start,
             end: self.cursor,
         });
@@ -144,18 +159,27 @@ impl<Id: Copy> Toolbar<Id> {
         let mut spans = Vec::with_capacity(self.cells.len() * 4);
         for (i, cell) in self.cells.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::raw(" ".repeat(GAP as usize)));
+                spans.push(Span::raw(" ".repeat(self.gap as usize)));
             }
             if let Some(label) = &cell.label {
-                spans.push(Span::styled(
-                    label.clone(),
-                    Style::default().fg(theme::IDLE),
-                ));
+                spans.push(Span::styled(label.clone(), Style::default().fg(theme::IDLE)));
                 spans.push(Span::raw(" "));
             }
-            spans.push(value_span(&cell.value, cell.hovered, cell.active, cell.color));
+            spans.push(cell.value.clone());
         }
         spans
+    }
+
+    /// Total rendered width in columns (handy to place a second bar or label
+    /// after this one on the same line).
+    pub(crate) fn width(&self) -> u16 {
+        self.cursor
+    }
+
+    /// Per-cell `(id, start, end)` columns relative to the origin — used to align
+    /// a second row under each cell (the tab bar's underline).
+    pub(crate) fn cells(&self) -> impl Iterator<Item = (Id, u16, u16)> + '_ {
+        self.cells.iter().map(|c| (c.id, c.start, c.end))
     }
 
     /// The control under `col`, where `origin` is the toolbar's first rendered
@@ -166,20 +190,4 @@ impl<Id: Copy> Toolbar<Id> {
             .find(|c| c.enabled && col >= origin + c.start && col < origin + c.end)
             .map(|c| c.id)
     }
-}
-
-/// Style a control value: bold-bright when hovered, lit in its colour when
-/// active, dim otherwise. Shared so a hovered/active control looks identical
-/// across every toolbar.
-fn value_span(text: &str, hovered: bool, active: bool, color: Color) -> Span<'static> {
-    let style = if hovered {
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD)
-    } else if active {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::IDLE)
-    };
-    Span::styled(text.to_string(), style)
 }

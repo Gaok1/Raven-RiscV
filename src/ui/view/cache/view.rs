@@ -14,9 +14,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{
-        Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    },
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use unicode_truncate::UnicodeTruncateStr;
 
@@ -27,6 +25,8 @@ use crate::ui::app::{
     App, CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope,
 };
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 const DIRTY_COLOR: Color = theme::DIRTY;
 fn addr_mode_hint(addr_mode: CacheAddrMode, cfgs: &[&CacheConfig]) -> String {
@@ -151,17 +151,17 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     let line = Line::from(vec![
         Span::raw(" "),
         Span::styled("V D", Style::default().fg(theme::LABEL_Y)),
-        Span::styled("=valid/dirty bits  ", Style::default().fg(theme::LABEL)),
+        Span::styled("=valid/dirty bits  ", style::label()),
         Span::styled(fmt_label, fmt_style),
         Span::raw(" "),
         Span::styled(group_label, group_style),
         Span::raw(" "),
         Span::styled(tag_label, tag_style),
-        Span::styled(addr_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(addr_hint, style::label()),
         Span::raw("  "),
-        Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(policy_hint, style::label()),
         Span::raw("  "),
-        Span::styled(scroll_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(scroll_hint, style::label()),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -214,17 +214,17 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
     let line = Line::from(vec![
         Span::raw(" "),
         Span::styled("V D", Style::default().fg(theme::LABEL_Y)),
-        Span::styled("=valid/dirty bits  ", Style::default().fg(theme::LABEL)),
+        Span::styled("=valid/dirty bits  ", style::label()),
         Span::styled(fmt_label, fmt_style),
         Span::raw(" "),
         Span::styled(group_label, group_style),
         Span::raw(" "),
         Span::styled(tag_label, tag_style),
-        Span::styled(addr_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(addr_hint, style::label()),
         Span::raw("  "),
-        Span::styled(policy_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(policy_hint, style::label()),
         Span::raw("  "),
-        Span::styled(scroll_hint, Style::default().fg(theme::LABEL)),
+        Span::styled(scroll_hint, style::label()),
     ]);
 
     f.render_widget(Paragraph::new(line), area);
@@ -250,7 +250,7 @@ fn legend_button_styles(app: &App) -> (Style, Style, Style, String, String, Stri
         Style::default().fg(theme::ACCENT)
     };
     let group_style = if is_float {
-        Style::default().fg(theme::IDLE)
+        style::idle()
     } else if matches!(app.cache.hover, Some(CacheHoverTarget::ViewGroup)) {
         Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
     } else {
@@ -394,22 +394,13 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         format!("{level_name}: disabled")
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(title, PanelKind::Accent));
 
     if !cfg.is_valid_config() {
         if inner.height > 0 {
             f.render_widget(
                 Paragraph::new("Cache disabled — configure it in the Settings tab")
-                    .style(Style::default().fg(theme::LABEL))
+                    .style(style::label())
                     .alignment(Alignment::Center),
                 inner,
             );
@@ -511,9 +502,9 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         let set = &sets_view[set_idx];
         let has_valid = set.lines.iter().any(|l| l.valid);
         let set_style = if has_valid {
-            Style::default().fg(theme::TEXT)
+            style::value()
         } else {
-            Style::default().fg(theme::LABEL)
+            style::label()
         };
         for sub_row in 0..row_height {
             if term_row >= rows_h {
@@ -622,22 +613,13 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         format!("{label}: disabled")
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            title,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(title, PanelKind::Accent));
 
     if !cfg.is_valid_config() {
         if inner.height > 0 {
             f.render_widget(
                 Paragraph::new("Cache disabled — configure it in the Settings tab")
-                    .style(Style::default().fg(theme::LABEL))
+                    .style(style::label())
                     .alignment(Alignment::Center),
                 inner,
             );
@@ -902,7 +884,7 @@ fn render_data(
     tint: Option<Color>,
 ) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let dim = Style::default().fg(theme::LABEL);
+    let dim = style::label();
     let g = if fmt == CacheDataFmt::Float {
         4
     } else {
@@ -978,9 +960,9 @@ fn render_data(
                 if is_zero {
                     dim
                 } else if neg {
-                    Style::default().fg(theme::DANGER)
+                    style::danger()
                 } else {
-                    Style::default().fg(theme::TEXT)
+                    style::value()
                 }
             },
             |c| Style::default().fg(c),
@@ -1016,13 +998,13 @@ fn build_cell(
     // ── Invalid line ─────────────────────────────────────────────────────────
     if !line.valid {
         if is_first_row {
-            spans.push(Span::styled("0", Style::default().fg(theme::LABEL)));
+            spans.push(Span::styled("0", style::label()));
             spans.push(Span::raw(" "));
-            spans.push(Span::styled("-", Style::default().fg(theme::LABEL)));
+            spans.push(Span::styled("-", style::label()));
             let rest = cell_width.saturating_sub(3);
             spans.push(Span::styled(
                 format!("{:<width$}", "  (empty)", width = rest),
-                Style::default().fg(theme::LABEL),
+                style::label(),
             ));
         } else {
             spans.push(Span::raw(" ".repeat(cell_width)));
@@ -1081,10 +1063,7 @@ fn build_cell(
     let is_dirty = is_dcache && line.dirty;
 
     // V bit
-    spans.push(Span::styled(
-        "1",
-        Style::default().fg(theme::RUNNING).bold(),
-    ));
+    spans.push(Span::styled("1", style::success().bold()));
     spans.push(Span::raw(" "));
 
     // D bit
@@ -1092,10 +1071,10 @@ fn build_cell(
         if is_dirty {
             spans.push(Span::styled("1", Style::default().fg(DIRTY_COLOR).bold()));
         } else {
-            spans.push(Span::styled("0", Style::default().fg(theme::LABEL)));
+            spans.push(Span::styled("0", style::label()));
         }
     } else {
-        spans.push(Span::styled("-", Style::default().fg(theme::LABEL)));
+        spans.push(Span::styled("-", style::label()));
     }
     spans.push(Span::raw("  "));
 
@@ -1109,7 +1088,7 @@ fn build_cell(
     } else if is_mru {
         Style::default().fg(theme::ACCENT).bold()
     } else {
-        Style::default().fg(theme::TEXT)
+        style::value()
     };
     match addr_mode {
         CacheAddrMode::Base => {
@@ -1157,16 +1136,16 @@ fn build_cell(
         ReplacementPolicy::Lru => {
             // r:? when only one way is valid — rank is trivially 0 with no competition
             if valid_ways < 2 {
-                spans.push(Span::styled("r:?", Style::default().fg(theme::IDLE)));
+                spans.push(Span::styled("r:?", style::idle()));
             } else {
                 let rank = set.lru_order.iter().position(|&w| w == way).unwrap_or(0);
                 let n = set.lru_order.len();
                 let style = if rank == 0 {
                     Style::default().fg(theme::ACCENT) // MRU = safest
                 } else if rank + 1 == n {
-                    Style::default().fg(theme::DANGER).bold() // LRU = evicted next
+                    style::danger().bold() // LRU = evicted next
                 } else {
-                    Style::default().fg(theme::LABEL)
+                    style::label()
                 };
                 spans.push(Span::styled(format!("r:{rank}"), style));
             }
@@ -1177,14 +1156,14 @@ fn build_cell(
             // MRU evicts the most recently used → rank 0 is the DANGER zone
             // r:? when only one way is valid — no competition yet
             if valid_ways < 2 {
-                spans.push(Span::styled("r:?", Style::default().fg(theme::IDLE)));
+                spans.push(Span::styled("r:?", style::idle()));
             } else {
                 let style = if rank == 0 {
-                    Style::default().fg(theme::DANGER).bold() // MRU = evicted next!
+                    style::danger().bold() // MRU = evicted next!
                 } else if rank + 1 == n {
                     Style::default().fg(theme::ACCENT) // LRU = safest for MRU
                 } else {
-                    Style::default().fg(theme::LABEL)
+                    style::label()
                 };
                 spans.push(Span::styled(format!("r:{rank}"), style));
             }
@@ -1195,9 +1174,9 @@ fn build_cell(
             let style = if pos == 0 {
                 Style::default().fg(theme::ACCENT) // newest
             } else if pos + 1 == n {
-                Style::default().fg(theme::DANGER).bold() // oldest = evicted next
+                style::danger().bold() // oldest = evicted next
             } else {
-                Style::default().fg(theme::LABEL)
+                style::label()
             };
             spans.push(Span::styled(format!("r:{pos}"), style));
         }
@@ -1211,7 +1190,7 @@ fn build_cell(
                 .min()
                 .unwrap_or(0);
             let style = if freq == min_freq {
-                Style::default().fg(theme::DANGER).bold()
+                style::danger().bold()
             } else {
                 Style::default().fg(theme::DIRTY)
             };
@@ -1229,14 +1208,14 @@ fn build_cell(
             let is_hand = (set.clock_hand % n) == way;
             let (icon, style) = match (is_hand, line.ref_bit) {
                 (true, true) => (">R", Style::default().fg(theme::LABEL_Y).bold()),
-                (true, false) => ("> ", Style::default().fg(theme::DANGER).bold()),
+                (true, false) => ("> ", style::danger().bold()),
                 (false, true) => (" R", Style::default().fg(theme::LABEL_Y)),
-                (false, false) => ("  ", Style::default().fg(theme::LABEL)),
+                (false, false) => ("  ", style::label()),
             };
             spans.push(Span::styled(icon, style));
         }
         ReplacementPolicy::Random => {
-            spans.push(Span::styled("??", Style::default().fg(theme::LABEL)));
+            spans.push(Span::styled("??", style::label()));
         }
     }
 

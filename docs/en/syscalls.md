@@ -26,10 +26,10 @@ a0  = return value  (negative value = -errno as u32)
             │  heap_ptr →                  │    (e.g. store heap_ptr in a .data label)
             │                              │
             ├  ─  ─  ─  ─  ─  ─  ─  ─  ─ ┤
-            │  stack  (grows ↓)            │  ← sp = 0x00020000 (one past end of RAM)
+            │  stack  (grows ↓)            │  ← sp = RAM_SIZE (one past configured RAM)
             │                              │    push:  addi sp, sp, -4 / sw rs, 0(sp)
 0x0001FFFF  └──────────────────────────────┘    pop:   lw rd, 0(sp)  / addi sp, sp, 4
-            sp (0x00020000) — first push → sp = 0x0001FFFC
+            sp (RAM_SIZE) - first push -> sp = RAM_SIZE - 4
 ```
 
 ### Key addresses
@@ -39,13 +39,11 @@ a0  = return value  (negative value = -errno as u32)
 | `base_pc`   | `0x00000000` | Start of `.text` (configurable in Run tab) |
 | `data_base` | `0x00001000` | Start of `.data` / `.bss`               |
 | `bss_end`   | dynamic      | First byte after `.bss` (end of static data) |
-| `sp` initial | `0x00020000` | One past end of RAM (RISC-V ABI convention); first `push` writes to `0x0001FFFC` |
+| `sp` initial | `RAM_SIZE` | One past the configured RAM size (default `0x01000000`, 16 MiB); first `push` writes to `RAM_SIZE - 4` |
 
 ### Manual heap — bump allocator pattern
 
-RAVEN has **no `malloc`/`free`**. The free region between `bss_end` and the
-stack bottom is plain RAM. To allocate dynamically, keep a pointer in `.data`
-and advance it manually:
+At the raw assembly/syscall level, RAVEN has **no built-in `malloc`/`free` function**. The free region between `bss_end` and the stack bottom is plain RAM. For a tiny manual allocator, keep a pointer in `.data` and advance it yourself. If you want simulator-managed heap growth instead, use `brk` (214) or anonymous `mmap` (222) below.
 
 ```asm
 .data
@@ -236,6 +234,20 @@ Returns simulated user/group ID (always `0`).
 
 ---
 
+### `brk` — syscall 214
+
+Query or extend the program break, the top of the simulator-managed heap. This
+is the primitive used to build `sbrk`/`malloc`-style allocators; it is **not** a
+`malloc` syscall by itself.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `214` |
+| `a0`     | new break address, or `0` to query |
+| **`a0` (ret)** | current/new break; unchanged old break if the request exceeds RAM |
+
+---
+
 ### `mmap` — syscall 222
 
 Allocate a block of anonymous memory from the heap.
@@ -252,7 +264,7 @@ Allocate a block of anonymous memory from the heap.
 | **`a0` (ret)** | allocated pointer, or `-EINVAL` / `-ENOMEM` |
 
 **Restrictions:** only anonymous mappings (`MAP_ANONYMOUS=0x20`, `fd=-1`) are supported.
-Memory is allocated from the heap (same region as `brk`). `munmap` is a no-op.
+Memory is allocated from the same simulator-managed heap used by `brk`; internally it advances the heap break by the requested length rounded up to 4 bytes. `munmap` is a no-op.
 
 ```asm
     li   a0, 0          ; hint = 0
@@ -888,6 +900,7 @@ Num   Name             a0          a1          a2          ret
 172   getpid           —           —           —           1
 174   getuid           —           —           —           0
 176   getgid           —           —           —           0
+214   brk              new_break   -           -           actual break / old
 215   munmap           addr        len         —           0 (nop)
 222   mmap             hint=0      len         prot        ptr / -err
 278   getrandom        buf addr    len         flags       len / -err

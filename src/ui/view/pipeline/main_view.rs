@@ -5,6 +5,7 @@ use crate::ui::pipeline::{
     gantt_max_scroll, gantt_view_rows, gantt_visible_rows, gantt_window_bounds,
 };
 use crate::ui::theme;
+use crate::ui::view::style;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -12,6 +13,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
@@ -154,8 +156,8 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App, fu_in_ex_title: bool) {
         let border_style = match slot {
             Some(s) if s.class == InstrClass::Unknown => Style::default().fg(Color::DarkGray),
             Some(s) if s.hazard.is_some() => Style::default().fg(s.hazard.unwrap().color()),
-            Some(s) if s.is_bubble => Style::default().fg(theme::PAUSED),
-            Some(s) if s.is_speculative => Style::default().fg(theme::PAUSED),
+            Some(s) if s.is_bubble => style::warning(),
+            Some(s) if s.is_speculative => style::warning(),
             Some(_) => Style::default().fg(theme::ACCENT),
             None => Style::default().fg(theme::BORDER),
         };
@@ -215,9 +217,7 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App, fu_in_ex_title: bool) {
                     Line::from(Span::styled(format!("0x{:04X}", s.pc), dim)),
                     Line::from(Span::styled(
                         "⊘ invalid",
-                        Style::default()
-                            .fg(theme::DANGER)
-                            .add_modifier(Modifier::DIM),
+                        style::danger().add_modifier(Modifier::DIM),
                     )),
                     Line::from(Span::styled(format!(".word 0x{:08x}", s.word), dim)),
                 ]
@@ -743,9 +743,7 @@ fn speculative_compact_badge(
     }
     Some((
         badge.to_string(),
-        Style::default()
-            .fg(theme::PAUSED)
-            .add_modifier(Modifier::BOLD),
+        style::warning().add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -784,11 +782,8 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
 
     if p.gantt.is_empty() {
         f.render_widget(
-            Paragraph::new("  — no history yet —").style(
-                Style::default()
-                    .fg(theme::LABEL)
-                    .add_modifier(Modifier::DIM),
-            ),
+            Paragraph::new("  — no history yet —")
+                .style(style::label().add_modifier(Modifier::DIM)),
             inner,
         );
         return;
@@ -814,9 +809,7 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     for c in start_cycle..end_cycle {
         header_spans.push(Span::styled(
             format!("{:>4}", c % 10000),
-            Style::default()
-                .fg(theme::LABEL)
-                .add_modifier(Modifier::DIM),
+            style::label().add_modifier(Modifier::DIM),
         ));
     }
 
@@ -851,7 +844,7 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM)
         } else {
-            Style::default().fg(theme::TEXT)
+            style::value()
         };
         let mut spans = vec![Span::styled(
             format!("{:<width$}", label, width = LABEL_W),
@@ -893,15 +886,15 @@ fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
         GanttCell::Empty => ("·", Style::default().fg(theme::BORDER)),
         GanttCell::InStage(Stage::IF) => ("IF", Style::default().fg(theme::ACCENT)),
         GanttCell::InStage(Stage::ID) => ("ID", Style::default().fg(theme::LABEL_Y)),
-        GanttCell::InStage(Stage::EX) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InStage(Stage::EX) => ("EX", style::success()),
         GanttCell::InStage(Stage::MEM) => ("MEM", Style::default().fg(theme::LABEL_Y)),
         GanttCell::InStage(Stage::WB) => ("WB", Style::default().fg(theme::ACCENT)),
-        GanttCell::InFu(FuKind::Alu) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Mul) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Div) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Fpu) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Lsu) => ("EX", Style::default().fg(theme::RUNNING)),
-        GanttCell::InFu(FuKind::Sys) => ("EX", Style::default().fg(theme::RUNNING)),
+        GanttCell::InFu(FuKind::Alu) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Mul) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Div) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Fpu) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Lsu) => ("EX", style::success()),
+        GanttCell::InFu(FuKind::Sys) => ("EX", style::success()),
         GanttCell::Speculative(Stage::IF) => ("IF", spec_style),
         GanttCell::Speculative(Stage::ID) => ("ID", spec_style),
         GanttCell::Speculative(Stage::EX) => ("EX", spec_style),
@@ -913,14 +906,9 @@ fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
         GanttCell::SpeculativeFu(FuKind::Fpu) => ("EX", spec_style),
         GanttCell::SpeculativeFu(FuKind::Lsu) => ("EX", spec_style),
         GanttCell::SpeculativeFu(FuKind::Sys) => ("EX", spec_style),
-        GanttCell::Stall => ("──", Style::default().fg(theme::PAUSED)),
-        GanttCell::Bubble => (
-            "NOP",
-            Style::default()
-                .fg(theme::PAUSED)
-                .add_modifier(Modifier::DIM),
-        ),
-        GanttCell::Flush => ("◀FL", Style::default().fg(theme::DANGER)),
+        GanttCell::Stall => ("──", style::warning()),
+        GanttCell::Bubble => ("NOP", style::warning().add_modifier(Modifier::DIM)),
+        GanttCell::Flush => ("◀FL", style::danger()),
     }
 }
 

@@ -2,7 +2,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
+    widgets::{List, ListItem, Paragraph},
 };
 
 use crate::falcon::cache::{
@@ -11,16 +11,78 @@ use crate::falcon::cache::{
 };
 use crate::ui::app::{App, CacheHoverTarget, ConfigField};
 use crate::ui::theme;
-use crate::ui::view::components::{dense_action, dense_value};
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::{ControlState, Toolbar, field_row};
+use crate::ui::view::style;
+
+/// A button in the cache config apply row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheApplyBtn {
+    Apply,
+    ApplyKeep,
+}
+
+/// The L1 preset row — `small medium large`. `icache` picks the hover target.
+/// Keyed by preset index. (Origin stored after the dim `presets ` label.)
+pub(crate) fn build_cache_preset_bar(app: &App, icache: bool) -> Toolbar<usize> {
+    let hovered = match app.cache.hover {
+        Some(CacheHoverTarget::PresetI(i)) if icache => Some(i),
+        Some(CacheHoverTarget::PresetD(i)) if !icache => Some(i),
+        _ => None,
+    };
+    let mut bar = Toolbar::with_gap(1);
+    for (i, lbl) in ["small", "medium", "large"].iter().enumerate() {
+        bar.action(i, lbl, ControlState::chip(false, hovered == Some(i)), theme::ACCENT);
+    }
+    bar
+}
+
+/// The unified (extra-level) preset row — `small Nkb  med Nkb  large Nkb`.
+/// Keyed by preset index; hover uses `PresetD`.
+pub(crate) fn build_cache_unified_preset_bar(app: &App) -> Toolbar<usize> {
+    let hovered = match app.cache.hover {
+        Some(CacheHoverTarget::PresetD(i)) => Some(i),
+        _ => None,
+    };
+    let presets = extra_level_presets();
+    let labels = [
+        format!("small {}kb", presets[0].size / 1024),
+        format!("med {}kb", presets[1].size / 1024),
+        format!("large {}kb", presets[2].size / 1024),
+    ];
+    let mut bar = Toolbar::with_gap(1);
+    for (i, lbl) in labels.iter().enumerate() {
+        bar.action(i, lbl, ControlState::chip(false, hovered == Some(i)), theme::ACCENT);
+    }
+    bar
+}
+
+/// The `apply + reset stats   apply keep history` row. Keyed by [`CacheApplyBtn`].
+pub(crate) fn build_cache_apply_bar(app: &App) -> Toolbar<CacheApplyBtn> {
+    let mut bar = Toolbar::new();
+    bar.action(
+        CacheApplyBtn::Apply,
+        "apply + reset stats",
+        ControlState::chip(false, matches!(app.cache.hover, Some(CacheHoverTarget::Apply))),
+        theme::RUNNING,
+    )
+    .action(
+        CacheApplyBtn::ApplyKeep,
+        "apply keep history",
+        ControlState::chip(false, matches!(app.cache.hover, Some(CacheHoverTarget::ApplyKeep))),
+        theme::ACCENT,
+    );
+    bar
+}
 
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     app.cache.config_hitboxes_i.set([(0, 0, 0); 11]);
     app.cache.config_hitboxes_d.set([(0, 0, 0); 11]);
     app.cache.config_hitboxes_u.set([(0, 0, 0); 11]);
-    app.cache.config_preset_btns_i.set([(0, 0, 0); 3]);
-    app.cache.config_preset_btns_d.set([(0, 0, 0); 3]);
-    app.cache.config_preset_btns_u.set([(0, 0, 0); 3]);
-    app.cache.config_apply_btns.set([(0, 0, 0); 2]);
+    app.cache.config_preset_origin_i.set((0, 0));
+    app.cache.config_preset_origin_d.set((0, 0));
+    app.cache.config_preset_origin_u.set((0, 0));
+    app.cache.config_apply_origin.set((0, 0));
     if app.cache.selected_level == 0 {
         // L1: two-column layout (I-Cache | D-Cache)
         let cols = Layout::default()
@@ -62,16 +124,7 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         _ => None,
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -130,16 +183,7 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
         _ => None,
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -211,51 +255,32 @@ fn render_fields(
     let size_ok = pending.size > 0 && validation.is_ok();
 
     let mark = |ok: bool| if ok { "" } else { " ✗" };
-    let value_color = |same: bool| if same { theme::TEXT } else { theme::LABEL_Y };
 
     let field_item =
         |field: ConfigField, label: &'static str, value: String, same: bool| -> ListItem<'static> {
-            let label_style = if active == Some(field) {
-                Style::default().fg(theme::ACCENT).bold()
-            } else if hovered == Some(field) {
-                Style::default().fg(theme::TEXT).bold()
-            } else {
-                Style::default().fg(theme::LABEL)
-            };
-            let item = if active == Some(field) {
-                if field.is_numeric() {
-                    let display = format!("{edit_buf}█");
-                    ListItem::new(Line::from(vec![
-                        Span::styled(label, label_style),
-                        dense_value(&display, false, true, theme::ACCENT),
-                    ]))
-                } else {
-                    ListItem::new(Line::from(vec![
-                        Span::styled(label, label_style),
-                        dense_value(&format!("< {value} >"), false, true, theme::ACCENT),
-                    ]))
-                }
-            } else {
-                ListItem::new(Line::from(vec![
-                    Span::styled(label, label_style),
-                    dense_value(&value, hovered == Some(field), true, value_color(same)),
-                ]))
-            };
-            item
+            field_row(
+                label,
+                &value,
+                active == Some(field),
+                field.is_numeric(),
+                edit_buf,
+                hovered == Some(field),
+                !same,
+            )
         };
 
     // Sets row: show computed value or the specific validation error
     let sets_item = match &validation {
         Ok(()) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", Style::default().fg(theme::LABEL)),
+            Span::styled("  Sets:          ", style::label()),
             Span::styled(
                 format!("{}", pending.num_sets()),
                 Style::default().fg(theme::BORDER),
             ),
         ])),
         Err(msg) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", Style::default().fg(theme::LABEL)),
-            Span::styled(format!("✗ {msg}"), Style::default().fg(theme::DANGER)),
+            Span::styled("  Sets:          ", style::label()),
+            Span::styled(format!("✗ {msg}"), style::danger()),
         ])),
     };
 
@@ -341,7 +366,7 @@ fn render_fields(
             } else {
                 "  Click/edit  ◄►=cycle  Ctrl+e=export  Ctrl+l=import"
             },
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ))),
     ];
 
@@ -349,136 +374,49 @@ fn render_fields(
 }
 
 fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
-    let hovered = match app.cache.hover {
-        Some(CacheHoverTarget::PresetI(i)) if icache => Some(i),
-        Some(CacheHoverTarget::PresetD(i)) if !icache => Some(i),
-        _ => None,
-    };
-
-    let small_s = preset_btn_style(hovered == Some(0));
-    let med_s = preset_btn_style(hovered == Some(1));
-    let large_s = preset_btn_style(hovered == Some(2));
-
-    let line = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("presets", Style::default().fg(theme::IDLE)),
-        Span::raw(" "),
-        Span::styled("small", small_s),
-        Span::raw(" "),
-        Span::styled("medium", med_s),
-        Span::raw(" "),
-        Span::styled("large", large_s),
-    ]);
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let btns = [
-        (inner.y, inner.x + 9, inner.x + 14),
-        (inner.y, inner.x + 15, inner.x + 21),
-        (inner.y, inner.x + 22, inner.x + 27),
-    ];
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
+    let origin = (inner.y, inner.x + 9);
     if icache {
-        app.cache.config_preset_btns_i.set(btns);
+        app.cache.config_preset_origin_i.set(origin);
     } else {
-        app.cache.config_preset_btns_d.set(btns);
+        app.cache.config_preset_origin_d.set(origin);
     }
-    f.render_widget(Paragraph::new(line), inner);
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::styled("presets", style::idle()),
+        Span::raw(" "),
+    ];
+    spans.extend(build_cache_preset_bar(app, icache).spans());
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usize) {
-    // PresetD is reused for unified presets
-    let hovered = match app.cache.hover {
-        Some(CacheHoverTarget::PresetD(i)) => Some(i),
-        _ => None,
-    };
-    let small_s = preset_btn_style(hovered == Some(0));
-    let med_s = preset_btn_style(hovered == Some(1));
-    let large_s = preset_btn_style(hovered == Some(2));
-
-    let presets = extra_level_presets();
-    let line = Line::from(vec![
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
+    app.cache.config_preset_origin_u.set((inner.y, inner.x + 9));
+    let mut spans = vec![
         Span::raw(" "),
-        Span::styled("presets", Style::default().fg(theme::IDLE)),
+        Span::styled("presets", style::idle()),
         Span::raw(" "),
-        Span::styled(format!("small {}kb", presets[0].size / 1024), small_s),
-        Span::raw(" "),
-        Span::styled(format!("med {}kb", presets[1].size / 1024), med_s),
-        Span::raw(" "),
-        Span::styled(format!("large {}kb", presets[2].size / 1024), large_s),
-    ]);
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let small_label = format!("small {}kb", presets[0].size / 1024);
-    let med_label = format!("med {}kb", presets[1].size / 1024);
-    let large_label = format!("large {}kb", presets[2].size / 1024);
-    let x0 = inner.x + 9;
-    app.cache.config_preset_btns_u.set([
-        (inner.y, x0, x0 + small_label.len() as u16),
-        (
-            inner.y,
-            x0 + small_label.len() as u16 + 1,
-            x0 + small_label.len() as u16 + 1 + med_label.len() as u16,
-        ),
-        (
-            inner.y,
-            x0 + small_label.len() as u16 + med_label.len() as u16 + 2,
-            x0 + small_label.len() as u16 + med_label.len() as u16 + 2 + large_label.len() as u16,
-        ),
-    ]);
-    f.render_widget(Paragraph::new(line), inner);
+    ];
+    spans.extend(build_cache_unified_preset_bar(app).spans());
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
+    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let line = if let Some(ref err) = app.cache.config_error {
-        Line::from(Span::styled(
-            format!(" ✗ {err}"),
-            Style::default().fg(theme::DANGER),
-        ))
+        app.cache.config_apply_origin.set((0, 0));
+        Line::from(Span::styled(format!(" ✗ {err}"), style::danger()))
     } else if let Some(ref status) = app.cache.config_status {
-        Line::from(Span::styled(
-            format!(" ✓ {status}"),
-            Style::default().fg(theme::RUNNING),
-        ))
+        app.cache.config_apply_origin.set((0, 0));
+        Line::from(Span::styled(format!(" ✓ {status}"), style::success()))
     } else {
-        Line::from(vec![
-            Span::raw(" "),
-            dense_action(
-                "apply + reset stats",
-                theme::RUNNING,
-                matches!(app.cache.hover, Some(CacheHoverTarget::Apply)),
-            ),
-            Span::raw("   "),
-            dense_action(
-                "apply keep history",
-                theme::ACCENT,
-                matches!(app.cache.hover, Some(CacheHoverTarget::ApplyKeep)),
-            ),
-        ])
+        app.cache.config_apply_origin.set((inner.y, inner.x + 1));
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(build_cache_apply_bar(app).spans());
+        Line::from(spans)
     };
-
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    app.cache.config_apply_btns.set([
-        (inner.y, inner.x + 1, inner.x + 20),
-        (inner.y, inner.x + 23, inner.x + 41),
-    ]);
     f.render_widget(Paragraph::new(line), inner);
-}
-
-fn preset_btn_style(hovered: bool) -> Style {
-    if hovered {
-        Style::default().fg(theme::TEXT).bold()
-    } else {
-        Style::default().fg(theme::ACCENT).bold()
-    }
 }
 
 pub fn replacement_label(r: ReplacementPolicy) -> &'static str {

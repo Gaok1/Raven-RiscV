@@ -2,13 +2,15 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{
-        Axis, Block, BorderType, Borders, Chart, Clear, Dataset, Gauge, GraphType, Paragraph,
-    },
+    widgets::{Axis, Chart, Dataset, Gauge, GraphType, Paragraph},
 };
 
 use crate::ui::app::{App, CacheScope};
 use crate::ui::theme;
+use crate::ui::view::components::overlay::{self, OverlayStyle};
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::vertical_scrollbar;
+use crate::ui::view::style;
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
 // Run Controls widget is rendered at the cache tab level (always visible).
@@ -97,27 +99,24 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 " Program total \u{2014} "
             },
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
         Span::styled(
             format!("Cycles: {total}"),
-            Style::default().fg(theme::METRIC_CYC),
+            style::metric(style::Metric::Cycles),
         ),
         Span::raw("  "),
         Span::styled(
             format!("Cycles/Instr: {cpi:.2}"),
-            Style::default().fg(theme::METRIC_CPI),
+            style::metric(style::Metric::Cpi),
         ),
         Span::raw("  "),
         Span::styled(
             format!("Instrs/Cycle: {ipc:.2}"),
-            Style::default().fg(theme::METRIC_IPC),
+            style::metric(style::Metric::Ipc),
         ),
         Span::raw("  "),
-        Span::styled(
-            format!("Instructions: {instr}"),
-            Style::default().fg(theme::LABEL),
-        ),
+        Span::styled(format!("Instructions: {instr}"), style::label()),
         Span::raw("  "),
         Span::styled(
             format!("I-Cache svc: {i_cyc}"),
@@ -188,16 +187,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         theme::DANGER
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -251,7 +241,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         stats.evictions
     );
     f.render_widget(
-        Paragraph::new(Span::styled(line3, Style::default().fg(theme::LABEL))),
+        Paragraph::new(Span::styled(line3, style::label())),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
     );
 
@@ -266,7 +256,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         fmt_bytes(stats.ram_write_bytes)
     );
     f.render_widget(
-        Paragraph::new(Span::styled(line4, Style::default().fg(theme::METRIC_CYC))),
+        Paragraph::new(Span::styled(line4, style::metric(style::Metric::Cycles))),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
 
@@ -278,7 +268,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     if !icache {
         let line5 = format!("CPU Stores:{}", fmt_bytes(stats.bytes_stored));
         f.render_widget(
-            Paragraph::new(Span::styled(line5, Style::default().fg(theme::LABEL))),
+            Paragraph::new(Span::styled(line5, style::label())),
             Rect::new(inner.x, inner.y + 4, inner.width, 1),
         );
     }
@@ -302,7 +292,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let line6 =
         format!("Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}");
     f.render_widget(
-        Paragraph::new(Span::styled(line6, Style::default().fg(theme::METRIC_CPI))),
+        Paragraph::new(Span::styled(line6, style::metric(style::Metric::Cpi))),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
 
@@ -315,7 +305,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
     let line7 = format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc");
     f.render_widget(
-        Paragraph::new(Span::styled(line7, Style::default().fg(theme::LABEL))),
+        Paragraph::new(Span::styled(line7, style::label())),
         Rect::new(inner.x, inner.y + 6, inner.width, 1),
     );
 
@@ -343,13 +333,7 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
     } else {
         " Snapshots (\u{2191}\u{2193} \u{b7} Enter=view \u{b7} D=delete) "
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(title, Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(title, PanelKind::Plain));
 
     if inner.height == 0 {
         return;
@@ -365,6 +349,10 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
     } else {
         0
     };
+
+    // Reserve a right column for the scrollbar when the list overflows.
+    let needs_sb = history.len() > visible;
+    let text_w = inner.width.saturating_sub(u16::from(needs_sb));
 
     for (i, snap) in history.iter().enumerate().skip(start).take(visible) {
         let row = (i - start) as u16;
@@ -412,24 +400,26 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         } else if is_selected {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
-            Style::default().fg(theme::TEXT)
+            style::value()
         };
 
         f.render_widget(
             Paragraph::new(Span::styled(text, style)),
-            Rect::new(inner.x, inner.y + row, inner.width, 1),
+            Rect::new(inner.x, inner.y + row, text_w, 1),
         );
+    }
+
+    if needs_sb {
+        vertical_scrollbar(f, inner, history.len(), visible, start);
     }
 }
 
 fn render_chart(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title("Hit Rate History (%)");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel_frame(PanelKind::Plain).title("Hit Rate History (%)"),
+    );
 
     if inner.height < 3 || inner.width < 10 {
         return;
@@ -441,7 +431,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
 
     if i_data.is_empty() && d_data.is_empty() {
         let msg = Paragraph::new("No data yet — run the program to collect cache statistics.")
-            .style(Style::default().fg(theme::LABEL))
+            .style(style::label())
             .alignment(Alignment::Center);
         f.render_widget(msg, inner);
         return;
@@ -534,16 +524,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         theme::DANGER
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            label,
-            Style::default().fg(theme::ACCENT).bold(),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
 
     if inner.height == 0 {
         return;
@@ -571,7 +552,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Hits: {hits}  Misses: {misses}  Miss Rate: {miss_rate:.1}%  Misses per 1K Instrs: {mpki:.1}"),
-            Style::default().fg(theme::TEXT),
+            style::value(),
         )),
         Rect::new(inner.x, inner.y + 1, inner.width, 1),
     );
@@ -590,7 +571,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
                 "Accesses: {total}  Evictions: {}  Writebacks: {}  Line Fills: {fills}",
                 stats.evictions, stats.writebacks
             ),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )),
         Rect::new(inner.x, inner.y + 2, inner.width, 1),
     );
@@ -605,7 +586,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
                 fmt_bytes(stats.bytes_loaded),
                 fmt_bytes(stats.ram_write_bytes)
             ),
-            Style::default().fg(theme::METRIC_CYC),
+            style::metric(style::Metric::Cycles),
         )),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
@@ -629,7 +610,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
             format!(
                 "Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}"
             ),
-            Style::default().fg(theme::METRIC_CPI),
+            style::metric(style::Metric::Cpi),
         )),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
@@ -642,7 +623,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc"),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )),
         Rect::new(inner.x, inner.y + 5, inner.width, 1),
     );
@@ -661,13 +642,11 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
 }
 
 fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title("Hit Rate History (%)");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel_frame(PanelKind::Plain).title("Hit Rate History (%)"),
+    );
 
     if inner.height < 3 || inner.width < 10 {
         return;
@@ -683,7 +662,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     if data.is_empty() {
         f.render_widget(
             Paragraph::new("No data yet — run the program to collect cache statistics.")
-                .style(Style::default().fg(theme::LABEL))
+                .style(style::label())
                 .alignment(Alignment::Center),
             inner,
         );
@@ -747,23 +726,18 @@ pub(in crate::ui::view) fn render_snapshot_popup(f: &mut Frame, area: Rect, app:
         pop_h.min(area.height),
     );
 
-    f.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::ACCENT))
-        .title(Span::styled(
-            format!(" Snapshot {} ", snap.label),
-            Style::default().fg(theme::ACCENT).bold(),
-        ))
-        .title_bottom(Span::styled(
-            " Esc=close ",
-            Style::default().fg(theme::LABEL),
-        ));
-
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
+    let inner = overlay::overlay(
+        f,
+        popup,
+        OverlayStyle {
+            border: theme::ACCENT,
+            title: Span::styled(
+                format!(" Snapshot {} ", snap.label),
+                Style::default().fg(theme::ACCENT).bold(),
+            ),
+            bottom: Some(Line::from(Span::styled(" Esc=close ", style::label()))),
+        },
+    );
 
     if inner.height == 0 || inner.width == 0 {
         return;
@@ -774,25 +748,25 @@ pub(in crate::ui::view) fn render_snapshot_popup(f: &mut Frame, area: Rect, app:
 
     // ── Program summary ───────────────────────────────────────────────────────
     lines.push(Line::from(vec![
-        Span::styled("Program  ", Style::default().fg(theme::LABEL)),
+        Span::styled("Program  ", style::label()),
         Span::styled(
             format!("Cycles: {}", snap.total_cycles),
-            Style::default().fg(theme::METRIC_CYC),
+            style::metric(style::Metric::Cycles),
         ),
         Span::raw("   "),
         Span::styled(
             format!("CPI: {:.2}", snap.cpi),
-            Style::default().fg(theme::METRIC_CPI),
+            style::metric(style::Metric::Cpi),
         ),
         Span::raw("   "),
         Span::styled(
             format!("IPC: {:.2}", snap.ipc),
-            Style::default().fg(theme::METRIC_IPC),
+            style::metric(style::Metric::Ipc),
         ),
         Span::raw("   "),
         Span::styled(
             format!("Instructions: {}", snap.instruction_count),
-            Style::default().fg(theme::LABEL),
+            style::label(),
         ),
     ]));
     lines.push(Line::raw(""));
@@ -827,17 +801,14 @@ pub(in crate::ui::view) fn render_snapshot_popup(f: &mut Frame, area: Rect, app:
                 Span::raw("   "),
                 Span::styled(
                     format!("Hits: {}  Misses: {}", lvl.hits, lvl.misses),
-                    Style::default().fg(theme::TEXT),
+                    style::value(),
                 ),
                 Span::raw("   "),
-                Span::styled(
-                    format!("Miss/1K: {mpki:.1}"),
-                    Style::default().fg(theme::LABEL),
-                ),
+                Span::styled(format!("Miss/1K: {mpki:.1}"), style::label()),
                 Span::raw("   "),
                 Span::styled(
                     format!("AMAT: {:.2} cyc", lvl.amat),
-                    Style::default().fg(theme::METRIC_CPI),
+                    style::metric(style::Metric::Cpi),
                 ),
             ]),
             Line::from(vec![
@@ -850,7 +821,7 @@ pub(in crate::ui::view) fn render_snapshot_popup(f: &mut Frame, area: Rect, app:
                         fmt_bytes(lvl.bytes_loaded),
                         fmt_bytes(lvl.ram_write_bytes)
                     ),
-                    Style::default().fg(theme::LABEL),
+                    style::label(),
                 ),
             ]),
         ]
@@ -931,13 +902,13 @@ pub(in crate::ui::view) fn render_snapshot_popup(f: &mut Frame, area: Rect, app:
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             "I-Cache miss hotspots (top PCs):",
-            Style::default().fg(theme::LABEL),
+            style::label(),
         )));
         for (pc, count) in snap.miss_hotspots.iter().take(5) {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(format!("0x{pc:08x}"), Style::default().fg(theme::ACCENT)),
-                Span::styled(format!("  ×{count}"), Style::default().fg(theme::TEXT)),
+                Span::styled(format!("  ×{count}"), style::value()),
             ]));
         }
     }

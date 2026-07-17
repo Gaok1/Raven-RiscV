@@ -258,21 +258,15 @@ pub(crate) struct CacheState {
     pub(crate) data_fmt: CacheDataFmt,
     pub(crate) data_group: CacheDataGroup,
     pub(crate) addr_mode: CacheAddrMode,
-    pub(crate) subtab_stats_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) subtab_view_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) subtab_config_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) level_btns: std::cell::RefCell<Vec<(u16, u16, u16)>>,
-    pub(crate) add_level_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) remove_level_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_results_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_import_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_export_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_scope_i_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_scope_d_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_scope_both_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_speed_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_state_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_reset_btn: std::cell::Cell<(u16, u16, u16)>,
+    /// Origin `(row, first_col)` of the subtab bar; the `Toolbar` in
+    /// `view::cache` maps a click column back to the [`CacheSubtab`].
+    pub(crate) subtab_header_origin: std::cell::Cell<(u16, u16)>,
+    // Bar origins `(row, first_col)` — the `Toolbar`s in `view::cache` map a
+    // click column back to the button (level / controls / scope / exec).
+    pub(crate) level_origin: std::cell::Cell<(u16, u16)>,
+    pub(crate) ctrl_origin: std::cell::Cell<(u16, u16)>,
+    pub(crate) ctrl_scope_origin: std::cell::Cell<(u16, u16)>,
+    pub(crate) exec_origin: std::cell::Cell<(u16, u16)>,
     // View legend button positions (set by render each frame, read by mouse)
     pub(crate) view_fmt_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
     pub(crate) view_group_btn: std::cell::Cell<(u16, u16, u16)>, // (y, x_start, x_end)
@@ -281,10 +275,12 @@ pub(crate) struct CacheState {
     pub(crate) config_hitboxes_i: std::cell::Cell<[(u16, u16, u16); 11]>,
     pub(crate) config_hitboxes_d: std::cell::Cell<[(u16, u16, u16); 11]>,
     pub(crate) config_hitboxes_u: std::cell::Cell<[(u16, u16, u16); 11]>,
-    pub(crate) config_preset_btns_i: std::cell::Cell<[(u16, u16, u16); 3]>,
-    pub(crate) config_preset_btns_d: std::cell::Cell<[(u16, u16, u16); 3]>,
-    pub(crate) config_preset_btns_u: std::cell::Cell<[(u16, u16, u16); 3]>,
-    pub(crate) config_apply_btns: std::cell::Cell<[(u16, u16, u16); 2]>,
+    // Config preset/apply bar origins `(row, first_col)` — the `Toolbar`s in
+    // `view::cache::config` map a click column back to the button.
+    pub(crate) config_preset_origin_i: std::cell::Cell<(u16, u16)>,
+    pub(crate) config_preset_origin_d: std::cell::Cell<(u16, u16)>,
+    pub(crate) config_preset_origin_u: std::cell::Cell<(u16, u16)>,
+    pub(crate) config_apply_origin: std::cell::Cell<(u16, u16)>,
     // Config form (pending values before Apply)
     pub(crate) pending_icache: CacheConfig,
     pub(crate) pending_dcache: CacheConfig,
@@ -307,8 +303,7 @@ pub(crate) struct CacheState {
     pub(crate) window_start_instr: u64,         // start of current capture window, reset on restart
     // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse
     pub(crate) hscroll_drag: bool,
-    pub(crate) hscroll_drag_start_x: u16,
-    pub(crate) hscroll_start: usize,
+    pub(crate) hscroll_drag_track_x: u16,
     pub(crate) hscroll_drag_max: usize,
     pub(crate) hscroll_drag_track_w: u16,
     pub(crate) hscroll_drag_is_dcache: bool, // true = dragging D-cache bar, false = I-cache/unified

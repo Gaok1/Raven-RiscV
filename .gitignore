@@ -2,6 +2,7 @@
 /target
 /.claude
 /.vscode
+/.handoff
 # Ignore generated distribution artifacts
 /dist/
 /claudeProblems

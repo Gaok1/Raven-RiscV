@@ -198,6 +198,8 @@ pub(crate) fn handle_syscall_with_cycle_override<B: Bus>(
             let requested = cpu.read(10);
             if requested == 0 || requested <= cpu.heap_break {
                 cpu.write(10, cpu.heap_break);
+            } else if requested > mem.mem_len() {
+                cpu.write(10, cpu.heap_break);
             } else {
                 cpu.heap_break = requested;
                 cpu.write(10, requested);
@@ -911,7 +913,7 @@ fn linux_writev<B: Bus>(
 
 fn linux_mmap<B: Bus>(
     cpu: &mut Cpu,
-    _mem: &mut B,
+    mem: &mut B,
     console: &mut Console,
 ) -> Result<bool, FalconError> {
     // mmap(addr=a0, len=a1, prot=a2, flags=a3, fd=a4, offset=a5) -> ptr or -errno
@@ -938,8 +940,8 @@ fn linux_mmap<B: Bus>(
     let ptr = cpu.heap_break;
     let new_break = ptr.wrapping_add(aligned_len);
 
-    // Simple overflow / out-of-range check (Raven RAM is 128 KB = 0x20000)
-    if new_break > 0x0002_0000 || new_break < ptr {
+    // Simple overflow / out-of-range check against the configured RAM size.
+    if new_break > mem.mem_len() || new_break < ptr {
         cpu.write(10, LINUX_ENOMEM);
         console.push_error("mmap: out of memory");
         return Ok(true);
