@@ -516,6 +516,41 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
             ]),
         ]
+    } else if sel == SETTINGS_ROW_SCREEN_TARGET {
+        vec![
+            Line::from(Span::styled(
+                "Screen Output",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Where a program's screen (graphics",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "syscalls 2000+) is displayed.",
+                Style::default().fg(theme::TEXT),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "TUI: Screen sub-view of the Run tab.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::from(Span::styled(
+                "WINDOW: native OS window (not on macOS).",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Applies at the next screen_init / reset.",
+                Style::default().fg(theme::LABEL),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+                Span::styled(" / Click = toggle", Style::default().fg(theme::LABEL)),
+            ]),
+        ]
     } else if sel == SETTINGS_ROW_MEM_SIZE {
         vec![
             Line::from(Span::styled(
