@@ -49,6 +49,8 @@ pub const RUNNING: Color = Color::Rgb(88, 200, 120);
 pub const PAUSED: Color = Color::Rgb(220, 170, 55);
 /// Danger / error / reset — clean red
 pub const DANGER: Color = Color::Rgb(210, 72, 68);
+/// Speculative execution (unresolved branch) — burnt orange
+pub const SPECULATIVE: Color = Color::Rgb(220, 140, 40);
 
 // ── General UI ───────────────────────────────────────────────────────────────
 /// Accent = violet, for active tabs / titles / interactive highlights

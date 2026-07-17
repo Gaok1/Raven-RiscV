@@ -153,9 +153,9 @@ pub fn ui(f: &mut Frame, app: &App) {
             ("[?]", "Help"),
         ]),
         Tab::Pipeline => {
-            if let Some(ref err) = app.pipeline.status_error {
+            if let Some(ref err) = app.run.pipeline().status_error {
                 Line::from(Span::styled(format!("✗  {err}"), style::danger()))
-            } else if let Some(ref ok) = app.pipeline.status_msg {
+            } else if let Some(ref ok) = app.run.pipeline().status_msg {
                 Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
                 style::hint_bar(&[
@@ -210,9 +210,10 @@ pub fn ui(f: &mut Frame, app: &App) {
                 Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
                 style::hint_bar(&[
-                    ("Tab", "Subviews"),
-                    ("Click", "Edit field"),
-                    ("f", "Flush TLB"),
+                    ("Tab", "Subtabs"),
+                    ("Ctrl+e", "Export config"),
+                    ("Ctrl+l", "Import config"),
+                    ("Ctrl+r", "Results"),
                     ("[?]", "Help"),
                 ])
             }
@@ -517,6 +518,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 ("[Ctrl+↑/↓]", "scroll console"),
                 ("[↑/↓]", "scroll memory or registers"),
                 ("[click]", "select instruction / register"),
+                ("[2×click/right]", "edit instruction word in place"),
                 ("[drag]", "resize sidebar / instruction panels"),
             ],
             vec![
@@ -676,37 +678,21 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+l]", "import full Settings tab state (.rcfg)"),
         ]],
         Tab::Tlb => vec![vec![
+            ("[Tab]", "cycle subtabs: overview → map → tlb → stats → settings"),
+            ("overview", "quick Mode/TLB controls + live satp / privilege / VM-active banner"),
+            ("map", "live N-level page-table tree (read-only)"),
+            ("tlb", "installed translations (VPN→PPN, perms, A/D, asid)"),
+            ("stats", "hits, misses, evictions, page faults, hit-rate chart + snapshots"),
+            ("settings", "VM mode, paging scheme, page map, TLB geometry + presets — then apply"),
+            ("scheme", "Custom mode: edit levels + index/offset bits (Σ must = 32)"),
+            ("[r/p/f]", "reset / run-pause / speed (like the Cache tab)"),
+            ("[s]", "capture session snapshot (stats subtab; ↑↓=select, Enter=view, D=delete)"),
+            ("[Ctrl+e/l]", "export / import cache+TLB config (.fcache)"),
+            ("[Ctrl+r]", "export results (.fstats/.csv, includes tlb.* section)"),
+            ("[Esc]", "cancel field edit / close popup"),
             (
-                "[Tab]",
-                "cycle subviews: status → tree → settings → TLB(stats/entries/settings)",
-            ),
-            ("status", "live satp / privilege / VM-active banner"),
-            ("tree", "live N-level page-table tree (read-only)"),
-            (
-                "settings",
-                "VM mode, paging scheme, page map, root PT, TLB geometry — then apply",
-            ),
-            (
-                "scheme",
-                "Custom mode: edit levels + index/offset bits (Σ must = 32)",
-            ),
-            (
-                "TLB ▸ stats",
-                "TLB hits, misses, evictions, page faults, hit-rate chart",
-            ),
-            (
-                "TLB ▸ entries",
-                "installed translations (VPN→PPN, perms, A/D, asid)",
-            ),
-            (
-                "TLB ▸ settings",
-                "edit entries / associativity / replacement / latencies",
-            ),
-            ("[f]", "flush TLB (in TLB settings)"),
-            ("[Esc]", "cancel field edit"),
-            (
-                "TLB Enabled",
-                "toggle in settings; when off every access walks (miss + penalty, no hits)",
+                "TLB toggle",
+                "overview or settings; when off every access walks (miss + penalty, no hits)",
             ),
             (
                 "Translation active?",

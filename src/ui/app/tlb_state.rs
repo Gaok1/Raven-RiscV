@@ -1,95 +1,47 @@
 // ui/app/tlb_state.rs — UI state for the top-level Virtual Memory tab.
 //
-// The tab mirrors the Cache tab: a Virtual Memory world with four subtabs
-// (`VmSubtab`) — Status (live satp / privilege / activation banner), Tree (the
-// live page-table tree, read-only), Settings (the comprehensive VM control
-// panel: mode, paging scheme, page map, root PT and TLB geometry) and Tlb. The
-// Tlb subtab opens its own nested world with three sub-subtabs (`TlbSubtab`):
-// Stats (counters + hit-rate chart), Entries (installed translations) and
-// Settings (geometry + latencies + presets).
+// The tab mirrors the Cache tab: one flat header with five subtabs
+// (`VmSubtab`) — Overview (live satp / privilege / activation banner + quick
+// mode/TLB controls), Map (the live page-table tree, read-only), Tlb (the
+// installed-translations table), Stats (counters + hit-rate chart + the shared
+// session-snapshot history) and Settings (the single comprehensive VM control
+// panel: mode, paging scheme, page map, TLB geometry + presets). Execution
+// controls and a shared controls bar (results / import / export / flush)
+// frame every subtab, exactly like the Cache tab.
 
 use crate::falcon::mmu::{PageMapSpec, PagingScheme, TlbConfig};
 
-/// Top-level Virtual Memory subtab (first header row).
-#[derive(PartialEq, Eq, Copy, Clone)]
+/// Virtual Memory subtab (single flat header row).
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub(crate) enum VmSubtab {
-    Status,
-    Tree,
-    Settings,
+    Overview,
+    Map,
     Tlb,
-}
-
-/// Nested TLB subtab (second header row, visible only inside `VmSubtab::Tlb`).
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub(crate) enum TlbSubtab {
     Stats,
-    Entries,
     Settings,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub(crate) enum TlbConfigField {
-    EntryCount,
-    Associativity,
-    Replacement,
-    HitLatency,
-    MissPenalty,
-}
+impl VmSubtab {
+    pub(crate) const ALL: [VmSubtab; 5] = [
+        Self::Overview,
+        Self::Map,
+        Self::Tlb,
+        Self::Stats,
+        Self::Settings,
+    ];
 
-impl TlbConfigField {
-    pub(crate) fn hitbox_index(self) -> usize {
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::EntryCount => 0,
-            Self::Associativity => 1,
-            Self::Replacement => 2,
-            Self::HitLatency => 3,
-            Self::MissPenalty => 4,
+            Self::Overview => "overview",
+            Self::Map => "map",
+            Self::Tlb => "tlb",
+            Self::Stats => "stats",
+            Self::Settings => "settings",
         }
-    }
-    pub(crate) fn is_numeric(self) -> bool {
-        !matches!(self, Self::Replacement)
-    }
-    pub(crate) fn all_editable() -> &'static [TlbConfigField] {
-        &[
-            Self::EntryCount,
-            Self::Associativity,
-            Self::Replacement,
-            Self::HitLatency,
-            Self::MissPenalty,
-        ]
-    }
-    pub(crate) fn list_row(self) -> usize {
-        match self {
-            Self::EntryCount => 0,
-            Self::Associativity => 1,
-            Self::Replacement => 3, // skip 2 (Sets readout)
-            Self::HitLatency => 4,
-            Self::MissPenalty => 5,
-        }
-    }
-    pub(crate) fn from_list_row(row: usize) -> Option<Self> {
-        match row {
-            0 => Some(Self::EntryCount),
-            1 => Some(Self::Associativity),
-            2 => None, // Sets readout
-            3 => Some(Self::Replacement),
-            4 => Some(Self::HitLatency),
-            5 => Some(Self::MissPenalty),
-            _ => None,
-        }
-    }
-    pub(crate) fn next(self) -> Self {
-        let a = Self::all_editable();
-        a[(a.iter().position(|&f| f == self).unwrap_or(0) + 1) % a.len()]
-    }
-    pub(crate) fn prev(self) -> Self {
-        let a = Self::all_editable();
-        let i = a.iter().position(|&f| f == self).unwrap_or(0);
-        a[i.checked_sub(1).unwrap_or(a.len() - 1)]
     }
 }
 
-/// An editable control in the comprehensive VM Settings panel.
+/// An editable control in the VM Settings panel.
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub(crate) enum VmSettingsField {
     /// VM mode selector (Off / Sv32 / Custom / Manual).
@@ -145,43 +97,47 @@ impl VmSettingsField {
 
 #[derive(PartialEq, Eq, Clone)]
 pub(crate) enum TlbHoverTarget {
-    // VM-level header (row 1)
-    VmStatus,
-    VmTree,
-    VmSettings,
-    VmTlb,
-    // TLB-level header (row 2)
-    TlbStats,
-    TlbEntries,
-    TlbSettings,
-    // TLB Settings form (nested TLB world)
-    ConfigField(TlbConfigField),
-    Preset(usize),
-    Apply,
-    Flush,
+    /// A header subtab button.
+    Subtab(VmSubtab),
+    // Overview quick controls
+    QuickMode,
+    QuickTlb,
     // VM Settings panel
     VmField(VmSettingsField),
+    /// TLB geometry preset button (0=small, 1=med, 2=large).
+    Preset(usize),
     VmApply,
     VmFlush,
+    // Shared controls bar
+    ExportResults,
+    ImportCfg,
+    ExportCfg,
+    FlushTlb,
 }
 
 pub(crate) struct TlbState {
-    /// Top-level Virtual Memory subtab.
+    /// Active Virtual Memory subtab.
     pub(crate) vm_subtab: VmSubtab,
-    /// Nested TLB subtab (only meaningful when `vm_subtab == Tlb`).
-    pub(crate) subtab: TlbSubtab,
     pub(crate) hover: Option<TlbHoverTarget>,
-    // Subtab-bar origins `(row, first_col)`: the `Toolbar` in `view::tlb` maps a
-    // click column back to the subtab, so only the origin needs storing.
-    pub(crate) vm_header_origin: std::cell::Cell<(u16, u16)>,
-    pub(crate) tlb_subheader_origin: std::cell::Cell<(u16, u16)>,
+    /// Header subtab hitboxes (y, x0, x1), in `VmSubtab::ALL` order.
+    pub(crate) subtab_btns: std::cell::Cell<[(u16, u16, u16); 5]>,
+    // Execution controls (mirrors CacheState's exec_* cells).
+    pub(crate) exec_speed_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) exec_state_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) exec_reset_btn: std::cell::Cell<(u16, u16, u16)>,
+    // Shared controls bar.
+    pub(crate) ctrl_results_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_import_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_export_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) ctrl_flush_btn: std::cell::Cell<(u16, u16, u16)>,
+    // Overview quick controls.
+    pub(crate) quick_mode_btn: std::cell::Cell<(u16, u16, u16)>,
+    pub(crate) quick_tlb_btn: std::cell::Cell<(u16, u16, u16)>,
+    /// TLB geometry being edited in the Settings panel (applied via `apply`).
     pub(crate) pending: TlbConfig,
-    pub(crate) config_hitboxes: std::cell::Cell<[(u16, u16, u16); 5]>,
-    /// Origins `(row, first_col)` of the TLB-config preset and apply bars.
-    pub(crate) preset_origin: std::cell::Cell<(u16, u16)>,
-    pub(crate) apply_origin: std::cell::Cell<(u16, u16)>,
-    pub(crate) edit_field: Option<TlbConfigField>,
-    pub(crate) edit_buf: String,
+    /// TLB preset button hitboxes in the Settings panel.
+    pub(crate) preset_btns: std::cell::Cell<[(u16, u16, u16); 3]>,
+    /// Footer status line (✓ / ✗ at the bottom of the screen).
     pub(crate) config_error: Option<String>,
     pub(crate) config_status: Option<String>,
     pub(crate) entries_scroll: usize,
@@ -204,7 +160,7 @@ pub(crate) struct TlbState {
     pub(crate) map_status: Option<String>,
     /// Per-field hitboxes for the VM Settings panel: (field, y, x0, x1).
     pub(crate) vm_field_hitboxes: std::cell::RefCell<Vec<(VmSettingsField, u16, u16, u16)>>,
-    /// Hitbox for the VM Settings `apply map` button.
+    /// Hitbox for the VM Settings `apply` button.
     pub(crate) vm_apply_btn: std::cell::Cell<(u16, u16, u16)>,
     /// Hitbox for the VM Settings `flush tlb` button.
     pub(crate) vm_flush_btn: std::cell::Cell<(u16, u16, u16)>,
@@ -216,17 +172,20 @@ pub(crate) struct TlbState {
 impl Default for TlbState {
     fn default() -> Self {
         Self {
-            vm_subtab: VmSubtab::Status,
-            subtab: TlbSubtab::Stats,
+            vm_subtab: VmSubtab::Overview,
             hover: None,
-            vm_header_origin: std::cell::Cell::new((0, 0)),
-            tlb_subheader_origin: std::cell::Cell::new((0, 0)),
+            subtab_btns: std::cell::Cell::new([(0, 0, 0); 5]),
+            exec_speed_btn: std::cell::Cell::new((0, 0, 0)),
+            exec_state_btn: std::cell::Cell::new((0, 0, 0)),
+            exec_reset_btn: std::cell::Cell::new((0, 0, 0)),
+            ctrl_results_btn: std::cell::Cell::new((0, 0, 0)),
+            ctrl_import_btn: std::cell::Cell::new((0, 0, 0)),
+            ctrl_export_btn: std::cell::Cell::new((0, 0, 0)),
+            ctrl_flush_btn: std::cell::Cell::new((0, 0, 0)),
+            quick_mode_btn: std::cell::Cell::new((0, 0, 0)),
+            quick_tlb_btn: std::cell::Cell::new((0, 0, 0)),
             pending: TlbConfig::default(),
-            config_hitboxes: std::cell::Cell::new([(0, 0, 0); 5]),
-            preset_origin: std::cell::Cell::new((0, 0)),
-            apply_origin: std::cell::Cell::new((0, 0)),
-            edit_field: None,
-            edit_buf: String::new(),
+            preset_btns: std::cell::Cell::new([(0, 0, 0); 3]),
             config_error: None,
             config_status: None,
             entries_scroll: 0,

@@ -1,5 +1,5 @@
 use super::super::TutorialStep;
-use crate::ui::app::{App, TlbSubtab, VmSubtab};
+use crate::ui::app::{App, VmSubtab};
 use ratatui::layout::Rect;
 
 fn whole(term: Rect, _app: &App) -> Option<Rect> {
@@ -7,24 +7,21 @@ fn whole(term: Rect, _app: &App) -> Option<Rect> {
 }
 
 fn setup_stats(app: &mut App) {
-    app.tlb.vm_subtab = VmSubtab::Tlb;
-    app.tlb.subtab = TlbSubtab::Stats;
+    app.tlb.vm_subtab = VmSubtab::Stats;
 }
 fn setup_config(app: &mut App) {
-    app.tlb.vm_subtab = VmSubtab::Tlb;
-    app.tlb.subtab = TlbSubtab::Settings;
-    app.tlb.pending = app.run.mem.mmu().tlb.config.clone();
+    app.tlb.vm_subtab = VmSubtab::Settings;
+    app.tlb.pending = app.run.mem().mmu().tlb.config.clone();
 }
 fn setup_entries(app: &mut App) {
     app.tlb.vm_subtab = VmSubtab::Tlb;
-    app.tlb.subtab = TlbSubtab::Entries;
 }
 fn setup_status(app: &mut App) {
-    app.tlb.vm_subtab = VmSubtab::Status;
+    app.tlb.vm_subtab = VmSubtab::Overview;
 }
 fn setup_vm_settings(app: &mut App) {
     // The walkthrough only makes sense with the scheme editable, so drop into
-    // Custom mode and open the VM Settings panel. The [+]/[-] level controls and
+    // Custom mode and open the Settings panel. The [+]/[-] level controls and
     // the per-field edit boxes only appear in Custom.
     app.set_vm_mode(crate::falcon::mmu::VmMode::Custom);
     app.tlb.vm_subtab = VmSubtab::Settings;
@@ -34,7 +31,7 @@ fn setup_page_tree(app: &mut App) {
     // where the program drives satp and handles its own faults — switch to
     // Manual mode and open the live page-table view.
     app.set_vm_mode(crate::falcon::mmu::VmMode::Manual);
-    app.tlb.vm_subtab = VmSubtab::Tree;
+    app.tlb.vm_subtab = VmSubtab::Map;
 }
 
 pub static STEPS: &[TutorialStep] = &[
@@ -81,10 +78,16 @@ O modo Manual é fiel ao hardware: seu programa controla o satp e as próprias t
         title_pt: "Stats — taxa de hit ao longo do tempo",
         body_en: "Counters: hits, misses, evictions, page faults. \
 The chart is a 300-cycle rolling window of hit-rate, sampled once per committed instruction. \
-Hit rate is meaningful only after a few hundred cycles with VM active.",
+Hit rate is meaningful only after a few hundred cycles with VM active. \
+\nPress s to capture the current window as a session snapshot — the history table below lets you \
+compare runs (↑↓ select, Enter opens the details popup, D deletes). Snapshots are shared with the \
+Cache tab and land in the results export.",
         body_pt: "Contadores: hits, misses, evictions, page faults. \
 O gráfico é uma janela de 300 ciclos da taxa de hit, amostrada por instrução. \
-Só faz sentido após algumas centenas de ciclos com VM ativa.",
+Só faz sentido após algumas centenas de ciclos com VM ativa. \
+\nAperte s para capturar a janela atual como snapshot da sessão — a tabela de histórico abaixo permite \
+comparar execuções (↑↓ seleciona, Enter abre o popup de detalhes, D apaga). Os snapshots são compartilhados \
+com a aba Cache e entram no export de resultados.",
         target: whole,
         setup: Some(setup_stats),
     },
@@ -103,8 +106,8 @@ Apply aplica e reseta a TLB; flush só invalida as entradas.",
         setup: Some(setup_config),
     },
     TutorialStep {
-        title_en: "Entries — see installed translations",
-        title_pt: "Entries — translations instaladas",
+        title_en: "tlb — see installed translations",
+        title_pt: "tlb — translations instaladas",
         body_en: "Each row is a TLB slot. Columns: VPN→PPN, R/W/X/U perms, ASID, G (global), A (accessed), D (dirty), Mp (megapage = 4 MiB). \
 Run a program with VM on to populate the table. Use ↑/↓ or the mouse wheel to scroll.",
         body_pt: "Cada linha é um slot da TLB. Colunas: VPN→PPN, perms R/W/X/U, ASID, G (global), A (accessed), D (dirty), Mp (megapage = 4 MiB). \
@@ -113,14 +116,16 @@ Rode um programa com VM ligada para popular. Use ↑/↓ ou a roda do mouse para
         setup: Some(setup_entries),
     },
     TutorialStep {
-        title_en: "vm — why is translation idle?",
-        title_pt: "vm — por que a tradução está parada?",
-        body_en: "If the TLB looks empty, this subview tells you why: \
-the active VM mode, satp mode, and current privilege level. \
+        title_en: "overview — why is translation idle?",
+        title_pt: "overview — por que a tradução está parada?",
+        body_en: "The overview is the landing subtab: quick Mode and TLB controls at the top \
+(click Mode and pick sv32 — no other setup needed), plus the live satp mode and privilege level. \
+If the TLB looks empty, this page tells you why. \
 A common gotcha in Manual mode: the program runs in M-mode and never touches satp, \
 so the MMU stays in identity mode and nothing populates the TLB.",
-        body_pt: "Se a TLB parece vazia, esta subaba explica o porquê: \
-o modo de VM ativo, o modo do satp e o nível de privilégio atual. \
+        body_pt: "O overview é a subaba inicial: controles rápidos de Mode e TLB no topo \
+(clique em Mode e escolha sv32 — nenhum outro setup é preciso), além do modo do satp e do privilégio ao vivo. \
+Se a TLB parece vazia, esta página explica o porquê. \
 Pegadinha comum no modo Manual: o programa roda em M-mode e nunca toca satp, \
 então a MMU continua em identidade e nada popula a TLB.",
         target: whole,
@@ -189,12 +194,12 @@ Este é o sandbox seguro: quebre o mapeamento aqui e nada trava, você só vê f
     TutorialStep {
         title_en: "Page tree — the live page table",
         title_pt: "Árvore de páginas — a tabela ao vivo",
-        body_en: "The tree subview walks the real page table rooted at satp.PPN, straight from RAM, \
+        body_en: "The map subview walks the real page table rooted at satp.PPN, straight from RAM, \
 following the active scheme's N levels: pointer PTEs expand into child tables, leaves at any level are (super)pages; \
 long runs of uniform leaves collapse into one summary line; PTEs cached in the TLB are marked ●TLB. \
 The tree is read-only — edit the map and scheme in the settings subview. \
 This is your window into what the MMU actually sees, invaluable when a mapping isn't taking effect.",
-        body_pt: "A subaba de árvore percorre a tabela de páginas real ancorada em satp.PPN, direto da RAM, \
+        body_pt: "A subaba map percorre a tabela de páginas real ancorada em satp.PPN, direto da RAM, \
 seguindo os N níveis do esquema ativo: PTEs ponteiro expandem em tabelas filhas, folhas em qualquer nível são (super)páginas; \
 sequências longas de folhas uniformes colapsam numa linha-resumo; PTEs cacheadas na TLB ganham a marca ●TLB. \
 A árvore é somente-leitura — edite o mapa e o esquema na subaba settings. \

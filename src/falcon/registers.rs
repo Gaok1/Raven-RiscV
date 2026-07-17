@@ -55,6 +55,10 @@ pub struct Cpu {
     pub pending_exec_map: Option<ExecRegion>,
     /// Set by FALCON_HART_EXIT (1101): exit only this hart, not the whole program.
     pub local_exit: bool,
+    /// GFX_SLEEP_MS (2007) parking deadline. While `Some`, this hart stays
+    /// parked on its `ecall` (the syscall re-executes and clears it once the
+    /// wall-clock deadline passes). Per-hart on purpose: other harts keep going.
+    pub sleep_until: Option<std::time::Instant>,
 
     // ── Machine-mode CSRs (Phase 2 subset) ──
     // satp lives on the MMU side of the bus; the Cpu mirror is convenient for

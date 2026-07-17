@@ -26,10 +26,10 @@ a0      = valor de retorno  (valor negativo = -errno como u32)
             │  heap_ptr →                  │    (ex.: guarde heap_ptr em um label .data)
             │                              │
             ├  ─  ─  ─  ─  ─  ─  ─  ─  ─ ┤
-            │  pilha  (cresce ↓)           │  ← sp = 0x00020000 (um além do fim da RAM)
+            │  pilha  (cresce ↓)           │  ← sp = RAM_SIZE (um além da RAM configurada)
             │                              │    push:  addi sp, sp, -4 / sw rs, 0(sp)
 0x0001FFFF  └──────────────────────────────┘    pop:   lw rd, 0(sp)  / addi sp, sp, 4
-            sp (0x00020000) — primeiro push → sp = 0x0001FFFC
+            sp (RAM_SIZE) - primeiro push -> sp = RAM_SIZE - 4
 ```
 
 ### Endereços importantes
@@ -39,13 +39,11 @@ a0      = valor de retorno  (valor negativo = -errno como u32)
 | `base_pc`  | `0x00000000` | Início do `.text` (configurável na aba Run) |
 | `data_base`| `0x00001000` | Início do `.data` / `.bss`                 |
 | `bss_end`  | dinâmico     | Primeiro byte após o `.bss`                |
-| `sp` inicial | `0x00020000` | Um além do fim da RAM (convenção ABI RISC-V); primeiro `push` escreve em `0x0001FFFC` |
+| `sp` inicial | `RAM_SIZE` | Um além do tamanho de RAM configurado (padrão `0x01000000`, 16 MiB); primeiro `push` escreve em `RAM_SIZE - 4` |
 
 ### Heap manual — padrão bump allocator
 
-O RAVEN **não tem `malloc`/`free`**. A região livre entre `bss_end` e o fundo da
-pilha é RAM comum. Para alocar memória dinamicamente, guarde um ponteiro em `.data`
-e avance-o manualmente:
+No nível de assembly/syscall bruto, o RAVEN **não tem função `malloc`/`free` embutida**. A região livre entre `bss_end` e o fundo da pilha é RAM comum. Para um alocador manual mínimo, guarde um ponteiro em `.data` e avance-o você mesmo. Se quiser crescimento de heap gerenciado pelo simulador, use `brk` (214) ou `mmap` anônimo (222) abaixo.
 
 ```asm
 .data
@@ -192,6 +190,107 @@ rng_buf: .space 4
     la   t0, rng_buf
     lw   t1, 0(t0)      ; t1 = palavra aleatória
 ```
+
+---
+
+### `writev` — syscall 66
+
+Escreve dados a partir de vários buffers (`scatter write`).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `66` |
+| `a0`       | fd (1=stdout, 2=stderr) |
+| `a1`       | ponteiro para array `iovec[]` |
+| `a2`       | número de entradas |
+| **`a0` (ret)** | total de bytes escritos, ou `-errno` |
+
+Cada entrada `iovec` é `{ u32 base, u32 len }` (8 bytes, little-endian).
+
+**Restrições:** as mesmas de `write` (`fd=1` ou `fd=2`).
+
+---
+
+### `getpid` — syscall 172
+
+Retorna o ID de processo simulado (sempre `1`).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `172` |
+| **`a0` (ret)** | `1` |
+
+---
+
+### `getuid` — syscall 174 / `getgid` — syscall 176
+
+Retorna o ID de usuário/grupo simulado (sempre `0`).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `174` ou `176` |
+| **`a0` (ret)** | `0` |
+
+---
+
+### `brk` — syscall 214
+
+Consulta ou estende o *program break*, o topo do heap gerenciado pelo simulador.
+É a primitiva usada para construir alocadores estilo `sbrk`/`malloc`; ela **não**
+é uma syscall `malloc` por si só.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `214` |
+| `a0`       | novo endereço do break, ou `0` para consultar |
+| **`a0` (ret)** | break atual/novo; break antigo sem alteração se o pedido exceder a RAM |
+
+---
+
+### `mmap` — syscall 222
+
+Aloca um bloco de memória anônima a partir do heap.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `222` |
+| `a0`       | endereço hint (ignorado; passe 0) |
+| `a1`       | tamanho em bytes |
+| `a2`       | prot (ignorado) |
+| `a3`       | flags — deve incluir `MAP_ANONYMOUS` (0x20) |
+| `a4`       | fd — deve ser `-1` para mapeamentos anônimos |
+| `a5`       | offset (ignorado) |
+| **`a0` (ret)** | ponteiro alocado, ou `-EINVAL` / `-ENOMEM` |
+
+**Restrições:** somente mapeamentos anônimos (`MAP_ANONYMOUS=0x20`, `fd=-1`) são suportados.
+A memória vem do mesmo heap gerenciado pelo simulador usado por `brk`; internamente
+o heap break avança pelo tamanho pedido arredondado para 4 bytes. `munmap` é no-op.
+
+---
+
+### `munmap` — syscall 215
+
+No-op no RAVEN (sempre retorna 0). A memória não é liberada.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `215` |
+| **`a0` (ret)** | `0` |
+
+---
+
+### `clock_gettime` — syscall 403
+
+Preenche um `timespec` com o tempo simulado (derivado da contagem de instruções).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `403` |
+| `a0`       | ID do clock (ignorado; todos retornam tempo baseado em instruções) |
+| `a1`       | ponteiro para `timespec { u32 tv_sec, u32 tv_nsec }` |
+| **`a0` (ret)** | `0`, ou `-EFAULT` |
+
+O tempo é aproximado como 10 ns por instrução (equivalente a 100 MHz).
 
 ---
 
@@ -389,6 +488,159 @@ Retorna o total de ciclos decorridos no modo de execução atual.
 
 ---
 
+## Syscalls gráficas (2000+)
+
+Um framebuffer mínimo no host para que um programa compilado possa ser um jogo
+(veja `Program Examples/graphics/snake.fas` para um exemplo completo). O modelo é
+deliberadamente simples, estilo UXN: desenhe num back buffer com chamadas de
+pixel/retângulo e `screen_present` publica o quadro.
+
+Onde a tela aparece:
+
+- **TUI**: a sub-aba *Screen* da aba Run abre automaticamente no
+  `screen_init`. Enquanto ela está em foco, toda tecla vai para o programa
+  (`screen_poll_key`); **Esc é reservado** — volta para a visão da CPU e nunca
+  é entregue ao programa. Alterne entre TUI e janela do OS em
+  *Settings → Screen Output*.
+- **CLI**: `raven run jogo.fas --screen` abre uma janela nativa do OS. Sem
+  `--screen` as syscalls continuam funcionando contra o buffer em memória
+  (nada é exibido) — determinístico e seguro para CI.
+- A janela do OS não está disponível no macOS (a janela precisa da thread
+  principal); a sub-aba do TUI funciona em qualquer plataforma.
+
+Cores são `0x00RRGGBB`. Toda chamada exceto `screen_init` retorna `-EINVAL`
+enquanto a tela não existir. O framebuffer vive no host, **não** na RAM do
+convidado, e não é revertido pelo step-back.
+
+### `2000` — screen_init
+
+Cria (ou recria) a tela.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2000` |
+| `a0`       | largura em pixels (8..=1024) |
+| `a1`       | altura em pixels (8..=1024) |
+| **`a0` (ret)** | `0`, ou `-EINVAL` para tamanho inválido |
+
+### `2001` — screen_clear
+
+Preenche todo o back buffer com uma cor.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2001` |
+| `a0`       | cor `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2002` — screen_set_pixel
+
+Desenha um pixel no back buffer.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2002` |
+| `a0`       | x |
+| `a1`       | y |
+| `a2`       | cor `0xRRGGBB` |
+| **`a0` (ret)** | `0`, ou `-EINVAL` fora dos limites (nunca gera fault) |
+
+### `2003` — screen_fill_rect
+
+Desenha um retângulo preenchido, recortado nas bordas da tela.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2003` |
+| `a0`       | x |
+| `a1`       | y |
+| `a2`       | largura |
+| `a3`       | altura |
+| `a4`       | cor `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2004` — screen_present
+
+Publica o back buffer. Nada fica visível antes do primeiro present — desenhe o
+quadro inteiro e chame present uma vez (double buffering clássico).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2004` |
+| **`a0` (ret)** | `0` |
+
+### `2005` — screen_poll_key
+
+Retira a tecla pendente mais antiga. Não bloqueia: retorna `0` com a fila
+vazia.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2005` |
+| **`a0` (ret)** | código da tecla, ou `0` |
+
+Códigos de tecla:
+
+| Tecla | Código |
+|-------|--------|
+| letras / dígitos / espaço | ASCII minúsculo (`'a'` = 97, `'0'` = 48, `' '` = 32) |
+| Backspace | 8 |
+| Enter | 13 |
+| Cima / Baixo / Esquerda / Direita | 256 / 257 / 258 / 259 |
+
+Esc (27) só é entregue no modo janela do OS; no TUI ele fecha a sub-aba
+Screen. Não construa seu jogo em torno do Esc — use `q`.
+
+### `2006` — screen_time_ms
+
+Milissegundos de relógio real desde o `screen_init` (u32, dá a volta após ~49
+dias). Use para ritmo de quadros; `clock_gettime` (403) é baseado em contagem
+de instruções e não acompanha o tempo real.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2006` |
+| **`a0` (ret)** | ms decorridos |
+
+### `2007` — screen_sleep_ms
+
+Dorme `a0` milissegundos reais. O hart fica estacionado no `ecall` sem queimar
+ciclos simulados nem travar o TUI; os outros harts continuam rodando.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `2007` |
+| `a0`       | milissegundos |
+| **`a0` (ret)** | `0` |
+
+### Esqueleto de game loop
+
+```asm
+    li   a0, 80
+    li   a1, 60
+    li   a7, 2000       ; screen_init(80, 60)
+    ecall
+
+loop:
+    li   a7, 2005       ; tecla = screen_poll_key()
+    ecall
+    ; ... reage à tecla, atualiza o estado ...
+
+    li   a0, 0x101820
+    li   a7, 2001       ; screen_clear(fundo)
+    ecall
+    ; ... chamadas screen_fill_rect / screen_set_pixel ...
+    li   a7, 2004       ; screen_present()
+    ecall
+
+    li   a0, 33
+    li   a7, 2007       ; screen_sleep_ms(33)  → ~30 fps
+    ecall
+    j    loop
+```
+
+---
+
 ## Pseudo-instruções que usam ecall
 
 | Pseudo | Expansão | Syscall(s) | Corrompe |
@@ -428,9 +680,17 @@ Num   Nome             a0        a1        a2        retorno
 ────  ───────────────  ────────  ────────  ────────  ────────────────
  63   read             fd=0      end. buf  máx bytes bytes lidos / -err
  64   write            fd=1/2    end. buf  qtd       bytes escritos / -err
+ 66   writev           fd=1/2    iov[]     iovcnt   bytes escritos / -err
  93   exit             código    —         —         (não retorna)
  94   exit_group       código    —         —         (não retorna)
+172   getpid           -         -         -         1
+174   getuid           -         -         -         0
+176   getgid           -         -         -         0
+214   brk              novo brk  -         -         break real / antigo
+215   munmap           end.      tam       -         0 (nop)
+222   mmap             hint=0    tam       prot      ptr / -err
 278   getrandom        end. buf  len       flags     len / -err
+403   clock_gettime    clockid   *timespec -         0 / -err
 
 1000  print_int        inteiro   —         —         —
 1001  print_str        end. str  —         —         —
@@ -444,4 +704,13 @@ Num   Nome             a0        a1        a2        retorno
 1100  hart_start       entry pc  stack ptr arg       hart id / -err
 1101  hart_exit        —         —         —         (não retorna)
 1102  map_exec         endereço  tamanho   —         0 / -err
+
+2000  screen_init      largura   altura    —         0 / -err
+2001  screen_clear     rgb       —         —         0
+2002  screen_set_pixel x         y         rgb       0 / -err
+2003  screen_fill_rect x         y         w (a3=h, a4=rgb)  0
+2004  screen_present   —         —         —         0
+2005  screen_poll_key  —         —         —         tecla / 0
+2006  screen_time_ms   —         —         —         ms desde o init
+2007  screen_sleep_ms  ms        —         —         0
 ```

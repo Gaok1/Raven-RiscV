@@ -2,8 +2,8 @@ use crate::falcon::jit::BackendKind;
 use crate::ui::app::{
     App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
-    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
+    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
+    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -21,7 +21,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             if app.settings.selected > 0 {
                 app.settings.selected -= 1;
                 if app.settings.selected == SETTINGS_BLANK_ROW {
-                    app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
+                    app.settings.selected = SETTINGS_BLANK_ROW - 1;
                 }
             }
             true
@@ -48,7 +48,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             } else if app.settings.selected == SETTINGS_ROW_RUN_SCOPE {
                 app.run_scope = app.run_scope.cycle();
             } else if app.settings.selected == SETTINGS_ROW_PIPELINE_ENABLED {
-                app.set_pipeline_enabled(!app.pipeline.enabled);
+                app.set_pipeline_enabled(!app.run.pipeline().enabled);
             } else if app.settings.selected == SETTINGS_ROW_VM_ENABLED {
                 app.set_vm_mode(app.vm_mode().cycle());
             } else if app.settings.selected == SETTINGS_ROW_TLB_ENABLED {
@@ -62,6 +62,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 app.set_jit_mode(next);
             } else if app.settings.selected == SETTINGS_ROW_TRACE_SYSCALLS {
                 app.set_trace_syscalls(!app.run.trace_syscalls);
+            } else if app.settings.selected == SETTINGS_ROW_SCREEN_TARGET {
+                app.console.screen_target = app.console.screen_target.cycle();
             } else if app.settings.selected >= SETTINGS_ROW_CPI_START {
                 let i = app.settings.selected - SETTINGS_ROW_CPI_START;
                 app.settings.cpi_edit_buf = app.run.cpi_config.get(i).to_string();
@@ -101,7 +103,7 @@ fn handle_numeric_edit(app: &mut App, code: KeyCode) -> bool {
             if app.settings.selected > 0 {
                 app.settings.selected -= 1;
                 if app.settings.selected == SETTINGS_BLANK_ROW {
-                    app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
+                    app.settings.selected = SETTINGS_BLANK_ROW - 1;
                 }
             }
         }

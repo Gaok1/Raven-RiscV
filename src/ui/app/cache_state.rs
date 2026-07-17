@@ -344,6 +344,38 @@ pub(crate) struct LevelSnapshot {
     pub amat: f64,
 }
 
+/// TLB / virtual-memory state captured alongside the cache levels. `None`
+/// when VM was off at capture time.
+#[derive(Clone)]
+pub(crate) struct TlbSnapshot {
+    pub entry_count: u16,
+    pub associativity: u8,
+    pub replacement: String,
+    pub hit_latency: u8,
+    pub miss_penalty: u8,
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub page_faults: u64,
+    pub total_cycles: u64,
+    pub valid_entries: usize,
+    pub vm_mode: String,
+    pub page_size: u64,
+    pub levels: usize,
+    pub hit_rate_history: Vec<(f64, f64)>,
+}
+
+impl TlbSnapshot {
+    pub(crate) fn hit_rate(&self) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64 * 100.0
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct CacheResultsSnapshot {
     pub label: String,
@@ -357,6 +389,7 @@ pub(crate) struct CacheResultsSnapshot {
     pub icache: LevelSnapshot,
     pub dcache: LevelSnapshot,
     pub extra_levels: Vec<LevelSnapshot>,
+    pub tlb: Option<TlbSnapshot>,
     pub cpi_config: CpiConfig,
     pub miss_hotspots: Vec<(u32, u64)>,
     pub hit_rate_history_i: Vec<(f64, f64)>,

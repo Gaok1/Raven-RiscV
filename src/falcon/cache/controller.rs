@@ -45,6 +45,25 @@ enum WritebackSource {
     Extra(usize),
 }
 
+/// A clone of every part of the cache subsystem **except the RAM** — the cache
+/// levels, the MMU/TLB, and the scalar counters. Captured per journaled step so
+/// a step-back can restore cache/TLB/stat state wholesale; the (large) RAM is
+/// rewound separately via byte-level pre-images, so it never appears here.
+///
+/// For didactic configurations (small or disabled caches) this clone is cheap.
+#[derive(Clone)]
+pub struct CacheSnapshot {
+    icache: Cache,
+    dcache: Cache,
+    extra_levels: Vec<Cache>,
+    mmu: Mmu,
+    instruction_count: u64,
+    extra_cycles: u64,
+    step_count: u64,
+    bypass: bool,
+    reservations: HashMap<u32, Reservation>,
+}
+
 impl CacheController {
     pub fn new(
         icfg: CacheConfig,
@@ -158,6 +177,36 @@ impl CacheController {
     /// tables before flipping `vm_enabled`.
     pub fn ram_mut(&mut self) -> &mut Ram {
         &mut self.ram
+    }
+
+    /// Clone the cache subsystem (everything but the RAM) into a
+    /// [`CacheSnapshot`] for the step journal. See that type's docs.
+    pub fn snapshot_state(&self) -> CacheSnapshot {
+        CacheSnapshot {
+            icache: self.icache.clone(),
+            dcache: self.dcache.clone(),
+            extra_levels: self.extra_levels.clone(),
+            mmu: self.mmu.clone(),
+            instruction_count: self.instruction_count,
+            extra_cycles: self.extra_cycles,
+            step_count: self.step_count,
+            bypass: self.bypass,
+            reservations: self.reservations.clone(),
+        }
+    }
+
+    /// Restore the cache subsystem from a [`CacheSnapshot`]. The RAM is left
+    /// untouched — the caller rewinds it separately via its byte pre-images.
+    pub fn restore_state(&mut self, snap: CacheSnapshot) {
+        self.icache = snap.icache;
+        self.dcache = snap.dcache;
+        self.extra_levels = snap.extra_levels;
+        self.mmu = snap.mmu;
+        self.instruction_count = snap.instruction_count;
+        self.extra_cycles = snap.extra_cycles;
+        self.step_count = snap.step_count;
+        self.bypass = snap.bypass;
+        self.reservations = snap.reservations;
     }
 
     pub fn reset_stats(&mut self) {
@@ -1022,6 +1071,10 @@ impl CacheController {
 }
 
 impl Bus for CacheController {
+    fn mem_len(&self) -> u32 {
+        self.ram.data_len().min(u32::MAX as usize) as u32
+    }
+
     // load* = cache-aware reads: dirty D-cache lines take priority over RAM.
     // This is the correct view for all runtime code (syscalls, decoders, etc.).
     // For raw RAM (UI diff display), use peek8/peek16/peek32 directly on CacheController.

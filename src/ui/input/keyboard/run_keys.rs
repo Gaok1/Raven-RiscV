@@ -13,11 +13,18 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
         return false;
     }
 
+    // An open inline editor claims keystrokes earlier, in
+    // `intercepts::handle_post_find_intercepts` (which sees key modifiers, so
+    // Ctrl+C / Ctrl+V work); nothing to do here while one is open.
     match code {
         KeyCode::Char('s') => {
             if !app.run.faulted {
                 app.single_step();
             }
+            true
+        }
+        KeyCode::Char('b') => {
+            app.stepback_one();
             true
         }
         KeyCode::Char('r') => {
@@ -38,6 +45,23 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// Whether `c` is a legal character for the cell currently being edited. Floats
+/// accept a free decimal/scientific form; integer and memory cells follow the
+/// Run tab's display format (hex / decimal / binary / raw string). Shared by the
+/// editor's key handler and clipboard paste (both in `intercepts`).
+pub(super) fn edit_char_allowed(app: &App, c: char) -> bool {
+    use crate::ui::app::{FormatMode, RunEditTarget};
+    if matches!(app.run.run_edit, Some(RunEditTarget::FReg(_))) {
+        return c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+');
+    }
+    match app.run.fmt_mode {
+        FormatMode::Hex => c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | '_'),
+        FormatMode::Dec => c.is_ascii_digit() || matches!(c, '-' | '_'),
+        FormatMode::Bin => matches!(c, '0' | '1' | 'b' | 'B' | '_'),
+        FormatMode::Str => !c.is_control(),
     }
 }
 
@@ -193,7 +217,7 @@ pub(super) fn cycle_memory_region(app: &mut App) {
     match app.run.mem_region {
         MemRegion::Data | MemRegion::Custom => {
             app.run.mem_region = MemRegion::Stack;
-            let sp = app.run.cpu.x[2];
+            let sp = app.run.cpu().x[2];
             app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
         }
         MemRegion::Stack => {
@@ -201,7 +225,7 @@ pub(super) fn cycle_memory_region(app: &mut App) {
         }
         MemRegion::Access => {
             app.run.mem_region = MemRegion::Heap;
-            let hb = app.run.cpu.heap_break;
+            let hb = app.run.cpu().heap_break;
             app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
         }
         MemRegion::Heap => {

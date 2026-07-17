@@ -1,106 +1,13 @@
 mod config_view;
 mod main_view;
 
+pub(crate) use main_view::{MainLayoutPlan, plan_main_layout};
+
 use crate::ui::app::App;
 use crate::ui::pipeline::PipelineSubtab;
 use crate::ui::theme;
-use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{ControlState, Toolbar};
+use crate::ui::view::components::{SpanRow, dense_action, dense_value};
 use crate::ui::view::style;
-
-/// A button in the pipeline header bar.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PipelineHeaderBtn {
-    Main,
-    Config,
-    Core,
-}
-
-/// A button in the pipeline exec-controls bar.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PipelineExecBtn {
-    Speed,
-    State,
-    Reset,
-}
-
-/// A button in the pipeline bottom controls bar.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PipelineCtrlBtn {
-    Results,
-    ImportCfg,
-    ExportCfg,
-}
-
-/// The live `(label, color)` of the exec `state` chip.
-fn pipeline_state_chip(app: &App) -> (&'static str, ratatui::style::Color) {
-    let p = &app.pipeline;
-    if p.faulted {
-        ("fault", theme::DANGER)
-    } else if p.halted {
-        ("halt", theme::PAUSED)
-    } else if app.run.is_running {
-        ("run", theme::RUNNING)
-    } else {
-        ("pause", theme::PAUSED)
-    }
-}
-
-/// The exec-controls bar — `speed <s>  state <s>  reset` — as a [`Toolbar`].
-pub(crate) fn build_pipeline_exec_bar(app: &App) -> Toolbar<PipelineExecBtn> {
-    let p = &app.pipeline;
-    let state_clickable = !p.faulted;
-    let (state_label, state_color) = pipeline_state_chip(app);
-    let mut bar = Toolbar::new();
-    bar.toggle(
-        PipelineExecBtn::Speed,
-        "speed",
-        p.speed.label(),
-        ControlState::chip(true, p.hover_speed),
-        theme::TEXT,
-    );
-    let state_ctrl = if state_clickable {
-        ControlState::chip(true, p.hover_state)
-    } else {
-        ControlState::Disabled
-    };
-    bar.toggle(PipelineExecBtn::State, "state", state_label, state_ctrl, state_color);
-    bar.action(
-        PipelineExecBtn::Reset,
-        "reset",
-        ControlState::chip(false, p.hover_reset),
-        theme::DANGER,
-    );
-    bar
-}
-
-/// The bottom controls bar — `results` (+ `import cfg` `export cfg` in Config) —
-/// as a [`Toolbar`].
-pub(crate) fn build_pipeline_ctrl_bar(app: &App) -> Toolbar<PipelineCtrlBtn> {
-    let p = &app.pipeline;
-    let mut bar = Toolbar::new();
-    bar.action(
-        PipelineCtrlBtn::Results,
-        "results",
-        ControlState::chip(false, p.hover_export_results),
-        theme::ACCENT,
-    );
-    if matches!(p.subtab, PipelineSubtab::Config) {
-        bar.action(
-            PipelineCtrlBtn::ImportCfg,
-            "import cfg",
-            ControlState::chip(false, p.hover_import_cfg),
-            theme::METRIC_CYC,
-        )
-        .action(
-            PipelineCtrlBtn::ExportCfg,
-            "export cfg",
-            ControlState::chip(false, p.hover_export_cfg),
-            theme::METRIC_CYC,
-        );
-    }
-    bar
-}
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -109,27 +16,20 @@ use ratatui::{
 };
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
-    app.pipeline.gantt_area_rect.set((0, 0, 0, 0));
-    if !matches!(app.pipeline.subtab, PipelineSubtab::Config) {
-        app.pipeline
+    app.run.pipeline().gantt_area_rect.set((0, 0, 0, 0));
+    if !matches!(app.run.pipeline().subtab, PipelineSubtab::Config) {
+        app.run.pipeline()
             .config_row_rects
             .set([(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS]);
     }
 
-    // Layout: subtab_header (3) | exec_controls (4) | content (min) | controls (3)
+    // Layout: merged header (2) | content (min)
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Length(5),
-            Constraint::Min(0),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
         .split(area);
 
-    render_subtab_header(f, layout[0], app);
-    render_exec_controls(f, layout[1], app);
-    render_controls_bar(f, layout[3], app);
+    render_header(f, layout[0], app);
 
     // When pipeline is disabled the sequential visualization is available;
     // fall through to the normal rendering path.
@@ -145,136 +45,196 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
                 style::label(),
             )),
         ]);
-        f.render_widget(p, layout[2]);
+        f.render_widget(p, layout[1]);
         return;
     }
 
-    match app.pipeline.subtab {
-        PipelineSubtab::Main => main_view::render_pipeline_main(f, layout[2], app),
-        PipelineSubtab::Config => config_view::render_pipeline_config(f, layout[2], app),
+    match app.run.pipeline().subtab {
+        PipelineSubtab::Main => main_view::render_pipeline_main(f, layout[1], app),
+        PipelineSubtab::Config => config_view::render_pipeline_config(f, layout[1], app),
     }
 }
 
-// ── Subtab header ─────────────────────────────────────────────────────────────
+// ── Merged header ─────────────────────────────────────────────────────────────
+//
+// Two borderless lines replacing the old subtab / Execution / bottom-bar boxes:
+//   L1: title, subtab buttons, core/hart/status, speed/state/reset, file actions
+//   L2: cycle metrics + stall breakdown (+ sequential note / key hints)
 
-/// The pipeline header bar — `[main] [settings]  core N/M` — as a [`Toolbar`].
-/// The two subtabs light up in ACCENT when selected; `core` is a stepper that
-/// keeps its off-white value and is `Disabled` (inert) on a single-core machine.
-/// Shared by the renderer and `mouse::update_pipeline_hover` / click.
-pub(crate) fn build_pipeline_header_bar(app: &App) -> Toolbar<PipelineHeaderBtn> {
-    let p = &app.pipeline;
+fn render_header(f: &mut Frame, area: Rect, app: &App) {
+    let p = &app.run.pipeline();
     let single_core = app.max_cores <= 1;
-    let core_text = format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1));
-    let mut bar = Toolbar::new();
-    bar.value(
-        PipelineHeaderBtn::Main,
-        "main",
-        ControlState::chip(p.subtab == PipelineSubtab::Main, p.hover_subtab_main),
-        theme::ACCENT,
-    )
-    .value(
-        PipelineHeaderBtn::Config,
-        "settings",
-        ControlState::chip(p.subtab == PipelineSubtab::Config, p.hover_subtab_config),
-        theme::ACCENT,
-    );
-    let core_state = if single_core {
-        ControlState::Disabled
+    let state_clickable = !p.faulted;
+
+    let (state_label, state_color) = if p.faulted {
+        ("fault", theme::DANGER)
+    } else if p.halted {
+        ("halt", theme::PAUSED)
+    } else if app.run.is_running {
+        ("run", theme::RUNNING)
     } else {
-        ControlState::chip(true, p.hover_core)
+        ("pause", theme::PAUSED)
     };
-    bar.toggle(PipelineHeaderBtn::Core, "core", &core_text, core_state, theme::TEXT);
-    bar
-}
 
-fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
-    let inner = render_panel(
-        f,
-        area,
-        panel::panel(" Pipeline Simulator ", PanelKind::Accent),
-    );
-    app.pipeline.header_origin.set((inner.y, inner.x + 1));
+    // ── Line 1: buttons ──
+    let mut row = SpanRow::new(area.x, area.y);
+    row.push(Span::styled(
+        " Pipeline ",
+        Style::default().fg(theme::ACCENT).bold(),
+    ));
+    row.gap(1);
 
-    let mut spans = vec![Span::raw(" ")];
-    spans.extend(build_pipeline_header_bar(app).spans());
-    spans.push(Span::styled(
+    let start = row.cursor();
+    row.push(Span::styled(
+        "main",
+        subtab_style(p.subtab == PipelineSubtab::Main, p.hover_subtab_main),
+    ));
+    row.record_hitbox(start, &p.btn_subtab_main_rect);
+    row.gap(2);
+    let start = row.cursor();
+    row.push(Span::styled(
+        "settings",
+        subtab_style(p.subtab == PipelineSubtab::Config, p.hover_subtab_config),
+    ));
+    row.record_hitbox(start, &p.btn_subtab_config_rect);
+
+    row.gap(3);
+    let core_style = if single_core {
+        Style::default().fg(theme::LABEL)
+    } else if p.hover_core {
+        Style::default().fg(theme::ACTIVE).bold()
+    } else {
+        Style::default().fg(theme::TEXT).bold()
+    };
+    let start = row.cursor();
+    row.push(Span::styled("core ", Style::default().fg(theme::LABEL)));
+    row.push(Span::styled(
+        format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1)),
+        core_style,
+    ));
+    if single_core {
+        p.btn_core_rect.set((0, 0, 0));
+    } else {
+        row.record_hitbox(start, &p.btn_core_rect);
+    }
+    row.push(Span::styled(
         format!(
-            " / Hart {} / {}",
+            " · hart {} · {}",
             app.core_hart_id(app.selected_core)
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| "-".to_string()),
             app.core_status(app.selected_core).label()
         ),
-        style::label(),
+        Style::default().fg(theme::LABEL),
     ));
-    let line1 = Line::from(spans);
-    let line2 = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("Tab to switch", style::label()),
-    ]);
-    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
-}
 
-// ── Exec controls ─────────────────────────────────────────────────────────────
+    row.gap(3);
+    let start = row.cursor();
+    row.push(Span::styled("speed ", Style::default().fg(theme::IDLE)));
+    row.push(dense_value(p.speed.label(), p.hover_speed, true, theme::TEXT));
+    row.record_hitbox(start, &p.btn_speed_rect);
 
-fn render_exec_controls(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.pipeline;
+    row.gap(3);
+    let start = row.cursor();
+    row.push(Span::styled("state ", Style::default().fg(theme::IDLE)));
+    row.push(dense_value(
+        state_label,
+        p.hover_state && state_clickable,
+        state_clickable,
+        state_color,
+    ));
+    row.record_hitbox(start, &p.btn_state_rect);
 
-    let mut spans = vec![Span::raw(" ")];
-    spans.extend(build_pipeline_exec_bar(app).spans());
-    if p.sequential_mode {
+    row.gap(3);
+    let start = row.cursor();
+    row.push(dense_action("reset", theme::DANGER, p.hover_reset));
+    row.record_hitbox(start, &p.btn_reset_rect);
+
+    row.gap(3);
+    let start = row.cursor();
+    row.push(dense_action("results", theme::ACCENT, p.hover_export_results));
+    row.record_hitbox(start, &p.btn_export_results_rect);
+
+    if matches!(p.subtab, PipelineSubtab::Config) {
+        row.gap(3);
+        let start = row.cursor();
+        row.push(dense_action("import cfg", theme::METRIC_CYC, p.hover_import_cfg));
+        row.record_hitbox(start, &p.btn_import_cfg_rect);
+        row.gap(3);
+        let start = row.cursor();
+        row.push(dense_action("export cfg", theme::METRIC_CYC, p.hover_export_cfg));
+        row.record_hitbox(start, &p.btn_export_cfg_rect);
+    } else {
+        p.btn_import_cfg_rect.set((0, 0, 0));
+        p.btn_export_cfg_rect.set((0, 0, 0));
+    }
+    let line1 = row.into_line();
+
+    // ── Line 2: metrics ──
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(
+        format!(" cyc {}", p.cycle_count),
+        Style::default().fg(theme::METRIC_CYC),
+    )];
+    if p.instr_committed > 0 {
+        let cpi = p.cycle_count as f64 / p.instr_committed as f64;
         spans.push(Span::styled(
-            "   Sequential (pipeline off) — one instruction at a time",
-            style::warning(),
+            format!("  CPI {cpi:.2}"),
+            Style::default().fg(theme::METRIC_CPI),
         ));
+        let stalls = if header_drops_stall_breakdown(area.width) {
+            format!("  instr {}  stalls {}", p.instr_committed, p.stall_count)
+        } else {
+            let [raw, lu, br, fu, mem] = p.stall_by_type;
+            format!(
+                "  instr {}  stalls {} (RAW {raw} · LD {lu} · BR {br} · FU {fu} · MEM {mem})",
+                p.instr_committed, p.stall_count
+            )
+        };
+        spans.push(Span::styled(stalls, Style::default().fg(theme::LABEL)));
+        if p.branches_executed > 0 {
+            let mispredict_pct = p.flush_count as f64 / p.branches_executed as f64 * 100.0;
+            spans.push(Span::styled(
+                format!(
+                    "  br {} · mispred {} ({mispredict_pct:.0}%)",
+                    p.branches_executed, p.flush_count
+                ),
+                Style::default().fg(theme::LABEL),
+            ));
+        }
     } else {
         spans.push(Span::styled(
-            "   r=reset  f=speed  s=step  p/Space=run",
-            style::label(),
+            "  (no instructions committed)",
+            Style::default().fg(theme::LABEL),
         ));
     }
-    let line1 = Line::from(spans);
-
-    let (cpi_str, stall_str) = if p.instr_committed > 0 {
-        let cpi = p.cycle_count as f64 / p.instr_committed as f64;
-        let branch_str = if p.branches_executed > 0 {
-            let mispredict_pct = p.flush_count as f64 / p.branches_executed as f64 * 100.0;
-            format!(
-                "  control:{}  mispred:{} ({:.0}%)",
-                p.branches_executed, p.flush_count, mispredict_pct
-            )
-        } else {
-            String::new()
-        };
-        let main = format!(
-            " Cycle:{}  CPI:{cpi:.2}  instrs:{}  stalls:{}{}",
-            p.cycle_count, p.instr_committed, p.stall_count, branch_str,
-        );
-        let [raw, lu, br, fu, mem] = p.stall_by_type;
-        let detail =
-            format!(" Stall tags — RAW:{raw}  Load-Use:{lu}  Branch:{br}  FU:{fu}  Mem:{mem}");
-        (main, detail)
+    if p.sequential_mode {
+        spans.push(Span::styled(
+            "  ·  Sequential (pipeline off)",
+            Style::default().fg(theme::PAUSED),
+        ));
     } else {
-        (
-            format!(" Cycle:{}  (no instructions committed)", p.cycle_count),
-            String::new(),
-        )
-    };
+        spans.push(Span::styled(
+            "   s=step · p=run · r=reset · f=speed",
+            Style::default().fg(theme::LABEL).add_modifier(Modifier::DIM),
+        ));
+    }
+    let line2 = Line::from(spans);
 
-    let line2 = Line::from(Span::styled(cpi_str, style::label()));
-    let line3 = Line::from(Span::styled(stall_str, style::label()));
-
-    let inner = render_panel(f, area, panel::panel("Execution", PanelKind::Plain));
-    app.pipeline.exec_origin.set((inner.y, inner.x + 1));
-    f.render_widget(Paragraph::new(vec![line1, line2, line3]), inner);
+    f.render_widget(Paragraph::new(vec![line1, line2]), area);
 }
 
+/// Below this width header line 2 shows only the stall total, without the
+/// per-type breakdown.
+fn header_drops_stall_breakdown(w: u16) -> bool {
+    w < 90
+}
 
-fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let mut spans = vec![Span::raw(" ")];
-    spans.extend(build_pipeline_ctrl_bar(app).spans());
-
-    let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
-    app.pipeline.ctrl_origin.set((inner.y, inner.x + 1));
-    f.render_widget(Paragraph::new(Line::from(spans)), inner);
+fn subtab_style(active: bool, hovered: bool) -> Style {
+    if active {
+        Style::default().fg(theme::ACTIVE).bold()
+    } else if hovered {
+        Style::default().fg(theme::TEXT).bold()
+    } else {
+        Style::default().fg(theme::IDLE)
+    }
 }

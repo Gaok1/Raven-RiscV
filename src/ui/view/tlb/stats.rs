@@ -1,28 +1,114 @@
-// ui/view/tlb/stats.rs — TLB metrics + hit-rate history chart.
+// ui/view/tlb/stats.rs — TLB metrics + hit-rate history chart + the shared
+// session-snapshot history (captured with `s`, same list as the Cache tab).
 
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
+    widgets::{Axis, Block, BorderType, Borders, Chart, Dataset, GraphType, Paragraph},
 };
 
 use crate::ui::app::App;
 use crate::ui::theme;
-use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::style;
 
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
+    let history_h = if app.cache.session_history.is_empty() {
+        0
+    } else {
+        (app.cache.session_history.len() as u16 + 2).min(6)
+    };
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(9), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(9),
+            Constraint::Min(8),
+            Constraint::Length(history_h), // snapshot history (0 = hidden)
+        ])
         .split(area);
 
     render_stats_metrics(f, layout[0], app);
     render_hit_chart(f, layout[1], app);
+    if history_h > 0 {
+        render_history_table(f, layout[2], app);
+    }
+}
+
+/// Session snapshots, TLB lens: same shared list as the Cache tab, but the
+/// columns show the translation-side numbers.
+fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
+    let is_running = app.run.is_running;
+    let title = if is_running {
+        " Snapshots (\u{23f8} to view) "
+    } else {
+        " Snapshots (\u{2191}\u{2193} \u{b7} Enter=view \u{b7} D=delete) "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(title, Style::default().fg(theme::LABEL)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let history = &app.cache.session_history;
+    let scroll = app.cache.history_scroll;
+    let visible = inner.height as usize;
+
+    // Scroll the view so the selected entry is always visible.
+    let start = if scroll + 1 > visible {
+        scroll + 1 - visible
+    } else {
+        0
+    };
+
+    for (i, snap) in history.iter().enumerate().skip(start).take(visible) {
+        let row = (i - start) as u16;
+        if row >= inner.height {
+            break;
+        }
+
+        let text = match &snap.tlb {
+            Some(t) => format!(
+                "  {:<14}  TLB: {:.1}%  Hits: {}  Misses: {}  Page Faults: {}  Evictions: {}",
+                snap.label,
+                t.hit_rate(),
+                t.hits,
+                t.misses,
+                t.page_faults,
+                t.evictions
+            ),
+            None => format!("  {:<14}  (VM was off during this window)", snap.label),
+        };
+
+        let is_selected = i == scroll;
+        let style = if is_running {
+            // Entries are greyed out while running — Enter is disabled.
+            if is_selected {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            }
+        } else if is_selected {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().fg(theme::TEXT)
+        };
+
+        f.render_widget(
+            Paragraph::new(Span::styled(text, style)),
+            Rect::new(inner.x, inner.y + row, inner.width, 1),
+        );
+    }
 }
 
 fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
-    let mmu = app.run.mem.mmu();
+    let mmu = app.run.mem().mmu();
     let stats = &mmu.tlb.stats;
     let total = stats.hits + stats.misses;
     let hit_rate = if total == 0 {
@@ -33,15 +119,18 @@ fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
     let valid_entries = mmu.tlb.entries.iter().filter(|e| e.valid).count();
     let lines = vec![
         Line::from(vec![
-            Span::styled(" Hits:       ", style::label()),
-            Span::styled(format!("{}", stats.hits), style::value()),
+            Span::styled(" Hits:       ", Style::default().fg(theme::LABEL)),
+            Span::styled(format!("{}", stats.hits), Style::default().fg(theme::TEXT)),
         ]),
         Line::from(vec![
-            Span::styled(" Misses:     ", style::label()),
-            Span::styled(format!("{}", stats.misses), style::value()),
+            Span::styled(" Misses:     ", Style::default().fg(theme::LABEL)),
+            Span::styled(
+                format!("{}", stats.misses),
+                Style::default().fg(theme::TEXT),
+            ),
         ]),
         Line::from(vec![
-            Span::styled(" Hit Rate:   ", style::label()),
+            Span::styled(" Hit Rate:   ", Style::default().fg(theme::LABEL)),
             Span::styled(
                 format!("{:.1}%", hit_rate),
                 Style::default().fg(if hit_rate >= 80.0 {
@@ -54,11 +143,14 @@ fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
             ),
         ]),
         Line::from(vec![
-            Span::styled(" Evictions:  ", style::label()),
-            Span::styled(format!("{}", stats.evictions), style::value()),
+            Span::styled(" Evictions:  ", Style::default().fg(theme::LABEL)),
+            Span::styled(
+                format!("{}", stats.evictions),
+                Style::default().fg(theme::TEXT),
+            ),
         ]),
         Line::from(vec![
-            Span::styled(" Page Faults:", style::label()),
+            Span::styled(" Page Faults:", Style::default().fg(theme::LABEL)),
             Span::styled(
                 format!(" {}", stats.page_faults),
                 Style::default().fg(if stats.page_faults > 0 {
@@ -69,43 +161,47 @@ fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
             ),
         ]),
         Line::from(vec![
-            Span::styled(" Valid Entries: ", style::label()),
+            Span::styled(" Valid Entries: ", Style::default().fg(theme::LABEL)),
             Span::styled(
                 format!("{} / {}", valid_entries, mmu.tlb.entries.len()),
-                style::value(),
+                Style::default().fg(theme::TEXT),
             ),
         ]),
         Line::from(vec![
-            Span::styled(" Sets:       ", style::label()),
+            Span::styled(" Sets:       ", Style::default().fg(theme::LABEL)),
             Span::styled(
                 format!("{}", mmu.tlb.num_sets()),
                 Style::default().fg(theme::BORDER),
             ),
             Span::raw("   "),
-            Span::styled(" Ways:       ", style::label()),
+            Span::styled(" Ways:       ", Style::default().fg(theme::LABEL)),
             Span::styled(
                 format!("{}", mmu.tlb.config.associativity),
                 Style::default().fg(theme::BORDER),
             ),
         ]),
     ];
-    let inner = render_panel(f, area, panel::panel("Metrics", PanelKind::Plain));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled("Metrics", Style::default().fg(theme::LABEL)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
-    let block = panel::panel("Hit Rate History", PanelKind::Plain);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BORDER))
+        .title(Span::styled(
+            "Hit Rate History",
+            Style::default().fg(theme::LABEL),
+        ));
 
-    let pts: Vec<(f64, f64)> = app
-        .run
-        .mem
-        .mmu()
-        .tlb
-        .stats
-        .history
-        .iter()
-        .copied()
-        .collect();
+    let pts: Vec<(f64, f64)> = app.run.mem().mmu().tlb.stats.history.iter().copied().collect();
     if pts.is_empty() {
         let inner = block.inner(area);
         f.render_widget(block, area);
@@ -117,7 +213,10 @@ fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
             "  (no data yet — run a program that touches paged memory)"
         };
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(msg, style::label()))),
+            Paragraph::new(Line::from(Span::styled(
+                msg,
+                Style::default().fg(theme::LABEL),
+            ))),
             inner,
         );
         return;
@@ -130,7 +229,7 @@ fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "  (chart hidden — resize terminal for more height)",
-                style::label(),
+                Style::default().fg(theme::LABEL),
             ))),
             inner,
         );
@@ -143,7 +242,7 @@ fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
             .name("hit %")
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(style::success())
+            .style(Style::default().fg(theme::RUNNING))
             .data(&pts),
     ];
     let chart = Chart::new(datasets)

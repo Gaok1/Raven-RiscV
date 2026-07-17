@@ -5,9 +5,40 @@ use ratatui::widgets::{Block, Cell, List, ListItem, Paragraph, Row, Table};
 use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
 use super::registers::reg_name;
 use super::{App, MemRegion};
+use crate::falcon::machine::types::{RegId, RegTarget};
+use crate::ui::app::RunEditTarget;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::style;
+
+/// The cursor-suffixed edit buffer to paint in a cell, when it is the target of
+/// the open inline editor. `None` means render the cell's value normally.
+fn reg_edit_overlay(app: &App, target: RegTarget) -> Option<String> {
+    match app.run.run_edit {
+        Some(RunEditTarget::Reg(t)) if t == target => Some(format!("{}█", app.run.run_edit_buf)),
+        _ => None,
+    }
+}
+
+/// Like [`reg_edit_overlay`] for the float register `index`.
+fn freg_edit_overlay(app: &App, index: u8) -> Option<String> {
+    match app.run.run_edit {
+        Some(RunEditTarget::FReg(f)) if f.index() == index => {
+            Some(format!("{}█", app.run.run_edit_buf))
+        }
+        _ => None,
+    }
+}
+
+/// Like [`reg_edit_overlay`] for the memory cell at `addr`.
+fn mem_edit_overlay(app: &App, addr: u32) -> Option<String> {
+    match app.run.run_edit {
+        Some(RunEditTarget::Mem { addr: a, .. }) if a == addr => {
+            Some(format!("{}█", app.run.run_edit_buf))
+        }
+        _ => None,
+    }
+}
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     if app.run.show_dyn {
@@ -76,9 +107,14 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         } else {
             base
         };
+        let target = RegId::new(reg_idx).map(RegTarget::X);
+        let (val, value_style) = match target.and_then(|t| reg_edit_overlay(app, t)) {
+            Some(overlay) => (overlay, edit_value_style()),
+            None => (val, style),
+        };
         rows.push(Row::new(vec![
             Cell::from(pin_label).style(style),
-            Cell::from(val).style(style),
+            Cell::from(val).style(value_style),
         ]));
     }
 
@@ -122,13 +158,33 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         } else {
             base_style
         };
+        let target = reg_target_for_row(index);
+        let (val, value_style) = match target.and_then(|t| reg_edit_overlay(app, t)) {
+            Some(overlay) => (overlay, edit_value_style()),
+            None => (val, row_style),
+        };
         rows.push(Row::new(vec![
             Cell::from(full_label).style(row_style),
-            Cell::from(val).style(row_style),
+            Cell::from(val).style(value_style),
         ]));
     }
 
     rows
+}
+
+/// Row index `0 = PC`, `1..=32 = x0..x31` to its edit target (mirrors the click
+/// hit-test in `mouse.rs`).
+fn reg_target_for_row(reg_idx: usize) -> Option<RegTarget> {
+    match reg_idx {
+        0 => Some(RegTarget::Pc),
+        1..=32 => RegId::new((reg_idx - 1) as u8).map(RegTarget::X),
+        _ => None,
+    }
+}
+
+/// Accent style for a cell currently being inline-edited.
+fn edit_value_style() -> Style {
+    Style::default().fg(theme::ACCENT).bold()
 }
 
 /// Style based on register age (0 = just changed → bright yellow, fades over steps).
@@ -145,17 +201,17 @@ fn age_style(age: u8) -> Style {
 /// Returns (label, value, age).
 fn register_entry(index: usize, app: &App) -> (String, String, u8) {
     if index == 0 {
-        let age = if app.run.cpu.pc != app.run.prev_pc {
+        let age = if app.run.cpu().pc != app.run.prev_pc {
             0
         } else {
             255
         };
-        let val = format_u32_value(app.run.cpu.pc, app.run.fmt_mode, app.run.show_signed);
+        let val = format_u32_value(app.run.cpu().pc, app.run.fmt_mode, app.run.show_signed);
         ("PC".to_string(), val, age)
     } else {
         let reg_index = (index - 1) as u8;
         let val = format_u32_value(
-            app.run.cpu.x[reg_index as usize],
+            app.run.cpu().x[reg_index as usize],
             app.run.fmt_mode,
             app.run.show_signed,
         );
@@ -170,7 +226,7 @@ fn register_entry(index: usize, app: &App) -> (String, String, u8) {
 /// Returns (label, value, age) for pinned register.
 fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
     let val = format_u32_value(
-        app.run.cpu.x[reg_idx as usize],
+        app.run.cpu().x[reg_idx as usize],
         app.run.fmt_mode,
         app.run.show_signed,
     );
@@ -195,7 +251,7 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
         .take(visible)
         .map(|i| {
             let age = app.run.f_age[i as usize];
-            let bits = app.run.cpu.f[i as usize];
+            let bits = app.run.cpu().f[i as usize];
             let val = f32::from_bits(bits);
             let label = format!("f{i:02} ({}) ", freg_name_short(i));
             let value = if val.is_nan() {
@@ -210,9 +266,13 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
                 format!("{val:.6}")
             };
             let style = age_style(age);
+            let (value, value_style) = match freg_edit_overlay(app, i) {
+                Some(overlay) => (overlay, edit_value_style()),
+                None => (value, style),
+            };
             Row::new(vec![
                 Cell::from(label).style(style),
-                Cell::from(value).style(style),
+                Cell::from(value).style(value_style),
             ])
         })
         .collect();
@@ -321,7 +381,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn memory_block(app: &App) -> Block<'static> {
-    let base_addr = visible_memory_base_addr(app, None);
+    let base_addr = app.run.visible_memory_base_addr(None);
     let section = memory_title_section(app, base_addr);
     let accent = memory_accent_color(app, section);
     let title = Line::from(vec![
@@ -336,7 +396,7 @@ fn memory_block(app: &App) -> Block<'static> {
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
-    let base = visible_memory_base_addr(app, Some(inner.height as u32));
+    let base = app.run.visible_memory_base_addr(Some(inner.height as u32));
     let bytes = app.run.mem_view_bytes;
     let lines = inner.height as u32;
     let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
@@ -349,29 +409,12 @@ fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
         .collect()
 }
 
-fn visible_memory_base_addr(app: &App, lines_override: Option<u32>) -> u32 {
-    let bytes = app.run.mem_view_bytes.max(1);
-    let lines = lines_override.unwrap_or(0);
-    let center = app.run.mem_region == MemRegion::Stack
-        || app.run.mem_region == MemRegion::Access
-        || app.run.mem_region == MemRegion::Heap
-        || (app.run.show_dyn && matches!(app.run.dyn_mem_access, Some((_, _, true))));
-    let base = if center {
-        let half = lines / 2;
-        app.run.mem_view_addr.saturating_sub(half * bytes)
-    } else {
-        app.run.mem_view_addr
-    };
-    let align_mask = !(bytes - 1);
-    base & align_mask
-}
-
 fn memory_title_section<'a>(app: &'a App, addr: u32) -> &'a str {
     classify_memory_section(app, addr)
 }
 
 fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
-    let sp_aligned = app.run.cpu.x[2] & !(app.run.mem_view_bytes.saturating_sub(1));
+    let sp_aligned = app.run.cpu().x[2] & !(app.run.mem_view_bytes.saturating_sub(1));
     if addr >= sp_aligned && (addr as usize) < app.run.mem_size {
         return "stack";
     }
@@ -403,7 +446,7 @@ fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
     if addr >= data_end && addr < bss_end {
         return ".bss";
     }
-    if addr >= app.run.heap_start && addr < app.run.cpu.heap_break {
+    if addr >= app.run.heap_start && addr < app.run.cpu().heap_break {
         return "heap";
     }
 
@@ -441,28 +484,34 @@ fn mem_age_style(age: u8) -> Option<Style> {
 const HEAP_COLOR: Color = Color::Rgb(80, 200, 120);
 
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
-    let sp = app.run.cpu.x[2];
+    // When this cell is the open inline editor, paint the buffer + cursor and
+    // skip the usual cache/marker decorations (transient while editing).
+    if let Some(overlay) = mem_edit_overlay(app, addr) {
+        return ListItem::new(format!("  0x{addr:08x}: {overlay}")).style(edit_value_style());
+    }
+
+    let sp = app.run.cpu().x[2];
     let sp_aligned = sp & !(app.run.mem_view_bytes - 1);
     let is_sp = addr == sp_aligned;
     let is_stack = app.run.mem_region == MemRegion::Stack;
 
-    let hb = app.run.cpu.heap_break;
+    let hb = app.run.cpu().heap_break;
     let hb_aligned = hb & !(app.run.mem_view_bytes - 1);
     let is_heap_mode = app.run.mem_region == MemRegion::Heap;
     let is_hb = addr == hb_aligned;
 
     let cache_presence = if app.run.cache_enabled {
-        cache_presence_label(&app.run.mem, addr)
+        cache_presence_label(app.run.mem(), addr)
     } else {
         None
     };
     let data_cache_loc = if app.run.cache_enabled {
-        app.run.mem.data_cache_location(addr)
+        app.run.mem().data_cache_location(addr)
     } else {
         None
     };
     let is_dirty =
-        app.run.cache_enabled && app.run.mem.is_dirty_cached(addr, app.run.mem_view_bytes);
+        app.run.cache_enabled && app.run.mem().is_dirty_cached(addr, app.run.mem_view_bytes);
 
     // Check if any recent memory access overlaps this row's byte range
     let row_end = addr.wrapping_add(app.run.mem_view_bytes);
@@ -643,7 +692,7 @@ fn cache_presence_label(mem: &crate::falcon::cache::CacheController, addr: u32) 
 #[allow(dead_code)]
 fn _unused_format(app: &App, addr: u32) -> String {
     format_u32_value(
-        app.run.mem.peek32(addr).unwrap_or(0),
+        app.run.mem().peek32(addr).unwrap_or(0),
         app.run.fmt_mode,
         app.run.show_signed,
     )
@@ -789,8 +838,8 @@ mod tests {
         app.run.base_pc = 0x0000;
         app.run.data_base = 0x1000;
         app.run.heap_start = 0x1040;
-        app.run.cpu.heap_break = 0x1080;
-        app.run.cpu.write(2, 0x2000);
+        app.run.machine.cpu_mut_unjournaled().heap_break = 0x1080;
+        app.run.machine.cpu_mut_unjournaled().write(2, 0x2000);
         app.run.mem_size = 0x2000;
         app.run.mem_view_bytes = 4;
         app
@@ -809,7 +858,7 @@ mod tests {
     #[test]
     fn stack_classification_uses_current_sp_boundary() {
         let mut app = make_app();
-        app.run.cpu.write(2, 0x1ff0);
+        app.run.machine.cpu_mut_unjournaled().write(2, 0x1ff0);
         assert_eq!(classify_memory_section(&app, 0x1ff0), "stack");
         assert_eq!(classify_memory_section(&app, 0x1fec), "free");
     }

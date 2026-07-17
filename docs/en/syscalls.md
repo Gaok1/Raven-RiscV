@@ -26,10 +26,10 @@ a0  = return value  (negative value = -errno as u32)
             │  heap_ptr →                  │    (e.g. store heap_ptr in a .data label)
             │                              │
             ├  ─  ─  ─  ─  ─  ─  ─  ─  ─ ┤
-            │  stack  (grows ↓)            │  ← sp = 0x00020000 (one past end of RAM)
+            │  stack  (grows ↓)            │  ← sp = RAM_SIZE (one past configured RAM)
             │                              │    push:  addi sp, sp, -4 / sw rs, 0(sp)
 0x0001FFFF  └──────────────────────────────┘    pop:   lw rd, 0(sp)  / addi sp, sp, 4
-            sp (0x00020000) — first push → sp = 0x0001FFFC
+            sp (RAM_SIZE) - first push -> sp = RAM_SIZE - 4
 ```
 
 ### Key addresses
@@ -39,13 +39,11 @@ a0  = return value  (negative value = -errno as u32)
 | `base_pc`   | `0x00000000` | Start of `.text` (configurable in Run tab) |
 | `data_base` | `0x00001000` | Start of `.data` / `.bss`               |
 | `bss_end`   | dynamic      | First byte after `.bss` (end of static data) |
-| `sp` initial | `0x00020000` | One past end of RAM (RISC-V ABI convention); first `push` writes to `0x0001FFFC` |
+| `sp` initial | `RAM_SIZE` | One past the configured RAM size (default `0x01000000`, 16 MiB); first `push` writes to `RAM_SIZE - 4` |
 
 ### Manual heap — bump allocator pattern
 
-RAVEN has **no `malloc`/`free`**. The free region between `bss_end` and the
-stack bottom is plain RAM. To allocate dynamically, keep a pointer in `.data`
-and advance it manually:
+At the raw assembly/syscall level, RAVEN has **no built-in `malloc`/`free` function**. The free region between `bss_end` and the stack bottom is plain RAM. For a tiny manual allocator, keep a pointer in `.data` and advance it yourself. If you want simulator-managed heap growth instead, use `brk` (214) or anonymous `mmap` (222) below.
 
 ```asm
 .data
@@ -236,6 +234,20 @@ Returns simulated user/group ID (always `0`).
 
 ---
 
+### `brk` — syscall 214
+
+Query or extend the program break, the top of the simulator-managed heap. This
+is the primitive used to build `sbrk`/`malloc`-style allocators; it is **not** a
+`malloc` syscall by itself.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `214` |
+| `a0`     | new break address, or `0` to query |
+| **`a0` (ret)** | current/new break; unchanged old break if the request exceeds RAM |
+
+---
+
 ### `mmap` — syscall 222
 
 Allocate a block of anonymous memory from the heap.
@@ -252,7 +264,7 @@ Allocate a block of anonymous memory from the heap.
 | **`a0` (ret)** | allocated pointer, or `-EINVAL` / `-ENOMEM` |
 
 **Restrictions:** only anonymous mappings (`MAP_ANONYMOUS=0x20`, `fd=-1`) are supported.
-Memory is allocated from the heap (same region as `brk`). `munmap` is a no-op.
+Memory is allocated from the same simulator-managed heap used by `brk`; internally it advances the heap break by the requested length rounded up to 4 bytes. `munmap` is a no-op.
 
 ```asm
     li   a0, 0          ; hint = 0
@@ -690,6 +702,159 @@ Compare NUL-terminated strings at `a0` and `a1`.
 
 ---
 
+## Graphics syscalls (2000+)
+
+A minimal host-side framebuffer so a compiled program can be a game (see
+`Program Examples/graphics/snake.fas` for a complete one). The model is deliberately
+simple, UXN-style: draw into a back buffer with pixel/rect calls, then
+`screen_present` publishes the frame.
+
+Where the screen shows up:
+
+- **TUI**: the *Screen* sub-view of the Run tab opens automatically on
+  `screen_init`. While it is focused, every key goes to the program
+  (`screen_poll_key`); **Esc is reserved** — it returns to the CPU view and is
+  never delivered to the program. Switch between TUI and OS window in
+  *Settings → Screen Output*.
+- **CLI**: `raven run game.fas --screen` opens a native OS window. Without
+  `--screen` the syscalls still work against the in-memory buffer (nothing is
+  displayed) — deterministic and CI-safe.
+- The OS window is not available on macOS (windowing must own the main
+  thread); the TUI sub-view works everywhere.
+
+Colors are `0x00RRGGBB`. Every call except `screen_init` returns `-EINVAL`
+until a screen exists. The framebuffer lives on the host, **not** in guest RAM,
+and is not rewound by step-back.
+
+### `2000` — screen_init
+
+Create (or recreate) the screen.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2000` |
+| `a0`     | width in pixels (8..=1024) |
+| `a1`     | height in pixels (8..=1024) |
+| **`a0` (ret)** | `0`, or `-EINVAL` for a bad size |
+
+### `2001` — screen_clear
+
+Fill the whole back buffer with one color.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2001` |
+| `a0`     | color `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2002` — screen_set_pixel
+
+Draw one pixel into the back buffer.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2002` |
+| `a0`     | x |
+| `a1`     | y |
+| `a2`     | color `0xRRGGBB` |
+| **`a0` (ret)** | `0`, or `-EINVAL` when out of bounds (never faults) |
+
+### `2003` — screen_fill_rect
+
+Draw a filled rectangle, clipped at the screen edges.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2003` |
+| `a0`     | x |
+| `a1`     | y |
+| `a2`     | width |
+| `a3`     | height |
+| `a4`     | color `0xRRGGBB` |
+| **`a0` (ret)** | `0` |
+
+### `2004` — screen_present
+
+Publish the back buffer. Nothing is visible until the first present — draw the
+whole frame, then present once (classic double buffering).
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2004` |
+| **`a0` (ret)** | `0` |
+
+### `2005` — screen_poll_key
+
+Pop the oldest pending key press. Non-blocking: returns `0` when the queue is
+empty.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2005` |
+| **`a0` (ret)** | key code, or `0` |
+
+Key codes:
+
+| Key | Code |
+|-----|------|
+| letters / digits / space | lowercase ASCII (`'a'` = 97, `'0'` = 48, `' '` = 32) |
+| Backspace | 8 |
+| Enter | 13 |
+| Up / Down / Left / Right | 256 / 257 / 258 / 259 |
+
+Esc (27) is only delivered in OS-window mode; in the TUI it closes the Screen
+sub-view instead. Don't build your game around Esc — use `q`.
+
+### `2006` — screen_time_ms
+
+Wall-clock milliseconds since `screen_init` (u32, wraps after ~49 days). Use it
+for frame pacing; `clock_gettime` (403) is instruction-count based and does not
+track real time.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2006` |
+| **`a0` (ret)** | elapsed ms |
+
+### `2007` — screen_sleep_ms
+
+Sleep for `a0` real milliseconds. The hart parks on the `ecall` without
+burning simulated cycles or blocking the TUI; other harts keep running.
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `2007` |
+| `a0`     | milliseconds |
+| **`a0` (ret)** | `0` |
+
+### Game loop skeleton
+
+```asm
+    li   a0, 80
+    li   a1, 60
+    li   a7, 2000       ; screen_init(80, 60)
+    ecall
+
+loop:
+    li   a7, 2005       ; key = screen_poll_key()
+    ecall
+    ; ... react to the key, update state ...
+
+    li   a0, 0x101820
+    li   a7, 2001       ; screen_clear(bg)
+    ecall
+    ; ... screen_fill_rect / screen_set_pixel calls ...
+    li   a7, 2004       ; screen_present()
+    ecall
+
+    li   a0, 33
+    li   a7, 2007       ; screen_sleep_ms(33)  → ~30 fps
+    ecall
+    j    loop
+```
+
+---
+
 ## Pseudo-instructions that use ecall
 
 | Pseudo | Expands to | Syscall(s) | Clobbers |
@@ -735,6 +900,7 @@ Num   Name             a0          a1          a2          ret
 172   getpid           —           —           —           1
 174   getuid           —           —           —           0
 176   getgid           —           —           —           0
+214   brk              new_break   -           -           actual break / old
 215   munmap           addr        len         —           0 (nop)
 222   mmap             hint=0      len         prot        ptr / -err
 278   getrandom        buf addr    len         flags       len / -err
@@ -763,4 +929,13 @@ Num   Name             a0          a1          a2          ret
 1100  hart_start       entry pc    stack ptr   arg         hart id / -err
 1101  hart_exit        —           —           —           (no return)
 1102  map_exec         addr        len         —           0 / -err
+
+2000  screen_init      width       height      —           0 / -err
+2001  screen_clear     rgb         —           —           0
+2002  screen_set_pixel x           y           rgb         0 / -err
+2003  screen_fill_rect x           y           w (a3=h, a4=rgb)  0
+2004  screen_present   —           —           —           0
+2005  screen_poll_key  —           —           —           key / 0
+2006  screen_time_ms   —           —           —           ms since init
+2007  screen_sleep_ms  ms          —           —           0
 ```

@@ -478,7 +478,7 @@ pub(super) fn make_level_snapshot(
 }
 
 pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
-    let mem = &app.run.mem;
+    let mem = app.run.mem();
     let pipeline = capture_pipeline_snapshot(app);
     let i_amat = mem.icache_amat();
     let d_amat = mem.dcache_amat();
@@ -536,6 +536,37 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         .cloned()
         .collect();
 
+    // TLB / VM state travels with the snapshot when VM is on.
+    let tlb = if app.run.vm_enabled() {
+        let mmu = mem.mmu();
+        let t = &mmu.tlb;
+        Some(crate::ui::app::TlbSnapshot {
+            entry_count: t.config.entry_count,
+            associativity: t.config.associativity,
+            replacement: format!("{:?}", t.config.replacement),
+            hit_latency: t.config.hit_latency,
+            miss_penalty: t.config.miss_penalty,
+            hits: t.stats.hits,
+            misses: t.stats.misses,
+            evictions: t.stats.evictions,
+            page_faults: t.stats.page_faults,
+            total_cycles: t.stats.total_cycles,
+            valid_entries: t.entries.iter().filter(|e| e.valid).count(),
+            vm_mode: app.vm_mode().as_str().to_string(),
+            page_size: 1u64 << mmu.scheme.offset_bits,
+            levels: mmu.scheme.num_levels(),
+            hit_rate_history: t
+                .stats
+                .history
+                .iter()
+                .filter(|(x, _)| *x >= start_f)
+                .cloned()
+                .collect(),
+        })
+    } else {
+        None
+    };
+
     let (instruction_count, total_cycles, base_cycles, cpi, ipc) = if let Some(p) = &pipeline {
         let ipc = if p.cycles > 0 {
             p.committed as f64 / p.cycles as f64
@@ -565,12 +596,25 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         icache: icache_snap,
         dcache: dcache_snap,
         extra_levels: extra_snaps,
+        tlb,
         cpi_config: app.run.cpi_config.clone(),
         miss_hotspots: hotspots,
         hit_rate_history_i: history_i,
         hit_rate_history_d: history_d,
         pipeline,
     }
+}
+
+/// Capture the current stats window into the shared session history. Both the
+/// Cache and Virtual Memory Stats subtabs call this on `s`.
+pub(super) fn capture_session_snapshot(app: &mut App) {
+    let snap = capture_snapshot(app);
+    let label = snap.label.clone();
+    let instr_end = snap.instr_end;
+    app.cache.session_history.push(snap);
+    app.cache.history_scroll = app.cache.session_history.len().saturating_sub(1);
+    app.cache.window_start_instr = instr_end;
+    app.cache.config_status = Some(format!("Captured {label}"));
 }
 
 fn capture_pipeline_snapshot(app: &App) -> Option<PipelineResultsSnapshot> {
@@ -609,7 +653,7 @@ pub(crate) fn apply_rcfg_text(app: &mut App, text: &str) -> Result<(), String> {
 /// Apply a raw .pcfg text to the app (parse + apply, no file I/O).
 pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
     let cfg = parse_pcfg(text)?;
-    cfg.apply_to_state(&mut app.pipeline);
+    cfg.apply_to_state(&mut app.run.pipeline_mut());
     Ok(())
 }
 
@@ -620,10 +664,11 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
     app.cache.pending_dcache = dcfg;
     let n_extra = extra.len();
     app.cache.extra_pending = extra;
-    app.run.mem.extra_levels.clear();
+    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
     for cfg in &app.cache.extra_pending {
         app.run
-            .mem
+            .machine
+            .mem_mut_unjournaled()
             .extra_levels
             .push(crate::falcon::cache::Cache::new(cfg.clone()));
     }
@@ -631,7 +676,7 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
         app.cache.selected_level = n_extra;
     }
     app.tlb.pending = tlb.clone();
-    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
+    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
     Ok(())
 }
 
@@ -677,10 +722,11 @@ pub(crate) fn do_import_cfg(app: &mut App) {
                     app.cache.pending_dcache = dcfg;
                     let n_extra = extra.len();
                     app.cache.extra_pending = extra;
-                    app.run.mem.extra_levels.clear();
+                    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
                     for cfg in &app.cache.extra_pending {
                         app.run
-                            .mem
+                            .machine
+                            .mem_mut_unjournaled()
                             .extra_levels
                             .push(crate::falcon::cache::Cache::new(cfg.clone()));
                     }
@@ -688,7 +734,7 @@ pub(crate) fn do_import_cfg(app: &mut App) {
                         app.cache.selected_level = n_extra;
                     }
                     app.tlb.pending = tlb.clone();
-                    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
+                    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",
@@ -714,7 +760,7 @@ pub(crate) fn do_export_rcfg(app: &mut App) {
     let text = serialize_rcfg(
         &app.run.cpi_config,
         app.run.cache_enabled,
-        app.pipeline.enabled,
+        app.run.pipeline().enabled,
         app.vm_mode(),
         &app.active_scheme(),
         app.run.trace_syscalls,
@@ -777,7 +823,7 @@ pub(crate) fn do_import_rcfg(app: &mut App) {
 }
 
 pub(crate) fn do_export_pcfg(app: &mut App) {
-    let text = serialize_pcfg(&app.pipeline);
+    let text = serialize_pcfg(&app.run.pipeline());
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Pipeline Config", &["pcfg"])
         .set_file_name("pipeline.pcfg")
@@ -786,15 +832,15 @@ pub(crate) fn do_export_pcfg(app: &mut App) {
         let path = ensure_extension(path, "pcfg");
         match std::fs::write(&path, &text) {
             Ok(()) => {
-                app.pipeline.status_error = None;
-                app.pipeline.status_msg = Some(format!(
+                app.run.pipeline_mut().status_error = None;
+                app.run.pipeline_mut().status_msg = Some(format!(
                     "Pipeline config exported to {}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }
             Err(e) => {
-                app.pipeline.status_msg = None;
-                app.pipeline.status_error = Some(format!("Export failed: {e}"));
+                app.run.pipeline_mut().status_msg = None;
+                app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
             }
         }
     } else {
@@ -810,21 +856,21 @@ pub(crate) fn do_import_pcfg(app: &mut App) {
         match std::fs::read_to_string(&path) {
             Ok(text) => match parse_pcfg(&text) {
                 Ok(cfg) => {
-                    cfg.apply_to_state(&mut app.pipeline);
-                    app.pipeline.status_error = None;
-                    app.pipeline.status_msg = Some(format!(
+                    cfg.apply_to_state(&mut app.run.pipeline_mut());
+                    app.run.pipeline_mut().status_error = None;
+                    app.run.pipeline_mut().status_msg = Some(format!(
                         "Pipeline config imported from {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
                 }
                 Err(msg) => {
-                    app.pipeline.status_msg = None;
-                    app.pipeline.status_error = Some(format!("Import failed: {msg}"));
+                    app.run.pipeline_mut().status_msg = None;
+                    app.run.pipeline_mut().status_error = Some(format!("Import failed: {msg}"));
                 }
             },
             Err(e) => {
-                app.pipeline.status_msg = None;
-                app.pipeline.status_error = Some(format!("Import failed: {e}"));
+                app.run.pipeline_mut().status_msg = None;
+                app.run.pipeline_mut().status_error = Some(format!("Import failed: {e}"));
             }
         }
     } else {
@@ -899,15 +945,15 @@ pub(crate) fn do_export_pipeline_results(app: &mut App) {
         };
         match std::fs::write(&path, &text) {
             Ok(()) => {
-                app.pipeline.status_msg = Some(format!(
+                app.run.pipeline_mut().status_msg = Some(format!(
                     "Pipeline results exported to {}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
-                app.pipeline.status_error = None;
+                app.run.pipeline_mut().status_error = None;
             }
             Err(e) => {
-                app.pipeline.status_error = Some(format!("Export failed: {e}"));
-                app.pipeline.status_msg = None;
+                app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
+                app.run.pipeline_mut().status_msg = None;
             }
         }
     } else {
@@ -988,6 +1034,26 @@ pub(super) fn serialize_results_fstats(
     for (i, lvl) in snap.extra_levels.iter().enumerate() {
         write_level_snap(&mut s, &format!("l{}", i + 2), lvl);
     }
+    if let Some(t) = &snap.tlb {
+        s.push_str("tlb.enabled=true\n");
+        s.push_str(&format!("tlb.vm_mode={}\n", t.vm_mode));
+        s.push_str(&format!("tlb.page_size={}\n", t.page_size));
+        s.push_str(&format!("tlb.levels={}\n", t.levels));
+        s.push_str(&format!("tlb.entry_count={}\n", t.entry_count));
+        s.push_str(&format!("tlb.associativity={}\n", t.associativity));
+        s.push_str(&format!("tlb.replacement={}\n", t.replacement));
+        s.push_str(&format!("tlb.hit_latency={}\n", t.hit_latency));
+        s.push_str(&format!("tlb.miss_penalty={}\n", t.miss_penalty));
+        s.push_str(&format!("tlb.hits={}\n", t.hits));
+        s.push_str(&format!("tlb.misses={}\n", t.misses));
+        s.push_str(&format!("tlb.hit_rate={:.4}\n", t.hit_rate()));
+        s.push_str(&format!("tlb.evictions={}\n", t.evictions));
+        s.push_str(&format!("tlb.page_faults={}\n", t.page_faults));
+        s.push_str(&format!("tlb.total_cycles={}\n", t.total_cycles));
+        s.push_str(&format!("tlb.valid_entries={}\n", t.valid_entries));
+    } else {
+        s.push_str("tlb.enabled=false\n");
+    }
     let cpi = &snap.cpi_config;
     s.push_str(&format!(
         "cpi.alu={}\ncpi.mul={}\ncpi.div={}\n",
@@ -1062,6 +1128,13 @@ pub(super) fn serialize_results_fstats(
                 s.push_str(&format!("window.{n}.extra.{k}.misses={}\n", lvl.misses));
                 s.push_str(&format!("window.{n}.extra.{k}.amat={:.4}\n", lvl.amat));
             }
+        }
+        if let Some(t) = &w.tlb {
+            s.push_str(&format!("window.{n}.tlb.hits={}\n", t.hits));
+            s.push_str(&format!("window.{n}.tlb.misses={}\n", t.misses));
+            s.push_str(&format!("window.{n}.tlb.hit_rate={:.4}\n", t.hit_rate()));
+            s.push_str(&format!("window.{n}.tlb.page_faults={}\n", t.page_faults));
+            s.push_str(&format!("window.{n}.tlb.evictions={}\n", t.evictions));
         }
     }
     s
@@ -1153,6 +1226,26 @@ pub(super) fn serialize_results_csv(
         csv_level_row(&mut s, &lvl.name, lvl, snap.instruction_count);
     }
     s.push('\n');
+    if let Some(t) = &snap.tlb {
+        s.push_str("TLB (VIRTUAL MEMORY)\n");
+        s.push_str("VM Mode,Page Size (B),Levels,Entries,Associativity,Replacement,Hits,Misses,Hit Rate (%),Evictions,Page Faults,Svc Cycles,Valid Entries\n");
+        s.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{:.1},{},{},{},{}\n\n",
+            t.vm_mode,
+            t.page_size,
+            t.levels,
+            t.entry_count,
+            t.associativity,
+            t.replacement,
+            t.hits,
+            t.misses,
+            t.hit_rate(),
+            t.evictions,
+            t.page_faults,
+            t.total_cycles,
+            t.valid_entries,
+        ));
+    }
     s.push_str("MISS HOTSPOTS (I-Cache)\n");
     s.push_str("PC,Miss Count\n");
     for (pc, count) in &snap.miss_hotspots {
@@ -1191,6 +1284,24 @@ pub(super) fn serialize_results_csv(
                 w.total_cycles,
                 w.cpi,
             ));
+        }
+        if windows.iter().any(|w| w.tlb.is_some()) {
+            s.push('\n');
+            s.push_str("WINDOW SNAPSHOTS (TLB)\n");
+            s.push_str("Window,TLB Hits,TLB Misses,TLB Hit Rate (%),Evictions,Page Faults\n");
+            for w in windows {
+                if let Some(t) = &w.tlb {
+                    s.push_str(&format!(
+                        "{},{},{},{:.1},{},{}\n",
+                        w.label,
+                        t.hits,
+                        t.misses,
+                        t.hit_rate(),
+                        t.evictions,
+                        t.page_faults,
+                    ));
+                }
+            }
         }
     }
     s
@@ -1582,10 +1693,11 @@ pub(super) fn dispatch_path_input(
                     app.cache.pending_icache = icfg;
                     app.cache.pending_dcache = dcfg;
                     app.cache.extra_pending = extra;
-                    app.run.mem.extra_levels.clear();
+                    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
                     for cfg in &app.cache.extra_pending {
                         app.run
-                            .mem
+                            .machine
+                            .mem_mut_unjournaled()
                             .extra_levels
                             .push(crate::falcon::cache::Cache::new(cfg.clone()));
                     }
@@ -1593,7 +1705,7 @@ pub(super) fn dispatch_path_input(
                         app.cache.selected_level = n_extra;
                     }
                     app.tlb.pending = tlb.clone();
-                    app.run.mem.mmu_mut().tlb.reconfigure(tlb);
+                    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Imported from {}",
@@ -1655,7 +1767,7 @@ pub(super) fn dispatch_path_input(
             let text = serialize_rcfg(
                 &app.run.cpi_config,
                 app.run.cache_enabled,
-                app.pipeline.enabled,
+                app.run.pipeline().enabled,
                 app.vm_mode(),
                 &app.active_scheme(),
                 app.run.trace_syscalls,
@@ -1681,7 +1793,7 @@ pub(super) fn dispatch_path_input(
         PathInputAction::OpenPcfg => match std::fs::read_to_string(&path) {
             Ok(text) => match parse_pcfg(&text) {
                 Ok(cfg) => {
-                    cfg.apply_to_state(&mut app.pipeline);
+                    cfg.apply_to_state(&mut app.run.pipeline_mut());
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
                         "Pipeline config imported from {}",
@@ -1700,7 +1812,7 @@ pub(super) fn dispatch_path_input(
         },
         PathInputAction::SavePcfg => {
             let path = ensure_extension(path, "pcfg");
-            let text = serialize_pcfg(&app.pipeline);
+            let text = serialize_pcfg(&app.run.pipeline());
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_error = None;
@@ -1766,15 +1878,15 @@ pub(super) fn dispatch_path_input(
             };
             match std::fs::write(&path, &text) {
                 Ok(()) => {
-                    app.pipeline.status_msg = Some(format!(
+                    app.run.pipeline_mut().status_msg = Some(format!(
                         "Pipeline results exported to {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
-                    app.pipeline.status_error = None;
+                    app.run.pipeline_mut().status_error = None;
                 }
                 Err(e) => {
-                    app.pipeline.status_error = Some(format!("Export failed: {e}"));
-                    app.pipeline.status_msg = None;
+                    app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
+                    app.run.pipeline_mut().status_msg = None;
                 }
             }
         }

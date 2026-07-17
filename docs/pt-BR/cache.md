@@ -246,7 +246,7 @@ Use **Ctrl+e** (exportar) e **Ctrl+l** (importar) na aba Cache. O formato é tex
 
 ## Programas de exemplo
 
-Todos os exemplos estão em `Program Examples/`:
+Todos os exemplos estão em `Program Examples/cache/`:
 
 - `cache_locality.fas` — acesso sequencial vs com stride; observe o hit rate mudar conforme o padrão de acesso varia.
 - `cache_conflict.fas` — dois endereços no mesmo set que se expulsam mesmo com capacidade livre em outros sets.

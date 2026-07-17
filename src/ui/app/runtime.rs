@@ -17,7 +17,7 @@ impl App {
     }
 
     pub(crate) fn aggregate_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.pipeline.enabled {
+        if !self.run.pipeline().enabled {
             return None;
         }
 
@@ -44,7 +44,7 @@ impl App {
         if self.core_hart_id(self.selected_core).is_some()
             || !matches!(self.core_status(self.selected_core), HartLifecycle::Free)
         {
-            accumulate(&self.pipeline);
+            accumulate(&self.run.pipeline());
         }
 
         for (idx, hart) in self.harts.iter().enumerate() {
@@ -86,19 +86,19 @@ impl App {
             branch_stalls,
             fu_stalls,
             mem_stalls,
-            bypass: self.pipeline.bypass.summary(),
-            mode: format!("{:?}", self.pipeline.mode),
-            branch_resolve: format!("{:?}", self.pipeline.branch_resolve),
-            branch_predict: format!("{:?}", self.pipeline.predict),
+            bypass: self.run.pipeline().bypass.summary(),
+            mode: format!("{:?}", self.run.pipeline().mode),
+            branch_resolve: format!("{:?}", self.run.pipeline().branch_resolve),
+            branch_predict: format!("{:?}", self.run.pipeline().predict),
         })
     }
 
     pub(crate) fn selected_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.pipeline.enabled {
+        if !self.run.pipeline().enabled {
             return None;
         }
 
-        let pipe = &self.pipeline;
+        let pipe = &self.run.pipeline();
         let [
             raw_stalls,
             load_use_stalls,
@@ -162,14 +162,14 @@ impl App {
 
     pub(in crate::ui) fn set_cache_enabled(&mut self, enabled: bool) {
         self.run.cache_enabled = enabled;
-        self.run.mem.bypass = !enabled;
-        self.run.mem.flush_all();
+        self.run.machine.mem_mut_unjournaled().bypass = !enabled;
+        self.run.machine.mem_mut_unjournaled().flush_all();
         self.ensure_visible_tab();
     }
 
     pub(in crate::ui) fn set_pipeline_enabled(&mut self, enabled: bool) {
-        self.pipeline.enabled = enabled;
-        self.pipeline.sequential_mode = !enabled;
+        self.run.pipeline_mut().enabled = enabled;
+        self.run.pipeline_mut().sequential_mode = !enabled;
         self.reconfigure_pipeline_model();
         self.ensure_visible_tab();
     }
@@ -198,7 +198,7 @@ impl App {
     pub(in crate::ui) fn push_vm_mode_to_mmu(&mut self) {
         let (enabled, force_translate) = self.run.vm_mode.flags();
         let scheme = self.active_scheme();
-        let mmu = self.run.mem.mmu_mut();
+        let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
         mmu.set_scheme(scheme);
         mmu.enabled = enabled;
         mmu.force_translate = force_translate;
@@ -221,7 +221,7 @@ impl App {
         if !enabled {
             // Drop all cached translations so re-enabling starts from a clean
             // slate (no stale PA mappings).
-            self.run.mem.mmu.flush();
+            self.run.machine.mem_mut_unjournaled().mmu.flush();
         } else if self.run.jit_kind != crate::falcon::jit::BackendKind::None {
             // The JIT does not yet invalidate translations on satp/sfence.vma,
             // so keeping it on with VM would silently run stale code. Demote to
@@ -235,10 +235,10 @@ impl App {
     /// page table (miss + penalty, no hits). Mirrors the flag into the engine.
     pub(in crate::ui) fn set_tlb_enabled(&mut self, enabled: bool) {
         self.run.tlb_enabled = enabled;
-        self.run.mem.mmu.tlb_enabled = enabled;
+        self.run.machine.mem_mut_unjournaled().mmu.tlb_enabled = enabled;
         if !enabled {
             // Drop cached translations so re-enabling starts cold.
-            self.run.mem.mmu.flush();
+            self.run.machine.mem_mut_unjournaled().mmu.flush();
         }
     }
 
@@ -271,7 +271,7 @@ impl App {
             }
             BackendKind::Full => {
                 #[cfg(feature = "jit")]
-                { crate::falcon::jit::make_full_backend(&self.run.cpu, &self.run.mem) }
+                { crate::falcon::jit::make_full_backend(self.run.cpu(), self.run.mem()) }
                 #[cfg(not(feature = "jit"))]
                 { make_backend(BackendKind::None).unwrap() }
             }
@@ -280,14 +280,14 @@ impl App {
 
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
         self.run.is_running = false;
-        self.pipeline.reset_stages(self.run.cpu.pc);
+        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
 
         for (idx, hart) in self.harts.iter_mut().enumerate() {
             if idx == self.selected_core {
                 continue;
             }
             if let Some(p) = hart.pipeline.as_mut() {
-                Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+                Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
                 p.reset_stages(hart.cpu.pc);
             }
         }
@@ -324,11 +324,11 @@ impl App {
         self.harts.clear();
         for core in 0..self.max_cores {
             let mut runtime = HartCoreRuntime::free(self.run.base_pc, self.run.mem_size);
-            runtime.cpu.heap_break = self.run.cpu.heap_break;
+            runtime.cpu.heap_break = self.run.cpu().heap_break;
             if core == 0 {
                 runtime.hart_id = Some(0);
                 runtime.lifecycle = HartLifecycle::Running;
-                runtime.cpu = self.run.cpu.clone();
+                runtime.cpu = self.run.cpu().clone();
                 runtime.cpu.hart_id = 0;
                 runtime.prev_x = self.run.prev_x;
                 runtime.prev_f = self.run.prev_f;
@@ -344,7 +344,7 @@ impl App {
                 runtime.mem_access_log = self.run.mem_access_log.clone();
                 runtime.pipeline = None;
             } else if let Some(p) = runtime.pipeline.as_mut() {
-                Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+                Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
                 p.reset_stages(runtime.cpu.pc);
             }
             self.harts.push(runtime);
@@ -359,7 +359,7 @@ impl App {
         let selected = self.selected_core;
         let replacement = crate::ui::pipeline::PipelineSimState::new();
         if let Some(runtime) = self.harts.get_mut(selected) {
-            runtime.cpu = self.run.cpu.clone();
+            runtime.cpu = self.run.cpu().clone();
             runtime.prev_x = self.run.prev_x;
             runtime.prev_f = self.run.prev_f;
             runtime.prev_pc = self.run.prev_pc;
@@ -372,7 +372,7 @@ impl App {
             runtime.exec_trace = self.run.exec_trace.clone();
             runtime.dyn_mem_access = self.run.dyn_mem_access;
             runtime.mem_access_log = self.run.mem_access_log.clone();
-            runtime.pipeline = Some(std::mem::replace(&mut self.pipeline, replacement));
+            runtime.pipeline = Some(std::mem::replace(&mut self.run.pipeline_mut(), replacement));
         }
     }
 
@@ -383,7 +383,7 @@ impl App {
     pub(super) fn sync_runtime_to_selected_core(&mut self) {
         let selected = self.selected_core;
         if let Some(runtime) = self.harts.get_mut(selected) {
-            self.run.cpu = runtime.cpu.clone();
+            *self.run.machine.cpu_mut_unjournaled() = runtime.cpu.clone();
             self.run.prev_x = runtime.prev_x;
             self.run.prev_f = runtime.prev_f;
             self.run.prev_pc = runtime.prev_pc;
@@ -400,11 +400,11 @@ impl App {
                 .pipeline
                 .take()
                 .unwrap_or_else(crate::ui::pipeline::PipelineSimState::new);
-            Self::copy_pipeline_config_to_hart(&self.pipeline, &mut pipeline);
+            Self::copy_pipeline_config_to_hart(&self.run.pipeline(), &mut pipeline);
             if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
-                pipeline.reset_stages(self.run.cpu.pc);
+                pipeline.reset_stages(self.run.cpu().pc);
             }
-            self.pipeline = pipeline;
+            *self.run.pipeline_mut() = pipeline;
         }
     }
 
@@ -456,7 +456,7 @@ impl App {
     }
 
     pub(super) fn process_pending_hart_start_for_selected(&mut self) {
-        let Some(request) = self.run.cpu.pending_hart_start.take() else {
+        let Some(request) = self.run.machine.cpu_mut_unjournaled().pending_hart_start.take() else {
             return;
         };
 
@@ -468,7 +468,7 @@ impl App {
                 )
         });
         let Some(free_core) = free_core else {
-            self.run.cpu.write(10, (-1i32) as u32);
+            self.run.machine.cpu_mut_unjournaled().write(10, (-1i32) as u32);
             self.console.push_colored(
                 format!(
                     "[C{}:H{}] hart start failed: no free core available (max_cores={})",
@@ -481,7 +481,7 @@ impl App {
             return;
         };
         if !self.is_pc_in_program(request.entry_pc) {
-            self.run.cpu.write(10, (-2i32) as u32);
+            self.run.machine.cpu_mut_unjournaled().write(10, (-2i32) as u32);
             self.console.push_colored(
                 format!(
                     "[C{}:H{}] hart start failed: entry PC 0x{:08X} is outside any executable region",
@@ -498,7 +498,7 @@ impl App {
             || request.stack_ptr > self.run.mem_size as u32
             || request.stack_ptr & 0xF != 0
         {
-            self.run.cpu.write(10, (-3i32) as u32);
+            self.run.machine.cpu_mut_unjournaled().write(10, (-3i32) as u32);
             self.console.push_colored(
                 format!(
                     "[C{}:H{}] hart start failed: stack 0x{:08X} invalid (must be non-zero, 16-byte aligned, within memory [0..0x{:08X}])",
@@ -522,15 +522,15 @@ impl App {
         child.cpu.pc = request.entry_pc;
         child.cpu.write(2, request.stack_ptr);
         child.cpu.write(10, request.arg);
-        child.cpu.heap_break = self.run.cpu.heap_break;
+        child.cpu.heap_break = self.run.cpu().heap_break;
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+            Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
             p.reset_stages(child.cpu.pc);
         }
 
         self.harts[free_core] = child;
-        self.run.cpu.write(10, hart_id);
+        self.run.machine.cpu_mut_unjournaled().write(10, hart_id);
         self.console.push_colored(
             format!(
                 "[C{}:H{}] hart start -> core {} pc=0x{:08X}",
@@ -545,7 +545,7 @@ impl App {
 
     /// Handle a hart-spawn request issued by a non-selected (background) hart.
     /// Equivalent to `process_pending_hart_start_for_selected` but reads from
-    /// and writes to `self.harts[core_idx].cpu` instead of `self.run.cpu`.
+    /// and writes to `self.harts[core_idx].cpu` instead of `self.run.cpu()`.
     pub(super) fn process_pending_hart_start_for_bg(&mut self, core_idx: usize) {
         let Some(request) = self.harts[core_idx].cpu.pending_hart_start.take() else {
             return;
@@ -616,7 +616,7 @@ impl App {
         child.cpu.heap_break = self.harts[core_idx].cpu.heap_break;
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            Self::copy_pipeline_config_to_hart(&self.pipeline, p);
+            Self::copy_pipeline_config_to_hart(&self.run.pipeline(), p);
             p.reset_stages(child.cpu.pc);
         }
 
@@ -635,7 +635,7 @@ impl App {
     }
 
     pub(super) fn propagate_heap_break(&mut self, heap_break: u32) {
-        self.run.cpu.heap_break = heap_break;
+        self.run.machine.cpu_mut_unjournaled().heap_break = heap_break;
         for (idx, hart) in self.harts.iter_mut().enumerate() {
             if idx != self.selected_core {
                 hart.cpu.heap_break = heap_break;

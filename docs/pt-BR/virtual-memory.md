@@ -351,7 +351,7 @@ Esse cache se chama **Translation Lookaside Buffer (TLB)**. É a estrutura mais 
 - **Miss penalty**: ciclos pra fazer um walk. No Raven, default `20` ciclos.
 - **Hit latency**: ciclos pra confirmar um hit. Default `1` ciclo.
 
-A subtab Stats da TLB plota o hit rate em janela rolante de 300 ciclos — útil pra ver fases distintas (warmup vs steady state, mudança de working set, etc.).
+A subaba stats da TLB plota o hit rate em janela rolante de 300 ciclos — útil pra ver fases distintas (warmup vs steady state, mudança de working set, etc.).
 
 ---
 
@@ -404,9 +404,9 @@ Quando um set está cheio, qual entrada é despejada? O Raven oferece as mesmas 
 | **MRU** (Most Recently Used) | A mais recentemente acessada | Streams sequenciais grandes |
 | **Random** | Aleatória | Baseline; surpreendentemente OK |
 
-Mudar política em runtime: vá em **Virtual Memory → TLB → Settings**, escolha a política, Apply. O Apply reinicia a TLB (todas as entradas viram inválidas), então a próxima execução começa de cold.
+Mudar política em runtime: vá em **Virtual Memory → settings**, escolha a política, Apply. O Apply reinicia a TLB (todas as entradas viram inválidas), então a próxima execução começa de cold.
 
-Dica de experimento: rode o mesmo programa duas vezes — uma com LRU, outra com MRU. Compare o hit rate na subtab Stats. Pra padrões de acesso comuns (loops, arrays), LRU ganha de longe. Pra varreduras sequenciais grandes maiores que a TLB, MRU pode surpreender.
+Dica de experimento: rode o mesmo programa duas vezes — uma com LRU, outra com MRU. Compare o hit rate na subaba stats. Pra padrões de acesso comuns (loops, arrays), LRU ganha de longe. Pra varreduras sequenciais grandes maiores que a TLB, MRU pode surpreender.
 
 ---
 
@@ -487,7 +487,7 @@ O Raven não tem swap nem alocador de páginas — ele te dá os primitivos pra 
 
 ## 15. Os modos de VM: padrão, Custom e Manual
 
-A memória virtual no Raven não é um simples liga/desliga: você escolhe **um entre quatro modos**, cada um pensado para um momento diferente do aprendizado. O seletor fica na **aba Settings global** ou na subaba **Virtual Memory → Settings** (ver §17) — em qualquer um dos dois você cicla entre os modos. A escolha é persistida no `.rcfg`.
+A memória virtual no Raven não é um simples liga/desliga: você escolhe **um entre quatro modos**, cada um pensado para um momento diferente do aprendizado. O seletor fica na **aba Settings global**, ou nas subabas overview / settings da aba **Virtual Memory** (ver §17) — em qualquer um deles você cicla entre os modos. A escolha é persistida no `.rcfg`.
 
 | Modo | O que faz | Quando usar |
 |------|-----------|-------------|
@@ -523,7 +523,7 @@ Exemplos para experimentar:
 | 22 | L0=10 | 32 | megapáginas de 4 MiB, walk de 1 nível |
 | 12 | L2=8, L1=6, L0=6 | 32 | três níveis, tabelas menores por nível |
 
-Páginas maiores/menos numerosas → walks mais curtos e menor pegada na TLB, mas mapeamento mais grosso. Mais níveis → tabelas menores e árvore mais profunda. É exatamente o trade-off que as ISAs reais enfrentam — e aqui você muda, dá `apply`, remonta e compara o hit rate na subaba Stats, tudo sem escrever assembly.
+Páginas maiores/menos numerosas → walks mais curtos e menor pegada na TLB, mas mapeamento mais grosso. Mais níveis → tabelas menores e árvore mais profunda. É exatamente o trade-off que as ISAs reais enfrentam — e aqui você muda, dá `apply`, remonta e compara o hit rate na subaba stats, tudo sem escrever assembly.
 
 ### 15.3 Modo Manual — o programa no comando
 
@@ -551,43 +551,41 @@ Sem pipeline, os ciclos extras viram parte do total e contribuem direto pra `tot
 - Hit rate 90-99% → notável; pode valer aumentar `entry_count` ou associatividade.
 - Hit rate < 90% → working set não cabe; mude pra megapáginas ou aumente o TLB.
 
-A subtab Stats mostra o gráfico rolante e os totais. Compare antes/depois de mudar a config usando **Apply + Reset Stats**.
+A subaba stats mostra o gráfico rolante e os totais. Capture um snapshot com `s` para comparar antes/depois de mudar a config.
 
 ---
 
 ## 17. A aba Virtual Memory do simulador
 
-A aba **Virtual Memory** é o painel central de tudo que este documento explica. O cabeçalho de topo tem **quatro** subviews — **Status · Tree · Settings · TLB** — e a subview **TLB** abre um segundo cabeçalho com **Stats · Entries · Settings**. Use `Tab` para ciclar.
+A aba **Virtual Memory** é o painel central de tudo que este documento explica. Ela espelha a aba Cache: um único cabeçalho plano com **cinco** subabas — **overview · map · tlb · stats · settings** — emoldurado por uma caixa de **Execution** (speed / state / reset + ciclos ao vivo) e uma barra de controles compartilhada (`results · import cfg · export cfg · flush tlb`). Use `Tab` para ciclar as subabas; `r` / `p` / `f` resetam, rodam-pausam e mudam a velocidade sem sair da aba.
 
-### Status
-- Estado vivo do `satp` (MODE, ASID, root PPN) e o nível de privilégio atual.
-- Um chip diz se a tradução está ativa: `vm=off`, `vm=on · translating`, ou `vm=on · inactive` (quando `satp=Bare` ou o privilégio é M no modo Manual). É o diagnóstico rápido pra "por que a TLB está vazia?".
+### overview
+- A subaba inicial. Dois **controles rápidos** clicáveis no topo — `Mode < off | sv32 | custom | manual >` e `TLB [on/off]` — para você ligar a MMU com um clique, sem precisar abrir Settings.
+- Abaixo deles, o estado vivo do `satp` (MODE, ASID, root PPN) e o nível de privilégio atual, mais uma linha **Translation active?** que diz por que a tradução está (in)ativa — o diagnóstico rápido pra "por que a TLB está vazia?".
 
-### Tree
+### map
 - A **tabela de páginas ao vivo**, lida direto da RAM a partir de `satp.PPN`, percorrida seguindo os N níveis do esquema ativo: PTEs ponteiro expandem em tabelas filhas; folhas em qualquer nível são (super)páginas; sequências longas de folhas uniformes colapsam numa linha-resumo. PTEs que estão cacheadas na TLB ganham a marca **●TLB**.
-- É **somente-leitura** — para alterar o mapa ou o esquema, use a subview Settings. É a sua janela para o que a MMU realmente enxerga, essencial quando um mapeamento não surte efeito.
+- É **somente-leitura** — para alterar o mapa ou o esquema, use a subaba settings. É a sua janela para o que a MMU realmente enxerga, essencial quando um mapeamento não surte efeito.
 
-### Settings (painel de controle de VM)
-Onde você remodela a memória virtual **sem escrever uma linha de código**. Três blocos, de cima para baixo:
-
-1. **Esquema de paginação** — o formato da tradução (offset + níveis). Editável no modo **Custom**; ver §15.2.
-2. **Page map** — o que o mapa automático instala: `kind` (identity = VA→VA, ou offset = desloca o físico por um deslocamento fixo, útil pra ver VPN e PPN divergirem em Entries), permissões `R/W/X/U`, flag `G` (global) e `ASID`.
-3. **Geometria da TLB** — atalho pros mesmos campos da TLB → Settings.
-
-Tudo é preparado em rascunho: as edições só surtem efeito quando você aperta **apply** (que reinstala o mapa e reaponta o `satp`). **flush tlb** apenas descarta as traduções cacheadas sem mexer no mapa. É o sandbox seguro: quebre o mapeamento aqui e nada trava — você só vê faults que consegue raciocinar.
-
-### TLB → Stats
-- Gauge de hit rate e contadores: `Hits`, `Misses`, `Evictions`, `Page Faults`.
-- Histórico rolante de 300 ciclos com o hit rate. `r` reseta os contadores; `p` pausa.
-
-### TLB → Entries
+### tlb
 - Tabela por entrada: `VPN → PPN | R/W/X/U | ASID | V | G | A | D | mega`.
 - Útil pra confirmar que uma página foi cacheada, ou pra ver os bits A/D ligando conforme o programa roda. `↑`/`↓` ou a roda do mouse rolam a lista.
+- Quando a TLB está desligada (toggle no overview/settings), esta subaba mostra um aviso: todo acesso percorre a tabela (miss + penalidade, sem hits).
 
-### TLB → Settings
-- `Entries` (potência de 2), `Associativity`, `Replacement Policy`, `Hit Latency`, `Miss Penalty`, mais presets small/med/large.
-- **Apply** aplica e reseta a TLB; **flush** só invalida as entradas.
-- Salvar/carregar config via export/import do Cache (`.fcache` / `.rcfg`); o bloco `[tlb]` carrega junto (ver [Config de cache](cache-config.md)).
+### stats
+- Gauge de hit rate e contadores: `Hits`, `Misses`, `Evictions`, `Page Faults`, mais um gráfico de histórico rolante de 300 ciclos.
+- **Snapshots de sessão** (compartilhados com a aba Cache): aperte `s` para capturar a janela atual; `↑`/`↓` seleciona, `Enter` abre o popup de detalhes (agora com um bloco TLB), `D` apaga. Os snapshots vão junto no export de resultados (`results` / `Ctrl+r`) — o `.fstats` / `.csv` ganha uma seção `tlb.*`.
+
+### settings (painel de controle de VM)
+Onde você remodela a memória virtual **sem escrever uma linha de código**. Quatro blocos, de cima para baixo:
+
+1. **Mode + TLB** — o mesmo seletor `Mode` e toggle `TLB` do overview.
+2. **Esquema de paginação** — o formato da tradução (offset + níveis). Editável no modo **Custom**; ver §15.2.
+3. **Page map** — o que o mapa automático instala: `kind` (identity = VA→VA, ou offset = desloca o físico por um deslocamento fixo, útil pra ver VPN e PPN divergirem na subaba tlb), permissões `R/W/X/U`, flag `G` (global) e `ASID`.
+4. **Geometria da TLB** — `Entries` (potência de 2), `Associativity`, `Replacement Policy`, `Hit Latency`, `Miss Penalty`, mais presets **small / med / large**.
+
+Tudo é preparado em rascunho: as edições só surtem efeito quando você aperta **apply** (que reconfigura a TLB e, nos modos automáticos, reinstala o mapa e reaponta o `satp`). **flush tlb** apenas descarta as traduções cacheadas sem mexer no mapa. Clique num campo para editar ou alternar; `Tab` / `↑` `↓` movem entre os campos numéricos durante a edição. É o sandbox seguro: quebre o mapeamento aqui e nada trava — você só vê faults que consegue raciocinar.
+- Salvar/carregar config via export/import (`export cfg` / `import cfg`, ou `Ctrl+e` / `Ctrl+l`); o bloco `[tlb]` viaja no `.fcache` / `.rcfg` compartilhado (ver [Config de cache](cache-config.md)).
 
 ---
 
@@ -607,16 +605,16 @@ loop:
     ecall               # exit
 ```
 
-1. Selecione o modo **Sv32** (em Settings global ou **Virtual Memory → Settings**) antes de montar.
+1. Selecione o modo **Sv32** (em Settings global ou na subaba overview/settings da **Virtual Memory**) antes de montar.
 2. Monte e rode.
-3. Vá em **Virtual Memory → TLB → Stats** e veja a hit rate subir conforme o loop reutiliza as páginas.
-4. Visite **Entries** pra confirmar que o `vpn` do código aparece com `X=1` e `A=1`.
+3. Vá em **Virtual Memory → stats** e veja a hit rate subir conforme o loop reutiliza as páginas.
+4. Visite a subaba **tlb** pra confirmar que o `vpn` do código aparece com `X=1` e `A=1`.
 
 ---
 
 ## 19. Exemplo avançado — tabela customizada
 
-Pra estudar page faults, transição de privilégio, ou layouts próprios, selecione o modo **Manual** (em **Virtual Memory → Settings**) e escreva a sua própria tabela — sem o override didático, o programa fica no comando.
+Pra estudar page faults, transição de privilégio, ou layouts próprios, selecione o modo **Manual** (na subaba overview/settings da **Virtual Memory**) e escreva a sua própria tabela — sem o override didático, o programa fica no comando.
 
 ```asm
 # Mapeia VA 0x0000 → PA 0x0000 (R|W|X|U, 4 KiB) e cai em U-mode.
@@ -723,7 +721,7 @@ Uma viagem de ida e volta completa fica assim: boot mapeia as páginas de códig
 - O **código do handler e as páginas de tabela precisam ser mapeados como não-`U`** (só kernel), porque S-mode não pode tocar páginas `U=1` (`SUM` não é modelado).
 - O handler edita a tabela *sob tradução*, então a página da leaf table precisa do próprio mapeamento de identidade (`VA = PA`) — o equivalente do simulador a um direct map de kernel.
 
-Pra ver ao vivo: selecione o modo **Manual** (em **Virtual Memory → Settings**), desligue o cache, monte e abra a subview **Virtual Memory → Tree** pra ver as PTEs surgindo conforme o handler as instala.
+Pra ver ao vivo: selecione o modo **Manual** (na subaba overview/settings da **Virtual Memory**), desligue o cache, monte e abra a subaba **Virtual Memory → map** pra ver as PTEs surgindo conforme o handler as instala.
 
 ---
 

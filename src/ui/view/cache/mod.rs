@@ -12,6 +12,9 @@ pub(crate) mod config;
 mod stats;
 mod view;
 
+// The session-snapshot popup is shared with the Virtual Memory tab.
+pub(in crate::ui::view) use stats::render_snapshot_popup;
+
 pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     // When cache is disabled, show a notice and skip all cache-specific content.
     if !app.run.cache_enabled {
@@ -85,7 +88,7 @@ pub(crate) enum CacheScopeBtn {
     Both,
 }
 
-/// The cache run-controls bar — `speed <s>  state <s>  reset` — as a [`Toolbar`]
+/// The cache run-controls bar â€” `speed <s>  state <s>  reset` â€” as a [`Toolbar`]
 /// keyed by the shared [`RunButton`] ids (mouse goes through `cache_exec_hit`).
 pub(crate) fn build_cache_exec_bar(app: &App) -> Toolbar<RunButton> {
     let hov = |b: RunButton| app.hover_run_button == Some(b);
@@ -118,7 +121,7 @@ pub(crate) fn build_cache_exec_bar(app: &App) -> Toolbar<RunButton> {
     bar
 }
 
-/// The cache level selector — `l1 l2 …  add  remove` (rendered after a dim
+/// The cache level selector â€” `l1 l2 â€¦  add  remove` (rendered after a dim
 /// `level ` label). Keyed by [`CacheLevelBtn`].
 pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
     let selected = app.cache.selected_level;
@@ -158,7 +161,7 @@ pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
     bar
 }
 
-/// The shared controls bar's action group — `results` (+ import/export cfg in
+/// The shared controls bar's action group â€” `results` (+ import/export cfg in
 /// the Config subtab). Keyed by [`CacheCtrlBtn`].
 pub(crate) fn build_cache_ctrl_bar(app: &App) -> Toolbar<CacheCtrlBtn> {
     let hov = |t: CacheHoverTarget| app.cache.hover == Some(t);
@@ -186,7 +189,7 @@ pub(crate) fn build_cache_ctrl_bar(app: &App) -> Toolbar<CacheCtrlBtn> {
     bar
 }
 
-/// The scope selector — `i-cache d-cache both` (rendered after a dim `view `
+/// The scope selector â€” `i-cache d-cache both` (rendered after a dim `view `
 /// label; L1 only). Keyed by [`CacheScopeBtn`].
 pub(crate) fn build_cache_scope_bar(app: &App) -> Toolbar<CacheScopeBtn> {
     let hov = |t: CacheHoverTarget| app.cache.hover == Some(t);
@@ -224,16 +227,16 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
         (cycles, cpi, committed)
     } else {
         (
-            app.run.mem.total_program_cycles(),
-            app.run.mem.overall_cpi(),
-            app.run.mem.instruction_count,
+            app.run.mem().total_program_cycles(),
+            app.run.mem().overall_cpi(),
+            app.run.mem().instruction_count,
         )
     };
 
     let mut spans = build_cache_exec_bar(app).spans();
     spans.push(Span::styled(
         if matches!(app.cache.subtab, crate::ui::app::CacheSubtab::Stats) {
-            "   r=reset  f=speed  p=pause  s=capture  ↑↓=history  D=del"
+            "   r=reset  f=speed  p=pause  s=capture  â†‘â†“=history  D=del"
         } else {
             "   r=reset  f=speed  p=pause  s=step"
         },

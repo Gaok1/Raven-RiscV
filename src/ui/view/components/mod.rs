@@ -97,8 +97,8 @@ pub(crate) mod toolbar;
 // Re-export selected widgets for use by sibling modules under `view`
 pub(super) use console::render_console;
 pub(crate) use controls::{
-    ControlState, bool_value, dense_action, dense_value, edit_value, field_row, label_span,
-    push_dense_pair,
+    ControlState, SpanRow, bool_value, dense_action, dense_value, edit_value, field_row,
+    label_span, render_exec_controls,
 };
 pub(crate) use toolbar::Toolbar;
 pub(crate) use lists::{

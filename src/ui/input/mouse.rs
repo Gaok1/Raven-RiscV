@@ -1,3 +1,4 @@
+use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
 use crate::ui::input::keyboard::{
     do_export_cfg, do_export_pipeline_results, do_export_rcfg, do_export_results, do_import_cfg,
     do_import_rcfg,
@@ -16,11 +17,12 @@ use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
-        EditorMode, FormatMode, MemRegion, PathInputAction, RunButton, SbDrag,
+        EditorMode, FormatMode, InstrFieldKind, MemRegion, PathInputAction, RunButton,
+        RunEditTarget, SbDrag,
         SETTINGS_ROW_CACHE_ENABLED,
         SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
-        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_TLB_ENABLED,
-        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
+        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET,
+        SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
     },
     editor::Editor,
 };
@@ -125,8 +127,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
-                if point_in_rect(me.column, me.row, app.pipeline.gantt_area_rect.get()) {
-                    app.pipeline.gantt_scroll = app.pipeline.gantt_scroll.saturating_sub(1);
+                // Bottom-anchored scroll: wheel-up moves into scrollback.
+                if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
+                    let max = app.run.pipeline().gantt_max_scroll_cache.get();
+                    app.run.pipeline_mut().gantt_scroll = (app.run.pipeline_mut().gantt_scroll + 1).min(max);
                 }
             }
             Tab::Docs => {
@@ -134,18 +138,21 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 clamp_docs_scroll(app, area);
             }
             Tab::Tlb => {
-                use crate::ui::app::{TlbSubtab, VmSubtab};
+                use crate::ui::app::VmSubtab;
                 match app.tlb.vm_subtab {
-                    VmSubtab::Tree => {
+                    VmSubtab::Map => {
                         app.tlb.page_tree_scroll = app.tlb.page_tree_scroll.saturating_sub(1);
                     }
                     VmSubtab::Settings => {
                         app.tlb.vm_settings_scroll = app.tlb.vm_settings_scroll.saturating_sub(1);
                     }
-                    VmSubtab::Tlb if matches!(app.tlb.subtab, TlbSubtab::Entries) => {
+                    VmSubtab::Tlb => {
                         app.tlb.entries_scroll = app.tlb.entries_scroll.saturating_sub(1);
                     }
-                    _ => {}
+                    VmSubtab::Stats => {
+                        app.cache.history_scroll = app.cache.history_scroll.saturating_sub(1);
+                    }
+                    VmSubtab::Overview => {}
                 }
             }
             Tab::Settings | Tab::Activity => {}
@@ -183,9 +190,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 _ => {}
             },
             Tab::Pipeline => {
-                if point_in_rect(me.column, me.row, app.pipeline.gantt_area_rect.get()) {
-                    let max = app.pipeline.gantt_max_scroll_cache.get();
-                    app.pipeline.gantt_scroll = (app.pipeline.gantt_scroll + 1).min(max);
+                // Bottom-anchored scroll: wheel-down moves back toward follow (0).
+                if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
+                    app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
                 }
             }
             Tab::Docs => {
@@ -193,9 +200,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 clamp_docs_scroll(app, area);
             }
             Tab::Tlb => {
-                use crate::ui::app::{TlbSubtab, VmSubtab};
+                use crate::ui::app::VmSubtab;
                 match app.tlb.vm_subtab {
-                    VmSubtab::Tree => {
+                    VmSubtab::Map => {
                         let max = app.tlb.page_tree_max_scroll.get();
                         app.tlb.page_tree_scroll =
                             app.tlb.page_tree_scroll.saturating_add(1).min(max);
@@ -205,12 +212,18 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                         app.tlb.vm_settings_scroll =
                             app.tlb.vm_settings_scroll.saturating_add(1).min(max);
                     }
-                    VmSubtab::Tlb if matches!(app.tlb.subtab, TlbSubtab::Entries) => {
-                        let total = app.run.mem.mmu().tlb.entries.len();
+                    VmSubtab::Tlb => {
+                        let total = app.run.mem().mmu().tlb.entries.len();
                         let next = app.tlb.entries_scroll.saturating_add(1);
                         app.tlb.entries_scroll = next.min(total.saturating_sub(1));
                     }
-                    _ => {}
+                    VmSubtab::Stats => {
+                        if !app.cache.session_history.is_empty() {
+                            app.cache.history_scroll = (app.cache.history_scroll + 1)
+                                .min(app.cache.session_history.len() - 1);
+                        }
+                    }
+                    VmSubtab::Overview => {}
                 }
             }
             Tab::Settings | Tab::Activity => {}
@@ -427,21 +440,30 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
 
     // Run tab interactions
     if let Tab::Run = app.tab {
+        // Screen sub-view: the CPU panels aren't rendered, so skip their
+        // hover/click hit-tests — only the status bar and console stay live.
+        let screen_view = app.run.show_screen && app.console.screen.is_some();
         update_run_status_hover(app, me, area);
-        update_imem_hover(app, me, area);
+        if !screen_view {
+            update_imem_hover(app, me, area);
+            update_sidebar_hover(app, me, area);
+        }
         update_console_hover(app, me, area);
-        update_sidebar_hover(app, me, area);
         match me.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 handle_run_status_click(app, me, area);
-                handle_panel_title_click(app, me, area);
-                start_sidebar_drag(app, me, area);
-                start_imem_drag(app, me, area);
-                handle_imem_bp_click(app, me, area);
-                handle_imem_click(app, me, area);
+                if !screen_view {
+                    handle_panel_title_click(app, me, area);
+                    start_sidebar_drag(app, me, area);
+                    start_imem_drag(app, me, area);
+                    handle_imem_bp_click(app, me, area);
+                    handle_imem_click(app, me, area);
+                    handle_details_click(app, me, area);
+                    handle_register_click(app, me, area);
+                    handle_memory_click(app, me, area);
+                }
                 handle_console_clear(app, me, area);
                 start_console_drag(app, me, area);
-                handle_register_click(app, me, area);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if app.run.sidebar_drag {
@@ -458,6 +480,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 app.run.sidebar_drag = false;
                 app.run.imem_drag = false;
                 app.run.console_drag = false;
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                if !screen_view {
+                    handle_imem_right_click(app, me, area);
+                }
             }
             _ => {}
         }
@@ -487,7 +514,8 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::Format => {
             app.run.fmt_mode = match app.run.fmt_mode {
                 FormatMode::Hex => FormatMode::Dec,
-                FormatMode::Dec => FormatMode::Str,
+                FormatMode::Dec => FormatMode::Bin,
+                FormatMode::Bin => FormatMode::Str,
                 FormatMode::Str => FormatMode::Hex,
             };
         }
@@ -511,7 +539,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::Region => {
             match app.run.mem_region {
                 MemRegion::Data | MemRegion::Custom => {
-                    let sp = app.run.cpu.x[2];
+                    let sp = app.run.cpu().x[2];
                     app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
                     app.run.mem_region = MemRegion::Stack;
                 }
@@ -519,7 +547,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                     app.run.mem_region = MemRegion::Access;
                 }
                 MemRegion::Access => {
-                    let hb = app.run.cpu.heap_break;
+                    let hb = app.run.cpu().heap_break;
                     app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
                     app.run.mem_region = MemRegion::Heap;
                 }
@@ -531,6 +559,9 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             app.run.show_registers = false;
             app.run.show_dyn = false;
             app.sync_mem_focus_for_active_sidebar_mode();
+        }
+        RunButton::Screen => {
+            app.run.show_screen = !app.run.show_screen;
         }
         RunButton::Speed => {
             app.run.speed = app.run.speed.cycle();
@@ -560,6 +591,9 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                     app.run.is_running = true;
                 }
             }
+        }
+        RunButton::Stepback => {
+            app.stepback_one();
         }
         RunButton::Reset => {
             app.restart_simulation();
@@ -623,123 +657,10 @@ pub(crate) fn run_status_area(app: &App, area: Rect) -> Rect {
 }
 
 pub(crate) fn run_status_hit(app: &App, status: Rect, col: u16) -> Option<RunButton> {
-    let core_text = format!("{}/{}", app.selected_core, app.max_cores.saturating_sub(1));
-    let view_text = if app.run.show_dyn {
-        "dyn"
-    } else if app.run.show_registers {
-        "regs"
-    } else {
-        "ram"
-    };
-    let fmt_text = match app.run.fmt_mode {
-        FormatMode::Hex => "hex",
-        FormatMode::Dec => "dec",
-        FormatMode::Str => "str",
-    };
-    let sign_text = if app.run.show_signed { "sgn" } else { "uns" };
-    let bytes_text = match app.run.mem_view_bytes {
-        4 => "4b",
-        2 => "2b",
-        _ => "1b",
-    };
-    let region_text = match app.run.mem_region {
-        MemRegion::Data | MemRegion::Custom => "data",
-        MemRegion::Stack => "stack",
-        MemRegion::Access => "r/w",
-        MemRegion::Heap => "heap",
-    };
-    let state_text = crate::ui::view::run::state_text(app);
-
-    let mut pos = status.x + 1;
-    let range = |start: &mut u16, label: &str| {
-        let s = *start;
-        *start += label.len() as u16;
-        (s, *start)
-    };
-    let pair_range = |start: &mut u16, label: &str, value: &str| {
-        let s = *start;
-        *start += (label.len() + 1 + value.len()) as u16;
-        (s, *start)
-    };
-    let skip = |start: &mut u16, s: &str| {
-        *start += s.len() as u16;
-    };
-
-    let (core_start, core_end) = pair_range(&mut pos, "core", &core_text);
-    skip(&mut pos, "   ");
-    let (view_start, view_end) = pair_range(&mut pos, "view", view_text);
-
-    let (region_start, region_end) = if app.run_sidebar_shows_memory() {
-        skip(&mut pos, "   ");
-        pair_range(&mut pos, "region", region_text)
-    } else {
-        (0, 0)
-    };
-
-    skip(&mut pos, "   ");
-    let (fmt_start, fmt_end) = pair_range(&mut pos, "fmt", fmt_text);
-
-    skip(&mut pos, "   ");
-    let (sign_start, sign_end) = pair_range(&mut pos, "sign", sign_text);
-
-    let (bytes_start, bytes_end) = if app.run_sidebar_shows_memory() {
-        skip(&mut pos, "   ");
-        pair_range(&mut pos, "bytes", bytes_text)
-    } else {
-        (0, 0)
-    };
-
-    let speed_text = if app.run.speed.label() == "GO" {
-        "go"
-    } else {
-        app.run.speed.label()
-    };
-    skip(&mut pos, "   ");
-    let (speed_start, speed_end) = pair_range(&mut pos, "speed", speed_text);
-
-    skip(&mut pos, "   ");
-    let (state_start, state_end) = pair_range(&mut pos, "state", &state_text);
-
-    let count_text = if app.run.show_exec_count { "on" } else { "off" };
-    skip(&mut pos, "   ");
-    let (count_start, count_end) = pair_range(&mut pos, "count", count_text);
-
-    let type_text = if app.run.show_instr_type { "on" } else { "off" };
-    skip(&mut pos, "   ");
-    let (type_start, type_end) = pair_range(&mut pos, "type", type_text);
-
-    skip(&mut pos, "   ");
-    let (reset_start, reset_end) = range(&mut pos, "reset");
-
-    if app.max_cores > 1 && col >= core_start && col < core_end {
-        Some(RunButton::Core)
-    } else if col >= view_start && col < view_end {
-        Some(RunButton::View)
-    } else if app.run_sidebar_shows_memory() && col >= region_start && col < region_end {
-        Some(RunButton::Region)
-    } else if col >= fmt_start && col < fmt_end {
-        Some(RunButton::Format)
-    } else if col >= sign_start && col < sign_end {
-        if matches!(app.run.fmt_mode, FormatMode::Dec) {
-            Some(RunButton::Sign)
-        } else {
-            None
-        }
-    } else if app.run_sidebar_shows_memory() && col >= bytes_start && col < bytes_end {
-        Some(RunButton::Bytes)
-    } else if col >= speed_start && col < speed_end {
-        Some(RunButton::Speed)
-    } else if col >= state_start && col < state_end {
-        Some(RunButton::State)
-    } else if col >= count_start && col < count_end {
-        Some(RunButton::ExecCount)
-    } else if col >= type_start && col < type_end {
-        Some(RunButton::InstrType)
-    } else if col >= reset_start && col < reset_end {
-        Some(RunButton::Reset)
-    } else {
-        None
-    }
+    // The run-controls bar is laid out once in `build_run_toolbar`; ask that same
+    // model which control the column falls in. The paragraph's block border eats
+    // one column, so content begins at `status.x + 1`.
+    crate::ui::view::run::build_run_toolbar(app).hit(col, status.x + 1)
 }
 
 fn run_main_area(app: &App, area: Rect) -> Rect {
@@ -1495,13 +1416,94 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
         && me.row < inner.y + inner.height
     {
         if let Some(addr) = app.run.hover_imem_addr {
-            app.run.prev_pc = app.run.cpu.pc;
-            app.run.cpu.pc = addr;
-            if app.pipeline.enabled {
-                app.pipeline.redirect_pc(addr);
+            // Single click pins the details panel to this row; a second click
+            // on the same row within the threshold redirects the PC there.
+            // The first click of the pair only selected, so a double-click
+            // never edits state the user didn't ask to change.
+            const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+            app.run.details_addr = Some(addr);
+            if let Some((last_addr, at)) = app.run.last_imem_click {
+                if last_addr == addr && at.elapsed() <= DOUBLE_CLICK {
+                    app.run.last_imem_click = None;
+                    app.run.prev_pc = app.run.cpu().pc;
+                    app.run.machine.cpu_mut_unjournaled().pc = addr;
+                    if app.run.pipeline().enabled {
+                        app.run.pipeline_mut().redirect_pc(addr);
+                    }
+                    return;
+                }
             }
+            app.run.last_imem_click = Some((addr, std::time::Instant::now()));
         }
     }
+}
+
+/// Right-click on an imem row selects it for the details panel, same as a
+/// single left click (the marker column keeps the breakpoint toggle).
+fn handle_imem_right_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if app.run.imem_collapsed {
+        return;
+    }
+    let cols = run_cols(app, area);
+    let imem = cols[1];
+    let inner = Rect::new(
+        imem.x + 1,
+        imem.y + 1,
+        imem.width.saturating_sub(2),
+        imem.height.saturating_sub(2),
+    );
+    if me.column >= inner.x
+        && me.column < inner.x + inner.width
+        && me.row >= inner.y
+        && me.row < inner.y + inner.height
+    {
+        if let Some(addr) = app.run.hover_imem_addr {
+            app.run.details_addr = Some(addr);
+        }
+    }
+}
+
+/// Double-click on an editable field of the Instruction Details panel opens
+/// the inline editor on it. Hitboxes are recorded by the details renderer
+/// each frame; the address comes from what that frame actually showed.
+fn handle_details_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if app.run.details_collapsed || app.run.is_running {
+        return;
+    }
+    let cols = run_cols(app, area);
+    let details = cols[2];
+    if me.column < details.x
+        || me.column >= details.x + details.width
+        || me.row < details.y
+        || me.row >= details.y + details.height
+    {
+        return;
+    }
+    let hit = app
+        .run
+        .details_field_hitboxes
+        .borrow()
+        .iter()
+        .find(|&&(_, y, x0, x1)| me.row == y && me.column >= x0 && me.column < x1)
+        .map(|&(field, ..)| field);
+    let Some(field) = hit else {
+        app.run.last_details_click = None;
+        return;
+    };
+    const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+    if let Some((last_field, at)) = app.run.last_details_click {
+        if last_field == field && at.elapsed() <= DOUBLE_CLICK {
+            app.run.last_details_click = None;
+            let addr = app.run.details_rendered_addr.get();
+            let target = match field {
+                InstrFieldKind::Word => RunEditTarget::Instr { addr },
+                _ => RunEditTarget::InstrField { addr, field },
+            };
+            app.begin_run_edit(target);
+            return;
+        }
+    }
+    app.run.last_details_click = Some((field, std::time::Instant::now()));
 }
 
 fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {
@@ -1553,29 +1555,54 @@ fn update_sidebar_hover(app: &mut App, me: MouseEvent, area: Rect) {
     }
 }
 
-fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
-    if !app.run_sidebar_shows_registers() || app.run.show_float_regs {
-        return;
+/// Label-column width of the integer / float register tables (see the
+/// `Constraint::Length` in `sidebar.rs`). A click at or past this offset lands
+/// on the value column and opens the inline editor; a click on the label keeps
+/// its existing meaning (pin / unpin).
+const INT_LABEL_W: u16 = 16;
+const FLOAT_LABEL_W: u16 = 13;
+
+/// The edit target for a register list row, where `0 = PC` and `1..=32 = x0..x31`.
+fn reg_target_for_row(reg_idx: usize) -> Option<RegTarget> {
+    match reg_idx {
+        0 => Some(RegTarget::Pc),
+        1..=32 => RegId::new((reg_idx - 1) as u8).map(RegTarget::X),
+        _ => None,
     }
-    let cols = run_cols(app, area);
-    let sidebar = cols[0];
+}
+
+/// The sidebar's inner content rect (inside the panel border), or `None` when
+/// the click misses it or the sidebar is collapsed.
+fn sidebar_inner_hit(app: &App, me: MouseEvent, area: Rect) -> Option<Rect> {
     if app.run.sidebar_collapsed {
-        return;
+        return None;
     }
+    let sidebar = run_cols(app, area)[0];
     let inner = Rect::new(
         sidebar.x + 1,
         sidebar.y + 1,
         sidebar.width.saturating_sub(2),
         sidebar.height.saturating_sub(2),
     );
-    if me.column < inner.x || me.column >= inner.x + inner.width {
+    let in_x = me.column >= inner.x && me.column < inner.x + inner.width;
+    let in_y = me.row >= inner.y && me.row < inner.y + inner.height;
+    (in_x && in_y).then_some(inner)
+}
+
+fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if !app.run_sidebar_shows_registers() {
         return;
     }
-    if me.row < inner.y || me.row >= inner.y + inner.height {
+    if app.run.show_float_regs {
+        handle_float_register_click(app, me, area);
         return;
     }
+    let Some(inner) = sidebar_inner_hit(app, me, area) else {
+        return;
+    };
 
     let visual_row = (me.row - inner.y) as usize;
+    let is_value = me.column >= inner.x + INT_LABEL_W;
     let pinned = &app.run.pinned_regs;
     let sep_row = if pinned.is_empty() {
         usize::MAX
@@ -1583,10 +1610,16 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
         pinned.len()
     };
 
-    // Click on a pinned register row → unpin it
+    // Pinned section: value column edits the register, label column unpins it.
     if visual_row < pinned.len() {
         let reg = pinned[visual_row];
-        app.run.pinned_regs.retain(|&r| r != reg);
+        if is_value {
+            if let Some(target) = reg_target_for_row(reg as usize + 1) {
+                app.begin_run_edit(RunEditTarget::Reg(target));
+            }
+        } else {
+            app.run.pinned_regs.retain(|&r| r != reg);
+        }
         return;
     }
     // Click on separator → ignore
@@ -1594,7 +1627,7 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
-    // Click on a regular (scrolled) register row → pin/unpin
+    // Regular (scrolled) section.
     let offset = if pinned.is_empty() {
         0
     } else {
@@ -1606,11 +1639,19 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     let max_scroll = total.saturating_sub(visible_rows.saturating_sub(offset));
     let start = app.run.regs_scroll.min(max_scroll);
     let reg_idx = start + row_in_scroll; // 0 = PC, 1..=32 = x0..x31
-
-    if reg_idx == 0 {
-        return;
-    } // PC can't be pinned
     if reg_idx > 32 {
+        return;
+    }
+
+    // Value column → open the editor (PC included).
+    if is_value {
+        if let Some(target) = reg_target_for_row(reg_idx) {
+            app.begin_run_edit(RunEditTarget::Reg(target));
+        }
+        return;
+    }
+    // Label column → pin / unpin (the PC row cannot be pinned).
+    if reg_idx == 0 {
         return;
     }
     let reg = (reg_idx - 1) as u8;
@@ -1619,6 +1660,65 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     } else {
         app.run.pinned_regs.push(reg);
     }
+}
+
+/// A click on the float register table's value column opens its editor. The row
+/// → `f`-index mapping mirrors `render_float_register_table` (scroll + visible).
+fn handle_float_register_click(app: &mut App, me: MouseEvent, area: Rect) {
+    let Some(inner) = sidebar_inner_hit(app, me, area) else {
+        return;
+    };
+    if me.column < inner.x + FLOAT_LABEL_W {
+        return;
+    }
+    let visible = inner.height.saturating_sub(2) as usize;
+    if visible == 0 {
+        return;
+    }
+    let scroll = app.run.regs_scroll.min(32usize.saturating_sub(visible));
+    let visual_row = (me.row - inner.y) as usize;
+    if visual_row >= visible {
+        return;
+    }
+    let f_index = scroll + visual_row;
+    if let Some(freg) = FRegId::new(f_index as u8) {
+        app.begin_run_edit(RunEditTarget::FReg(freg));
+    }
+}
+
+/// A click on a memory row opens that cell's editor (width follows the byte
+/// view). The row → address mapping mirrors `memory_items`, including the
+/// one-line offset the search bar takes when open.
+fn handle_memory_click(app: &mut App, me: MouseEvent, area: Rect) {
+    if !app.run_sidebar_shows_memory() {
+        return;
+    }
+    let Some(inner) = sidebar_inner_hit(app, me, area) else {
+        return;
+    };
+    // The search bar, when open, occupies the first inner row (see
+    // `render_memory_view`); the memory list starts below it.
+    let search_offset = if app.run.mem_search_open && inner.height > 2 {
+        1
+    } else {
+        0
+    };
+    if me.row < inner.y + search_offset {
+        return;
+    }
+    let list_height = inner.height.saturating_sub(search_offset) as u32;
+    let row = (me.row - inner.y - search_offset) as u32;
+    let bytes = app.run.mem_view_bytes;
+    let base = app.run.visible_memory_base_addr(Some(list_height));
+    let addr = base.wrapping_add(row * bytes);
+    let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
+    if addr > max {
+        return;
+    }
+    app.begin_run_edit(RunEditTarget::Mem {
+        addr,
+        width: MemWidth::from_view_bytes(bytes),
+    });
 }
 
 fn handle_help_popup_mouse(app: &mut App, me: MouseEvent, area: Rect) {
@@ -2221,16 +2321,16 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
     let extra = app.cache.extra_pending.clone();
     if keep_history {
         app.cache.config_status = Some("Settings applied (history kept).".to_string());
-        let old_istats = std::mem::take(&mut app.run.mem.icache.stats);
-        let old_dstats = std::mem::take(&mut app.run.mem.dcache.stats);
-        app.run.mem.apply_config(icfg, dcfg, extra);
-        app.run.mem.icache.stats.history = old_istats.history;
-        app.run.mem.dcache.stats.history = old_dstats.history;
+        let old_istats = std::mem::take(&mut app.run.machine.mem_mut_unjournaled().icache.stats);
+        let old_dstats = std::mem::take(&mut app.run.machine.mem_mut_unjournaled().dcache.stats);
+        app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, extra);
+        app.run.machine.mem_mut_unjournaled().icache.stats.history = old_istats.history;
+        app.run.machine.mem_mut_unjournaled().dcache.stats.history = old_dstats.history;
     } else {
         app.cache.config_status = Some("Settings applied (stats reset).".to_string());
-        app.run.mem.apply_config(icfg, dcfg, extra);
+        app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, extra);
     }
-    app.run.mem.bypass = !app.run.cache_enabled;
+    app.run.machine.mem_mut_unjournaled().bypass = !app.run.cache_enabled;
     app.cache.view_scroll = 0;
     app.cache.view_scroll_d = 0;
     app.cache.stats_scroll = 0;
@@ -2297,23 +2397,26 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
     app.cache.config_error = None;
     if keep_history {
         app.cache.config_status = Some("Settings applied (history kept).".to_string());
-        let old_stats = if extra_idx < app.run.mem.extra_levels.len() {
+        let old_stats = if extra_idx < app.run.mem().extra_levels.len() {
             Some(std::mem::take(
-                &mut app.run.mem.extra_levels[extra_idx].stats,
+                &mut app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx].stats,
             ))
         } else {
             None
         };
-        if extra_idx < app.run.mem.extra_levels.len() {
-            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
+        if extra_idx < app.run.mem().extra_levels.len() {
+            app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx] =
+                crate::falcon::cache::Cache::new(cfg);
             if let Some(s) = old_stats {
-                app.run.mem.extra_levels[extra_idx].stats.history = s.history;
+                app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx].stats.history =
+                    s.history;
             }
         }
     } else {
         app.cache.config_status = Some("Settings applied (stats reset).".to_string());
-        if extra_idx < app.run.mem.extra_levels.len() {
-            app.run.mem.extra_levels[extra_idx] = crate::falcon::cache::Cache::new(cfg);
+        if extra_idx < app.run.mem().extra_levels.len() {
+            app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx] =
+                crate::falcon::cache::Cache::new(cfg);
         }
     }
     app.cache.view_scroll = 0;
@@ -2329,6 +2432,7 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     app.settings.hover_vm_enabled = false;
     app.settings.hover_tlb_enabled = false;
     app.settings.hover_trace_syscalls = false;
+    app.settings.hover_screen_target = false;
     app.settings.hover_run_scope = false;
     app.settings.hover_import_rcfg = false;
     app.settings.hover_export_rcfg = false;
@@ -2372,6 +2476,8 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
         app.settings.hover_row = Some(SETTINGS_ROW_JIT_MODE);
     } else if me.row == btn_y.saturating_add(8) {
         app.settings.hover_row = Some(SETTINGS_ROW_TRACE_SYSCALLS);
+    } else if me.row == btn_y.saturating_add(9) {
+        app.settings.hover_row = Some(SETTINGS_ROW_SCREEN_TARGET);
     }
     if me.row == btn_y && me.column >= btn_x0 && me.column < btn_x1 {
         app.settings.hover_cache_enabled = true;
@@ -2397,6 +2503,10 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
     let (trace_y, trace_x0, trace_x1) = app.settings.bool_btn_trace_syscalls_rect.get();
     if me.row == trace_y && me.column >= trace_x0 && me.column < trace_x1 {
         app.settings.hover_trace_syscalls = true;
+    }
+    let (screen_y, screen_x0, screen_x1) = app.settings.screen_target_rect.get();
+    if me.row == screen_y && me.column >= screen_x0 && me.column < screen_x1 {
+        app.settings.hover_screen_target = true;
     }
 
     if me.row == btn_y.saturating_add(1) {
@@ -2455,7 +2565,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 
     let (pipe_y, _, _) = app.settings.bool_btn_pipeline_rect.get();
     if me.row == pipe_y {
-        app.set_pipeline_enabled(!app.pipeline.enabled);
+        app.set_pipeline_enabled(!app.run.pipeline().enabled);
         app.settings.selected = SETTINGS_ROW_PIPELINE_ENABLED;
         return;
     }
@@ -2478,6 +2588,13 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     if me.row == trace_y {
         app.set_trace_syscalls(!app.run.trace_syscalls);
         app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
+        return;
+    }
+
+    let (screen_y, _, _) = app.settings.screen_target_rect.get();
+    if me.row == screen_y {
+        app.console.screen_target = app.console.screen_target.cycle();
+        app.settings.selected = SETTINGS_ROW_SCREEN_TARGET;
         return;
     }
 
@@ -2509,83 +2626,66 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 // ── Pipeline tab mouse ────────────────────────────────────────────────────────
 
 fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
-    {
-        let p = &mut app.pipeline;
-        p.hover_subtab_main = false;
-        p.hover_subtab_config = false;
-        p.hover_core = false;
-        p.hover_reset = false;
-        p.hover_speed = false;
-        p.hover_state = false;
-        p.hover_export_results = false;
-        p.hover_import_cfg = false;
-        p.hover_export_cfg = false;
-        p.hover_config_row = None;
-    }
+    let p = app.run.pipeline_mut();
+    let state_clickable = !p.faulted;
+    p.hover_subtab_main = false;
+    p.hover_subtab_config = false;
+    p.hover_core = false;
+    p.hover_reset = false;
+    p.hover_speed = false;
+    p.hover_state = false;
+    p.hover_export_results = false;
+    p.hover_import_cfg = false;
+    p.hover_export_cfg = false;
+    p.hover_config_row = None;
 
-    // Header bar [main][settings][core] — one bar maps a column to its button.
-    let (hy, hx) = app.pipeline.header_origin.get();
-    if me.row == hy {
-        use crate::ui::view::pipeline::PipelineHeaderBtn;
-        match crate::ui::view::pipeline::build_pipeline_header_bar(app).hit(me.column, hx) {
-            Some(PipelineHeaderBtn::Main) => {
-                app.pipeline.hover_subtab_main = true;
-                return;
-            }
-            Some(PipelineHeaderBtn::Config) => {
-                app.pipeline.hover_subtab_config = true;
-                return;
-            }
-            Some(PipelineHeaderBtn::Core) => {
-                app.pipeline.hover_core = true;
-                return;
-            }
-            None => {}
-        }
+    let (main_y, main_x0, main_x1) = p.btn_subtab_main_rect.get();
+    if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
+        p.hover_subtab_main = true;
+        return;
     }
-    // Exec-controls bar [speed][state][reset] (state is inert while faulted).
-    let (ey, ex) = app.pipeline.exec_origin.get();
-    if me.row == ey {
-        use crate::ui::view::pipeline::PipelineExecBtn;
-        match crate::ui::view::pipeline::build_pipeline_exec_bar(app).hit(me.column, ex) {
-            Some(PipelineExecBtn::Speed) => {
-                app.pipeline.hover_speed = true;
-                return;
-            }
-            Some(PipelineExecBtn::State) => {
-                app.pipeline.hover_state = true;
-                return;
-            }
-            Some(PipelineExecBtn::Reset) => {
-                app.pipeline.hover_reset = true;
-                return;
-            }
-            None => {}
-        }
+    let (cfg_y, cfg_x0, cfg_x1) = p.btn_subtab_config_rect.get();
+    if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
+        p.hover_subtab_config = true;
+        return;
     }
-    // Bottom controls bar [results][import cfg][export cfg].
-    let (cy, cx) = app.pipeline.ctrl_origin.get();
-    if me.row == cy {
-        use crate::ui::view::pipeline::PipelineCtrlBtn;
-        match crate::ui::view::pipeline::build_pipeline_ctrl_bar(app).hit(me.column, cx) {
-            Some(PipelineCtrlBtn::Results) => {
-                app.pipeline.hover_export_results = true;
-                return;
-            }
-            Some(PipelineCtrlBtn::ImportCfg) => {
-                app.pipeline.hover_import_cfg = true;
-                return;
-            }
-            Some(PipelineCtrlBtn::ExportCfg) => {
-                app.pipeline.hover_export_cfg = true;
-                return;
-            }
-            None => {}
-        }
+    let (core_y, core_x0, core_x1) = p.btn_core_rect.get();
+    if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
+        p.hover_core = true;
+        return;
+    }
+    let (rst_y, rst_x0, rst_x1) = p.btn_reset_rect.get();
+    if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
+        p.hover_reset = true;
+        return;
+    }
+    let (spd_y, spd_x0, spd_x1) = p.btn_speed_rect.get();
+    if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
+        p.hover_speed = true;
+        return;
+    }
+    let (st_y, st_x0, st_x1) = p.btn_state_rect.get();
+    if state_clickable && me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
+        p.hover_state = true;
+        return;
+    }
+    let (res_y, res_x0, res_x1) = p.btn_export_results_rect.get();
+    if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
+        p.hover_export_results = true;
+        return;
+    }
+    let (in_y, in_x0, in_x1) = p.btn_import_cfg_rect.get();
+    if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
+        p.hover_import_cfg = true;
+        return;
+    }
+    let (out_y, out_x0, out_x1) = p.btn_export_cfg_rect.get();
+    if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
+        p.hover_export_cfg = true;
+        return;
     }
 
     // Config row hover
-    let p = &mut app.pipeline;
     if matches!(p.subtab, crate::ui::pipeline::PipelineSubtab::Config) {
         let rects = p.config_row_rects.get();
         for i in 0..crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS {
@@ -2603,167 +2703,152 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineSubtab,
     };
 
-    // Header bar [main][settings][core] — same bar as render & hover.
-    let (hy, hx) = app.pipeline.header_origin.get();
-    if me.row == hy {
-        use crate::ui::view::pipeline::PipelineHeaderBtn;
-        match crate::ui::view::pipeline::build_pipeline_header_bar(app).hit(me.column, hx) {
-            Some(PipelineHeaderBtn::Main) => {
-                app.pipeline.subtab = PipelineSubtab::Main;
-                return;
-            }
-            Some(PipelineHeaderBtn::Config) => {
-                app.pipeline.subtab = PipelineSubtab::Config;
-                return;
-            }
-            Some(PipelineHeaderBtn::Core) => {
-                app.cycle_selected_core(1);
-                return;
-            }
-            None => {}
-        }
+    let (main_y, main_x0, main_x1) = app.run.pipeline().btn_subtab_main_rect.get();
+    if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
+        app.run.pipeline_mut().subtab = PipelineSubtab::Main;
+        return;
     }
-    // Exec-controls bar [speed][state][reset] — same bar as render & hover.
-    let (ey, ex) = app.pipeline.exec_origin.get();
-    if me.row == ey {
-        use crate::ui::view::pipeline::PipelineExecBtn;
-        match crate::ui::view::pipeline::build_pipeline_exec_bar(app).hit(me.column, ex) {
-            Some(PipelineExecBtn::Speed) => {
-                app.pipeline.speed = app.pipeline.speed.next();
-                app.pipeline.last_tick = std::time::Instant::now();
-                return;
-            }
-            Some(PipelineExecBtn::State) => {
-                if app.pipeline.enabled && !app.pipeline.faulted {
-                    if app.pipeline.halted {
-                        app.restart_simulation();
-                        if app.can_start_run() {
-                            app.run.is_running = true;
-                        }
-                    } else if app.run.is_running {
-                        app.run.is_running = false;
-                    } else {
-                        app.resume_selected_hart();
-                        if app.can_start_run() {
-                            app.run.is_running = true;
-                        }
-                    }
-                }
-                return;
-            }
-            Some(PipelineExecBtn::Reset) => {
+    let (cfg_y, cfg_x0, cfg_x1) = app.run.pipeline().btn_subtab_config_rect.get();
+    if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
+        app.run.pipeline_mut().subtab = PipelineSubtab::Config;
+        return;
+    }
+    let (core_y, core_x0, core_x1) = app.run.pipeline().btn_core_rect.get();
+    if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
+        app.cycle_selected_core(1);
+        return;
+    }
+    let (rst_y, rst_x0, rst_x1) = app.run.pipeline().btn_reset_rect.get();
+    if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
+        app.restart_simulation();
+        return;
+    }
+    let (spd_y, spd_x0, spd_x1) = app.run.pipeline().btn_speed_rect.get();
+    if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
+        app.run.pipeline_mut().speed = app.run.pipeline_mut().speed.next();
+        app.run.pipeline_mut().last_tick = std::time::Instant::now();
+        return;
+    }
+    let (st_y, st_x0, st_x1) = app.run.pipeline().btn_state_rect.get();
+    if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
+        if app.run.pipeline().enabled && !app.run.pipeline().faulted {
+            if app.run.pipeline().halted {
                 app.restart_simulation();
-                return;
+                if app.can_start_run() {
+                    app.run.is_running = true;
+                }
+            } else if app.run.is_running {
+                app.run.is_running = false;
+            } else {
+                app.resume_selected_hart();
+                if app.can_start_run() {
+                    app.run.is_running = true;
+                }
             }
-            None => {}
         }
+        return;
     }
-    // Bottom controls bar [results][import cfg][export cfg].
-    let (cy, cx) = app.pipeline.ctrl_origin.get();
-    if me.row == cy {
-        use crate::ui::view::pipeline::PipelineCtrlBtn;
-        match crate::ui::view::pipeline::build_pipeline_ctrl_bar(app).hit(me.column, cx) {
-            Some(PipelineCtrlBtn::Results) => {
-                do_export_pipeline_results(app);
-                return;
-            }
-            Some(PipelineCtrlBtn::ImportCfg) => {
-                crate::ui::input::keyboard::do_import_pcfg(app);
-                return;
-            }
-            Some(PipelineCtrlBtn::ExportCfg) => {
-                crate::ui::input::keyboard::do_export_pcfg(app);
-                return;
-            }
-            None => {}
-        }
+    let (res_y, res_x0, res_x1) = app.run.pipeline().btn_export_results_rect.get();
+    if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
+        do_export_pipeline_results(app);
+        return;
+    }
+    let (in_y, in_x0, in_x1) = app.run.pipeline().btn_import_cfg_rect.get();
+    if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
+        crate::ui::input::keyboard::do_import_pcfg(app);
+        return;
+    }
+    let (out_y, out_x0, out_x1) = app.run.pipeline().btn_export_cfg_rect.get();
+    if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
+        crate::ui::input::keyboard::do_export_pcfg(app);
+        return;
     }
 
     // Config row clicks — toggle on click like Cache tab
-    if matches!(app.pipeline.subtab, PipelineSubtab::Config) {
-        let rects = app.pipeline.config_row_rects.get();
+    if matches!(app.run.pipeline().subtab, PipelineSubtab::Config) {
+        let rects = app.run.pipeline().config_row_rects.get();
         for i in 0..PipelineBypassConfig::CONFIG_ROWS {
             let (ry, rx0, rx1) = rects[i];
             if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
                 match i {
-                    0 => app.pipeline.bypass.ex_to_ex = !app.pipeline.bypass.ex_to_ex,
-                    1 => app.pipeline.bypass.mem_to_ex = !app.pipeline.bypass.mem_to_ex,
-                    2 => app.pipeline.bypass.wb_to_id = !app.pipeline.bypass.wb_to_id,
-                    3 => app.pipeline.bypass.store_to_load = !app.pipeline.bypass.store_to_load,
+                    0 => app.run.pipeline_mut().bypass.ex_to_ex = !app.run.pipeline_mut().bypass.ex_to_ex,
+                    1 => app.run.pipeline_mut().bypass.mem_to_ex = !app.run.pipeline_mut().bypass.mem_to_ex,
+                    2 => app.run.pipeline_mut().bypass.wb_to_id = !app.run.pipeline_mut().bypass.wb_to_id,
+                    3 => app.run.pipeline_mut().bypass.store_to_load = !app.run.pipeline_mut().bypass.store_to_load,
                     4 => {
-                        app.pipeline.mode = match app.pipeline.mode {
+                        app.run.pipeline_mut().mode = match app.run.pipeline_mut().mode {
                             PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
                             PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
                         }
                     }
                     5 => {
-                        app.pipeline.branch_resolve = match app.pipeline.branch_resolve {
+                        app.run.pipeline_mut().branch_resolve = match app.run.pipeline_mut().branch_resolve {
                             BranchResolve::Id => BranchResolve::Ex,
                             BranchResolve::Ex => BranchResolve::Mem,
                             BranchResolve::Mem => BranchResolve::Id,
                         }
                     }
                     6 => {
-                        let next = match app.pipeline.predict {
+                        let next = match app.run.pipeline().predict {
                             BranchPredict::NotTaken => BranchPredict::Taken,
                             BranchPredict::Taken => BranchPredict::Btfnt,
                             BranchPredict::Btfnt => BranchPredict::TwoBit,
                             BranchPredict::TwoBit => BranchPredict::NotTaken,
                         };
-                        app.pipeline.set_predict(next);
+                        app.run.pipeline_mut().set_predict(next);
                     }
                     7 => {
                         let idx = crate::ui::pipeline::FuKind::Alu.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     8 => {
                         let idx = crate::ui::pipeline::FuKind::Mul.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     9 => {
                         let idx = crate::ui::pipeline::FuKind::Div.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     10 => {
                         let idx = crate::ui::pipeline::FuKind::Fpu.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     11 => {
                         let idx = crate::ui::pipeline::FuKind::Lsu.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     12 => {
                         let idx = crate::ui::pipeline::FuKind::Sys.index();
-                        app.pipeline.fu_capacity[idx] = if app.pipeline.fu_capacity[idx] >= 8 {
+                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
                             1
                         } else {
-                            app.pipeline.fu_capacity[idx] + 1
+                            app.run.pipeline_mut().fu_capacity[idx] + 1
                         };
                     }
                     _ => {}
                 }
                 app.reconfigure_pipeline_model();
-                app.pipeline.config_cursor = i;
+                app.run.pipeline_mut().config_cursor = i;
                 return;
             }
         }
@@ -2773,61 +2858,38 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
 // ── TLB tab mouse ────────────────────────────────────────────────────────────
 
 fn update_tlb_hover(app: &mut App, me: MouseEvent) {
-    use crate::ui::app::{TlbConfigField, TlbHoverTarget, TlbSubtab, VmSubtab};
+    use crate::ui::app::{TlbHoverTarget, VmSubtab};
 
     app.tlb.hover = None;
 
-    // VM-level header — the bar maps a click column back to its VmSubtab.
-    let (vy, vx) = app.tlb.vm_header_origin.get();
-    if me.row == vy {
-        if let Some(sub) = crate::ui::view::tlb::build_vm_header_bar(app).hit(me.column, vx) {
-            app.tlb.hover = Some(match sub {
-                VmSubtab::Status => TlbHoverTarget::VmStatus,
-                VmSubtab::Tree => TlbHoverTarget::VmTree,
-                VmSubtab::Settings => TlbHoverTarget::VmSettings,
-                VmSubtab::Tlb => TlbHoverTarget::VmTlb,
-            });
-        }
-    }
-    // TLB-level header.
-    let (ty, tx) = app.tlb.tlb_subheader_origin.get();
-    if app.tlb.hover.is_none() && me.row == ty {
-        if let Some(sub) = crate::ui::view::tlb::build_tlb_subheader_bar(app).hit(me.column, tx) {
-            app.tlb.hover = Some(match sub {
-                TlbSubtab::Stats => TlbHoverTarget::TlbStats,
-                TlbSubtab::Entries => TlbHoverTarget::TlbEntries,
-                TlbSubtab::Settings => TlbHoverTarget::TlbSettings,
-            });
+    // Header subtabs.
+    let btns = app.tlb.subtab_btns.get();
+    for (i, sub) in VmSubtab::ALL.iter().enumerate() {
+        if point_in_btn(me, btns[i]) {
+            app.tlb.hover = Some(TlbHoverTarget::Subtab(*sub));
         }
     }
 
-    // TLB Settings form.
-    if matches!(app.tlb.vm_subtab, VmSubtab::Tlb)
-        && matches!(app.tlb.subtab, TlbSubtab::Settings)
-    {
-        let hitboxes = app.tlb.config_hitboxes.get();
-        for &field in TlbConfigField::all_editable() {
-            let hb = hitboxes[field.hitbox_index()];
-            if point_in_btn(me, hb) {
-                app.tlb.hover = Some(TlbHoverTarget::ConfigField(field));
-            }
-        }
-        use crate::ui::view::tlb::config::TlbConfigBtn;
-        let (py, px) = app.tlb.preset_origin.get();
-        if me.row == py {
-            if let Some(TlbConfigBtn::Preset(i)) =
-                crate::ui::view::tlb::config::build_tlb_preset_bar(app).hit(me.column, px)
-            {
-                app.tlb.hover = Some(TlbHoverTarget::Preset(i));
-            }
-        }
-        let (ay, ax) = app.tlb.apply_origin.get();
-        if me.row == ay {
-            match crate::ui::view::tlb::config::build_tlb_apply_bar(app).hit(me.column, ax) {
-                Some(TlbConfigBtn::Apply) => app.tlb.hover = Some(TlbHoverTarget::Apply),
-                Some(TlbConfigBtn::Flush) => app.tlb.hover = Some(TlbHoverTarget::Flush),
-                _ => {}
-            }
+    // Execution controls (shared highlight via hover_run_button).
+    app.hover_run_button = tlb_exec_hit(app, me);
+
+    // Shared controls bar.
+    if point_in_btn(me, app.tlb.ctrl_results_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::ExportResults);
+    } else if point_in_btn(me, app.tlb.ctrl_import_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::ImportCfg);
+    } else if point_in_btn(me, app.tlb.ctrl_export_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::ExportCfg);
+    } else if point_in_btn(me, app.tlb.ctrl_flush_btn.get()) {
+        app.tlb.hover = Some(TlbHoverTarget::FlushTlb);
+    }
+
+    // Overview quick controls.
+    if matches!(app.tlb.vm_subtab, VmSubtab::Overview) {
+        if point_in_btn(me, app.tlb.quick_mode_btn.get()) {
+            app.tlb.hover = Some(TlbHoverTarget::QuickMode);
+        } else if point_in_btn(me, app.tlb.quick_tlb_btn.get()) {
+            app.tlb.hover = Some(TlbHoverTarget::QuickTlb);
         }
     }
 
@@ -2838,6 +2900,10 @@ fn update_tlb_hover(app: &mut App, me: MouseEvent) {
                 app.tlb.hover = Some(TlbHoverTarget::VmField(field));
             }
         }
+        let presets = app.tlb.preset_btns.get();
+        if let Some(i) = point_in_any_btn(me, &presets) {
+            app.tlb.hover = Some(TlbHoverTarget::Preset(i));
+        }
         if point_in_btn(me, app.tlb.vm_apply_btn.get()) {
             app.tlb.hover = Some(TlbHoverTarget::VmApply);
         } else if point_in_btn(me, app.tlb.vm_flush_btn.get()) {
@@ -2846,75 +2912,72 @@ fn update_tlb_hover(app: &mut App, me: MouseEvent) {
     }
 }
 
+/// Which execution-control button (if any) the pointer is over in the VM tab.
+fn tlb_exec_hit(app: &App, me: MouseEvent) -> Option<RunButton> {
+    if point_in_btn(me, app.tlb.exec_reset_btn.get()) {
+        Some(RunButton::Reset)
+    } else if point_in_btn(me, app.tlb.exec_speed_btn.get()) {
+        Some(RunButton::Speed)
+    } else if point_in_btn(me, app.tlb.exec_state_btn.get()) {
+        Some(RunButton::State)
+    } else {
+        None
+    }
+}
+
 fn handle_tlb_click(app: &mut App, me: MouseEvent) {
-    use crate::ui::app::{TlbConfigField, TlbSubtab, VmSubtab};
+    use crate::ui::app::VmSubtab;
     use crate::ui::input::keyboard::tlb_select;
 
-    // VM-level header — same bar geometry as the renderer and the hover pass.
-    let (vy, vx) = app.tlb.vm_header_origin.get();
-    if me.row == vy {
-        if let Some(sub) = crate::ui::view::tlb::build_vm_header_bar(app).hit(me.column, vx) {
-            let nested = if matches!(sub, VmSubtab::Tlb) {
-                Some(app.tlb.subtab)
-            } else {
-                None
-            };
-            tlb_select(app, sub, nested);
-            return;
-        }
-    }
-    // TLB-level header.
-    let (ty, tx) = app.tlb.tlb_subheader_origin.get();
-    if me.row == ty {
-        if let Some(sub) = crate::ui::view::tlb::build_tlb_subheader_bar(app).hit(me.column, tx) {
-            tlb_select(app, VmSubtab::Tlb, Some(sub));
+    // Header subtabs.
+    let btns = app.tlb.subtab_btns.get();
+    for (i, sub) in VmSubtab::ALL.iter().enumerate() {
+        if point_in_btn(me, btns[i]) {
+            tlb_select(app, *sub);
             return;
         }
     }
 
-    // TLB Settings form.
-    if matches!(app.tlb.vm_subtab, VmSubtab::Tlb)
-        && matches!(app.tlb.subtab, TlbSubtab::Settings)
-    {
-        let hitboxes = app.tlb.config_hitboxes.get();
-        for &field in TlbConfigField::all_editable() {
-            let hb = hitboxes[field.hitbox_index()];
-            if point_in_btn(me, hb) {
-                app.commit_tlb_edit();
-                app.tlb.edit_field = Some(field);
-                app.tlb.edit_buf = if field.is_numeric() {
-                    app.tlb_field_value_str(field)
-                } else {
-                    String::new()
-                };
-                return;
-            }
+    // Execution controls.
+    if let Some(btn) = tlb_exec_hit(app, me) {
+        apply_run_button(app, btn);
+        return;
+    }
+
+    // Shared controls bar. Export/import report through the cache status
+    // fields; mirror them into the VM footer so feedback shows on this tab.
+    if point_in_btn(me, app.tlb.ctrl_results_btn.get()) {
+        do_export_results(app);
+        app.tlb.config_status = app.cache.config_status.clone();
+        app.tlb.config_error = app.cache.config_error.clone();
+        return;
+    }
+    if point_in_btn(me, app.tlb.ctrl_import_btn.get()) {
+        do_import_cfg(app);
+        app.tlb.config_status = app.cache.config_status.clone();
+        app.tlb.config_error = app.cache.config_error.clone();
+        return;
+    }
+    if point_in_btn(me, app.tlb.ctrl_export_btn.get()) {
+        do_export_cfg(app);
+        app.tlb.config_status = app.cache.config_status.clone();
+        app.tlb.config_error = app.cache.config_error.clone();
+        return;
+    }
+    if point_in_btn(me, app.tlb.ctrl_flush_btn.get()) {
+        app.flush_tlb();
+        return;
+    }
+
+    // Overview quick controls.
+    if matches!(app.tlb.vm_subtab, VmSubtab::Overview) {
+        if point_in_btn(me, app.tlb.quick_mode_btn.get()) {
+            app.set_vm_mode(app.vm_mode().cycle());
+            return;
         }
-        use crate::ui::view::tlb::config::TlbConfigBtn;
-        let (py, px) = app.tlb.preset_origin.get();
-        if me.row == py {
-            if let Some(TlbConfigBtn::Preset(i)) =
-                crate::ui::view::tlb::config::build_tlb_preset_bar(app).hit(me.column, px)
-            {
-                app.apply_tlb_preset(i);
-                app.tlb.config_error = None;
-                app.tlb.config_status = None;
-                return;
-            }
-        }
-        let (ay, ax) = app.tlb.apply_origin.get();
-        if me.row == ay {
-            match crate::ui::view::tlb::config::build_tlb_apply_bar(app).hit(me.column, ax) {
-                Some(TlbConfigBtn::Apply) => {
-                    app.apply_tlb_config();
-                    return;
-                }
-                Some(TlbConfigBtn::Flush) => {
-                    app.flush_tlb();
-                    return;
-                }
-                _ => {}
-            }
+        if point_in_btn(me, app.tlb.quick_tlb_btn.get()) {
+            app.set_tlb_enabled(!app.run.tlb_enabled);
+            return;
         }
     }
 
@@ -2952,6 +3015,14 @@ fn handle_vm_settings_click(app: &mut App, me: MouseEvent) {
         } else {
             app.toggle_vm_field(field);
         }
+        return;
+    }
+
+    // TLB geometry presets: set the pending values; `apply` commits them.
+    let presets = app.tlb.preset_btns.get();
+    if let Some(i) = point_in_any_btn(me, &presets) {
+        app.apply_tlb_preset(i);
+        app.tlb.map_status = Some("preset set — apply to commit".into());
         return;
     }
 

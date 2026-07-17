@@ -11,6 +11,7 @@ Everything you can call from a Raven C program, grouped by module. The umbrella 
 | [`<raven/types.h>`](#types--rangetypesh) | integer typedefs, `NULL`, `size_t` |
 | [`<raven/version.h>`](#version--ravenversionh) | API version macros |
 | [`<raven/io.h>`](#io--raveniooh) | print / read / println / eprint |
+| [`<raven/gfx.h>`](#graphics--ravengfxh) | framebuffer graphics / key polling / frame pacing |
 | [`<raven/fmt.h>`](#fmt--ravenfmth) | printf / scanf / snprintf / sscanf |
 | [`<raven/mem.h>`](#mem--ravenmemh) | malloc family, memset / memcpy / memmove / memcmp |
 | [`<raven/str.h>`](#strings--ravenstrh) | strlen / strcmp / strcpy / ... |
@@ -87,6 +88,36 @@ Each print/read function is a **single ecall** — the formatting work happens i
 | `float raven_read_float(void)` | |
 | `int raven_read_line(char *buf, int max)` | **bounded**: ≤ max-1 bytes, NUL-terminates, returns byte count |
 | `int raven_read_char(void)` | -1 on EOF |
+
+---
+
+## graphics - `<raven/gfx.h>`
+
+Host-side framebuffer graphics for games and demos. Drawing writes to a back
+buffer; call `raven_screen_present()` once per frame. Colors are `0x00RRGGBB`, `RAVEN_RGB(r,g,b)`, or `RavenColor`.
+
+| Function / macro | Syscall | Description |
+|---|---:|---|
+| `raven_screen_init(w, h)` | 2000 | Create the screen |
+| `raven_screen_clear(rgb)` / `_color(color)` | 2001 | Fill the back buffer |
+| `raven_screen_set_pixel(x,y,rgb)` / `_color(...)` | 2002 | Set one pixel |
+| `raven_screen_fill_rect(x,y,w,h,rgb)` / `_color(...)` | 2003 | Fill clipped rectangle |
+| `raven_screen_present()` | 2004 | Publish the frame |
+| `raven_screen_poll_key()` | 2005 | Non-blocking key poll, 0 if none |
+| `raven_screen_time_ms()` | 2006 | Wall-clock ms since init |
+| `raven_screen_sleep_ms(ms)` | 2007 | Frame pacing / park hart |
+| `RAVEN_KEY_UP/DOWN/LEFT/RIGHT` | n/a | Arrow key constants |
+| `RavenColor`, `raven_color_rgb`, `raven_color_from_bytes` | n/a | Struct color helpers |
+| `RAVEN_RGB(r,g,b)`, `raven_color_pack(color)` | n/a | Pack 8-bit RGB channels |
+
+```c
+raven_screen_init(80, 60);
+RavenColor bg = raven_color_rgb(16, 24, 32);
+raven_screen_clear_color(bg);
+raven_screen_fill_rect_color(8, 8, 16, 16, raven_color_rgb(0, 255, 0));
+raven_screen_present();
+raven_screen_sleep_ms(33);
+```
 
 ---
 

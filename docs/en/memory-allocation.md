@@ -22,10 +22,10 @@ In most environments you have `malloc` and `free`. In RAVEN there is no standard
             │        free space            │  ← stack grows ↓
             │                              │
 0x0001FFFF  └──────────────────────────────┘
-            sp (0x00020000) — first push → 0x0001FFFC
+            sp (RAM_SIZE) - first push -> RAM_SIZE - 4
 ```
 
-**Total RAM: 128 KiB.** The heap and the stack share this free zone and grow toward each other. Raven does not automatically detect a collision — budget your memory carefully.
+**RAM is configurable** (`16 MiB` by default in the UI/CLI). The heap and the stack share the free zone between `bss_end` and `RAM_SIZE`; manual bump allocators do not automatically detect a collision, so budget memory carefully.
 
 ---
 
@@ -172,13 +172,13 @@ Before sbrk(256):                After sbrk(256):
 | **+** | No static `heap_ptr` — the OS tracks the break |
 | **+** | Idiomatic — mirrors how real allocators work |
 | **−** | No `free` — memory is only ever extended, never shrunk |
-| **−** | Mixing `brk` and `mmap` in the same program can corrupt both |
+| **-** | Mixing `brk` and `mmap` in separate ad-hoc allocators can break allocator assumptions; prefer one strategy or one central allocator |
 
 ---
 
 ## Approach 3 — `mmap` anonymous
 
-`mmap` allocates an independent block of memory without moving the program break. In Raven only **anonymous** mappings are supported (no file-backed, no shared memory).
+`mmap` allocates an anonymous block from the simulator-managed heap. In Raven only **anonymous** mappings are supported (no file-backed, no shared memory); internally it advances the same heap break used by `brk`.
 
 ### Syscall reference
 
@@ -215,11 +215,11 @@ Before sbrk(256):                After sbrk(256):
     ecall               ; a0 = pointer, or large negative value on failure
 
     ; check for error: mmap returns -ENOMEM (-12) or -EINVAL (-22) on failure
-    li   t0, -1
-    bge  a0, t0, .mmap_ok   ; if a0 >= -1 → treat as pointer (positive)
-    ; handle error...
-.mmap_ok:
+    blt  a0, zero, .mmap_error
     ; a0 is the usable pointer
+    j    .mmap_ok
+.mmap_error:
+    ; handle error...
 ```
 
 > **Checking for errors:** `mmap` error codes are returned as signed negative values
@@ -244,10 +244,10 @@ Before sbrk(256):                After sbrk(256):
 | | |
 |---|---|
 | **+** | Familiar API — same as Linux `mmap` |
-| **+** | Each call returns an independent block (no pointer arithmetic needed) |
+| **+** | Each call returns the start of a newly reserved block |
 | **+** | OOM is detectable (negative return value) |
 | **−** | No `free` — `munmap` is a no-op |
-| **−** | Internally uses the same heap region as `brk` — **do not mix both in the same program** |
+| **-** | Internally uses the same heap break as `brk` - do not mix separate allocators unless they coordinate |
 
 ---
 
@@ -258,8 +258,8 @@ Before sbrk(256):                After sbrk(256):
 | **No `free`** | Neither `brk` nor `mmap` ever releases memory. Design programs to allocate once. |
 | **`munmap` is a no-op** | Always returns 0; memory is not reclaimed. |
 | **No `sbrk` syscall** | Emulate it with two `brk` calls (see Approach 2). |
-| **`brk` and `mmap` share the same heap** | If you call both, they allocate from the same region and will corrupt each other. Pick one. |
-| **128 KiB total RAM** | Heap + stack must fit together. A large heap leaves little room for deep call stacks. |
+| **`brk` and `mmap` share the same heap break** | They can coexist only if one allocator coordinates both. For simple assembly programs, pick one strategy. |
+| **Configurable RAM** | Heap + stack must fit together within `RAM_SIZE` (default 16 MiB). A large heap leaves little room for deep call stacks. |
 | **OOM = Raven says no** | If `brk` returns less than requested, or `mmap` returns a negative value, Raven has denied the allocation — you have hit the memory limit. |
 
 ---
@@ -272,8 +272,8 @@ Before sbrk(256):                After sbrk(256):
 | Free memory | No | No | No (`munmap` = nop) |
 | OOM detection | Manual (no guard) | Yes — check return value | Yes — check return value |
 | Grows continuously | Yes | Yes | Per-block |
-| Can mix with the other? | Yes (it IS the other) | No — conflicts with mmap | No — conflicts with brk |
-| Best for | Tiny programs, toy allocators | Growing a buffer step-by-step | Allocating independent fixed-size blocks |
+| Can mix with the other? | Manual only | Only with a coordinated allocator | Only with a coordinated allocator |
+| Best for | Tiny programs, toy allocators | Growing a buffer step-by-step | Reserving fixed-size blocks through a Linux-like API |
 
 ---
 
