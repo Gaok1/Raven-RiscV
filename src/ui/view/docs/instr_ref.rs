@@ -1,7 +1,9 @@
 use super::chrome::{render_filter_bar, render_page_tabs, render_tab_hint, separator_line};
 use crate::ui::theme;
 use crate::ui::view::App;
-use crate::ui::view::components::{horizontal_scrollbar, vertical_scrollbar, visible_window};
+use crate::ui::view::components::{
+    SbGeom, horizontal_scrollbar, vertical_scrollbar, visible_window,
+};
 use crate::ui::view::style;
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
@@ -1155,12 +1157,15 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
         let sb_area = Rect::new(data_area.x, data_area.y, table_area.width, data_area.height);
         let max_v = rows.len().saturating_sub(viewport_h);
         vertical_scrollbar(f, sb_area, rows.len(), viewport_h, start);
-        app.docs.sb_v.set(Some((
-            data_area.y,
-            data_area.height,
-            data_area.x + content_w_u16,
-            max_v,
-        )));
+        app.docs.sb_v.set(Some(SbGeom {
+            start: data_area.y,
+            len: data_area.height,
+            cross: data_area.x + content_w_u16,
+            content: rows.len(),
+            viewport: viewport_h,
+            offset: start,
+            max: max_v,
+        }));
     } else {
         app.docs.sb_v.set(None);
     }
@@ -1169,9 +1174,15 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     if needs_h {
         let hbar = Rect::new(hbar_area.x, hbar_area.y, content_w_u16, 1);
         horizontal_scrollbar(f, hbar, natural_w, content_w, h_off as usize);
-        app.docs
-            .sb_h
-            .set(Some((hbar_area.x, content_w_u16, hbar_area.y, max_h)));
+        app.docs.sb_h.set(Some(SbGeom {
+            start: hbar_area.x,
+            len: content_w_u16,
+            cross: hbar_area.y,
+            content: natural_w,
+            viewport: content_w,
+            offset: h_off as usize,
+            max: max_h,
+        }));
     } else {
         app.docs.sb_h.set(None);
     }

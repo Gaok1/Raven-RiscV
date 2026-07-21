@@ -45,12 +45,13 @@ fn editor_status(term: Rect) -> Rect {
 
 fn editor_body(term: Rect) -> Rect {
     let c = content_area(term);
-    let status_h = 5.min(c.height);
+    // status block (5) + file tab strip (1)
+    let top_h = 6.min(c.height);
     Rect {
         x: c.x,
-        y: c.y + status_h,
+        y: c.y + top_h,
         width: c.width,
-        height: c.height.saturating_sub(status_h),
+        height: c.height.saturating_sub(top_h),
     }
 }
 

@@ -28,6 +28,7 @@ use crate::guided_learning::view::render_guided_learning;
 
 use cache::render_cache;
 use docs::render_docs;
+pub(crate) use editor::build_file_tab_bar;
 use editor::{render_editor, render_editor_status};
 use path_input_overlay::render_path_input;
 use pipeline::render_pipeline;
@@ -108,10 +109,15 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Editor => {
             let editor_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(5), Constraint::Min(3)])
+                .constraints([
+                    Constraint::Length(5),
+                    Constraint::Length(1),
+                    Constraint::Min(3),
+                ])
                 .split(chunks[1]);
             render_editor_status(f, editor_chunks[0], app);
-            render_editor(f, editor_chunks[1], app);
+            editor::render_file_tabs(f, editor_chunks[1], app);
+            render_editor(f, editor_chunks[2], app);
         }
         Tab::Run => render_run(f, chunks[1], app),
         Tab::Cache => render_cache(f, chunks[1], app),
@@ -548,6 +554,8 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         Tab::Editor => vec![vec![
             ("[Esc]", "switch to Command mode (click editor to return)"),
             ("[Ctrl+Enter]", "assemble and switch to Run"),
+            ("[Ctrl+n]", "new file tab (files assemble together, in tab order)"),
+            ("[click tab]", "switch file — 2×click renames, [✕] deletes"),
             ("[Ctrl+e]", "toggle inline encoding display"),
             ("[Ctrl+z]", "undo"),
             ("[Ctrl+y]", "redo"),

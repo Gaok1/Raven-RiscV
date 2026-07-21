@@ -5,7 +5,9 @@ use ratatui::{Frame, prelude::*};
 use crate::ui::app::App;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{Align, Col, DataTable, vertical_scrollbar, visible_window};
+use crate::ui::view::components::{
+    Align, Col, DataTable, SbGeom, vertical_scrollbar, visible_window,
+};
 use crate::ui::view::style;
 
 pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
@@ -96,11 +98,14 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
     if needs_sb {
         let sb_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
         vertical_scrollbar(f, sb_area, total, visible, scroll);
-        app.tlb.entries_sb.set(Some((
-            sb_area.y,
-            sb_area.height,
-            inner.x + inner.width.saturating_sub(1),
-            total - visible,
-        )));
+        app.tlb.entries_sb.set(Some(SbGeom {
+            start: sb_area.y,
+            len: sb_area.height,
+            cross: inner.x + inner.width.saturating_sub(1),
+            content: total,
+            viewport: visible,
+            offset: scroll,
+            max: total - visible,
+        }));
     }
 }

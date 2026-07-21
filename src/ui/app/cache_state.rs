@@ -234,10 +234,10 @@ pub(crate) enum CacheHoverTarget {
     ViewFmt,
     ViewGroup,
     ViewTag,
-    /// Horizontal scrollbar — stores which track is hovered for render highlighting.
+    /// Horizontal scrollbar — stores which panel's bar is hovered for render
+    /// highlighting (slot 1 = D-cache, slot 0 = I-cache/unified).
     Hscrollbar {
-        track_x: u16,
-        track_w: u16,
+        is_dcache: bool,
     },
 }
 
@@ -299,24 +299,21 @@ pub(crate) struct CacheState {
     // Session run history (captured with `s` key)
     pub(crate) session_history: Vec<CacheResultsSnapshot>,
     pub(crate) history_scroll: usize,
-    /// Vertical-scrollbar track of the snapshot history `(y_start, len, cross_x, max)`
-    /// — set by render, hit-tested by mouse; dragging moves the selection.
-    pub(crate) history_sb: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
-    pub(crate) history_sb_drag: bool,
+    /// Vertical scrollbar of the snapshot history — geometry set by render,
+    /// hit-tested by mouse; dragging scrolls the window and the selection
+    /// follows its edge.
+    pub(crate) history_sb: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
+    /// `Some(grab)` while the bar's thumb is being dragged.
+    pub(crate) history_sb_drag: Option<u16>,
     pub(crate) viewing_snapshot: Option<usize>, // index into session_history, Some = popup open
     pub(crate) window_start_instr: u64,         // start of current capture window, reset on restart
-    // Horizontal scrollbar (View subtab) — geometry set by render, read by mouse
-    pub(crate) hscroll_drag: bool,
-    pub(crate) hscroll_drag_track_x: u16,
-    pub(crate) hscroll_drag_max: usize,
-    pub(crate) hscroll_drag_track_w: u16,
+    // Horizontal scrollbars (View subtab) — geometry set by render each frame
+    // (via Cell so render takes &App). Slot 0 = I-cache or primary/unified,
+    // slot 1 = D-cache (None if absent).
+    pub(crate) hscroll_bars: std::cell::Cell<[Option<crate::ui::view::components::SbGeom>; 2]>,
+    /// `Some(grab)` while a bar's thumb is being dragged.
+    pub(crate) hscroll_drag: Option<u16>,
     pub(crate) hscroll_drag_is_dcache: bool, // true = dragging D-cache bar, false = I-cache/unified
-    // Set each frame by render (via Cell so render takes &App).
-    // tracks[0] = I-cache or primary/unified, tracks[1] = D-cache (0,0 if absent).
-    // Each entry: (track_x, track_w).
-    pub(crate) hscroll_row: std::cell::Cell<u16>,
-    pub(crate) hscroll_tracks: std::cell::Cell<[(u16, u16); 2]>,
-    pub(crate) hscroll_max_by_panel: std::cell::Cell<[usize; 2]>,
     pub(crate) view_num_sets: std::cell::Cell<usize>,
     pub(crate) view_num_sets_d: std::cell::Cell<usize>,
     pub(crate) view_visible_sets: std::cell::Cell<usize>,

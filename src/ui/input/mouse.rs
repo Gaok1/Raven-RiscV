@@ -12,7 +12,7 @@ use crate::ui::view::{
 };
 use crate::ui::view::components::layout;
 use crate::ui::view::components::panel::{self, PanelKind};
-use crate::ui::view::components::scroll_offset_from_pos;
+use crate::ui::view::components::SbGeom;
 use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
@@ -230,11 +230,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         },
         MouseEventKind::ScrollLeft => {
             if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {
-                // Scroll the panel under the cursor: D-cache slot 1 if its track is set
-                let tracks = app.cache.hscroll_tracks.get();
-                let use_d = tracks[1].1 > 0
-                    && me.column >= tracks[1].0
-                    && me.column < tracks[1].0 + tracks[1].1;
+                // Scroll the panel under the cursor: D-cache slot 1 if its bar is set
+                let bars = app.cache.hscroll_bars.get();
+                let use_d =
+                    bars[1].is_some_and(|b| me.column >= b.start && me.column < b.start + b.len);
                 if use_d {
                     app.cache.view_focus = CacheViewFocus::DCache;
                     app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_sub(3);
@@ -246,10 +245,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         }
         MouseEventKind::ScrollRight => {
             if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {
-                let tracks = app.cache.hscroll_tracks.get();
-                let use_d = tracks[1].1 > 0
-                    && me.column >= tracks[1].0
-                    && me.column < tracks[1].0 + tracks[1].1;
+                let bars = app.cache.hscroll_bars.get();
+                let use_d =
+                    bars[1].is_some_and(|b| me.column >= b.start && me.column < b.start + b.len);
                 if use_d {
                     app.cache.view_focus = CacheViewFocus::DCache;
                     app.cache.view_h_scroll_d = app.cache.view_h_scroll_d.saturating_add(3);
@@ -268,58 +266,51 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         update_cache_run_status_hover(app, me, area);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_cache_run_status_click(app, me, area);
-            // H-scrollbar: start drag or jump to click position
-            if let Some(CacheHoverTarget::Hscrollbar { track_x, track_w }) = app.cache.hover {
-                // Determine which panel (slot 0 = I-cache, slot 1 = D-cache)
-                let tracks = app.cache.hscroll_tracks.get();
-                let is_dcache = tracks[1].1 > 0 && track_x == tracks[1].0;
-                let max_scroll = app.cache.hscroll_max_by_panel.get()[usize::from(is_dcache)];
-                app.cache.hscroll_drag_is_dcache = is_dcache;
-                app.cache.view_focus = if is_dcache {
-                    CacheViewFocus::DCache
-                } else {
-                    CacheViewFocus::ICache
-                };
-                // Map the click column to an absolute scroll position; the drag
-                // handler maps the cursor the same way, so the view tracks the
-                // mouse 1:1 instead of snapping back to the old offset.
-                let new_scroll = scroll_offset_from_pos(me.column, track_x, track_w, max_scroll);
-                if is_dcache {
-                    app.cache.view_h_scroll_d = new_scroll;
-                } else {
-                    app.cache.view_h_scroll = new_scroll;
+            // H-scrollbar: grab the thumb (no jump) or, on the track, jump the
+            // thumb under the cursor — then drag keeps it glued to the mouse.
+            if let Some(CacheHoverTarget::Hscrollbar { is_dcache }) = app.cache.hover {
+                if let Some(bar) = app.cache.hscroll_bars.get()[usize::from(is_dcache)] {
+                    app.cache.hscroll_drag_is_dcache = is_dcache;
+                    app.cache.view_focus = if is_dcache {
+                        CacheViewFocus::DCache
+                    } else {
+                        CacheViewFocus::ICache
+                    };
+                    let (grab, new_scroll) = bar.begin_drag(me.column);
+                    app.cache.hscroll_drag = Some(grab);
+                    if is_dcache {
+                        app.cache.view_h_scroll_d = new_scroll;
+                    } else {
+                        app.cache.view_h_scroll = new_scroll;
+                    }
                 }
-                // Start drag state
-                app.cache.hscroll_drag = true;
-                app.cache.hscroll_drag_track_x = track_x;
-                app.cache.hscroll_drag_max = max_scroll;
-                app.cache.hscroll_drag_track_w = track_w;
             } else if start_cache_history_scrollbar_drag(app, me) {
-                // Click landed on the Snapshots scrollbar: jumped + drag started.
+                // Click landed on the Snapshots scrollbar: grabbed + drag started.
             } else {
                 handle_cache_click(app, me, area);
             }
         }
         if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
-            app.cache.hscroll_drag = false;
-            app.cache.history_sb_drag = false;
+            app.cache.hscroll_drag = None;
+            app.cache.history_sb_drag = None;
         }
-        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.hscroll_drag {
-            let new_scroll = scroll_offset_from_pos(
-                me.column,
-                app.cache.hscroll_drag_track_x,
-                app.cache.hscroll_drag_track_w,
-                app.cache.hscroll_drag_max,
-            );
-            if app.cache.hscroll_drag_is_dcache {
-                app.cache.view_h_scroll_d = new_scroll;
-            } else {
-                app.cache.view_h_scroll = new_scroll;
+        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) {
+            if let Some(grab) = app.cache.hscroll_drag {
+                let is_dcache = app.cache.hscroll_drag_is_dcache;
+                if let Some(bar) = app.cache.hscroll_bars.get()[usize::from(is_dcache)] {
+                    let new_scroll = bar.drag(me.column, grab);
+                    if is_dcache {
+                        app.cache.view_h_scroll_d = new_scroll;
+                    } else {
+                        app.cache.view_h_scroll = new_scroll;
+                    }
+                }
             }
-        }
-        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.cache.history_sb_drag {
-            if let Some((start, len, _, max)) = app.cache.history_sb.get() {
-                app.cache.history_scroll = scroll_offset_from_pos(me.row, start, len, max);
+            if let Some(grab) = app.cache.history_sb_drag {
+                if let Some(bar) = app.cache.history_sb.get() {
+                    let start = bar.drag(me.row, grab);
+                    app.cache.history_scroll = history_sel_for_window(bar, start);
+                }
             }
         }
     }
@@ -332,11 +323,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             }
         }
         if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
-            app.tlb.entries_sb_drag = false;
+            app.tlb.entries_sb_drag = None;
         }
-        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) && app.tlb.entries_sb_drag {
-            if let Some((start, len, _, max)) = app.tlb.entries_sb.get() {
-                app.tlb.entries_scroll = scroll_offset_from_pos(me.row, start, len, max);
+        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) {
+            if let (Some(grab), Some(bar)) = (app.tlb.entries_sb_drag, app.tlb.entries_sb.get()) {
+                app.tlb.entries_scroll = bar.drag(me.row, grab);
             }
         }
     }
@@ -376,13 +367,50 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         let chunks = layout::app_frame_chunks(area);
         let editor_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(5), Constraint::Min(3)])
+            .constraints([
+                Constraint::Length(5),
+                Constraint::Length(1),
+                Constraint::Min(3),
+            ])
             .split(chunks[1]);
         let status_area = editor_chunks[0];
-        let editor_area = editor_chunks[1];
+        let files_area = editor_chunks[1];
+        let editor_area = editor_chunks[2];
 
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
             handle_editor_status_click(app, me, status_area);
+        }
+
+        // File tab strip: hover + click (switch / new / delete / rename)
+        app.editor.hover_file_tab = None;
+        if me.row == files_area.y {
+            let bar = crate::ui::view::build_file_tab_bar(app);
+            let hit = bar.hit(me.column, files_area.x + 1);
+            app.editor.hover_file_tab = hit;
+            if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                handle_file_tab_click(app, hit);
+            }
+        }
+
+        // Editor scrollbar: press grabs the thumb (or jumps it), drag glues it.
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            if let Some(bar) = app.editor.sb.get() {
+                if bar.hit(me.row, me.column) {
+                    let (grab, off) = bar.begin_drag(me.row);
+                    app.editor.sb_drag = Some(grab);
+                    app.editor.buf.scroll_to(off, bar.viewport);
+                    return;
+                }
+            }
+        }
+        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) {
+            if let (Some(grab), Some(bar)) = (app.editor.sb_drag, app.editor.sb.get()) {
+                app.editor.buf.scroll_to(bar.drag(me.row, grab), bar.viewport);
+                return;
+            }
+        }
+        if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
+            app.editor.sb_drag = None;
         }
 
         // Use the stable scroll offset written by the renderer (consistent with display).
@@ -498,17 +526,15 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 if app.run.console_drag {
                     handle_console_drag(app, me, area);
                 }
-                if app.run.regs_sb_drag {
-                    if let Some((start, len, _, max)) = app.run.regs_sb.get() {
-                        app.run.regs_scroll = scroll_offset_from_pos(me.row, start, len, max);
-                    }
+                if let (Some(grab), Some(bar)) = (app.run.regs_sb_drag, app.run.regs_sb.get()) {
+                    app.run.regs_scroll = bar.drag(me.row, grab);
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 app.run.sidebar_drag = false;
                 app.run.imem_drag = false;
                 app.run.console_drag = false;
-                app.run.regs_sb_drag = false;
+                app.run.regs_sb_drag = None;
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 if !screen_view {
@@ -893,78 +919,98 @@ fn update_docs_hover(app: &mut App, me: MouseEvent) {
     }
 }
 
-/// On left-down over a Docs scrollbar track, begin dragging it and jump to the
-/// click position. Returns true if a bar was hit (caller then skips the normal
-/// click handling). Tracks are `(start, len, cross, max_offset)`, set by render.
-/// Down on the run-sidebar register scrollbar: jump the view to the click
-/// position and begin dragging. Returns `true` when the click was on the track.
+/// Down on the run-sidebar register scrollbar: grab the thumb (or, on the
+/// track, jump the thumb under the cursor) and begin dragging. Returns `true`
+/// when the click was on the bar.
 fn start_regs_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
-    if let Some((start, len, cross, max)) = app.run.regs_sb.get() {
-        if me.column == cross && me.row >= start && me.row < start + len {
-            app.run.regs_sb_drag = true;
-            app.run.regs_scroll = scroll_offset_from_pos(me.row, start, len, max);
+    if let Some(bar) = app.run.regs_sb.get() {
+        if bar.hit(me.row, me.column) {
+            let (grab, offset) = bar.begin_drag(me.row);
+            app.run.regs_sb_drag = Some(grab);
+            app.run.regs_scroll = offset;
             return true;
         }
     }
     false
 }
 
-/// Down on the Snapshots (cache stats) scrollbar: jump the selection to the
-/// click position and begin dragging. Returns `true` when the click was on the
-/// bar's track.
+/// Selection index that keeps the Snapshots window starting at `start`. The
+/// render derives the window from the selection (pinned to the window's bottom
+/// edge once scrolled), so this is that mapping's inverse; `start` 0 selects
+/// the first row.
+fn history_sel_for_window(bar: SbGeom, start: usize) -> usize {
+    if start == 0 {
+        0
+    } else {
+        (start + bar.viewport - 1).min(bar.content.saturating_sub(1))
+    }
+}
+
+/// Down on the Snapshots (cache stats) scrollbar: grab the thumb (or jump it
+/// under the cursor) and begin dragging; the selection follows the window.
+/// Returns `true` when the click was on the bar.
 fn start_cache_history_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
-    if let Some((start, len, cross, max)) = app.cache.history_sb.get() {
-        if me.column == cross && me.row >= start && me.row < start + len {
-            app.cache.history_sb_drag = true;
-            app.cache.history_scroll = scroll_offset_from_pos(me.row, start, len, max);
+    if let Some(bar) = app.cache.history_sb.get() {
+        if bar.hit(me.row, me.column) {
+            let (grab, start) = bar.begin_drag(me.row);
+            app.cache.history_sb_drag = Some(grab);
+            if start != bar.offset {
+                app.cache.history_scroll = history_sel_for_window(bar, start);
+            }
             return true;
         }
     }
     false
 }
 
-/// Down on the TLB Entries scrollbar: jump the view to the click position and
-/// begin dragging. Returns `true` when the click was on the bar's track.
+/// Down on the TLB Entries scrollbar: grab the thumb (or jump it under the
+/// cursor) and begin dragging. Returns `true` when the click was on the bar.
 fn start_tlb_entries_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
-    if let Some((start, len, cross, max)) = app.tlb.entries_sb.get() {
-        if me.column == cross && me.row >= start && me.row < start + len {
-            app.tlb.entries_sb_drag = true;
-            app.tlb.entries_scroll = scroll_offset_from_pos(me.row, start, len, max);
+    if let Some(bar) = app.tlb.entries_sb.get() {
+        if bar.hit(me.row, me.column) {
+            let (grab, offset) = bar.begin_drag(me.row);
+            app.tlb.entries_sb_drag = Some(grab);
+            app.tlb.entries_scroll = offset;
             return true;
         }
     }
     false
 }
 
+/// On left-down over a Docs scrollbar, grab the thumb (or jump it under the
+/// cursor) and begin dragging. Returns `true` if a bar was hit (caller then
+/// skips the normal click handling).
 fn start_docs_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
-    if let Some((start, len, cross, max)) = app.docs.sb_v.get() {
-        if me.column == cross && me.row >= start && me.row < start + len {
-            app.docs.sb_drag = SbDrag::Vert;
-            app.docs.scroll = scroll_offset_from_pos(me.row, start, len, max);
+    if let Some(bar) = app.docs.sb_v.get() {
+        if bar.hit(me.row, me.column) {
+            let (grab, offset) = bar.begin_drag(me.row);
+            app.docs.sb_drag = SbDrag::Vert(grab);
+            app.docs.scroll = offset;
             return true;
         }
     }
-    if let Some((start, len, cross, max)) = app.docs.sb_h.get() {
-        if me.row == cross && me.column >= start && me.column < start + len {
-            app.docs.sb_drag = SbDrag::Horz;
-            app.docs.h_scroll = scroll_offset_from_pos(me.column, start, len, max);
+    if let Some(bar) = app.docs.sb_h.get() {
+        if bar.hit(me.column, me.row) {
+            let (grab, offset) = bar.begin_drag(me.column);
+            app.docs.sb_drag = SbDrag::Horz(grab);
+            app.docs.h_scroll = offset;
             return true;
         }
     }
     false
 }
 
-/// While a Docs scrollbar is being dragged, map the cursor to the scroll offset.
+/// While a Docs scrollbar is being dragged, keep its thumb glued to the cursor.
 fn drag_docs_scrollbar(app: &mut App, me: MouseEvent) {
     match app.docs.sb_drag {
-        SbDrag::Vert => {
-            if let Some((start, len, _, max)) = app.docs.sb_v.get() {
-                app.docs.scroll = scroll_offset_from_pos(me.row, start, len, max);
+        SbDrag::Vert(grab) => {
+            if let Some(bar) = app.docs.sb_v.get() {
+                app.docs.scroll = bar.drag(me.row, grab);
             }
         }
-        SbDrag::Horz => {
-            if let Some((start, len, _, max)) = app.docs.sb_h.get() {
-                app.docs.h_scroll = scroll_offset_from_pos(me.column, start, len, max);
+        SbDrag::Horz(grab) => {
+            if let Some(bar) = app.docs.sb_h.get() {
+                app.docs.h_scroll = bar.drag(me.column, grab);
             }
         }
         SbDrag::None => {}
@@ -1144,10 +1190,13 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
             .add_filter("Falcon ASM", &["fas", "asm"])
             .pick_file()
         {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                app.editor.buf.lines = content.lines().map(|s| s.to_string()).collect();
-                app.editor.buf.cursor_row = 0;
-                app.editor.buf.cursor_col = 0;
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("opened.fas")
+                    .to_string();
+                app.add_file_with_lines(name, content.lines().map(|s| s.to_string()).collect());
                 app.assemble_and_load();
             }
         } else {
@@ -1168,7 +1217,7 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                 app.editor.last_ok_bss_size,
             ) {
                 (Some(t), Some(d), bss) => (t.clone(), d.clone(), bss.unwrap_or(0)),
-                _ => match crate::falcon::asm::assemble(&app.editor.buf.text(), app.run.base_pc) {
+                _ => match crate::falcon::asm::assemble(&app.combined_source().0, app.run.base_pc) {
                     Ok(p) => (p.text, p.data, p.bss_size),
                     Err(e) => {
                         app.console.push_error(format!(
@@ -1223,6 +1272,52 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     if col >= fmt_start && col < fmt_end {
         app.format_code();
         return;
+    }
+}
+
+/// A click on the file tab strip: switch file, create, delete (armed two-click
+/// confirm) or rename (double-click on the active tab).
+fn handle_file_tab_click(app: &mut App, hit: Option<crate::ui::app::FileTabId>) {
+    use crate::ui::app::FileTabId;
+    let now = std::time::Instant::now();
+    match hit {
+        Some(FileTabId::File(i)) => {
+            app.editor.file_delete_armed = None;
+            let double = app
+                .editor
+                .last_file_tab_click
+                .is_some_and(|(idx, t)| idx == i && t.elapsed().as_millis() < 400);
+            app.editor.last_file_tab_click = Some((i, now));
+            if i == app.editor.active_file {
+                if double {
+                    // Rename via the path-input bar (typed as a plain name).
+                    app.path_input.action = PathInputAction::RenameFile;
+                    app.path_input.open = true;
+                    app.path_input.query = app.editor.files[i].name.clone();
+                    app.path_input.completions.clear();
+                    app.path_input.completion_sel = 0;
+                }
+            } else {
+                app.switch_file(i);
+            }
+        }
+        Some(FileTabId::New) => {
+            app.editor.file_delete_armed = None;
+            app.new_file();
+        }
+        Some(FileTabId::Delete) => {
+            let armed = app
+                .editor
+                .file_delete_armed
+                .is_some_and(|t| t.elapsed().as_secs() < 3);
+            if armed {
+                app.editor.file_delete_armed = None;
+                app.delete_active_file();
+            } else {
+                app.editor.file_delete_armed = Some(now);
+            }
+        }
+        None => app.editor.file_delete_armed = None,
     }
 }
 
@@ -2161,16 +2256,14 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 
-    // H-scrollbar hover (View subtab only) — check both track slots
+    // H-scrollbar hover (View subtab only) — check both bar slots
     if matches!(app.cache.subtab, CacheSubtab::View) {
-        let sb_row = app.cache.hscroll_row.get();
-        let tracks = app.cache.hscroll_tracks.get();
-        if sb_row > 0 && me.row == sb_row {
-            for &(track_x, track_w) in &tracks {
-                if track_w > 0 && me.column >= track_x && me.column < track_x + track_w {
-                    app.cache.hover = Some(CacheHoverTarget::Hscrollbar { track_x, track_w });
-                    break;
-                }
+        for (slot, bar) in app.cache.hscroll_bars.get().into_iter().enumerate() {
+            if bar.is_some_and(|b| b.hit(me.column, me.row)) {
+                app.cache.hover = Some(CacheHoverTarget::Hscrollbar {
+                    is_dcache: slot == 1,
+                });
+                break;
             }
         }
 

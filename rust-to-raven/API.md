@@ -155,14 +155,18 @@ writes to a back buffer; call `screen_present()` once per frame. Colors are `u32
 | Function / constant | Syscall | Description |
 |---|---:|---|
 | `screen_init(w, h) -> i32` | 2000 | Create the screen |
-| `screen_clear(rgb) -> i32` / `screen_clear_color(Color)` | 2001 | Fill the back buffer |
-| `screen_set_pixel(x,y,rgb) -> i32` / `_color(...)` | 2002 | Set one pixel |
-| `screen_fill_rect(x,y,w,h,rgb) -> i32` / `_color(...)` | 2003 | Fill clipped rectangle |
+| `screen_clear(color) -> i32` / `screen_clear_color(Color)` | 2001 | Fill the back buffer; accepts `Color`, `u32`, `[u8;3]`, `(u8,u8,u8)` |
+| `screen_set_pixel(x,y,color) -> i32` / `_color(...)` | 2002 | Set one pixel; accepts `Color`, `u32`, `[u8;3]`, `(u8,u8,u8)` |
+| `screen_fill_rect(x,y,w,h,color) -> i32` / `_color(...)` | 2003 | Fill clipped rectangle; accepts `Color`, `u32`, `[u8;3]`, `(u8,u8,u8)` |
 | `screen_present() -> i32` | 2004 | Publish the frame |
-| `screen_poll_key() -> u32` | 2005 | Non-blocking key poll, 0 if none |
+| `screen_poll_key() -> u32` | 2005 | Non-blocking key poll, `KEY_NONE`/0 if none |
+| `screen_poll_printable_char() -> Option<char>` | 2005 | Poll and convert a printable ASCII key to `char` |
 | `screen_time_ms() -> u32` | 2006 | Wall-clock ms since init |
 | `screen_sleep_ms(ms) -> i32` | 2007 | Frame pacing / park hart |
+| `KEY_NONE`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_ENTER`, `KEY_ESC` | n/a | Common control key constants |
+| `KEY_SPACE`, `KEY_0..KEY_9`, `KEY_A..KEY_Z`, punctuation constants | n/a | Printable ASCII key constants; letters are lowercase ASCII |
 | `KEY_UP/DOWN/LEFT/RIGHT` | n/a | Arrow key constants |
+| `is_ascii_key`, `is_printable_ascii_key`, `key_to_ascii`, `key_to_printable_char` | n/a | Key-code helpers |
 | `Color::Rgb`, `Color::Bytes`, `Color::Raw` | n/a | Color enum variants |
 | `rgb(r,g,b) -> u32`, `Color::to_u32()` | n/a | Pack 8-bit RGB channels |
 

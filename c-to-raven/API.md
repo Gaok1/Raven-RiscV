@@ -99,22 +99,27 @@ buffer; call `raven_screen_present()` once per frame. Colors are `0x00RRGGBB`, `
 | Function / macro | Syscall | Description |
 |---|---:|---|
 | `raven_screen_init(w, h)` | 2000 | Create the screen |
-| `raven_screen_clear(rgb)` / `_color(color)` | 2001 | Fill the back buffer |
-| `raven_screen_set_pixel(x,y,rgb)` / `_color(...)` | 2002 | Set one pixel |
-| `raven_screen_fill_rect(x,y,w,h,rgb)` / `_color(...)` | 2003 | Fill clipped rectangle |
+| `raven_screen_clear(color)` / `_color(color)` | 2001 | Fill the back buffer; in C11+ accepts raw `raven_u32`/integer or `RavenColor` |
+| `raven_screen_set_pixel(x,y,color)` / `_color(...)` | 2002 | Set one pixel; in C11+ accepts raw `raven_u32`/integer or `RavenColor` |
+| `raven_screen_fill_rect(x,y,w,h,color)` / `_color(...)` | 2003 | Fill clipped rectangle; in C11+ accepts raw `raven_u32`/integer or `RavenColor` |
 | `raven_screen_present()` | 2004 | Publish the frame |
-| `raven_screen_poll_key()` | 2005 | Non-blocking key poll, 0 if none |
+| `raven_screen_poll_key()` | 2005 | Non-blocking key poll, `RAVEN_KEY_NONE`/0 if none |
+| `raven_screen_poll_printable_char()` | 2005 | Poll and convert a printable ASCII key to `char`, or `'\0'` |
 | `raven_screen_time_ms()` | 2006 | Wall-clock ms since init |
 | `raven_screen_sleep_ms(ms)` | 2007 | Frame pacing / park hart |
+| `RAVEN_KEY_NONE`, `RAVEN_KEY_BACKSPACE`, `RAVEN_KEY_TAB`, `RAVEN_KEY_ENTER`, `RAVEN_KEY_ESC` | n/a | Common control key constants |
+| `RAVEN_KEY_SPACE`, `RAVEN_KEY_0..RAVEN_KEY_9`, `RAVEN_KEY_A..RAVEN_KEY_Z`, punctuation constants | n/a | Printable ASCII key constants; letters are lowercase ASCII |
 | `RAVEN_KEY_UP/DOWN/LEFT/RIGHT` | n/a | Arrow key constants |
+| `raven_is_ascii_key`, `raven_is_printable_ascii_key`, `raven_key_to_ascii` | n/a | Key-code helpers |
 | `RavenColor`, `raven_color_rgb`, `raven_color_from_bytes` | n/a | Struct color helpers |
 | `RAVEN_RGB(r,g,b)`, `raven_color_pack(color)` | n/a | Pack 8-bit RGB channels |
 
 ```c
 raven_screen_init(80, 60);
 RavenColor bg = raven_color_rgb(16, 24, 32);
-raven_screen_clear_color(bg);
-raven_screen_fill_rect_color(8, 8, 16, 16, raven_color_rgb(0, 255, 0));
+raven_screen_clear(bg); // C11+ convenience; C99: raven_screen_clear_color(bg)
+raven_screen_fill_rect(8, 8, 16, 16, raven_color_rgb(0, 255, 0));
+raven_screen_set_pixel(0, 0, RAVEN_RGB(255, 255, 255));
 raven_screen_present();
 raven_screen_sleep_ms(33);
 ```

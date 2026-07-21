@@ -51,12 +51,13 @@ impl DocsLang {
 }
 
 /// Which scrollbar (if any) the mouse is currently dragging on the Docs tab.
+/// The payload is the thumb cell the cursor holds (see `SbGeom::begin_drag`).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SbDrag {
     #[default]
     None,
-    Vert,
-    Horz,
+    Vert(u16),
+    Horz(u16),
 }
 
 pub(crate) struct DocsState {
@@ -79,11 +80,10 @@ pub(crate) struct DocsState {
     pub(crate) tab_bar_xs: std::cell::Cell<[(u16, u16); 4]>,
     /// Y row of the filter bar (InstrRef page only).
     pub(crate) filter_bar_y: std::cell::Cell<u16>,
-    /// Vertical/horizontal scrollbar tracks for mouse drag, set by render each
-    /// frame: `(track_start, track_len, cross_axis_coord, max_offset)`. `None`
-    /// when that bar isn't shown.
-    pub(crate) sb_v: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
-    pub(crate) sb_h: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
+    /// Vertical/horizontal scrollbar geometry for mouse drag, set by render
+    /// each frame. `None` when that bar isn't shown.
+    pub(crate) sb_v: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
+    pub(crate) sb_h: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
     /// Which bar is being dragged right now.
     pub(crate) sb_drag: SbDrag,
 }
@@ -126,6 +126,8 @@ pub(crate) enum PathInputAction {
     SavePcfg,
     SaveResults,
     SavePipelineResults,
+    /// Rename the active editor file — the query is a plain name, not a path.
+    RenameFile,
 }
 
 pub(crate) struct PathInput {

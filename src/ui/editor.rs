@@ -32,6 +32,15 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// A fresh single-empty-line buffer (new file tabs).
+    pub fn empty() -> Self {
+        Self {
+            lines: vec![String::new()],
+            page_size: Cell::new(20),
+            ..Self::default()
+        }
+    }
+
     pub fn with_sample() -> Self {
         let sample = vec![
             ".data".to_string(),
@@ -709,6 +718,25 @@ impl Editor {
         start
     }
 
+    /// Jump the viewport to `offset` (scrollbar click/drag), pulling the cursor
+    /// inside the stable window so `stable_scroll_start` doesn't snap back.
+    pub fn scroll_to(&mut self, offset: usize, visible_h: usize) {
+        if visible_h == 0 || self.lines.is_empty() {
+            return;
+        }
+        let max = self.lines.len().saturating_sub(visible_h);
+        let off = offset.min(max);
+        self.scroll_offset.set(off);
+        let margin = 3usize.min(visible_h.saturating_sub(1) / 2);
+        let lo = off + margin;
+        let hi = (off + visible_h).saturating_sub(margin + 1).max(lo);
+        self.cursor_row = self
+            .cursor_row
+            .clamp(lo, hi)
+            .min(self.lines.len().saturating_sub(1));
+        self.cursor_col = self.cursor_col.min(Self::char_count(self.current_line()));
+    }
+
     /// Select the word (alphanumeric+underscore run) around the cursor.
     pub fn select_word_at_cursor(&mut self) {
         let col = self.cursor_col;
@@ -786,6 +814,21 @@ fn word_right_col_inclusive(line: &str, col: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::Editor;
+
+    #[test]
+    fn scroll_to_offset_survives_the_next_stable_scroll() {
+        let mut editor = Editor::with_sample();
+        editor.lines = (0..100).map(|i| format!("line {i}")).collect();
+        editor.cursor_row = 0;
+        editor.scroll_to(50, 20);
+        assert_eq!(editor.scroll_offset.get(), 50);
+        // The cursor was pulled into the stable window, so the next frame's
+        // cursor-follow pass must not snap the viewport back.
+        assert_eq!(editor.stable_scroll_start(20), 50);
+        // Clamped at the bottom.
+        editor.scroll_to(999, 20);
+        assert_eq!(editor.scroll_offset.get(), 80);
+    }
 
     #[test]
     fn enter_does_not_carry_indentation_to_next_line() {

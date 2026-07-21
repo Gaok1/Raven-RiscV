@@ -30,8 +30,8 @@ pub(crate) use self::hart::{
 };
 pub(crate) use self::instr_edit::{EncFormat, InstrFieldKind, Seg, detect_format};
 pub(crate) use self::run_state::{
-    BuildStats, EditorMode, EditorState, FormatMode, MemRegion, RunButton, RunEditTarget, RunSpeed,
-    RunState,
+    BuildStats, EditorMode, EditorState, EditorFile, FileTabId, FormatMode, MemRegion, RunButton,
+    RunEditTarget, RunSpeed, RunState,
 };
 pub(crate) use self::settings_state::{
     RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
@@ -326,6 +326,17 @@ impl App {
             mode: EditorMode::Insert,
             editor: EditorState {
                 buf: Editor::with_sample(),
+                files: vec![EditorFile {
+                    name: "main.fas".to_string(),
+                    buf: Editor::empty(),
+                }],
+                active_file: 0,
+                file_line_offsets: vec![0],
+                hover_file_tab: None,
+                file_delete_armed: None,
+                last_file_tab_click: None,
+                sb: std::cell::Cell::new(None),
+                sb_drag: None,
                 dirty: true,
                 last_edit_at: Some(Instant::now()),
                 auto_check_delay: Duration::from_millis(400),
@@ -422,7 +433,7 @@ impl App {
                 console_height_start: 5,
                 regs_scroll: 0,
                 regs_sb: std::cell::Cell::new(None),
-                regs_sb_drag: false,
+                regs_sb_drag: None,
                 is_running: false,
                 last_step_time: Instant::now(),
                 step_interval: Duration::from_millis(80),
@@ -524,17 +535,12 @@ impl App {
                 session_history: Vec::new(),
                 history_scroll: 0,
                 history_sb: std::cell::Cell::new(None),
-                history_sb_drag: false,
+                history_sb_drag: None,
                 viewing_snapshot: None,
                 window_start_instr: 0,
-                hscroll_drag: false,
-                hscroll_drag_track_x: 0,
-                hscroll_drag_max: 0,
-                hscroll_drag_track_w: 1,
+                hscroll_bars: std::cell::Cell::new([None; 2]),
+                hscroll_drag: None,
                 hscroll_drag_is_dcache: false,
-                hscroll_row: std::cell::Cell::new(0),
-                hscroll_tracks: std::cell::Cell::new([(0, 0); 2]),
-                hscroll_max_by_panel: std::cell::Cell::new([0, 0]),
                 view_num_sets: std::cell::Cell::new(0),
                 view_num_sets_d: std::cell::Cell::new(0),
                 view_visible_sets: std::cell::Cell::new(0),
@@ -598,6 +604,165 @@ impl App {
         let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
     }
 
+    // ── Multi-file workspace ───────────────────────────────────────────────
+
+    /// All files' source concatenated in tab order, plus each file's starting
+    /// line offset in the combined text. Labels resolve across files, so a
+    /// program can be split into modules; the first file's `.text` runs first.
+    pub(crate) fn combined_source(&self) -> (String, Vec<usize>) {
+        let mut parts: Vec<String> = Vec::with_capacity(self.editor.files.len());
+        let mut offsets = Vec::with_capacity(self.editor.files.len());
+        let mut offset = 0usize;
+        for (i, file) in self.editor.files.iter().enumerate() {
+            let buf = if i == self.editor.active_file {
+                &self.editor.buf
+            } else {
+                &file.buf
+            };
+            offsets.push(offset);
+            offset += buf.lines.len().max(1);
+            parts.push(buf.text());
+        }
+        (parts.join("\n"), offsets)
+    }
+
+    /// Map a combined-source line to `(file index, line local to that file)`.
+    pub(crate) fn combined_to_local(&self, line: usize) -> (usize, usize) {
+        let offs = &self.editor.file_line_offsets;
+        let idx = offs.iter().rposition(|&o| o <= line).unwrap_or(0);
+        (idx, line - offs.get(idx).copied().unwrap_or(0))
+    }
+
+    /// Store post-assemble source metadata: `label_to_line` stays in combined
+    /// space (cross-file goto), `line_to_addr` is translated to the active file.
+    fn store_source_meta(
+        &mut self,
+        label_to_line: std::collections::HashMap<String, usize>,
+        line_addrs: std::collections::HashMap<usize, u32>,
+        offsets: Vec<usize>,
+    ) {
+        let lo = offsets
+            .get(self.editor.active_file)
+            .copied()
+            .unwrap_or(0);
+        let hi = lo + self.editor.buf.lines.len();
+        self.editor.line_to_addr = line_addrs
+            .into_iter()
+            .filter(|&(l, _)| l >= lo && l < hi)
+            .map(|(l, a)| (l - lo, a))
+            .collect();
+        self.editor.label_to_line = label_to_line;
+        self.editor.file_line_offsets = offsets;
+    }
+
+    /// Diagnostic fields for an assemble error at combined line `line`. When the
+    /// error is in another file the message is prefixed with its name and no
+    /// line is underlined in the active buffer.
+    fn set_diag(&mut self, line: usize, msg: &str, offsets: &[usize]) {
+        self.editor.file_line_offsets = offsets.to_vec();
+        let (fidx, local) = self.combined_to_local(line);
+        if fidx == self.editor.active_file {
+            self.editor.diag_line = Some(local);
+            self.editor.diag_line_text = self.editor.buf.lines.get(local).cloned();
+            self.editor.last_assemble_msg =
+                Some(format!("Assemble error at line {}: {}", local + 1, msg));
+        } else {
+            let name = self
+                .editor
+                .files
+                .get(fidx)
+                .map(|f| f.name.as_str())
+                .unwrap_or("?");
+            self.editor.diag_line = None;
+            self.editor.diag_line_text = None;
+            self.editor.last_assemble_msg =
+                Some(format!("Assemble error in {} line {}: {}", name, local + 1, msg));
+        }
+        self.editor.diag_msg = Some(msg.to_string());
+        self.editor.last_build_stats = None;
+        self.editor.last_compile_ok = Some(false);
+    }
+
+    /// Make file `idx` the active buffer. Per-buffer state (cursor, selection,
+    /// scroll, undo) travels with the `Editor`; view state that indexes into the
+    /// buffer (find/goto, line→addr, diagnostics) is reset and rebuilt by the
+    /// next auto-check.
+    pub(crate) fn switch_file(&mut self, idx: usize) {
+        if idx >= self.editor.files.len() || idx == self.editor.active_file {
+            return;
+        }
+        let cur = self.editor.active_file;
+        std::mem::swap(&mut self.editor.files[cur].buf, &mut self.editor.buf);
+        std::mem::swap(&mut self.editor.files[idx].buf, &mut self.editor.buf);
+        self.editor.active_file = idx;
+        self.editor.find_open = false;
+        self.editor.replace_open = false;
+        self.editor.goto_open = false;
+        self.editor.find_in_replace = false;
+        self.editor.find_matches.clear();
+        self.editor.find_current = 0;
+        self.editor.line_to_addr.clear();
+        self.editor.diag_line = None;
+        self.editor.diag_msg = None;
+        self.editor.diag_line_text = None;
+        self.editor.file_delete_armed = None;
+        self.editor.dirty = true;
+        self.editor.last_edit_at = Some(Instant::now());
+    }
+
+    /// Create an empty file tab and switch to it.
+    pub(crate) fn new_file(&mut self) {
+        let mut n = self.editor.files.len() + 1;
+        let name = loop {
+            let candidate = format!("file{n}.fas");
+            if !self.editor.files.iter().any(|f| f.name == candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        self.add_file_with_lines(name, vec![String::new()]);
+    }
+
+    /// Add a file tab with the given content and switch to it (Ctrl+O / import).
+    pub(crate) fn add_file_with_lines(&mut self, name: String, lines: Vec<String>) {
+        let mut name = name;
+        while self.editor.files.iter().any(|f| f.name == name) {
+            name.insert_str(0, "_");
+        }
+        self.editor.files.push(EditorFile {
+            name,
+            buf: Editor::empty(),
+        });
+        self.switch_file(self.editor.files.len() - 1);
+        self.editor.buf.lines = if lines.is_empty() {
+            vec![String::new()]
+        } else {
+            lines
+        };
+        self.editor.buf.cursor_row = 0;
+        self.editor.buf.cursor_col = 0;
+        self.editor.buf.scroll_offset.set(0);
+        self.editor.buf.clear_selection();
+    }
+
+    /// Delete the active file tab (needs a second tab to fall back to).
+    pub(crate) fn delete_active_file(&mut self) {
+        if self.editor.files.len() <= 1 {
+            return;
+        }
+        let idx = self.editor.active_file;
+        let next = if idx + 1 < self.editor.files.len() {
+            idx + 1
+        } else {
+            idx - 1
+        };
+        self.switch_file(next);
+        self.editor.files.remove(idx);
+        if self.editor.active_file > idx {
+            self.editor.active_file -= 1;
+        }
+    }
+
     pub(crate) fn assemble_and_load(&mut self) {
         use falcon::asm::assemble;
         use falcon::program::{load_bytes, load_words, zero_bytes};
@@ -624,7 +789,8 @@ impl App {
         self.push_vm_mode_to_mmu();
         self.run.faulted = false;
 
-        match assemble(&self.editor.buf.text(), self.run.base_pc) {
+        let (src, offsets) = self.combined_source();
+        match assemble(&src, self.run.base_pc) {
             Ok(prog) => {
                 // Write directly to RAM (bypass cache) so invalidate() won't discard data
                 if let Err(e) = load_words(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.base_pc, &prog.text) {
@@ -665,8 +831,7 @@ impl App {
                 self.run.exec_trace.clear();
                 self.run.reg_age = [255u8; 32];
                 self.run.reg_last_write_pc = [None; 32];
-                self.editor.label_to_line = prog.label_to_line;
-                self.editor.line_to_addr = prog.line_addrs;
+                self.store_source_meta(prog.label_to_line, prog.line_addrs, offsets);
                 self.editor.last_ok_text = Some(prog.text.clone());
                 self.rebuild_imem_vrow_cache();
                 self.editor.last_ok_data = Some(prog.data.clone());
@@ -725,20 +890,22 @@ impl App {
                 self.rebuild_harts();
             }
             Err(e) => {
-                self.editor.diag_line = Some(e.line);
-                self.editor.diag_msg = Some(e.msg.clone());
-                self.editor.diag_line_text = self.editor.buf.lines.get(e.line).cloned();
-                self.editor.last_build_stats = None;
-                self.editor.last_compile_ok = Some(false);
-                self.editor.last_assemble_msg =
-                    Some(format!("Assemble error at line {}: {}", e.line + 1, e.msg));
+                // Explicit compile: jump to the file with the error so the
+                // underline lands where the fix goes.
+                self.editor.file_line_offsets = offsets.clone();
+                let (fidx, _) = self.combined_to_local(e.line);
+                if fidx != self.editor.active_file {
+                    self.switch_file(fidx);
+                }
+                self.set_diag(e.line, &e.msg, &offsets);
             }
         }
     }
 
     fn check_assemble(&mut self) {
         use falcon::asm::assemble;
-        match assemble(&self.editor.buf.text(), self.run.base_pc) {
+        let (src, offsets) = self.combined_source();
+        match assemble(&src, self.run.base_pc) {
             Ok(prog) => {
                 self.editor.last_ok_text = Some(prog.text.clone());
                 self.editor.last_ok_data = Some(prog.data.clone());
@@ -752,8 +919,7 @@ impl App {
                 self.editor.last_ok_block_comments = prog.block_comments;
                 self.editor.last_ok_labels = prog.labels.clone();
                 self.editor.last_ok_halt_pcs = prog.halt_pcs;
-                self.editor.label_to_line = prog.label_to_line;
-                self.editor.line_to_addr = prog.line_addrs;
+                self.store_source_meta(prog.label_to_line, prog.line_addrs, offsets);
                 self.editor.last_assemble_msg = Some(format!(
                     "OK: {} instructions, {} data bytes, {} bss bytes",
                     prog.text.len(),
@@ -767,16 +933,8 @@ impl App {
                 self.editor.diag_line_text = None;
             }
             Err(e) => {
-                self.editor.diag_line = Some(e.line);
-                self.editor.diag_msg = Some(e.msg.clone());
-                self.editor.diag_line_text = self.editor.buf.lines.get(e.line).cloned();
-                self.editor.last_build_stats = None;
-                self.editor.last_compile_ok = Some(false);
-                let line = e.line + 1;
-                let text = self.editor.diag_line_text.as_deref().unwrap_or("");
-                let err = self.editor.diag_msg.as_deref().unwrap_or("");
-                self.editor.last_assemble_msg =
-                    Some(format!("Error line {}: {} ({})", line, text, err));
+                // Background check: report only, never yank the user to another file.
+                self.set_diag(e.line, &e.msg, &offsets);
             }
         }
         self.editor.dirty = false;
@@ -3011,8 +3169,12 @@ impl App {
         if word.is_empty() {
             return;
         }
-        if let Some(&target_line) = self.editor.label_to_line.get(&word) {
-            self.editor.buf.cursor_row = target_line;
+        if let Some(&combined) = self.editor.label_to_line.get(&word) {
+            let (fidx, local) = self.combined_to_local(combined);
+            if fidx != self.editor.active_file {
+                self.switch_file(fidx);
+            }
+            self.editor.buf.cursor_row = local.min(self.editor.buf.lines.len().saturating_sub(1));
             self.editor.buf.cursor_col = 0;
         }
     }

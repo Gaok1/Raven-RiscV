@@ -18,6 +18,7 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
         | PathInputAction::OpenFcache
         | PathInputAction::OpenRcfg
         | PathInputAction::OpenPcfg => " Open File ",
+        PathInputAction::RenameFile => " Rename File ",
         _ => " Save File ",
     };
 

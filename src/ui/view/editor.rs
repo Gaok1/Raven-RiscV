@@ -5,7 +5,63 @@ use std::cmp::min;
 use std::collections::HashSet;
 
 use super::components::panel::{self, PanelKind};
+use super::components::{ControlState, SbGeom, Toolbar, vertical_scrollbar};
 use super::{App, Editor};
+use crate::ui::app::FileTabId;
+use crate::ui::theme;
+
+/// The editor's file tab strip: one chip per file, then `[+]` (new file) and
+/// `[✕]` (delete active file, confirmed by a second click). Single source of
+/// truth for render and mouse hit-testing.
+pub(crate) fn build_file_tab_bar(app: &App) -> Toolbar<FileTabId> {
+    let hover = app.editor.hover_file_tab;
+    let mut bar = Toolbar::with_gap(1);
+    for (i, file) in app.editor.files.iter().enumerate() {
+        bar.value(
+            FileTabId::File(i),
+            &format!(" {} ", file.name),
+            ControlState::chip(
+                i == app.editor.active_file,
+                hover == Some(FileTabId::File(i)),
+            ),
+            theme::ACCENT,
+        );
+    }
+    bar.action(
+        FileTabId::New,
+        "[+]",
+        if hover == Some(FileTabId::New) {
+            ControlState::Hovered
+        } else {
+            ControlState::Normal
+        },
+        Color::Green,
+    );
+    if app.editor.files.len() > 1 {
+        let armed = app
+            .editor
+            .file_delete_armed
+            .is_some_and(|t| t.elapsed().as_secs() < 3);
+        bar.action(
+            FileTabId::Delete,
+            if armed { "[✕ delete?]" } else { "[✕]" },
+            if hover == Some(FileTabId::Delete) {
+                ControlState::Hovered
+            } else {
+                ControlState::Normal
+            },
+            theme::DANGER,
+        );
+    }
+    bar
+}
+
+pub(super) fn render_file_tabs(f: &mut Frame, area: Rect, app: &App) {
+    let bar = build_file_tab_bar(app);
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(bar.spans());
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
 
 pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
     let compile_span = if app.editor.last_ok_elf_bytes.is_some() {
@@ -210,7 +266,8 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
 
     let num_width = if end > 0 { end.to_string().len() } else { 1 };
     let labels = collect_labels(&app.editor.buf.lines);
-    let content_w = area.width.saturating_sub(2);
+    // One column reserved on the right for the vertical scrollbar.
+    let content_w = area.width.saturating_sub(3);
     let query_char_len = app.editor.find_query.chars().count();
     let show_hints = app.editor.show_addr_hints;
     let hint_w: usize = if show_hints { 11 } else { 0 }; // "0x00000000 " = 11 chars
@@ -384,14 +441,36 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     // Render block border
     f.render_widget(block, area);
 
-    // Render content to inner sub-area (excluding bar rows)
+    // Render content to inner sub-area (excluding bar rows and scrollbar column)
     let content_area = Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(3),
+        content_h,
+    );
+    f.render_widget(Paragraph::new(rows), content_area);
+
+    // Draggable vertical scrollbar on the inner right column.
+    let sb_area = Rect::new(
         area.x + 1,
         area.y + 1,
         area.width.saturating_sub(2),
         content_h,
     );
-    f.render_widget(Paragraph::new(rows), content_area);
+    if len > visible_h && visible_h > 0 {
+        vertical_scrollbar(f, sb_area, len, visible_h, start);
+        app.editor.sb.set(Some(SbGeom {
+            start: sb_area.y,
+            len: sb_area.height,
+            cross: sb_area.x + sb_area.width.saturating_sub(1),
+            content: len,
+            viewport: visible_h,
+            offset: start,
+            max: len - visible_h,
+        }));
+    } else {
+        app.editor.sb.set(None);
+    }
 
     // Render find/goto bar
     if bar_rows > 0 {

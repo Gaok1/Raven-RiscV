@@ -689,32 +689,45 @@ fn cache_view_mouse_wheel_targets_only_panel_under_cursor() {
 
 #[test]
 fn cache_view_hscroll_drag_uses_hovered_panel_max_scroll() {
+    use crate::ui::view::components::SbGeom;
     let mut app = App::new(None);
     app.set_cache_enabled(true);
     app.tab = Tab::Cache;
     app.cache.subtab = CacheSubtab::View;
-    app.cache.hscroll_row.set(20);
-    app.cache.hscroll_tracks.set([(10, 50), (80, 50)]);
-    app.cache.hscroll_max_by_panel.set([10, 40]);
+    // Two side-by-side bars as the View renderer registers them (viewport 0 =
+    // ratatui's fall-back). D-cache (slot 1) spans columns 80..130 on row 20.
+    let bar = |start: u16, max: usize| SbGeom {
+        start,
+        len: 50,
+        cross: 20,
+        content: max,
+        viewport: 0,
+        offset: 0,
+        max,
+    };
+    app.cache.hscroll_bars.set([Some(bar(10, 10)), Some(bar(80, 40))]);
 
     let area = Rect::new(0, 0, 160, 40);
 
+    // Down inside the D-cache thumb (offset 0 → thumb starts at column 81).
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 80,
+            column: 90,
             row: 20,
             modifiers: KeyModifiers::NONE,
         },
         area,
     );
+    // Grabbing the thumb must not jump the view.
+    assert_eq!(app.cache.view_h_scroll_d, 0);
 
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Drag(crossterm::event::MouseButton::Left),
-            column: 90,
+            column: 120,
             row: 20,
             modifiers: KeyModifiers::NONE,
         },
@@ -815,13 +828,23 @@ fn clicking_collapsed_details_rail_reopens_panel() {
 
 #[test]
 fn tlb_entries_scrollbar_click_jumps_and_drag_follows() {
-    use crate::ui::view::components::scroll_offset_from_pos;
+    use crate::ui::view::components::SbGeom;
     let mut app = App::new(None);
     app.tab = Tab::Tlb;
-    // Track registered by the Entries renderer: (y_start, len, cross_x, max).
-    app.tlb.entries_sb.set(Some((5, 20, 100, 40)));
+    // Geometry as the Entries renderer registers it: 60 rows, 20 visible,
+    // bar on column 100 over rows 5..25 (thumb at rows 6..11 for offset 0).
+    let bar = SbGeom {
+        start: 5,
+        len: 20,
+        cross: 100,
+        content: 60,
+        viewport: 20,
+        offset: 0,
+        max: 40,
+    };
+    app.tlb.entries_sb.set(Some(bar));
 
-    // Down on the track jumps to the click position and starts the drag.
+    // Down on the track jumps the thumb under the cursor and starts the drag.
     handle_mouse(
         &mut app,
         MouseEvent {
@@ -832,10 +855,13 @@ fn tlb_entries_scrollbar_click_jumps_and_drag_follows() {
         },
         Rect::new(0, 0, 160, 40),
     );
-    assert!(app.tlb.entries_sb_drag);
-    assert_eq!(app.tlb.entries_scroll, scroll_offset_from_pos(15, 5, 20, 40));
+    let (grab, jumped) = bar.begin_drag(15);
+    assert!(app.tlb.entries_sb_drag.is_some());
+    assert_eq!(app.tlb.entries_scroll, jumped);
+    let thumb = SbGeom { offset: jumped, ..bar }.thumb();
+    assert!((thumb.0..thumb.0 + thumb.1).contains(&15), "thumb under cursor");
 
-    // Dragging tracks the cursor with the same absolute mapping (no snap-back).
+    // Dragging keeps the grabbed thumb cell glued to the cursor (clamped at max).
     handle_mouse(
         &mut app,
         MouseEvent {
@@ -846,7 +872,7 @@ fn tlb_entries_scrollbar_click_jumps_and_drag_follows() {
         },
         Rect::new(0, 0, 160, 40),
     );
-    assert_eq!(app.tlb.entries_scroll, scroll_offset_from_pos(24, 5, 20, 40));
+    assert_eq!(app.tlb.entries_scroll, bar.drag(24, grab));
 
     // Up ends the drag; further drags are ignored.
     handle_mouse(
@@ -859,18 +885,30 @@ fn tlb_entries_scrollbar_click_jumps_and_drag_follows() {
         },
         Rect::new(0, 0, 160, 40),
     );
-    assert!(!app.tlb.entries_sb_drag);
+    assert!(app.tlb.entries_sb_drag.is_none());
 }
 
 #[test]
 fn cache_history_scrollbar_click_moves_selection() {
-    use crate::ui::view::components::scroll_offset_from_pos;
+    use crate::ui::view::components::SbGeom;
     let mut app = App::new(None);
     app.tab = Tab::Cache;
     app.cache.subtab = CacheSubtab::Stats;
-    // Track registered by the Snapshots renderer; max = last selectable index.
-    app.cache.history_sb.set(Some((6, 10, 120, 7)));
+    // Geometry as the Snapshots renderer registers it: 20 entries, 8 visible,
+    // bar on column 120 over rows 6..16, window at the top.
+    let bar = SbGeom {
+        start: 6,
+        len: 10,
+        cross: 120,
+        content: 20,
+        viewport: 8,
+        offset: 0,
+        max: 12,
+    };
+    app.cache.history_sb.set(Some(bar));
 
+    // Down near the bottom of the track: the window jumps there and the
+    // selection pins to the window's bottom edge.
     handle_mouse(
         &mut app,
         MouseEvent {
@@ -881,29 +919,43 @@ fn cache_history_scrollbar_click_moves_selection() {
         },
         Rect::new(0, 0, 160, 40),
     );
-    assert!(app.cache.history_sb_drag);
-    assert_eq!(app.cache.history_scroll, scroll_offset_from_pos(12, 6, 10, 7));
+    assert!(app.cache.history_sb_drag.is_some());
+    let (grab, start) = bar.begin_drag(12);
+    assert!(start > 0);
+    assert_eq!(app.cache.history_scroll, (start + 8 - 1).min(19));
 
+    // Dragging back to the top of the track selects the first entry.
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Drag(crossterm::event::MouseButton::Left),
             column: 120,
-            row: 15,
+            row: 6,
             modifiers: KeyModifiers::NONE,
         },
         Rect::new(0, 0, 160, 40),
     );
-    assert_eq!(app.cache.history_scroll, scroll_offset_from_pos(15, 6, 10, 7));
+    assert_eq!(bar.drag(6, grab), 0);
+    assert_eq!(app.cache.history_scroll, 0);
 }
 
 #[test]
 fn run_sidebar_register_scrollbar_click_scrolls_instead_of_editing() {
-    use crate::ui::view::components::scroll_offset_from_pos;
+    use crate::ui::view::components::SbGeom;
     let mut app = App::new(None);
     app.tab = Tab::Run;
-    // Track registered by the register-table renderer: (y_start, len, cross_x, max).
-    app.run.regs_sb.set(Some((6, 18, 36, 12)));
+    // Geometry as the register-table renderer registers it: 30 rows, 18
+    // visible, bar on column 36 over rows 6..24.
+    let bar = SbGeom {
+        start: 6,
+        len: 18,
+        cross: 36,
+        content: 30,
+        viewport: 18,
+        offset: 0,
+        max: 12,
+    };
+    app.run.regs_sb.set(Some(bar));
 
     handle_mouse(
         &mut app,
@@ -915,8 +967,9 @@ fn run_sidebar_register_scrollbar_click_scrolls_instead_of_editing() {
         },
         Rect::new(0, 0, 160, 40),
     );
-    assert!(app.run.regs_sb_drag);
-    assert_eq!(app.run.regs_scroll, scroll_offset_from_pos(14, 6, 18, 12));
+    let (grab, jumped) = bar.begin_drag(14);
+    assert!(app.run.regs_sb_drag.is_some());
+    assert_eq!(app.run.regs_scroll, jumped);
     // The click was consumed by the bar — no inline register editor opened.
     assert!(app.run.run_edit.is_none());
 
@@ -930,5 +983,5 @@ fn run_sidebar_register_scrollbar_click_scrolls_instead_of_editing() {
         },
         Rect::new(0, 0, 160, 40),
     );
-    assert_eq!(app.run.regs_scroll, scroll_offset_from_pos(22, 6, 18, 12));
+    assert_eq!(app.run.regs_scroll, bar.drag(22, grab));
 }

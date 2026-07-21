@@ -67,6 +67,11 @@ pub(super) fn handle_common_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
         return true;
     }
 
+    if ctrl && matches!(key.code, KeyCode::Char('n')) && matches!(app.tab, Tab::Editor) {
+        app.new_file();
+        return true;
+    }
+
     if ctrl && matches!(app.tab, Tab::Editor) {
         match key.code {
             KeyCode::Char('c') => {
@@ -126,9 +131,15 @@ fn open_file(app: &mut App) {
 }
 
 fn save_file(app: &mut App) {
+    let name = app
+        .editor
+        .files
+        .get(app.editor.active_file)
+        .map(|f| f.name.clone())
+        .unwrap_or_else(|| "program.fas".to_string());
     if let Some(path) = OSFileDialog::new()
         .add_filter("Falcon ASM", &["fas", "asm"])
-        .set_file_name("program.fas")
+        .set_file_name(&name)
         .save_file()
     {
         let _ = std::fs::write(path, app.editor.buf.text());

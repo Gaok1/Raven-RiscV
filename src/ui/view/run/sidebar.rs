@@ -9,7 +9,7 @@ use crate::falcon::machine::types::{RegId, RegTarget};
 use crate::ui::app::RunEditTarget;
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::vertical_scrollbar;
+use crate::ui::view::components::{SbGeom, vertical_scrollbar};
 use crate::ui::view::style;
 
 /// The cursor-suffixed edit buffer to paint in a cell, when it is the target of
@@ -99,12 +99,15 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
         let start = app.run.regs_scroll.min(max_scroll);
         let sb_area = Rect::new(inner.x, inner.y + offset as u16, inner.width, viewport as u16);
         vertical_scrollbar(f, sb_area, total, viewport, start);
-        app.run.regs_sb.set(Some((
-            sb_area.y,
-            sb_area.height,
-            inner.x + inner.width.saturating_sub(1),
-            max_scroll,
-        )));
+        app.run.regs_sb.set(Some(SbGeom {
+            start: sb_area.y,
+            len: sb_area.height,
+            cross: inner.x + inner.width.saturating_sub(1),
+            content: total,
+            viewport,
+            offset: start,
+            max: max_scroll,
+        }));
     }
 }
 
@@ -306,12 +309,15 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
         let max_scroll = 32usize - visible;
         let sb_area = Rect::new(inner.x, inner.y, inner.width, visible as u16);
         vertical_scrollbar(f, sb_area, 32, visible, scroll);
-        app.run.regs_sb.set(Some((
-            sb_area.y,
-            sb_area.height,
-            inner.x + inner.width.saturating_sub(1),
-            max_scroll,
-        )));
+        app.run.regs_sb.set(Some(SbGeom {
+            start: sb_area.y,
+            len: sb_area.height,
+            cross: inner.x + inner.width.saturating_sub(1),
+            content: 32,
+            viewport: visible,
+            offset: scroll,
+            max: max_scroll,
+        }));
     }
 }
 

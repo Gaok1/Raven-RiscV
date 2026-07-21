@@ -9,7 +9,7 @@ use crate::ui::app::{App, CacheScope};
 use crate::ui::theme;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::vertical_scrollbar;
+use crate::ui::view::components::{SbGeom, vertical_scrollbar};
 use crate::ui::view::style;
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
@@ -409,16 +409,20 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
         );
     }
 
-    // Register the bar's track for mouse click-to-jump + drag; the mapped
-    // position drives the *selection* (the window follows it, like ↑↓).
+    // Register the bar for mouse click-to-jump + thumb drag; dragging moves
+    // the *window* (so the thumb stays glued to the cursor) and the mouse
+    // handler pins the selection to the window's edge.
     if needs_sb {
         vertical_scrollbar(f, inner, history.len(), visible, start);
-        app.cache.history_sb.set(Some((
-            inner.y,
-            inner.height,
-            inner.x + inner.width.saturating_sub(1),
-            history.len() - 1,
-        )));
+        app.cache.history_sb.set(Some(SbGeom {
+            start: inner.y,
+            len: inner.height,
+            cross: inner.x + inner.width.saturating_sub(1),
+            content: history.len(),
+            viewport: visible,
+            offset: start,
+            max: history.len() - visible,
+        }));
     }
 }
 

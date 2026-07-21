@@ -1509,6 +1509,12 @@ pub(super) fn levenshtein(a: &str, b: &str) -> usize {
 }
 
 pub(super) fn refresh_path_completions(input: &mut PathInput) {
+    // Rename takes a plain file name, not a path — no completions.
+    if input.action == PathInputAction::RenameFile {
+        input.completions.clear();
+        input.completion_sel = 0;
+        return;
+    }
     let query = &input.query;
     let path = std::path::Path::new(query);
     let (dir, prefix) = if query.ends_with('/') || query.ends_with(std::path::MAIN_SEPARATOR) {
@@ -1613,9 +1619,13 @@ pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path) {
     } else {
         // SAFETY: from_utf8 succeeded above.
         let content = unsafe { String::from_utf8_unchecked(bytes) };
-        app.editor.buf.lines = content.lines().map(|s| s.to_string()).collect();
-        app.editor.buf.cursor_row = 0;
-        app.editor.buf.cursor_col = 0;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("opened.fas")
+            .to_string();
+        // Opened sources land in a new file tab so the workspace keeps its modules.
+        app.add_file_with_lines(name, content.lines().map(|s| s.to_string()).collect());
         app.assemble_and_load();
     }
 }
@@ -1631,6 +1641,24 @@ pub(super) fn dispatch_path_input(
         }
         PathInputAction::SaveFas => {
             let _ = std::fs::write(&path, app.editor.buf.text());
+        }
+        PathInputAction::RenameFile => {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let idx = app.editor.active_file;
+            let taken = app
+                .editor
+                .files
+                .iter()
+                .enumerate()
+                .any(|(i, f)| i != idx && f.name == name);
+            if !name.is_empty() && !taken {
+                app.editor.files[idx].name = name;
+            }
         }
         PathInputAction::OpenBin => {
             if let Ok(bytes) = std::fs::read(&path) {
@@ -1662,7 +1690,7 @@ pub(super) fn dispatch_path_input(
                 app.editor.last_ok_bss_size,
             ) {
                 (Some(t), Some(d), bss) => (t.clone(), d.clone(), bss.unwrap_or(0)),
-                _ => match crate::falcon::asm::assemble(&app.editor.buf.text(), app.run.base_pc) {
+                _ => match crate::falcon::asm::assemble(&app.combined_source().0, app.run.base_pc) {
                     Ok(p) => (p.text, p.data, p.bss_size),
                     Err(e) => {
                         app.console.push_error(format!(

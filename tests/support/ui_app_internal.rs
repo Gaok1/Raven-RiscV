@@ -2100,3 +2100,45 @@ mod run_edit {
         assert!(app.run.run_edit.is_none());
     }
 }
+
+#[test]
+fn multi_file_workspace_assembles_across_tabs_and_maps_lines() {
+    let mut app = App::new(None);
+    app.editor.buf.lines = vec![
+        ".text".to_string(),
+        "_start:".to_string(),
+        "    jal helper".to_string(),
+        "    li a7, 93".to_string(),
+        "    ecall".to_string(),
+    ];
+    app.add_file_with_lines(
+        "util.fas".to_string(),
+        vec![
+            "helper:".to_string(),
+            "    li a0, 7".to_string(),
+            "    ret".to_string(),
+        ],
+    );
+    app.assemble_and_load();
+    assert_eq!(app.editor.last_compile_ok, Some(true));
+
+    // Active file is util.fas; its "li a0, 7" (local line 1) maps to an address.
+    assert_eq!(app.editor.active_file, 1);
+    assert!(app.editor.line_to_addr.contains_key(&1));
+
+    // The cross-file label resolves to (file 1, local line 0).
+    let combined = *app.editor.label_to_line.get("helper").unwrap();
+    assert_eq!(app.combined_to_local(combined), (1, 0));
+
+    // Switching swaps the real buffers back in.
+    app.switch_file(0);
+    assert_eq!(app.editor.buf.lines[1], "_start:");
+
+    // Deleting the active tab falls back to the other file, keeping its text;
+    // the last remaining tab can never be deleted.
+    app.delete_active_file();
+    assert_eq!(app.editor.files.len(), 1);
+    assert_eq!(app.editor.buf.lines[0], "helper:");
+    app.delete_active_file();
+    assert_eq!(app.editor.files.len(), 1);
+}

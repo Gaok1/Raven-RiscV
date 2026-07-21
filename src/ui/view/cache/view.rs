@@ -25,6 +25,7 @@ use crate::ui::app::{
     App, CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope,
 };
 use crate::ui::theme;
+use crate::ui::view::components::SbGeom;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::style;
 
@@ -90,8 +91,8 @@ pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_l1_view(f: &mut Frame, area: Rect, app: &App) {
-    // Reset both scrollbar track slots; render_cache_matrix will fill them.
-    app.cache.hscroll_tracks.set([(0, 0); 2]);
+    // Reset both scrollbar slots; render_cache_matrix will fill them.
+    app.cache.hscroll_bars.set([None; 2]);
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -558,15 +559,23 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     if need_h_scrollbar {
         let sb_y = inner.y + inner.height - 1;
         let sb_area = Rect::new(inner.x, sb_y, inner.width, 1);
-        let track_x = inner.x + 1;
-        let track_w = inner.width.saturating_sub(2);
         // Unified/extra levels use slot 0 only
-        app.cache.hscroll_tracks.set([(track_x, track_w), (0, 0)]);
-        app.cache.hscroll_row.set(sb_y);
-        let mut maxes = app.cache.hscroll_max_by_panel.get();
-        maxes[0] = max_h_scroll;
-        app.cache.hscroll_max_by_panel.set(maxes);
-        let hovered = matches!(app.cache.hover, Some(CacheHoverTarget::Hscrollbar { track_x: tx, .. }) if tx == track_x);
+        app.cache.hscroll_bars.set([
+            Some(SbGeom {
+                start: inner.x,
+                len: inner.width,
+                cross: sb_y,
+                content: max_h_scroll,
+                viewport: 0, // ratatui fall-back: viewport = bar length
+                offset: h_scroll as usize,
+                max: max_h_scroll,
+            }),
+            None,
+        ]);
+        let hovered = matches!(
+            app.cache.hover,
+            Some(CacheHoverTarget::Hscrollbar { is_dcache: false })
+        );
         let style = if hovered {
             Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
         } else {
@@ -800,19 +809,21 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     if need_h_scrollbar {
         let sb_y = inner.y + inner.height - 1;
         let sb_area = Rect::new(inner.x, sb_y, inner.width, 1);
-        let track_x = inner.x + 1;
-        let track_w = inner.width.saturating_sub(2);
         // slot 0 = I-cache, slot 1 = D-cache
-        let slot = if icache { 0 } else { 1 };
-        let mut tracks = app.cache.hscroll_tracks.get();
-        tracks[slot] = (track_x, track_w);
-        app.cache.hscroll_tracks.set(tracks);
-        app.cache.hscroll_row.set(sb_y);
-        let mut maxes = app.cache.hscroll_max_by_panel.get();
-        maxes[slot] = max_h_scroll;
-        app.cache.hscroll_max_by_panel.set(maxes);
+        let slot = usize::from(!icache);
+        let mut bars = app.cache.hscroll_bars.get();
+        bars[slot] = Some(SbGeom {
+            start: inner.x,
+            len: inner.width,
+            cross: sb_y,
+            content: max_h_scroll,
+            viewport: 0, // ratatui fall-back: viewport = bar length
+            offset: raw_h_scroll.min(max_h_scroll),
+            max: max_h_scroll,
+        });
+        app.cache.hscroll_bars.set(bars);
         // Highlight if this specific scrollbar is hovered
-        let hovered = matches!(app.cache.hover, Some(CacheHoverTarget::Hscrollbar { track_x: tx, .. }) if tx == track_x);
+        let hovered = matches!(app.cache.hover, Some(CacheHoverTarget::Hscrollbar { is_dcache }) if is_dcache == !icache);
         let style = if hovered {
             Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 70))
         } else {

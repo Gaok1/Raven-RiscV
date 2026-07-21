@@ -111,8 +111,39 @@ pub(crate) enum RunButton {
 
 // ── State per tab ──────────────────────────────────────────────────────────────
 
+/// One assembly file in the editor workspace. The **active** file's real buffer
+/// lives in [`EditorState::buf`]; its entry here holds a parked placeholder
+/// until the user switches away (see `App::switch_file`).
+pub(crate) struct EditorFile {
+    pub(crate) name: String,
+    pub(crate) buf: Editor,
+}
+
+/// A control in the editor's file tab strip (shared by render + mouse hit-test).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileTabId {
+    File(usize),
+    New,
+    Delete,
+}
+
 pub(crate) struct EditorState {
     pub(crate) buf: Editor,
+    /// All workspace files, in assemble order (the first file's `.text` lands at
+    /// the base PC, so the entry point lives in the first tab).
+    pub(crate) files: Vec<EditorFile>,
+    pub(crate) active_file: usize,
+    /// Combined-source line offset of each file at the last assemble, used to
+    /// map assembler line numbers (labels, diagnostics) back to a file.
+    pub(crate) file_line_offsets: Vec<usize>,
+    pub(crate) hover_file_tab: Option<FileTabId>,
+    /// Two-click delete confirm: set on the first `[✕]` click, expires after 3s.
+    pub(crate) file_delete_armed: Option<Instant>,
+    /// Last click on a file tab (index, instant) for rename double-click.
+    pub(crate) last_file_tab_click: Option<(usize, Instant)>,
+    /// Editor scrollbar geometry (set by render) + active thumb drag grab.
+    pub(crate) sb: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
+    pub(crate) sb_drag: Option<u16>,
     pub(crate) dirty: bool,
     pub(crate) last_edit_at: Option<Instant>,
     pub(crate) auto_check_delay: Duration,
@@ -137,7 +168,9 @@ pub(crate) struct EditorState {
     pub(crate) diag_msg: Option<String>,
     pub(crate) diag_line_text: Option<String>,
 
-    // Source-level metadata from last successful assembly
+    // Source-level metadata from last successful assembly.
+    // `label_to_line` is in **combined**-source line space (all files, resolve
+    // with `file_line_offsets`); `line_to_addr` is local to the active file.
     pub(crate) label_to_line: std::collections::HashMap<String, usize>,
     pub(crate) line_to_addr: std::collections::HashMap<usize, u32>,
     pub(crate) show_addr_hints: bool,
@@ -309,10 +342,12 @@ pub(crate) struct RunState {
 
     // Execution
     pub(crate) regs_scroll: usize,
-    /// Vertical-scrollbar track of the sidebar register list `(y_start, len,
-    /// cross_x, max)` — set by render, hit-tested by mouse for click + drag.
-    pub(crate) regs_sb: std::cell::Cell<Option<(u16, u16, u16, usize)>>,
-    pub(crate) regs_sb_drag: bool,
+    /// Vertical scrollbar of the sidebar register list — geometry set by
+    /// render, hit-tested by mouse for click + thumb drag.
+    pub(crate) regs_sb: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
+    /// `Some(grab)` while the bar's thumb is being dragged; `grab` is the
+    /// thumb cell the cursor holds (see `SbGeom::begin_drag`).
+    pub(crate) regs_sb_drag: Option<u16>,
     pub(crate) is_running: bool,
     pub(crate) last_step_time: Instant,
     pub(crate) step_interval: Duration,

@@ -2,28 +2,40 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 
-use crate::raven_api::{Coroutine, exit};
-
+use crate::raven_api::{Color, Coroutine, KEY_DOWN, KEY_UP, exit};
 mod raven_api;
+
+use raven_api::graphics;
+
+struct Player {
+    x:u32,
+    y:u32,
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    // Coroutine demo: a generator that yields 1..=5.
-    //
-    // The closure runs on its own stack. `y.suspend(i)` hands `i` back to the
-    // resumer and pauses; the next `resume` continues right after it, with the
-    // stack intact. It's a pure user-space context switch — no ecall, no extra
-    // hart.
-    let mut counter = Coroutine::new(4096, |y| {
-        for i in 1..=5usize {
-            y.suspend(i);
+    graphics::screen_init(200, 200);
+    graphics::screen_clear(Color::rgb(1, 1, 42));
+    let mut p = Player { x: 100, y: 100 };
+
+    loop{
+        match graphics::screen_poll_key() {
+            KEY_UP => {
+                if p.y > 0 {
+                    p.y -= 1;
+                }
+            },
+            KEY_DOWN => {
+                if p.y < 200 {
+                    p.y += 1;
+                }
+            },
+
+            _ => {}
         }
-    });
 
-    while let Some(v) = counter.resume(0) {
-        println!("coroutine yielded {v}");
+        
     }
-    println!("coroutine done");
 
-    exit(0)
+    exit(0);
 }
