@@ -12,12 +12,15 @@ pub mod syscall;
 
 pub mod decoder;
 
+pub mod engine;
+
 pub mod asm;
 pub mod encoder;
 
 pub mod program;
 
 pub use cache::CacheController;
+pub use engine::{Falcon, RunResult};
 #[allow(unused_imports)]
 pub use instruction::Instruction;
 #[allow(unused_imports)]
