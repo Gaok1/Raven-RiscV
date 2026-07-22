@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "raven-riscv-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dynasm",
  "dynasmrt",
