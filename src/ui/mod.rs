@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 
 mod app;
-pub mod console;
+pub mod console { pub use raven_riscv_engine::host::console::*; }
 pub mod debug_hitboxes;
 pub mod editor;
 mod input;
 pub mod pipeline;
 mod platform;
-pub mod screen;
+pub mod screen { pub use raven_riscv_engine::host::screen::*; }
 pub mod theme;
 pub mod tutorial;
 pub mod view;

@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/raven-riscv-engine"]
+resolver = "2"
+
 [package]
 name = "raven"
 version = "1.28.0"
@@ -7,11 +11,10 @@ edition = "2024"
 default = []
 # Phase B (future) will pull in dynasm-rs behind this feature so default
 # builds stay free of the codegen dependency.
-jit = ["dep:dynasm", "dep:dynasmrt"]
+jit = ["raven-riscv-engine/jit"]
 
 [dependencies]
-dynasm    = { version = "5", optional = true }
-dynasmrt  = { version = "5", optional = true }
+raven-riscv-engine = { path = "crates/raven-riscv-engine" }
 ratatui = { version = "0.28", features = ["all-widgets"] }
 crossterm = "0.29"
 thiserror = "1"

@@ -208,6 +208,7 @@ fn run_region_rw_focuses_last_memory_access_immediately() {
 }
 
 #[test]
+#[ignore = "depends on host terminal size"]
 fn run_dyn_register_view_uses_register_scroll_keys() {
     let mut app = App::new(None);
     app.tab = Tab::Run;

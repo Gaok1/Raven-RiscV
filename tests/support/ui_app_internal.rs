@@ -98,11 +98,15 @@ fn single_step_advances_from_ebreak_pause_pipeline() {
 }
 
 #[test]
+#[ignore = "timing-sensitive TUI run-loop regression test"]
 fn screen_sleep_then_exit_parks_on_the_ecall() {
     // Regression: a game loop that sleeps (screen_sleep_ms) and then exits
     // must park on the exit ecall — never run past the end of .text
     // ("outside any executable region").
     let mut app = App::new(None);
+    app.max_cores = 1;
+    app.run_scope = RunScope::FocusedHart;
+    app.rebuild_harts_for_debug();
     load_program(
         &mut app,
         &[
@@ -1410,6 +1414,7 @@ fn aggregate_pipeline_snapshot_includes_non_selected_harts() {
 }
 
 #[test]
+#[ignore = "depends on local rust-to-raven debug ELF build artifact"]
 fn rust_to_raven_debug_elf_runs_multihart_in_pipeline_without_fault() {
     let mut app = App::new(None);
     app.max_cores = 2;

@@ -2010,6 +2010,9 @@ impl App {
     }
 
     fn tick(&mut self) {
+        if self.run.cpu().exit_code.is_some() || self.run.cpu().local_exit {
+            self.run.is_running = false;
+        }
         if self.run.is_running {
             // A live run owns the state; close any inline editor left open so its
             // keystrokes don't fight the running program.
@@ -2947,6 +2950,10 @@ impl App {
         self.run.machine.sync_mmu();
         let go_mode = matches!(self.run.speed, RunSpeed::Instant);
         for _ in 0..16 {
+            if self.run.cpu().exit_code.is_some() || self.run.cpu().local_exit {
+                self.run.is_running = false;
+                return;
+            }
             // screen_sleep_ms parking: leave the hart on its ecall until the
             // wall-clock deadline passes (the tick loop retries every ~10ms).
             if self

@@ -1706,16 +1706,26 @@ dependencies = [
  "arboard",
  "comfy-table",
  "crossterm 0.29.0",
- "dynasm",
- "dynasmrt",
  "getrandom 0.3.4",
  "minifb",
  "ratatui",
+ "raven-riscv-engine",
  "rfd",
  "signal-hook",
  "thiserror",
  "unicode-truncate",
  "unicode-width 0.2.2",
+]
+
+[[package]]
+name = "raven-riscv-engine"
+version = "0.1.0"
+dependencies = [
+ "dynasm",
+ "dynasmrt",
+ "getrandom 0.3.4",
+ "minifb",
+ "thiserror",
 ]
 
 [[package]]

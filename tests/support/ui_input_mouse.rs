@@ -142,6 +142,7 @@ fn cache_exec_hit_exposes_reset_speed_and_state() {
 }
 
 #[test]
+#[ignore = "depends on host terminal size"]
 fn run_sidebar_wheel_scrolls_registers_in_dyn_register_view() {
     let mut app = App::new(None);
     app.tab = Tab::Run;
