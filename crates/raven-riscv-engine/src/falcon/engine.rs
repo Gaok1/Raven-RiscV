@@ -1,24 +1,31 @@
-﻿//! Falcon â€” a small, ergonomic headless engine for driving RISC-V programs from
-//! Rust (tests, tools, graders). Build it with a few optional setters, `run()`,
-//! then inspect the final machine state:
+//! Falcon - a small, ergonomic headless engine for driving RISC-V programs from
+//! Rust tests, tools, and graders.
 //!
-//! ```no_run
-//! use raven_riscv_engine::falcon::Falcon;
+//! The high-level flow is:
 //!
-//! let r = Falcon::new()
-//!     .asm(".text\n li a0, 42\n li a7, 93\n ecall\n")
-//!     .max_cycles(10_000)          // optional
-//!     .run()
-//!     .unwrap();
+//! 1. Build a [`Falcon`] with assembly source and optional settings.
+//! 2. Call [`Falcon::run`].
+//! 3. Handle `Result<RunResult, String>`.
+//! 4. Inspect registers, memory, stdout, and exit status from [`RunResult`].
 //!
-//! assert_eq!(r.exit_code, Some(42));
-//! assert_eq!(r.reg("a0"), 42);
+//! ```
+//! use raven_riscv_engine::Falcon;
+//!
+//! fn main() -> Result<(), String> {
+//!     let r = Falcon::new()
+//!         .asm(".text\n li a0, 42\n li a7, 93\n ecall\n")
+//!         .max_cycles(10_000)
+//!         .run()?;
+//!
+//!     assert_eq!(r.exit_code, Some(42));
+//!     assert_eq!(r.reg("a0"), 42);
+//!     Ok(())
+//! }
 //! ```
 //!
-//! Sensible defaults (16 MB RAM, cache on, VM off, single hart) mean the only
-//! thing you *must* provide is a program. Everything else is a `set_*`-style
-//! optional. For the full CLI-shaped runner (multi-hart, pipeline, file config)
-//! use [`crate::cli::run_headless`].
+//! Sensible defaults (16 MiB RAM, cache on, VM off, single hart) mean the only
+//! thing you must provide is a program. For now, the simple [`Falcon`] API is
+//! intentionally single-hart; lower-level modules are exposed for advanced uses.
 
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::jit::{BackendKind, ExecCtx, ExecOutcome, make_backend};

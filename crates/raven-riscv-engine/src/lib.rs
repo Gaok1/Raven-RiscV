@@ -1,4 +1,9 @@
-﻿pub mod falcon;
+//! Headless Raven RISC-V engine.
+//!
+//! Start with [`Falcon`] to assemble and run a program, then inspect the
+//! returned [`RunResult`].
+
+pub mod falcon;
 
 /// Minimal host-side console and screen device used by the Falcon engine.
 pub mod host {
