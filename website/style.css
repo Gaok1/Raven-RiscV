@@ -377,9 +377,10 @@ kbd {
   gap: 0;
 }
 .tui-tab {
-  padding: 9px 18px;
+  padding: 9px 13px;
   color: var(--text-dim);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
+  white-space: nowrap;
   cursor: default;
   border-bottom: 2px solid transparent;
   transition: var(--transition);
@@ -652,6 +653,80 @@ kbd {
 .tui-docs-mnem { color: var(--steel);    font-weight: 600; }
 .tui-docs-ops  { color: var(--teal);     }
 .tui-docs-desc { color: var(--text-muted); }
+
+/* ── Pipeline panel ──────────────────────────────────────── */
+.tui-pipe-layout {
+  padding: 16px 14px 12px;
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
+}
+.tui-pipe-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.tui-pipe-stage {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 8px;
+  text-align: center;
+}
+.tui-pipe-stage--stall {
+  border-color: rgba(220,170,55,0.4);
+  background: rgba(220,170,55,0.06);
+}
+.tui-pipe-name {
+  display: block;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.tui-pipe-instr { font-size: 0.74rem; }
+.tui-pipe-bubble { color: var(--amber); font-style: italic; }
+.tui-pipe-note {
+  margin-top: 12px;
+  font-size: 0.70rem;
+  color: var(--text-muted);
+}
+.tui-pipe-hz { color: var(--amber); font-weight: 600; }
+.tui-pipe-fw {
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+.tui-pipe-arrow { color: var(--teal); }
+
+/* ── VM / TLB panel ──────────────────────────────────────── */
+.tui-vm-layout {
+  padding: 14px 14px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  border-bottom: 1px solid var(--border);
+}
+.tui-vm-xlate {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  color: var(--text-muted);
+}
+.tui-vm-vaddr { color: var(--text); }
+.tui-vm-op { color: var(--text-dim); }
+.tui-vm-tlb {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.tui-vm-tlb-row {
+  display: grid;
+  grid-template-columns: 1fr 60px 46px;
+  gap: 6px;
+  padding: 2px 0;
+  color: var(--text-muted);
+}
+.tui-vm-hit  { color: var(--green); text-align: right; }
+.tui-vm-miss { color: var(--amber); text-align: right; }
 
 /* Syntax inside TUI */
 .tui-frame .hl-comment { color: #628a70; font-style: italic; }
@@ -967,6 +1042,7 @@ kbd {
 .isa-b  { background: rgba(110,175,220,0.10); color: var(--steel); }
 .isa-s  { background: rgba(88,200,120,0.10);  color: var(--green); }
 .isa-f  { background: rgba(110,175,220,0.12); color: var(--steel); }
+.isa-a  { background: rgba(195,105,250,0.12); color: var(--dirty); }
 
 .isa-pills { display: flex; flex-wrap: wrap; gap: 5px; }
 .isa-pills span {
@@ -988,6 +1064,11 @@ kbd {
   border-color: rgba(110,175,220,0.18);
   color: var(--steel);
 }
+.isa-pills span.isa-a-pill {
+  background: rgba(195,105,250,0.07);
+  border-color: rgba(195,105,250,0.18);
+  color: var(--dirty);
+}
 
 .isa-legend {
   font-size: 0.8rem;
@@ -998,6 +1079,7 @@ kbd {
 }
 .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .isa-m-dot  { background: var(--teal); }
+.isa-a-dot  { background: var(--dirty); }
 
 /* =========================================================
    QUICK START

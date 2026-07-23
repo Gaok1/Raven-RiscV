@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RAVEN — RISC-V Simulator &amp; Learning IDE</title>
+  <title>RAVEN · RISC-V Simulator &amp; Learning IDE</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -19,8 +19,9 @@
       </a>
       <ul class="nav-links">
         <li><a href="#features">Features</a></li>
-        <li><a href="#cache">Cache</a></li>
-        <li><a href="#examples">Examples</a></li>
+        <li><a href="#pipeline">Pipeline</a></li>
+        <li><a href="#vm">Virtual Memory</a></li>
+        <li><a href="#toolkit">CLI &amp; SDK</a></li>
         <li><a href="#quickstart">Quick Start</a></li>
       </ul>
       <a href="https://github.com/Gaok1/Raven-RiscV" class="btn btn-outline nav-cta" target="_blank" rel="noopener">
@@ -35,8 +36,10 @@
   <!-- MOBILE NAV OVERLAY -->
   <nav class="nav-mobile" id="navMobile" aria-hidden="true">
     <a href="#features">Features</a>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#vm">Virtual Memory</a>
     <a href="#cache">Cache</a>
-    <a href="#examples">Examples</a>
+    <a href="#toolkit">CLI &amp; SDK</a>
     <a href="#quickstart">Quick Start</a>
     <a href="https://github.com/Gaok1/Raven-RiscV" class="nav-mobile-cta" target="_blank" rel="noopener">View on GitHub ↗</a>
   </nav>
@@ -52,7 +55,7 @@
     <div class="hero-content">
       <div class="hero-badge">
         <span class="badge-dot"></span>
-        Free · Open Source · RV32IMF
+        Free · Open Source · RV32IMAF
       </div>
 
       <h1 class="hero-title">
@@ -61,7 +64,7 @@
       </h1>
 
       <p class="hero-desc">
-        RAVEN is a free RISC-V simulator and IDE for the terminal. Write assembly, assemble with one keystroke, and step through every instruction — watching registers, memory, and the cache update in real time. Nothing is a black box.
+        RAVEN is a free RISC-V simulator and IDE that runs in your terminal. Write assembly, assemble with one keystroke, and step through the program while the registers, memory, cache, the five-stage pipeline, and address translation all update as it runs. You see what the machine does, not just what it prints.
       </p>
 
       <div class="hero-actions">
@@ -74,17 +77,17 @@
 
       <div class="hero-stats">
         <div class="stat">
-          <span class="stat-num">RV32IMF</span>
+          <span class="stat-num">RV32IMAF</span>
           <span class="stat-label">Architecture</span>
         </div>
         <div class="stat-div"></div>
         <div class="stat">
-          <span class="stat-num">Step-by-Step</span>
-          <span class="stat-label">Debugger</span>
+          <span class="stat-num">5-Stage</span>
+          <span class="stat-label">Pipeline</span>
         </div>
         <div class="stat-div"></div>
         <div class="stat">
-          <span class="stat-num">I+D Cache</span>
+          <span class="stat-num">Cache + TLB</span>
           <span class="stat-label">Simulator</span>
         </div>
         <div class="stat-div"></div>
@@ -103,9 +106,11 @@
         <div class="tui-topbar">
           <span class="tui-tab tui-tab--active" data-tui="editor">Editor</span>
           <span class="tui-tab" data-tui="run">Run</span>
+          <span class="tui-tab" data-tui="pipeline">Pipeline</span>
           <span class="tui-tab" data-tui="cache">Cache</span>
+          <span class="tui-tab" data-tui="vm">VM</span>
           <span class="tui-tab" data-tui="docs">Docs</span>
-          <span class="tui-arch">RV32IMF</span>
+          <span class="tui-arch">RV32IMAF</span>
         </div>
 
         <!-- ── EDITOR PANEL ─────────────────────────────── -->
@@ -242,6 +247,37 @@
           </div>
         </div>
 
+        <!-- ── PIPELINE PANEL ─────────────────────────────── -->
+        <div class="tui-panel tui-panel--hidden" id="tui-pipeline">
+          <div class="tui-pipe-layout">
+            <div class="tui-pipe-grid">
+              <div class="tui-pipe-stage"><span class="tui-pipe-name">IF</span><span class="tui-pipe-instr"><span class="hl-instr">lw</span> <span class="hl-reg">t2</span></span></div>
+              <div class="tui-pipe-stage"><span class="tui-pipe-name">ID</span><span class="tui-pipe-instr"><span class="hl-instr">add</span> <span class="hl-reg">t1</span></span></div>
+              <div class="tui-pipe-stage tui-pipe-stage--stall"><span class="tui-pipe-name">EX</span><span class="tui-pipe-instr tui-pipe-bubble">bubble</span></div>
+              <div class="tui-pipe-stage"><span class="tui-pipe-name">MEM</span><span class="tui-pipe-instr"><span class="hl-instr">lw</span> <span class="hl-reg">t0</span></span></div>
+              <div class="tui-pipe-stage"><span class="tui-pipe-name">WB</span><span class="tui-pipe-instr"><span class="hl-instr">addi</span> <span class="hl-reg">sp</span></span></div>
+            </div>
+            <div class="tui-pipe-note">
+              <span class="tui-pipe-hz">load-use hazard</span> · <span class="hl-reg">t0</span> not ready, EX stalls one cycle
+            </div>
+            <div class="tui-pipe-fw">
+              <span class="tui-pipe-arrow">↳</span> forward MEM→EX active · predictor: taken · redirect on miss
+            </div>
+          </div>
+          <div class="tui-cache-summary">
+            <span><span class="tui-st-key">cycle</span> <span class="tui-st-val tui-st-cyc">37</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">stalls</span> <span class="tui-st-val" style="color:var(--amber)">6</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">flushes</span> <span class="tui-st-val" style="color:var(--dirty)">2</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">IPC</span> <span class="tui-st-val tui-st-ipc">0.82</span></span>
+          </div>
+          <div class="tui-cache-config">
+            5-stage in-order · full forwarding · 1-bit predictor · Main / Config subtabs
+          </div>
+        </div>
+
         <!-- ── CACHE PANEL ────────────────────────────────── -->
         <div class="tui-panel tui-panel--hidden" id="tui-cache">
           <div class="tui-cache-layout">
@@ -271,6 +307,35 @@
           </div>
           <div class="tui-cache-config">
             Policy: LRU &nbsp;·&nbsp; 4-way &nbsp;·&nbsp; 16 B lines &nbsp;·&nbsp; 16 sets &nbsp;·&nbsp; write-back
+          </div>
+        </div>
+
+        <!-- ── VM / TLB PANEL ─────────────────────────────── -->
+        <div class="tui-panel tui-panel--hidden" id="tui-vm">
+          <div class="tui-vm-layout">
+            <div class="tui-vm-xlate">
+              <span class="tui-vm-vaddr">VA <span class="hl-num">0x0001_0A40</span></span>
+              <span class="tui-vm-op">→ VPN <span class="hl-reg">0x00010</span> · off <span class="hl-num">0xA40</span></span>
+            </div>
+            <div class="tui-vm-xlate">
+              <span class="tui-vm-vaddr">PA <span class="hl-num">0x0041_0A40</span></span>
+              <span class="tui-vm-op">← PPN <span class="hl-reg">0x00410</span> · off <span class="hl-num">0xA40</span></span>
+            </div>
+            <div class="tui-vm-tlb">
+              <div class="tui-vm-tlb-row"><span>VPN→PPN 0x10→0x410</span><span>RWXU</span><span class="tui-vm-hit">HIT</span></div>
+              <div class="tui-vm-tlb-row"><span>VPN→PPN 0x11→0x411</span><span>RW-U</span><span class="tui-vm-hit">HIT</span></div>
+              <div class="tui-vm-tlb-row"><span>VPN→PPN 0x2F→ walk</span><span>----</span><span class="tui-vm-miss">MISS</span></div>
+            </div>
+          </div>
+          <div class="tui-cache-summary">
+            <span><span class="tui-st-key">satp.mode</span> <span class="tui-st-val" style="color:var(--green)">Sv32</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">TLB hit</span> <span class="tui-st-val" style="color:var(--green)">96.4%</span></span>
+            <span class="tui-st-sep">│</span>
+            <span><span class="tui-st-key">faults</span> <span class="tui-st-val" style="color:var(--dirty)">3</span></span>
+          </div>
+          <div class="tui-cache-config">
+            Modes: Off / Sv32 / Custom / Manual · 4 KiB pages · configurable TLB geometry
           </div>
         </div>
 
@@ -311,8 +376,8 @@
     <div class="container">
       <div class="section-header">
         <span class="eyebrow">Why RAVEN</span>
-        <h2>Everything a student needs — nothing more</h2>
-        <p>One terminal app. Write, assemble, run, debug, and profile your RISC-V programs without installing a toolchain.</p>
+        <h2>One terminal app for the whole loop</h2>
+        <p>Write, assemble, run, debug, and profile your RISC-V programs in a single window. No toolchain to install, no black boxes to trust.</p>
       </div>
 
       <div class="features-grid">
@@ -321,7 +386,7 @@
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="5" width="22" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M3 10h22M8 14h4M8 18h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
           <h3>Write and run in the same window</h3>
-          <p>Built-in editor with syntax highlighting for instructions, registers, directives, and labels. Press <kbd>Ctrl+R</kbd> to assemble instantly — no Makefile, no terminal juggling. Import <code>.asm</code> files from other simulators or export your work as binary.</p>
+          <p>Built-in editor with syntax highlighting for instructions, registers, directives, and labels. Press <kbd>Ctrl+R</kbd> to assemble instantly, with no Makefile and no terminal juggling. Import <code>.asm</code> files from other simulators or export your work as a binary. It even loads ELF32 RISC-V binaries built by a real toolchain.</p>
           <div class="feature-tag-row">
             <span class="tag">Syntax Highlighting</span>
             <span class="tag">Import / Export</span>
@@ -342,7 +407,7 @@
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="4" y="4" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="4" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="16" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="16" width="8" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
           </div>
           <h3>All 32 registers, always visible</h3>
-          <p>Integer registers shown with ABI names (<code>ra</code>, <code>sp</code>, <code>a0–a7</code>, <code>s0–s11</code>…) plus hex and decimal side by side. Recently changed registers are highlighted automatically.</p>
+          <p>Integer registers shown with ABI names (<code>ra</code>, <code>sp</code>, <code>a0–a7</code>, <code>s0–s11</code>…) plus hex and decimal side by side. Recently changed registers are highlighted automatically, and the float bank is one keypress away.</p>
         </div>
 
         <div class="feature-card">
@@ -355,10 +420,26 @@
 
         <div class="feature-card">
           <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="2" y="8" width="5" height="12" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="8.5" y="8" width="5" height="12" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="15" y="8" width="5" height="12" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="21.5" y="8" width="5" height="12" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h3>Run the five-stage pipeline</h3>
+          <p>Step the classic IF, ID, EX, MEM, WB pipeline one cycle at a time. See instructions flow through each stage, watch forwarding paths light up, and catch load-use stalls, branch flushes, and cache stalls as they happen.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="4" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="15" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M12 8.5h6.5a2 2 0 0 1 2 2V15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Watch virtual memory translate</h3>
+          <p>A working MMU walks the page table and translates virtual addresses to physical ones a page at a time. See VPN to PPN mappings, TLB hits and misses, page faults, and the live page-table tree. Flip between Sv32, a custom scheme, or hardware-accurate manual mode.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><path d="M5 20L10 8l5 7 4-5 4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </div>
-          <h3>Full RV32IMF — complete ISA</h3>
-          <p>Base integer (RV32I), multiply/divide (M), and single-precision float (F). Every instruction your textbook covers, plus the pseudo-instructions used in real code.</p>
+          <h3>Full RV32IMAF, plus multi-hart</h3>
+          <p>Base integer (RV32I), multiply/divide (M), atomics (A), and single-precision float (F). Every instruction your textbook covers, plus the pseudo-instructions used in real code. Spawn extra harts and watch several cores run at once.</p>
         </div>
 
         <div class="feature-card feature-card--large">
@@ -388,21 +469,80 @@
       </div>
       <div class="pipeline">
         <div class="pipeline-step">
-          <div class="pipeline-num">01 — WRITE</div>
+          <div class="pipeline-num">01 · WRITE</div>
           <h3>Editor Tab</h3>
-          <p>Type RISC-V assembly in the built-in editor. Syntax highlighting colours instructions, registers, labels, and directives. Ghost hints show operand syntax as you type. Press <kbd>Ctrl+R</kbd> to assemble instantly — errors show the exact line and reason.</p>
+          <p>Type RISC-V assembly in the built-in editor. Syntax highlighting colours instructions, registers, labels, and directives. Ghost hints show operand syntax as you type. Press <kbd>Ctrl+R</kbd> to assemble instantly; any error points at the exact line and reason.</p>
         </div>
         <div class="pipeline-arrow">→</div>
         <div class="pipeline-step">
-          <div class="pipeline-num">02 — RUN</div>
+          <div class="pipeline-num">02 · RUN</div>
           <h3>Run Tab</h3>
           <p>Step instruction by instruction or run free. The instruction list shows the current PC, decoded type badge, and execution heat. Registers and memory update on every step.</p>
         </div>
         <div class="pipeline-arrow">→</div>
         <div class="pipeline-step">
-          <div class="pipeline-num">03 — PROFILE</div>
-          <h3>Cache Tab</h3>
-          <p>Switch to the Cache tab to see hit rates, AMAT, IPC, and a visual matrix of every cache line. Change the replacement policy and run again to compare.</p>
+          <div class="pipeline-num">03 · PROFILE</div>
+          <h3>Cache, Pipeline &amp; VM Tabs</h3>
+          <p>Switch to the Cache, Pipeline, or VM tab to see hit rates, AMAT, IPC, pipeline stalls, and address translation. Change a policy or a scheme, run again, and compare.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PIPELINE SECTION -->
+  <section class="section" id="pipeline">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Pipeline Simulator</span>
+        <h2>Step the pipeline one cycle at a time</h2>
+        <p>The sequential view runs instruction by instruction. The pipeline view runs cycle by cycle, so you can see the hazards, stalls, and forwarding paths that the textbook only draws on paper.</p>
+      </div>
+
+      <div class="audience-grid">
+        <div class="audience-text">
+          <ul class="audience-list" style="margin-top:0">
+            <li>
+              <div><strong>Classic five stages.</strong> IF, ID, EX, MEM, WB, in order. Advance one cycle, run free, or pause, and watch each instruction move down the stages.</div>
+            </li>
+            <li>
+              <div><strong>Hazards and forwarding.</strong> Data hazards are detected and resolved by bypass paths you can toggle on or off, so you can see exactly when a value is forwarded and when it can't be.</div>
+            </li>
+            <li>
+              <div><strong>Branch prediction.</strong> Predict, redirect, and squash the wrong path. Flip the predictor and bypass settings to see how mispredictions cost you cycles.</div>
+            </li>
+            <li>
+              <div><strong>Stalls made visible.</strong> Load-use stalls, replays, and MEM stalls from cache latency all show up as bubbles in the stage view.</div>
+            </li>
+            <li>
+              <div><strong>Main and Config subtabs.</strong> Inspect the hazard map and per-cycle history, tune the pipeline behaviour, and export configs and results with <kbd>Ctrl+E</kbd>, <kbd>Ctrl+L</kbd>, and <kbd>Ctrl+R</kbd>.</div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="audience-card">
+          <div class="ac-header">
+            <span class="ac-dot ac-red"></span>
+            <span class="ac-dot ac-yellow"></span>
+            <span class="ac-dot ac-green"></span>
+            <span class="ac-title">Pipeline · Stages</span>
+          </div>
+          <div class="ac-body">
+            <div class="ac-row ac-row--head">
+              <span>Stage</span><span style="grid-column:2/4">Instruction</span><span>State</span>
+            </div>
+            <div class="ac-row"><span class="ac-reg">IF</span><span style="grid-column:2/4">lw t2, 0(t1)</span><span style="color:var(--green)">ok</span></div>
+            <div class="ac-row"><span class="ac-reg">ID</span><span style="grid-column:2/4">add t1, t0, t3</span><span style="color:var(--green)">ok</span></div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">EX</span><span style="grid-column:2/4;color:var(--amber)">bubble</span><span style="color:var(--amber)">stall</span></div>
+            <div class="ac-row"><span class="ac-reg">MEM</span><span style="grid-column:2/4">lw t0, 0(sp)</span><span style="color:var(--teal)">fwd</span></div>
+            <div class="ac-row"><span class="ac-reg">WB</span><span style="grid-column:2/4">addi sp, sp, -8</span><span style="color:var(--green)">ok</span></div>
+            <div class="ac-row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px">
+              <span style="color:var(--text-muted);font-size:.75rem">Hazard</span>
+              <span style="grid-column:2/5;color:var(--amber)">load-use · t0 forwarded MEM→EX next cycle</span>
+            </div>
+          </div>
+          <div class="ac-footer">
+            <span class="ac-status">● cycle 37 &nbsp;|&nbsp; stalls 6 &nbsp;|&nbsp; flushes 2 &nbsp;|&nbsp; IPC 0.82</span>
+          </div>
         </div>
       </div>
     </div>
@@ -413,27 +553,27 @@
     <div class="container">
       <div class="section-header">
         <span class="eyebrow">Cache Simulator</span>
-        <h2>The memory hierarchy, finally visible</h2>
-        <p>Most simulators hide the cache. RAVEN exposes everything — per-access tracking, live statistics, a visual matrix of every cache line, and configurable policies so you can experiment with what you learned in class.</p>
+        <h2>See the memory hierarchy work</h2>
+        <p>Most simulators hide the cache. RAVEN shows the whole thing: per-access tracking, live statistics, a visual matrix of every cache line, and configurable policies so you can test what you learned in class.</p>
       </div>
 
       <div class="audience-grid">
         <div class="audience-text">
           <ul class="audience-list" style="margin-top:0">
             <li>
-              <div><strong>Separate I-Cache &amp; D-Cache</strong> — instruction fetches and data loads/stores tracked independently. Hit rates, miss counts, and MPKI reported per cache — just like a real processor.</div>
+              <div><strong>Separate I-Cache and D-Cache.</strong> Instruction fetches and data loads/stores are tracked independently, with hit rates, miss counts, and MPKI reported per cache, plus extra levels (L2, L3) when you want them.</div>
             </li>
             <li>
-              <div><strong>Six Replacement Policies</strong> — LRU, FIFO, LFU, Clock, MRU, Random. Swap policy mid-run and immediately see how it affects your hit rate. Perfect for comparing what your textbook describes.</div>
+              <div><strong>Six replacement policies.</strong> LRU, FIFO, LFU, Clock, MRU, and Random. Swap policy mid-run and watch your hit rate react, which makes it easy to compare what the textbook describes.</div>
             </li>
             <li>
-              <div><strong>Configurable Geometry</strong> — sets, ways, block size, write policy, inclusion policy. Three built-in presets (Small / Medium / Large) for quick starting points.</div>
+              <div><strong>Configurable geometry.</strong> Sets, ways, block size, write policy, and inclusion policy, with three built-in presets (Small, Medium, Large) for quick starting points.</div>
             </li>
             <li>
-              <div><strong>Academic Metrics</strong> — AMAT (Average Memory Access Time), IPC, CPI breakdown, and MPKI. The same numbers your architecture course asks you to calculate — computed automatically.</div>
+              <div><strong>Academic metrics.</strong> AMAT (Average Memory Access Time), IPC, a CPI breakdown, and MPKI: the same numbers your architecture course asks you to calculate, computed for you.</div>
             </li>
             <li>
-              <div><strong>Visual Matrix View</strong> — every set and way rendered as a colour-coded grid. Valid, tag, dirty state visible per cache line. Scroll through the entire cache state at a glance.</div>
+              <div><strong>Visual matrix view.</strong> Every set and way rendered as a colour-coded grid. Valid, tag, and dirty state are visible per cache line, and you can scroll the whole cache at a glance.</div>
             </li>
           </ul>
         </div>
@@ -468,7 +608,65 @@
             </div>
           </div>
           <div class="ac-footer">
-            <span class="ac-status">● Running — Scope: Both &nbsp;|&nbsp; [R]eset &nbsp;[P]ause</span>
+            <span class="ac-status">● Running · Scope: Both &nbsp;|&nbsp; [R]eset &nbsp;[P]ause</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIRTUAL MEMORY SECTION -->
+  <section class="section" id="vm">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Virtual Memory &amp; TLB</span>
+        <h2>Follow an address from virtual to physical</h2>
+        <p>Programs use virtual addresses; RAM uses physical ones. RAVEN's MMU walks the page table, translates one page at a time, and caches the result in the TLB, and it shows you every step.</p>
+      </div>
+
+      <div class="audience-grid">
+        <div class="audience-text">
+          <ul class="audience-list" style="margin-top:0">
+            <li>
+              <div><strong>Four modes.</strong> Off, Sv32, a Custom paging scheme you reshape yourself, or hardware-accurate Manual mode where your program drives <code>satp</code> and its own tables.</div>
+            </li>
+            <li>
+              <div><strong>Didactic by default.</strong> In Sv32 and Custom the simulator installs a page map for you, so even a plain loop shows TLB hits and misses with no setup code.</div>
+            </li>
+            <li>
+              <div><strong>The page table, live.</strong> Watch the real tree rooted at <code>satp</code>, straight from RAM: pointer entries expand into child tables, leaves are (super)pages, and cached entries are marked.</div>
+            </li>
+            <li>
+              <div><strong>Configurable TLB.</strong> Set entry count, associativity, hit latency, and miss penalty. Apply resets the TLB; flush just drops the cached translations.</div>
+            </li>
+            <li>
+              <div><strong>Faults and demand paging.</strong> In Manual mode, delegate page faults to supervisor mode, install the missing entry in a handler, run <code>sfence.vma</code>, and <code>sret</code> back to retry the access.</div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="audience-card">
+          <div class="ac-header">
+            <span class="ac-dot ac-red"></span>
+            <span class="ac-dot ac-yellow"></span>
+            <span class="ac-dot ac-green"></span>
+            <span class="ac-title">VM · Translation</span>
+          </div>
+          <div class="ac-body">
+            <div class="ac-row ac-row--head">
+              <span>VPN</span><span>PPN</span><span>Perm</span><span>TLB</span>
+            </div>
+            <div class="ac-row ac-row--hi"><span class="ac-reg">0x00010</span><span class="ac-changed">0x00410</span><span>RWXU</span><span style="color:var(--green)">hit</span></div>
+            <div class="ac-row"><span class="ac-reg">0x00011</span><span>0x00411</span><span>RW-U</span><span style="color:var(--green)">hit</span></div>
+            <div class="ac-row"><span class="ac-reg">0x0002F</span><span style="color:var(--text-dim)">walk…</span><span>----</span><span style="color:var(--amber)">miss</span></div>
+            <div class="ac-ellipsis">· · ·</div>
+            <div class="ac-row" style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px">
+              <span style="color:var(--text-muted);font-size:.75rem">satp</span>
+              <span style="grid-column:2/5;color:var(--teal)">Sv32 · 4 KiB pages · root PT @ 0x80020000</span>
+            </div>
+          </div>
+          <div class="ac-footer">
+            <span class="ac-status">● Translating &nbsp;|&nbsp; TLB hit 96.4% &nbsp;|&nbsp; faults 3</span>
           </div>
         </div>
       </div>
@@ -611,7 +809,7 @@
     <span class="hl-pseudo">ret</span></pre>
             </div>
             <div class="example-info">
-              <h4>Quicksort — Recursive</h4>
+              <h4>Recursive Quicksort</h4>
               <p>Full recursive quicksort on a 20-element integer array. Demonstrates proper RISC-V calling convention with <code>push</code>/<code>pop</code> to save callee-saved registers across recursive calls.</p>
               <ul class="example-highlights">
                 <li>Recursive <code>call</code> + stack frame via <code>push</code>/<code>pop</code></li>
@@ -677,7 +875,7 @@
             </div>
             <div class="example-info">
               <h4>Bubble Sort</h4>
-              <p>Classic O(n²) sort over a 20-element array in <code>.data</code>. Great for watching D-cache access patterns in the Cache tab — the tight inner loop shows excellent spatial locality.</p>
+              <p>Classic O(n²) sort over a 20-element array in <code>.data</code>. Great for watching D-cache access patterns in the Cache tab, where the tight inner loop shows excellent spatial locality.</p>
               <ul class="example-highlights">
                 <li>Static data with <code>.word</code> directive</li>
                 <li>Pointer arithmetic (<code>slli</code> + <code>add</code>)</li>
@@ -722,7 +920,7 @@
     <span class="hl-instr">ecall</span></pre>
             </div>
             <div class="example-info">
-              <h4>Echo — Raw Linux ABI</h4>
+              <h4>Echo, Raw Linux ABI</h4>
               <p>No pseudo-instructions. Pure Linux-style <code>ecall</code>: put the syscall number in <code>a7</code>, arguments in <code>a0–a5</code>, fire <code>ecall</code>. Return value lands in <code>a0</code>. Reads a line from stdin and writes it straight back to stdout.</p>
               <ul class="example-highlights">
                 <li><code>read(63)</code>: stdin → buffer</li>
@@ -781,14 +979,14 @@
     <span class="hl-instr">ecall</span></pre>
             </div>
             <div class="example-info">
-              <h4>Interactive Prompt — Raw Syscalls</h4>
-              <p>Composes output from three separate <code>write</code> calls — a prompt string, a greeting prefix, and the user's input — all using raw Linux ABI. No pseudo-instructions, no helpers.</p>
+              <h4>Interactive Prompt, Raw Syscalls</h4>
+              <p>Composes output from three separate <code>write</code> calls (a prompt string, a greeting prefix, and the user's input), all using raw Linux ABI. No pseudo-instructions, no helpers.</p>
               <ul class="example-highlights">
                 <li>Three distinct <code>write(64)</code> calls</li>
                 <li>Return value of <code>read</code> reused as write length</li>
                 <li>fd=0 (stdin), fd=1 (stdout)</li>
                 <li>Data pointers via <code>la</code> (load address)</li>
-                <li><code>exit(93)</code> — Linux-compatible clean exit</li>
+                <li><code>exit(93)</code>: Linux-compatible clean exit</li>
               </ul>
             </div>
           </div>
@@ -803,8 +1001,8 @@
     <div class="container">
       <div class="section-header">
         <span class="eyebrow">Instruction Set</span>
-        <h2>Full RV32IMF — every instruction your course covers</h2>
-        <p>From basic arithmetic to floating-point. RAVEN supports the complete standard instruction set so you never hit a wall mid-course.</p>
+        <h2>Full RV32IMAF, every instruction your course covers</h2>
+        <p>From basic arithmetic to atomics and floating-point. RAVEN supports the complete standard instruction set, so you never hit a wall mid-course.</p>
       </div>
 
       <div class="isa-grid">
@@ -837,6 +1035,19 @@
           <div class="isa-pills">
             <span>LB</span><span>LH</span><span>LW</span><span>LBU</span><span>LHU</span>
             <span>SB</span><span>SH</span><span>SW</span>
+          </div>
+        </div>
+        <div class="isa-category">
+          <div class="isa-cat-header">
+            <span class="isa-cat-badge isa-a">A</span>
+            <span>Atomics (RV32A)</span>
+          </div>
+          <div class="isa-pills">
+            <span class="isa-a-pill">LR.W</span><span class="isa-a-pill">SC.W</span>
+            <span class="isa-a-pill">AMOSWAP.W</span><span class="isa-a-pill">AMOADD.W</span>
+            <span class="isa-a-pill">AMOAND.W</span><span class="isa-a-pill">AMOOR.W</span><span class="isa-a-pill">AMOXOR.W</span>
+            <span class="isa-a-pill">AMOMAX.W</span><span class="isa-a-pill">AMOMIN.W</span>
+            <span class="isa-a-pill">AMOMAXU.W</span><span class="isa-a-pill">AMOMINU.W</span>
           </div>
         </div>
         <div class="isa-category">
@@ -877,7 +1088,72 @@
 
       <div class="isa-legend">
         <span><span class="legend-dot isa-m-dot"></span> M extension (multiply/divide)</span>
+        <span style="margin-left:16px"><span class="legend-dot isa-a-dot"></span> A extension (atomics)</span>
         <span style="margin-left:16px"><span class="legend-dot" style="background:var(--steel)"></span> F extension (single-precision float)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- TOOLKIT: CLI + SDK -->
+  <section class="section section--accent" id="toolkit">
+    <div class="container">
+      <div class="section-header">
+        <span class="eyebrow">Beyond the IDE</span>
+        <h2>A headless CLI and an embeddable engine</h2>
+        <p>The same core that powers the IDE also runs from the command line and ships as a Rust crate, so you can script runs, grade assignments, and build your own tools on top of RAVEN.</p>
+      </div>
+
+      <div class="quickstart-grid">
+        <div class="qs-option">
+          <h3>Headless CLI</h3>
+          <p>Assemble, simulate, and export stats without opening the TUI. Point it at a <code>.fas</code> source, a FALC <code>.bin</code>, or an ELF, and redirect the numbers to a file.</p>
+          <div class="qs-terminal">
+            <div class="qs-term-line">
+              <span class="qs-prompt">$</span>
+              <span class="qs-cmd">raven build program.fas</span>
+            </div>
+            <div class="qs-term-line">
+              <span class="qs-prompt">$</span>
+              <span class="qs-cmd">raven run program.fas --pipeline</span>
+            </div>
+            <div class="qs-term-line">
+              <span class="qs-prompt">$</span>
+              <span class="qs-cmd">raven run program.fas --format csv --out stats.csv</span>
+            </div>
+            <div class="qs-term-line">
+              <span class="qs-prompt">$</span>
+              <span class="qs-cmd">raven export-pipeline-config --out my.pcfg</span>
+            </div>
+          </div>
+          <p style="margin-top:14px;margin-bottom:0">
+            <a href="https://github.com/Gaok1/Raven-RiscV/blob/main/docs/en/cli.md" target="_blank" rel="noopener" class="btn btn-ghost">CLI Reference</a>
+          </p>
+        </div>
+
+        <div class="qs-option">
+          <h3>Embeddable SDK</h3>
+          <p>The <code>raven-riscv-engine</code> crate runs the assembler and simulator headless, so you can embed them in tests, autograders, and other Rust tools.</p>
+          <div class="code-pane">
+            <div class="code-header">
+              <span class="code-filename">grader.rs</span>
+              <span class="code-lang">Rust</span>
+            </div>
+            <pre class="hlcode"><span class="hl-instr">use</span> raven_riscv_engine::Falcon;
+
+<span class="hl-instr">let</span> result = Falcon::new()
+    .asm(<span class="hl-str">".text\n li a0, 42\n li a7, 93\n ecall\n"</span>)
+    .max_cycles(<span class="hl-num">10_000</span>)
+    .run()?;
+
+<span class="hl-pseudo">assert_eq!</span>(result.exit_code, <span class="hl-instr">Some</span>(<span class="hl-num">42</span>));
+<span class="hl-pseudo">assert_eq!</span>(result.reg(<span class="hl-str">"a0"</span>), <span class="hl-num">42</span>);
+<span class="hl-comment">// result.stdout(), result.pc(), result.read_word(addr)…</span></pre>
+          </div>
+          <p style="margin-top:14px;margin-bottom:0">
+            <a href="https://crates.io/crates/raven-riscv-engine" target="_blank" rel="noopener" class="btn btn-ghost">crates.io</a>
+            <a href="https://docs.rs/raven-riscv-engine" target="_blank" rel="noopener" class="btn btn-ghost">docs.rs</a>
+          </p>
+        </div>
       </div>
     </div>
   </section>
@@ -888,14 +1164,14 @@
       <div class="section-header">
         <span class="eyebrow">Get Started</span>
         <h2>Running in under a minute</h2>
-        <p>RAVEN is a single binary. No VM, no Docker, no toolchain setup.</p>
+        <p>RAVEN is a single binary. No toolchain to install and no container to set up.</p>
       </div>
 
       <div class="quickstart-grid">
         <div class="qs-option">
           <div class="qs-badge">Recommended</div>
           <h3>Download &amp; Run</h3>
-          <p>Grab the binary for your OS from the Releases page and run it directly — RAVEN opens immediately.</p>
+          <p>Grab the binary for your OS from the Releases page and run it directly. RAVEN opens immediately.</p>
           <div class="qs-steps">
             <div class="qs-step">
               <span class="qs-num">1</span>
@@ -903,7 +1179,7 @@
             </div>
             <div class="qs-step">
               <span class="qs-num">2</span>
-              <div><strong>Run</strong> the executable — RAVEN's IDE opens immediately.</div>
+              <div><strong>Run</strong> the executable, and RAVEN's IDE opens immediately.</div>
             </div>
             <div class="qs-step">
               <span class="qs-num">3</span>
@@ -922,14 +1198,14 @@
             </div>
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
-              <span class="qs-cmd">cd raven</span>
+              <span class="qs-cmd">cd raven-riscv</span>
             </div>
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
               <span class="qs-cmd">cargo run</span>
             </div>
             <div class="qs-term-out">
-              <span class="qs-ok">✓</span> RAVEN opens — start writing assembly
+              <span class="qs-ok">✓</span> RAVEN opens, start writing assembly
             </div>
           </div>
         </div>
@@ -945,17 +1221,17 @@
           <span class="eyebrow">Who is it for?</span>
           <h2>Made for computer architecture students</h2>
           <p>
-            If you're studying RISC-V — for a university course, self-study, or just curiosity — RAVEN is designed for you. Register naming, memory layout, and calling conventions follow the standard spec exactly. No surprises.
+            If you're studying RISC-V for a university course, on your own, or just out of curiosity, RAVEN is built for you. Register naming, memory layout, and calling conventions follow the standard spec exactly, so what you see here is what you'll see on the exam.
           </p>
           <ul class="audience-list">
             <li>
-              <div><strong>Students</strong> — Follow your textbook exactly. RAVEN's register ABI names, little-endian layout, and instruction encoding match the RISC-V spec and every major computer architecture textbook.</div>
+              <div><strong>Students.</strong> Follow your textbook exactly. RAVEN's register ABI names, little-endian layout, and instruction encoding match the RISC-V spec and every major computer architecture textbook.</div>
             </li>
             <li>
-              <div><strong>Teachers</strong> — Live-demo pipeline stages, cache behaviour, and calling conventions without any setup. Step through student assignments during office hours.</div>
+              <div><strong>Teachers.</strong> Live-demo pipeline stages, cache behaviour, virtual memory, and calling conventions without any setup. Step through student assignments during office hours.</div>
             </li>
             <li>
-              <div><strong>Self-learners</strong> — Curious how a CPU actually works? Start with a simple add, step through it, and watch the machine state change. Build up from there.</div>
+              <div><strong>Self-learners.</strong> Curious how a CPU actually works? Start with a simple add, step through it, and watch the machine state change. Build up from there.</div>
             </li>
           </ul>
         </div>
@@ -1003,9 +1279,18 @@
             <h4>Resources</h4>
             <ul>
               <li><a href="https://github.com/Gaok1/Raven-RiscV/blob/main/docs/en/README.md" target="_blank" rel="noopener">Tutorial</a></li>
+              <li><a href="https://github.com/Gaok1/Raven-RiscV/blob/main/docs/en/cli.md" target="_blank" rel="noopener">CLI Reference</a></li>
               <li><a href="https://github.com/Gaok1/Raven-RiscV/blob/main/docs/en/format.md" target="_blank" rel="noopener">Format Guide</a></li>
-              <li><a href="https://github.com/Gaok1/Raven-RiscV/blob/main/docs/pt-BR/README.md" target="_blank" rel="noopener">Tutorial (PT-BR)</a></li>
               <li><a href="https://github.com/Gaok1/Raven-RiscV/tree/main/Program%20Examples" target="_blank" rel="noopener">Example Programs</a></li>
+            </ul>
+          </div>
+          <div class="fl-group">
+            <h4>Developers</h4>
+            <ul>
+              <li><a href="https://crates.io/crates/raven-riscv-engine" target="_blank" rel="noopener">Engine crate (SDK)</a></li>
+              <li><a href="https://docs.rs/raven-riscv-engine" target="_blank" rel="noopener">SDK docs (docs.rs)</a></li>
+              <li><a href="https://github.com/Gaok1/Raven-RiscV/tree/main/rust-to-raven" target="_blank" rel="noopener">Rust no_std template</a></li>
+              <li><a href="https://github.com/Gaok1/Raven-RiscV/blob/main/docs/pt-BR/README.md" target="_blank" rel="noopener">Tutorial (PT-BR)</a></li>
             </ul>
           </div>
           <div class="fl-group">
@@ -1021,7 +1306,7 @@
       </div>
       <div class="footer-bottom">
         <span>Licensed under MIT / Apache 2.0 · Built with Rust</span>
-        <span class="footer-arch">RV32IMF · Little-endian · 32-bit</span>
+        <span class="footer-arch">RV32IMAF · Little-endian · 32-bit</span>
       </div>
     </div>
   </footer>
