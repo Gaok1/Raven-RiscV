@@ -15,9 +15,7 @@ pub fn render_path_input(f: &mut Frame, area: Rect, app: &App) {
     let title = match &app.path_input.action {
         PathInputAction::OpenFas
         | PathInputAction::OpenBin
-        | PathInputAction::OpenFcache
-        | PathInputAction::OpenRcfg
-        | PathInputAction::OpenPcfg => " Open File ",
+        | PathInputAction::OpenConfig => " Open File ",
         PathInputAction::RenameFile => " Rename File ",
         _ => " Save File ",
     };

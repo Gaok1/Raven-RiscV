@@ -1,6 +1,6 @@
-# Raven — Cache Configuration File (`.fcache`)
+# Raven — Cache Configuration (`[cache]` section of `.rcfg`)
 
-This guide explains every field in a Raven cache configuration file so you (or an LLM) can write valid configs from scratch. Import any `.fcache` into Raven via **Cache → ↓ Import cfg**.
+This guide explains every cache field in a Raven config so you (or an LLM) can write valid configs from scratch. The cache hierarchy lives in the `[cache]` section of the unified `.rcfg` file (alongside `[sim]` and `[pipeline]`). Import any `.rcfg` into Raven via **Cache → ↓ Import cfg** (or `Ctrl+l`).
 
 ---
 
@@ -16,7 +16,7 @@ key=value
 - Whitespace around `=` is trimmed.
 - Unknown keys are silently ignored (forward-compatible).
 - Enum values are **case-sensitive PascalCase** (e.g. `Lru`, not `lru`).
-- File extension must be `.fcache`.
+- These keys live under the `[cache]` section of a `.rcfg` file.
 
 ---
 
@@ -197,7 +197,7 @@ All values are unsigned integers ≥ 0.
 
 ## Unified TLB (`tlb.*`)
 
-Raven's MMU is fronted by a single TLB shared by instruction and data translations. Its geometry is saved in the `.fcache` alongside the cache levels, so a config can ship a TLB layout next to the CPI and cache settings.
+Raven's MMU is fronted by a single TLB shared by instruction and data translations. Its geometry is saved in the `[cache]` section alongside the cache levels, so a config can ship a TLB layout next to the CPI and cache settings.
 
 ```
 # Unified TLB
@@ -218,9 +218,9 @@ tlb.miss_penalty=20
 
 > **Heads up — casing differs from the cache `replacement` key.** The TLB policy is **lowercase**: `lru`, `fifo`, `random`, `lfu`, `clock`, `mru`. (The cache levels use PascalCase `Lru`, `Fifo`, … — they are separate keys.)
 
-### Virtual-memory mode (`.rcfg` only)
+### Virtual-memory mode (`[sim]` section)
 
-The VM *mode* and the Custom paging scheme are simulator settings, not cache settings, so they live in the `.rcfg` (sim settings) file rather than the `.fcache`:
+The VM *mode* and the Custom paging scheme are simulator settings, not cache settings, so they live in the `[sim]` section rather than `[cache]`:
 
 | Key | Type | Values | Notes |
 |-----|------|--------|-------|

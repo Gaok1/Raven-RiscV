@@ -1,4 +1,4 @@
-# dcache_multilevel_demo.fas
+# dcache_multilevel_demo.s
 #
 # Short D-cache workload for manual validation of multi-level load/store stalls
 # and writeback propagation. Tiny write-back caches make the three lines below

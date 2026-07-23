@@ -116,7 +116,7 @@ assert_eq!(result.stdout(), "7");
 ```rust
 Falcon::new()
     .asm("...")           // assembly source string
-    .asm_file("main.fas") // load source from file, returns io::Result<Falcon>
+    .asm_file("main.s") // load source from file, returns io::Result<Falcon>
     .mem_bytes(1024 * 1024)
     .mem_mb(16)
     .max_cycles(1_000_000)

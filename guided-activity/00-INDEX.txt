@@ -1,20 +1,20 @@
 RAVEN - atividade guiada
 
 Estrutura da pasta
-- programas/: arquivos .fas a importar no Editor
+- programas/: arquivos .s a importar no Editor
 - config-global/: arquivos .rcfg para a aba Config
 - config-pipeline/: arquivos .pcfg para a aba Pipeline
 - config-cache/: arquivos .fcache para a aba Cache
 
 Programas
-- programas/D101.fas: pipeline com instrucoes independentes
-- programas/D102.fas: pipeline com cadeia de dependencias RAW
-- programas/D201.fas: load-use hazard
-- programas/D202.fas: flush por redirecionamento de controle
-- programas/D301.fas: streaming / AMAT / LRU vs FIFO
-- programas/D302.fas: thrashing por associatividade insuficiente
-- programas/D401.fas: comparacao entre tipos I, R, M e S
-- programas/D501.fas: multi-core / registradores independentes
+- programas/D101.s: pipeline com instrucoes independentes
+- programas/D102.s: pipeline com cadeia de dependencias RAW
+- programas/D201.s: load-use hazard
+- programas/D202.s: flush por redirecionamento de controle
+- programas/D301.s: streaming / AMAT / LRU vs FIFO
+- programas/D302.s: thrashing por associatividade insuficiente
+- programas/D401.s: comparacao entre tipos I, R, M e S
+- programas/D501.s: multi-core / registradores independentes
 
 Perfis gerais (.rcfg)
 - config-global/R100.rcfg: 1 hart em foco, cache desabilitada, pipeline habilitado por padrao, latencias-base de 1 ciclo
@@ -36,11 +36,11 @@ Perfis de cache (.fcache)
 - config-cache/C332.fcache: D3/Q3 4 sets, 8 ways, line size 16
 
 Mapeamento por dominio
-- D1: use `programas/D101.fas` com `config-pipeline/P100.pcfg` para D1-01; use `programas/D102.fas` com `config-pipeline/P102.pcfg` para D1-02.
-- D2: para `D201.fas`, importe `config-global/R100.rcfg` na aba Config e `config-pipeline/P103.pcfg` na aba Pipeline; para `D202.fas`, mantenha `config-pipeline/P100.pcfg`; abra o programa correspondente no Editor.
-- D3/Q1: importe `config-global/R300.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; importe `config-cache/C311.fcache` ou `config-cache/C312.fcache` na aba Cache; abra `programas/D301b.fas` no Editor.
-- D3/Q2: importe `config-global/R300.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; importe `config-cache/C321.fcache` ou `config-cache/C322.fcache` na aba Cache; abra `programas/D301.fas` no Editor.
-- D3/Q3: importe `config-global/R300.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; importe `config-cache/C331.fcache` ou `config-cache/C332.fcache` na aba Cache; abra `programas/D302.fas` no Editor.
-- D4: importe `config-global/R100.rcfg` na aba Config; importe `config-pipeline/P101.pcfg` na aba Pipeline; abra `programas/D401.fas` no Editor.
-- D5: importe `config-global/R500.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; abra `programas/D501.fas` no Editor.
-- D6: importe `config-global/R100.rcfg` na aba Config; use `config-pipeline/P101.pcfg` para a medicao sem pipeline; troque apenas para `config-pipeline/P100.pcfg` na medicao com pipeline; reutilize `programas/D102.fas`.
+- D1: use `programas/D101.s` com `config-pipeline/P100.pcfg` para D1-01; use `programas/D102.s` com `config-pipeline/P102.pcfg` para D1-02.
+- D2: para `D201.s`, importe `config-global/R100.rcfg` na aba Config e `config-pipeline/P103.pcfg` na aba Pipeline; para `D202.s`, mantenha `config-pipeline/P100.pcfg`; abra o programa correspondente no Editor.
+- D3/Q1: importe `config-global/R300.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; importe `config-cache/C311.fcache` ou `config-cache/C312.fcache` na aba Cache; abra `programas/D301b.s` no Editor.
+- D3/Q2: importe `config-global/R300.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; importe `config-cache/C321.fcache` ou `config-cache/C322.fcache` na aba Cache; abra `programas/D301.s` no Editor.
+- D3/Q3: importe `config-global/R300.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; importe `config-cache/C331.fcache` ou `config-cache/C332.fcache` na aba Cache; abra `programas/D302.s` no Editor.
+- D4: importe `config-global/R100.rcfg` na aba Config; importe `config-pipeline/P101.pcfg` na aba Pipeline; abra `programas/D401.s` no Editor.
+- D5: importe `config-global/R500.rcfg` na aba Config; mantenha `config-pipeline/P101.pcfg` na aba Pipeline; abra `programas/D501.s` no Editor.
+- D6: importe `config-global/R100.rcfg` na aba Config; use `config-pipeline/P101.pcfg` para a medicao sem pipeline; troque apenas para `config-pipeline/P100.pcfg` na medicao com pipeline; reutilize `programas/D102.s`.

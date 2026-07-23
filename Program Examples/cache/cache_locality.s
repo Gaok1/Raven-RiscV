@@ -1,4 +1,4 @@
-# cache_locality.fas — Spatial and temporal locality demonstration
+# cache_locality.s — Spatial and temporal locality demonstration
 #
 # Three phases show how access pattern affects cache performance:
 #

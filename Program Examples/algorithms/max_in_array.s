@@ -1,4 +1,4 @@
-# max_in_array.fas — Find both minimum and maximum in a single O(n) pass
+# max_in_array.s — Find both minimum and maximum in a single O(n) pass
 #
 # The array is filled at run time via the Linux getrandom(2) syscall,
 # so input differs on every execution.

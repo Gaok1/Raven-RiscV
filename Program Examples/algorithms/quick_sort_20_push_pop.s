@@ -1,4 +1,4 @@
-# quick_sort_20_push_pop.fas — Quicksort (recursive, Lomuto partition scheme)
+# quick_sort_20_push_pop.s — Quicksort (recursive, Lomuto partition scheme)
 #
 # Sorts 20 random integers using the classic recursive quicksort.
 # The array is filled at run time via the Linux getrandom(2) syscall,

@@ -491,7 +491,7 @@ Retorna o total de ciclos decorridos no modo de execução atual.
 ## Syscalls gráficas (2000+)
 
 Um framebuffer mínimo no host para que um programa compilado possa ser um jogo
-(veja `Program Examples/graphics/snake.fas` para um exemplo completo). O modelo é
+(veja `Program Examples/graphics/snake.s` para um exemplo completo). O modelo é
 deliberadamente simples, estilo UXN: desenhe num back buffer com chamadas de
 pixel/retângulo e `screen_present` publica o quadro.
 
@@ -502,7 +502,7 @@ Onde a tela aparece:
   (`screen_poll_key`); **Esc é reservado** — volta para a visão da CPU e nunca
   é entregue ao programa. Alterne entre TUI e janela do OS em
   *Settings → Screen Output*.
-- **CLI**: `raven run jogo.fas --screen` abre uma janela nativa do OS. Sem
+- **CLI**: `raven run jogo.s --screen` abre uma janela nativa do OS. Sem
   `--screen` as syscalls continuam funcionando contra o buffer em memória
   (nada é exibido) — determinístico e seguro para CI.
 - A janela do OS não está disponível no macOS (a janela precisa da thread

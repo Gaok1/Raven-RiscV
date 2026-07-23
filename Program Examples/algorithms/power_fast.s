@@ -1,4 +1,4 @@
-# power_fast.fas — Fast (binary) exponentiation: base^exp in O(log exp) multiplies
+# power_fast.s — Fast (binary) exponentiation: base^exp in O(log exp) multiplies
 #
 # Reads base and exponent from stdin.
 # Algorithm: scan exp bit-by-bit from LSB to MSB.

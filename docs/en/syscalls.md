@@ -705,7 +705,7 @@ Compare NUL-terminated strings at `a0` and `a1`.
 ## Graphics syscalls (2000+)
 
 A minimal host-side framebuffer so a compiled program can be a game (see
-`Program Examples/graphics/snake.fas` for a complete one). The model is deliberately
+`Program Examples/graphics/snake.s` for a complete one). The model is deliberately
 simple, UXN-style: draw into a back buffer with pixel/rect calls, then
 `screen_present` publishes the frame.
 
@@ -716,7 +716,7 @@ Where the screen shows up:
   (`screen_poll_key`); **Esc is reserved** — it returns to the CPU view and is
   never delivered to the program. Switch between TUI and OS window in
   *Settings → Screen Output*.
-- **CLI**: `raven run game.fas --screen` opens a native OS window. Without
+- **CLI**: `raven run game.s --screen` opens a native OS window. Without
   `--screen` the syscalls still work against the in-memory buffer (nothing is
   displayed) — deterministic and CI-safe.
 - The OS window is not available on macOS (windowing must own the main

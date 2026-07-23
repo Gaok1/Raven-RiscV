@@ -128,27 +128,18 @@ fn main() -> io::Result<()> {
 
     let sub = args.get(1).map(String::as_str);
 
-    // Subcommands and legacy flags → CLI mode
+    // Subcommands → CLI mode
     let is_cli = matches!(
         sub,
         Some("build")
         | Some("run")
-        | Some("export-cache-config")
-        | Some("check-cache-config")
-        | Some("export-sim-settings")
-        | Some("check-sim-settings")
-        | Some("export-pipeline-config")
-        | Some("check-pipeline-config")
+        | Some("export-config")
+        | Some("check-config")
         | Some("debug-run-controls")
         | Some("debug-help-layout")
         | Some("debug-pipeline-stage")
         | Some("help")
         | Some("--help") | Some("-h")
-        // legacy aliases (still work, not shown in help)
-        | Some("export-config") | Some("import-config")
-        | Some("export-settings") | Some("import-settings")
-        | Some("export-pipeline") | Some("import-pipeline")
-        | Some("--run") | Some("--export-config")
     );
 
     if is_cli {
@@ -252,23 +243,9 @@ fn dispatch_subcommand(args: &[String]) -> Result<(), String> {
         Some("build") => cmd_build(&args[2..]),
         Some("run") => cmd_run(&args[2..]),
 
-        // ── Cache config ──────────────────────────────────────────────────
-        Some("export-cache-config") | Some("export-config") => cmd_export_cache_config(&args[2..]),
-        Some("check-cache-config") | Some("import-config") => cmd_check_cache_config(&args[2..]),
-
-        // ── Sim settings ──────────────────────────────────────────────────
-        Some("export-sim-settings") | Some("export-settings") => {
-            cmd_export_sim_settings(&args[2..])
-        }
-        Some("check-sim-settings") | Some("import-settings") => cmd_check_sim_settings(&args[2..]),
-
-        // ── Pipeline config ───────────────────────────────────────────────
-        Some("export-pipeline-config") | Some("export-pipeline") => {
-            cmd_export_pipeline_config(&args[2..])
-        }
-        Some("check-pipeline-config") | Some("import-pipeline") => {
-            cmd_check_pipeline_config(&args[2..])
-        }
+        // ── Unified config (.rcfg v3: sim + cache + pipeline) ─────────────
+        Some("export-config") => cmd_export_config(&args[2..]),
+        Some("check-config") => cmd_check_config(&args[2..]),
 
         // ── Debug utilities ───────────────────────────────────────────────
         Some("debug-run-controls") => cmd_debug_run_controls(&args[2..]),
@@ -278,42 +255,6 @@ fn dispatch_subcommand(args: &[String]) -> Result<(), String> {
         Some("help") | Some("--help") | Some("-h") => {
             print_help();
             Ok(())
-        }
-
-        // ── Legacy: raven --run <file> [old flags] ────────────────────────
-        Some("--run") => {
-            let file = flag_value(args, "--run").ok_or("--run requires a file path")?;
-            let mut legacy: Vec<String> = vec![file];
-            for flag in &[
-                "--cache-config",
-                "--output",
-                "--format",
-                "--mem",
-                "--max-cycles",
-            ] {
-                if let Some(v) = flag_value(args, flag) {
-                    // map --output → --out
-                    let mapped = if *flag == "--output" { "--out" } else { flag };
-                    legacy.push(mapped.to_string());
-                    legacy.push(v);
-                }
-            }
-            cmd_run(&legacy)
-        }
-        Some("--export-config") => {
-            let out = flag_value(args, "--output").or_else(|| {
-                let p = args
-                    .iter()
-                    .position(|a| a == "--export-config")
-                    .unwrap_or(0);
-                args.get(p + 1).filter(|a| !a.starts_with('-')).cloned()
-            });
-            let mut legacy: Vec<String> = vec![];
-            if let Some(o) = out {
-                legacy.push("--out".to_string());
-                legacy.push(o);
-            }
-            cmd_export_cache_config(&legacy)
         }
 
         Some(other) => Err(format!(
@@ -341,10 +282,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     validate_value_flags(
         args,
         &[
-            "--cache-config",
-            "--sim-settings",
-            "--settings",
-            "--pipeline-config",
+            "--config",
             "--pipeline-trace-out",
             "--out",
             "--mem",
@@ -368,12 +306,12 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         None => 1_000_000_000u64,
     };
     let format = match flag_value(args, "--format").as_deref() {
-        Some("fstats") => cli::OutputFormat::Fstats,
+        Some("rstats") => cli::OutputFormat::Rstats,
         Some("csv") => cli::OutputFormat::Csv,
         Some("json") | None => cli::OutputFormat::Json,
         Some(other) => {
             return Err(format!(
-                "unknown --format '{other}' (use json, fstats, or csv)"
+                "unknown --format '{other}' (use json, rstats, or csv)"
             ));
         }
     };
@@ -409,10 +347,8 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
 
     cli::run_headless(cli::RunArgs {
         file,
-        cache_config: flag_value(args, "--cache-config"),
-        settings: flag_value(args, "--sim-settings").or_else(|| flag_value(args, "--settings")),
+        config: flag_value(args, "--config"),
         pipeline: has_flag(args, "--pipeline"),
-        pipeline_config: flag_value(args, "--pipeline-config"),
         pipeline_trace_out: flag_value(args, "--pipeline-trace-out"),
         output: flag_value(args, "--out"),
         nout: has_flag(args, "--nout"),
@@ -429,46 +365,18 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     })
 }
 
-// ── raven export-cache-config [--out <file>] ─────────────────────────────────
+// ── raven export-config [--out <file>] ───────────────────────────────────────
 
-fn cmd_export_cache_config(args: &[String]) -> Result<(), String> {
-    cli::export_default_config(flag_value(args, "--out").as_deref())
+fn cmd_export_config(args: &[String]) -> Result<(), String> {
+    cli::export_config(flag_value(args, "--out").as_deref())
 }
 
-// ── raven check-cache-config <file> [--out <file>] ───────────────────────────
+// ── raven check-config <file> [--out <file>] ─────────────────────────────────
 
-fn cmd_check_cache_config(args: &[String]) -> Result<(), String> {
+fn cmd_check_config(args: &[String]) -> Result<(), String> {
     let file = positional(args)
-        .ok_or("check-cache-config requires a file argument\n\nUsage: raven check-cache-config <file.fcache> [--out <file>]")?;
-    cli::import_config(&file, flag_value(args, "--out").as_deref())
-}
-
-// ── raven export-sim-settings [--out <file>] ─────────────────────────────────
-
-fn cmd_export_sim_settings(args: &[String]) -> Result<(), String> {
-    cli::export_sim_settings(flag_value(args, "--out").as_deref())
-}
-
-// ── raven check-sim-settings <file> [--out <file>] ───────────────────────────
-
-fn cmd_check_sim_settings(args: &[String]) -> Result<(), String> {
-    let file = positional(args)
-        .ok_or("check-sim-settings requires a file argument\n\nUsage: raven check-sim-settings <file.rcfg> [--out <file>]")?;
-    cli::import_sim_settings(&file, flag_value(args, "--out").as_deref())
-}
-
-// ── raven export-pipeline-config [--out <file>] ──────────────────────────────
-
-fn cmd_export_pipeline_config(args: &[String]) -> Result<(), String> {
-    cli::export_pipeline_settings(flag_value(args, "--out").as_deref())
-}
-
-// ── raven check-pipeline-config <file> [--out <file>] ────────────────────────
-
-fn cmd_check_pipeline_config(args: &[String]) -> Result<(), String> {
-    let file = positional(args)
-        .ok_or("check-pipeline-config requires a file argument\n\nUsage: raven check-pipeline-config <file.pcfg> [--out <file>]")?;
-    cli::import_pipeline_settings(&file, flag_value(args, "--out").as_deref())
+        .ok_or("check-config requires a file argument\n\nUsage: raven check-config <file.rcfg> [--out <file>]")?;
+    cli::check_config(&file, flag_value(args, "--out").as_deref())
 }
 
 fn cmd_debug_run_controls(args: &[String]) -> Result<(), String> {
@@ -606,12 +514,8 @@ USAGE:
     raven                                          Open interactive TUI
     raven build  <file> [OPTIONS]                  Assemble source file
     raven run    <file> [OPTIONS]                  Assemble and simulate
-    raven export-cache-config [OPTIONS]            Export default cache config (.fcache)
-    raven check-cache-config  <file> [OPTIONS]     Validate and inspect a .fcache file
-    raven export-sim-settings [OPTIONS]            Export default sim settings (.rcfg)
-    raven check-sim-settings  <file> [OPTIONS]     Validate and inspect a .rcfg file
-    raven export-pipeline-config [OPTIONS]         Export default pipeline config (.pcfg)
-    raven check-pipeline-config  <file> [OPTIONS]  Validate and inspect a .pcfg file
+    raven export-config [OPTIONS]                  Export default unified config (.rcfg)
+    raven check-config  <file> [OPTIONS]           Validate and inspect a .rcfg file
     raven debug-run-controls [OPTIONS]             Dump Run Controls hitboxes for debugging
     raven debug-help-layout [OPTIONS]              Dump help button / popup layout for a tab
     raven debug-pipeline-stage [OPTIONS]           Dump a pipeline stage line preview
@@ -622,10 +526,8 @@ OPTIONS  build:
     --nout                      Check-only: assemble but don't write any file
 
 OPTIONS  run:
-    --cache-config <file>       Load cache hierarchy from .fcache
-    --sim-settings <file>       Load full Config-tab sim settings from .rcfg
+    --config <file>             Load unified config (sim + cache + pipeline) from .rcfg
     --pipeline                  Run using the pipeline simulator instead of sequential exec
-    --pipeline-config <file>    Load pipeline config from a .pcfg file
     --pipeline-trace-out <file> Write per-cycle pipeline trace JSON (requires --pipeline)
     --screen                    Show programs that use the graphics syscalls (2000+) in an OS window
     --cores <n>                 Max physical cores / harts for the run (default: settings or 1)
@@ -637,12 +539,12 @@ OPTIONS  run:
     --expect-mem <addr=value>   Fail if a 32-bit memory word differs; repeatable
     --out <file>                Write simulation results to file
     --nout                      Don't write/print results (program output only)
-    --format json|fstats|csv    Results format                     (default: json)
+    --format json|rstats|csv    Results format                     (default: json)
 
-OPTIONS  export-cache-config / export-sim-settings / export-pipeline-config:
+OPTIONS  export-config:
     --out <file>                Write to file instead of stdout
 
-OPTIONS  check-cache-config / check-sim-settings / check-pipeline-config:
+OPTIONS  check-config:
     --out <file>                Re-export normalized config to this file
 
 OPTIONS  debug-run-controls:
@@ -670,26 +572,19 @@ OPTIONS  debug-help-layout:
     --out <file>                Write dump to file instead of stdout
 
 EXAMPLES:
-    raven build program.fas
-    raven build program.fas out/prog.bin
-    raven build program.fas --nout
-    raven run program.fas --nout
-    raven run program.fas --out results.json
-    raven run program.fas --cache-config l2.fcache --format csv --out stats.csv
-    raven run program.fas --sim-settings my.rcfg --nout
-    raven run program.fas --cores 4 --nout
-    raven run program.fas --pipeline --pipeline-config mypipe.pcfg --format json
-    raven run program.fas --expect-exit 0 --expect-reg a0=42
-    raven run program.fas --pipeline --pipeline-trace-out trace.json
-    raven export-cache-config --out default.fcache
-    raven check-cache-config my.fcache
-    raven check-cache-config my.fcache --out normalized.fcache
-    raven export-sim-settings --out default.rcfg
-    raven check-sim-settings my.rcfg
-    raven check-sim-settings my.rcfg --out normalized.rcfg
-    raven export-pipeline-config --out default.pcfg
-    raven check-pipeline-config my.pcfg
-    raven check-pipeline-config my.pcfg --out normalized.pcfg
+    raven build program.s
+    raven build program.s out/prog.bin
+    raven build program.s --nout
+    raven run program.s --nout
+    raven run program.s --out results.json
+    raven run program.s --config my.rcfg --format csv --out stats.csv
+    raven run program.s --cores 4 --nout
+    raven run program.s --pipeline --config my.rcfg --format json
+    raven run program.s --expect-exit 0 --expect-reg a0=42
+    raven run program.s --pipeline --pipeline-trace-out trace.json
+    raven export-config --out default.rcfg
+    raven check-config my.rcfg
+    raven check-config my.rcfg --out normalized.rcfg
     raven debug-run-controls --cores 4 --selected-core 2 --view dyn --out run-controls.txt
     raven debug-help-layout --tab cache
     raven debug-pipeline-stage --width 24 --disasm "addi t4, t4, 1" --badges LOAD,RAW,FWD

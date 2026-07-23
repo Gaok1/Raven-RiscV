@@ -1,8 +1,5 @@
 use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
-use crate::ui::input::keyboard::{
-    do_export_cfg, do_export_pipeline_results, do_export_rcfg, do_export_results, do_import_cfg,
-    do_import_rcfg,
-};
+use crate::ui::input::keyboard::{do_export_config, do_export_results, do_import_config};
 use crate::ui::view::run::{
     RUN_COLLAPSED_RAIL_W, RUN_DETAILS_MIN_W, RUN_IMEM_MIN_W, RUN_SIDEBAR_MIN_W,
     run_panel_constraints,
@@ -1187,14 +1184,14 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     }
     if col >= icode_start && col < icode_end {
         if let Some(path) = OSFileDialog::new()
-            .add_filter("Falcon ASM", &["fas", "asm"])
+            .add_filter("Falcon ASM", &["s", "asm"])
             .pick_file()
         {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 let name = path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .unwrap_or("opened.fas")
+                    .unwrap_or("opened.s")
                     .to_string();
                 app.add_file_with_lines(name, content.lines().map(|s| s.to_string()).collect());
                 app.assemble_and_load();
@@ -1250,8 +1247,8 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
     }
     if col >= ecode_start && col < ecode_end {
         if let Some(path) = OSFileDialog::new()
-            .add_filter("Falcon ASM", &["fas", "asm"])
-            .set_file_name("program.fas")
+            .add_filter("Falcon ASM", &["s", "asm"])
+            .set_file_name("program.s")
             .save_file()
         {
             let _ = std::fs::write(path, app.editor.buf.text());
@@ -2324,11 +2321,11 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
                 return;
             }
             Some(CacheCtrlBtn::ImportCfg) => {
-                do_import_cfg(app);
+                do_import_config(app);
                 return;
             }
             Some(CacheCtrlBtn::ExportCfg) => {
-                do_export_cfg(app);
+                do_export_config(app);
                 return;
             }
             None => {}
@@ -2693,12 +2690,12 @@ fn update_settings_hover(app: &mut App, me: MouseEvent) {
 fn handle_settings_click(app: &mut App, me: MouseEvent) {
     let (import_y, import_x0, import_x1) = app.settings.import_rcfg_rect.get();
     if me.row == import_y && me.column >= import_x0 && me.column < import_x1 {
-        do_import_rcfg(app);
+        do_import_config(app);
         return;
     }
     let (export_y, export_x0, export_x1) = app.settings.export_rcfg_rect.get();
     if me.row == export_y && me.column >= export_x0 && me.column < export_x1 {
-        do_export_rcfg(app);
+        do_export_config(app);
         return;
     }
 
@@ -2912,17 +2909,17 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
     }
     let (res_y, res_x0, res_x1) = app.run.pipeline().btn_export_results_rect.get();
     if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
-        do_export_pipeline_results(app);
+        do_export_results(app);
         return;
     }
     let (in_y, in_x0, in_x1) = app.run.pipeline().btn_import_cfg_rect.get();
     if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
-        crate::ui::input::keyboard::do_import_pcfg(app);
+        do_import_config(app);
         return;
     }
     let (out_y, out_x0, out_x1) = app.run.pipeline().btn_export_cfg_rect.get();
     if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
-        crate::ui::input::keyboard::do_export_pcfg(app);
+        do_export_config(app);
         return;
     }
 
@@ -3115,13 +3112,13 @@ fn handle_tlb_click(app: &mut App, me: MouseEvent) {
         return;
     }
     if point_in_btn(me, app.tlb.ctrl_import_btn.get()) {
-        do_import_cfg(app);
+        do_import_config(app);
         app.tlb.config_status = app.cache.config_status.clone();
         app.tlb.config_error = app.cache.config_error.clone();
         return;
     }
     if point_in_btn(me, app.tlb.ctrl_export_btn.get()) {
-        do_export_cfg(app);
+        do_export_config(app);
         app.tlb.config_status = app.cache.config_status.clone();
         app.tlb.config_error = app.cache.config_error.clone();
         return;

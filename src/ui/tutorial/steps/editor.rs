@@ -176,11 +176,11 @@ pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
         title_en: "Import / Export Buttons",
         title_pt: "Botões Import / Export",
-        body_en: "Import [BIN] loads an ELF binary. Import [CODE] opens a .fas (assembly) file.\
+        body_en: "Import [BIN] loads an ELF binary. Import [CODE] opens a .s (assembly) file.\
 \n\nExport [BIN] saves the compiled binary. Export [CODE] saves the source code.\
 \n\nThe [▶ RUN] and [FORMAT] buttons execute and format the code respectively.\
 \n\nCtrl+o opens a file picker for import; Ctrl+s opens one for export; Ctrl+Enter or F5 assembles and switches to Run.",
-        body_pt: "Import [BIN] carrega um binário ELF. Import [CODE] abre um arquivo .fas (assembly).\
+        body_pt: "Import [BIN] carrega um binário ELF. Import [CODE] abre um arquivo .s (assembly).\
 \n\nExport [BIN] salva o binário compilado. Export [CODE] salva o código-fonte.\
 \n\nOs botões [▶ RUN] e [FORMAT] executam e formatam o código respectivamente.\
 \n\nCtrl+o abre o seletor de arquivo para importação; Ctrl+s abre para exportação; Ctrl+Enter ou F5 montam e trocam para a aba Run.",

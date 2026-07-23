@@ -1,4 +1,4 @@
-# sum_1_to_10.fas — Gauss formula vs iterative loop, measured with instruction counters
+# sum_1_to_10.s — Gauss formula vs iterative loop, measured with instruction counters
 #
 # Both methods compute 1+2+...+10 = 55.
 # get_instr_count (syscall 1030) brackets each computation so you can compare

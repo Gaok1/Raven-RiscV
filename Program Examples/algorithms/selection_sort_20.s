@@ -1,4 +1,4 @@
-# selection_sort_20.fas — Selection sort on 20 random integers
+# selection_sort_20.s — Selection sort on 20 random integers
 #
 # The array is filled at run time via the Linux getrandom(2) syscall,
 # so input differs on every execution.
@@ -6,7 +6,7 @@
 # to its final position with exactly one swap.
 #
 # Complexity: O(n^2) comparisons, O(n) swaps — always exactly n-1 swaps
-# regardless of input order.  Compare with bubble_sort_20.fas:
+# regardless of input order.  Compare with bubble_sort_20.s:
 #   - Bubble: fewer swaps on nearly-sorted data (early-exit possible)
 #   - Selection: constant swap count, simpler swap logic
 

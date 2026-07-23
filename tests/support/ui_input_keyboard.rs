@@ -1,7 +1,6 @@
 use super::{
     KeyOutcome, apply_imem_search, capture_snapshot, handle_key, paste_from_terminal,
-    paste_imem_search, paste_mem_search, serialize_pipeline_results_pstats, serialize_results_csv,
-    serialize_results_fstats,
+    paste_imem_search, paste_mem_search, serialize_results_csv, serialize_results_rstats,
 };
 use crate::ui::app::{App, EditorMode, HartLifecycle, Tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -707,21 +706,19 @@ fn pipeline_snapshot_and_exports_use_pipeline_clock_model() {
     assert_eq!(snap.base_cycles, 0);
     assert_eq!(snap.pipeline.as_ref().map(|p| p.cycles), Some(12));
 
-    let fstats = serialize_results_fstats(&snap, &[]);
-    assert!(fstats.starts_with("# FALCON-ASM Simulation Results v2\n"));
-    assert!(fstats.contains("prog.clock_model=pipeline\n"));
-    assert!(fstats.contains("prog.total_cycles=12\n"));
-    assert!(!fstats.contains("prog.base_cycles="));
-    assert!(!fstats.contains("prog.cache_cycles="));
+    let rstats = serialize_results_rstats(&snap, &[]);
+    assert!(rstats.starts_with("# Raven Results v1\n"));
+    assert!(rstats.contains("prog.clock_model=pipeline\n"));
+    assert!(rstats.contains("prog.total_cycles=12\n"));
+    assert!(!rstats.contains("prog.base_cycles="));
+    assert!(!rstats.contains("prog.cache_cycles="));
+    // Pipeline stats travel in the same unified file.
+    assert!(rstats.contains("[pipeline]\n"));
+    assert!(rstats.contains("pipeline.cycles=12\n"));
 
     let csv = serialize_results_csv(&snap, &[]);
     assert!(csv.contains("Clock Model,Instructions,Total Cycles,CPI,IPC\n"));
     assert!(csv.contains("pipeline,3,12,"));
     assert!(!csv.contains("Base Cycles"));
     assert!(!csv.contains("Cache Cycles"));
-
-    let pstats = serialize_pipeline_results_pstats(&snap);
-    assert!(pstats.starts_with("# Raven Pipeline Results v2\n"));
-    assert!(pstats.contains("prog.clock_model=pipeline\n"));
-    assert!(pstats.contains("prog.total_cycles=12\n"));
 }

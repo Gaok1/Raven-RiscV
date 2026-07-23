@@ -696,7 +696,7 @@
           <div class="tab-panel active" data-panel="quicksort">
             <div class="code-pane">
               <div class="code-header">
-                <span class="code-filename">quick_sort_20_push_pop.fas</span>
+                <span class="code-filename">quick_sort_20_push_pop.s</span>
                 <span class="code-lang">RISC-V Assembly</span>
               </div>
               <pre class="hlcode"><span class="hl-dir">.data</span>
@@ -825,7 +825,7 @@
           <div class="tab-panel" data-panel="bubble">
             <div class="code-pane">
               <div class="code-header">
-                <span class="code-filename">bubble_sort_20.fas</span>
+                <span class="code-filename">bubble_sort_20.s</span>
                 <span class="code-lang">RISC-V Assembly</span>
               </div>
               <pre class="hlcode"><span class="hl-dir">.data</span>
@@ -890,7 +890,7 @@
           <div class="tab-panel" data-panel="echo">
             <div class="code-pane">
               <div class="code-header">
-                <span class="code-filename">syscall_echo_linux.fas</span>
+                <span class="code-filename">syscall_echo_linux.s</span>
                 <span class="code-lang">RISC-V Assembly</span>
               </div>
               <pre class="hlcode"><span class="hl-dir">.data</span>
@@ -936,7 +936,7 @@
           <div class="tab-panel" data-panel="prompt">
             <div class="code-pane">
               <div class="code-header">
-                <span class="code-filename">io_prompt_linux.fas</span>
+                <span class="code-filename">io_prompt_linux.s</span>
                 <span class="code-lang">RISC-V Assembly</span>
               </div>
               <pre class="hlcode"><span class="hl-dir">.data</span>
@@ -1106,23 +1106,23 @@
       <div class="quickstart-grid">
         <div class="qs-option">
           <h3>Headless CLI</h3>
-          <p>Assemble, simulate, and export stats without opening the TUI. Point it at a <code>.fas</code> source, a FALC <code>.bin</code>, or an ELF, and redirect the numbers to a file.</p>
+          <p>Assemble, simulate, and export stats without opening the TUI. Point it at a <code>.s</code> source, a FALC <code>.bin</code>, or an ELF, and redirect the numbers to a file.</p>
           <div class="qs-terminal">
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
-              <span class="qs-cmd">raven build program.fas</span>
+              <span class="qs-cmd">raven build program.s</span>
             </div>
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
-              <span class="qs-cmd">raven run program.fas --pipeline</span>
+              <span class="qs-cmd">raven run program.s --pipeline</span>
             </div>
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
-              <span class="qs-cmd">raven run program.fas --format csv --out stats.csv</span>
+              <span class="qs-cmd">raven run program.s --format csv --out stats.csv</span>
             </div>
             <div class="qs-term-line">
               <span class="qs-prompt">$</span>
-              <span class="qs-cmd">raven export-pipeline-config --out my.pcfg</span>
+              <span class="qs-cmd">raven export-config --out my.rcfg</span>
             </div>
           </div>
           <p style="margin-top:14px;margin-bottom:0">

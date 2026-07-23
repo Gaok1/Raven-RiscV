@@ -1,4 +1,4 @@
-# code_example_.fas — FizzBuzz 1..20
+# code_example_.s — FizzBuzz 1..20
 #
 # Classic exercise: for each number 1..20 print —
 #   "FizzBuzz"  if divisible by both 3 and 5

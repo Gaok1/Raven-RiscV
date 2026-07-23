@@ -1,4 +1,4 @@
-# io_echo.fas — Echo loop: reads lines until an empty line is entered
+# io_echo.s — Echo loop: reads lines until an empty line is entered
 #
 # Uses Raven pseudo-instructions for I/O:
 #   read buf       → syscall 63: reads up to 256 bytes from stdin into buf (NUL-terminated)

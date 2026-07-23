@@ -22,7 +22,7 @@ Caches are effective because programs tend to reuse data:
 - **Temporal locality** — if you read an address, you'll likely read it again soon.
 - **Spatial locality** — if you read address X, you'll likely read X+4, X+8, … soon (they share the same cache line).
 
-Run `cache_locality.fas` with the default config to see both effects live.
+Run `cache_locality.s` with the default config to see both effects live.
 
 ---
 
@@ -74,7 +74,7 @@ addr 0x0000 → set 0, way 0  (the only option)
 addr 0x0400 → set 0, way 0  (same slot! → conflict)
 ```
 
-Simple hardware, but vulnerable to **conflict misses**. Try `cache_conflict.fas` + `cache_direct_mapped_1kb.fcache`.
+Simple hardware, but vulnerable to **conflict misses**. Try `cache_conflict.s` + `cache_direct_mapped_1kb.rcfg`.
 
 ### Set-associative (N-way, N > 1)
 
@@ -86,7 +86,7 @@ addr 0x0400 → set 0, way 1  ✓  (no conflict!)
 addr 0x0800 → set 0, ?      → set full → eviction
 ```
 
-More ways → fewer conflict misses, slightly more work per lookup. Try `cache_large_4kb_4way.fcache`.
+More ways → fewer conflict misses, slightly more work per lookup. Try `cache_large_4kb_4way.rcfg`.
 
 ### Fully associative
 
@@ -148,7 +148,7 @@ The store updates **only the cache line**; the line is flagged **dirty** (shown 
 Every store immediately updates **both** the cache and RAM. No dirty lines exist.
 
 - Simpler to reason about, but `RAM W` grows on every store.
-- Use `cache_write_policy.fas` to compare `RAM W` between both policies.
+- Use `cache_write_policy.s` to compare `RAM W` between both policies.
 
 ### Write-Allocate vs No-Write-Allocate
 
@@ -238,9 +238,9 @@ Line Size must be a power of 2, and the total Size must divide evenly into a who
 
 ---
 
-## Saving and loading configs (.fcache)
+## Saving and loading configs (.rcfg)
 
-Use **Ctrl+e** (export) and **Ctrl+l** (import) in the Cache tab to save and restore configurations as text files. The format is plain `key=value` — you can open and edit it in any text editor.
+Use **Ctrl+e** (export) and **Ctrl+l** (import) in the Cache tab to save and restore configurations as text files. Export writes the whole unified `.rcfg` (sim + cache + pipeline); the cache hierarchy lives in its `[cache]` section. The format is plain `key=value` — you can open and edit it in any text editor.
 
 ---
 
@@ -248,13 +248,13 @@ Use **Ctrl+e** (export) and **Ctrl+l** (import) in the Cache tab to save and res
 
 All examples are in `Program Examples/cache/`:
 
-- `cache_locality.fas` — sequential vs stride access; watch hit rate change as access patterns vary.
-- `cache_conflict.fas` — two addresses sharing a set that evict each other even when free capacity exists elsewhere.
-- `cache_write_policy.fas` — store-heavy loop; compare Write-Back vs Write-Through by watching `RAM W`.
+- `cache_locality.s` — sequential vs stride access; watch hit rate change as access patterns vary.
+- `cache_conflict.s` — two addresses sharing a set that evict each other even when free capacity exists elsewhere.
+- `cache_write_policy.s` — store-heavy loop; compare Write-Back vs Write-Through by watching `RAM W`.
 
-Matching `.fcache` configs:
+Matching `.rcfg` configs:
 
-- `cache_direct_mapped_1kb.fcache`
-- `cache_large_4kb_4way.fcache`
-- `cache_write_through.fcache`
-- `cache_no_write_allocate.fcache`
+- `cache_direct_mapped_1kb.rcfg`
+- `cache_large_4kb_4way.rcfg`
+- `cache_write_through.rcfg`
+- `cache_no_write_allocate.rcfg`

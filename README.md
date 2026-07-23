@@ -53,14 +53,14 @@ Requires Rust 1.75+. No other dependencies.
 - Live stats: hit rate, MPKI, RAM traffic, top miss PCs
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
-- Export results (`Ctrl+r`) to `.fstats`/`.csv`
+- Export results (`Ctrl+r`) to `.rstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
 ### Pipeline Simulator (Tab 4)
 - Five-stage in-order pipeline visualization with per-cycle stepping and run/pause controls
 - Main and Config subtabs for hazard/history inspection and pipeline configuration
 - Branch resolve and predictor controls, bypass toggles, and hazard map visualization
-- Export pipeline configs/results with `Ctrl+e`, `Ctrl+l`, and `Ctrl+r`
+- Export the unified config / results with `Ctrl+e`, `Ctrl+l`, and `Ctrl+r`
 
 ### Docs Tab (Tab 5)
 - Instruction reference for all supported instructions
@@ -151,20 +151,20 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 
 | File | Demonstrates |
 |------|-------------|
-| `basics/` (`print.fas`, `sum_1_to_10.fas`, ...) | First steps: printing, loops, pseudo-instructions |
-| `algorithms/fib.fas` | Recursion, stack frames, calling convention |
-| `algorithms/bubble_sort_20.fas` | Loops, pointer arithmetic, in-place swap |
-| `algorithms/quick_sort_20_push_pop.fas` | Recursive quicksort with `push`/`pop` |
-| `algorithms/binary_search_tree.fas` | Heap allocation, pointer chasing |
-| `algorithms/gcd_euclid.fas` | Iterative algorithm, branch-heavy |
-| `cache/cache_locality.fas` | Cache-friendly vs cache-hostile access patterns |
-| `pipeline/pipeline_forwarding_demo.fas` | RAW chains and forwarding paths |
-| `pipeline/pipeline_load_use_demo.fas` | Load-use stalls and replays |
-| `pipeline/pipeline_branch_flush_demo.fas` | Prediction, redirect, and wrong-path squash |
-| `pipeline/pipeline_cache_stall_demo.fas` | MEM stalls from cache latency |
-| `syscalls/` (`io_echo.fas`, `syscall_echo_linux.fas`) | Console I/O via Linux ABI and teaching syscalls |
-| `harts/hart_spawn_visual_demo.fas` | Multi-hart activity across cores for Run/Pipeline inspection |
-| `graphics/snake.fas` | Complete snake game on the graphics syscalls (2000+) |
+| `basics/` (`print.s`, `sum_1_to_10.s`, ...) | First steps: printing, loops, pseudo-instructions |
+| `algorithms/fib.s` | Recursion, stack frames, calling convention |
+| `algorithms/bubble_sort_20.s` | Loops, pointer arithmetic, in-place swap |
+| `algorithms/quick_sort_20_push_pop.s` | Recursive quicksort with `push`/`pop` |
+| `algorithms/binary_search_tree.s` | Heap allocation, pointer chasing |
+| `algorithms/gcd_euclid.s` | Iterative algorithm, branch-heavy |
+| `cache/cache_locality.s` | Cache-friendly vs cache-hostile access patterns |
+| `pipeline/pipeline_forwarding_demo.s` | RAW chains and forwarding paths |
+| `pipeline/pipeline_load_use_demo.s` | Load-use stalls and replays |
+| `pipeline/pipeline_branch_flush_demo.s` | Prediction, redirect, and wrong-path squash |
+| `pipeline/pipeline_cache_stall_demo.s` | MEM stalls from cache latency |
+| `syscalls/` (`io_echo.s`, `syscall_echo_linux.s`) | Console I/O via Linux ABI and teaching syscalls |
+| `harts/hart_spawn_visual_demo.s` | Multi-hart activity across cores for Run/Pipeline inspection |
+| `graphics/snake.s` | Complete snake game on the graphics syscalls (2000+) |
 
 ---
 
@@ -173,14 +173,13 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 Raven can also be used headlessly from the command line — assemble, simulate, export/import configs, and redirect output to files.
 
 ```bash
-raven build program.fas                             # assemble
-raven run   program.fas --nout                      # run, suppress stats
-raven run   program.fas --out results.json          # run, save stats
-raven run   program.fas --cache-config l2.fcache \
-                        --sim-settings my.rcfg \
+raven build program.s                             # assemble
+raven run   program.s --nout                      # run, suppress stats
+raven run   program.s --out results.json          # run, save stats
+raven run   program.s --config my.rcfg \
                         --format csv --out stats.csv
-raven export-config  --out default.fcache           # dump default cache config
-raven export-settings --out default.rcfg            # dump default sim settings
+raven export-config --out default.rcfg              # dump default unified config
+raven check-config  my.rcfg                         # validate a config
 ```
 
 See the **[CLI Reference](docs/en/cli.md)** for all subcommands and flags.
@@ -194,7 +193,7 @@ See the **[CLI Reference](docs/en/cli.md)** for all subcommands and flags.
 - [Referência da CLI (PT-BR)](docs/pt-BR/cli.md)
 - [Instruction formats (EN)](docs/en/format.md) — bit layouts, encoding, pseudo-instructions
 - [Formatos (PT-BR)](docs/pt-BR/format.md)
-- [Cache config file reference](docs/en/cache-config.md) — `.fcache` format, all fields, LN hierarchy, LLM prompt template
+- [Cache config file reference](docs/en/cache-config.md) — `[cache]` section of `.rcfg`, all fields, LN hierarchy, LLM prompt template
 
 ---
 

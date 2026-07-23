@@ -22,7 +22,7 @@ A cache funciona porque programas tendem a reutilizar dados:
 - **Localidade temporal** — se você leu um endereço agora, provavelmente vai lê-lo de novo em breve.
 - **Localidade espacial** — se você leu o endereço X, provavelmente vai ler X+4, X+8, … em breve (eles compartilham a mesma linha de cache).
 
-Execute `cache_locality.fas` com a configuração padrão para ver os dois efeitos ao vivo.
+Execute `cache_locality.s` com a configuração padrão para ver os dois efeitos ao vivo.
 
 ---
 
@@ -74,7 +74,7 @@ addr 0x0000 → set 0, way 0  (única opção)
 addr 0x0400 → set 0, way 0  (mesmo slot! → conflito)
 ```
 
-Hardware simples, mas vulnerável a **conflict misses**. Experimente com `cache_conflict.fas` + `cache_direct_mapped_1kb.fcache`.
+Hardware simples, mas vulnerável a **conflict misses**. Experimente com `cache_conflict.s` + `cache_direct_mapped_1kb.rcfg`.
 
 ### Mapeamento por conjuntos (N-way, N > 1)
 
@@ -86,7 +86,7 @@ addr 0x0400 → set 0, way 1  ✓  (sem conflito!)
 addr 0x0800 → set 0, ?      → set cheio → eviction
 ```
 
-Mais ways → menos conflict misses, um pouco mais de trabalho por acesso. Use `cache_large_4kb_4way.fcache` para experimentar.
+Mais ways → menos conflict misses, um pouco mais de trabalho por acesso. Use `cache_large_4kb_4way.rcfg` para experimentar.
 
 ### Totalmente associativo
 
@@ -148,7 +148,7 @@ O store atualiza **apenas a linha de cache**; a linha fica marcada como **dirty*
 Cada store atualiza **tanto a cache quanto a RAM** imediatamente. Nenhuma linha fica dirty.
 
 - Mais fácil de raciocinar, mas `RAM W` cresce a cada store.
-- Use `cache_write_policy.fas` para comparar `RAM W` entre os dois modos.
+- Use `cache_write_policy.s` para comparar `RAM W` entre os dois modos.
 
 ### Write-Allocate vs No-Write-Allocate
 
@@ -238,9 +238,9 @@ O tamanho de linha deve ser potência de 2, e o tamanho total deve ser divisíve
 
 ---
 
-## Salvar e carregar configurações (.fcache)
+## Salvar e carregar configurações (.rcfg)
 
-Use **Ctrl+e** (exportar) e **Ctrl+l** (importar) na aba Cache. O formato é texto simples `chave=valor` — você pode abrir e editar em qualquer editor de texto.
+Use **Ctrl+e** (exportar) e **Ctrl+l** (importar) na aba Cache. A exportação grava o `.rcfg` unificado completo (sim + cache + pipeline); a hierarquia de cache fica na seção `[cache]`. O formato é texto simples `chave=valor` — você pode abrir e editar em qualquer editor de texto.
 
 ---
 
@@ -248,13 +248,13 @@ Use **Ctrl+e** (exportar) e **Ctrl+l** (importar) na aba Cache. O formato é tex
 
 Todos os exemplos estão em `Program Examples/cache/`:
 
-- `cache_locality.fas` — acesso sequencial vs com stride; observe o hit rate mudar conforme o padrão de acesso varia.
-- `cache_conflict.fas` — dois endereços no mesmo set que se expulsam mesmo com capacidade livre em outros sets.
-- `cache_write_policy.fas` — loop com muitos stores; compare Write-Back vs Write-Through observando o `RAM W`.
+- `cache_locality.s` — acesso sequencial vs com stride; observe o hit rate mudar conforme o padrão de acesso varia.
+- `cache_conflict.s` — dois endereços no mesmo set que se expulsam mesmo com capacidade livre em outros sets.
+- `cache_write_policy.s` — loop com muitos stores; compare Write-Back vs Write-Through observando o `RAM W`.
 
 Configs prontas para importar:
 
-- `cache_direct_mapped_1kb.fcache`
-- `cache_large_4kb_4way.fcache`
-- `cache_write_through.fcache`
-- `cache_no_write_allocate.fcache`
+- `cache_direct_mapped_1kb.rcfg`
+- `cache_large_4kb_4way.rcfg`
+- `cache_write_through.rcfg`
+- `cache_no_write_allocate.rcfg`

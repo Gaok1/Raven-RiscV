@@ -1,4 +1,4 @@
-# pipeline_cache_stall_demo.fas — large streaming load workload
+# pipeline_cache_stall_demo.s — large streaming load workload
 #
 # Best viewed in the Pipeline tab with cache enabled and non-trivial latencies.
 # The array is intentionally larger than a small teaching cache, so the scan

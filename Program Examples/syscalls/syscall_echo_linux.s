@@ -1,4 +1,4 @@
-# syscall_echo_linux.fas — ROT13 cipher using only Linux ABI syscalls (63 / 64)
+# syscall_echo_linux.s — ROT13 cipher using only Linux ABI syscalls (63 / 64)
 #
 # No Raven pseudo-instructions.  All I/O goes through raw ecall.
 #

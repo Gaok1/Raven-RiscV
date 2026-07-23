@@ -1,4 +1,4 @@
-# bubble_sort_20.fas — Bubble sort with swap counter and early-exit optimisation
+# bubble_sort_20.s — Bubble sort with swap counter and early-exit optimisation
 #
 # Sorts 20 random integers in-place.  The array is filled at run time via the
 # Linux getrandom(2) syscall, so input differs on every execution.

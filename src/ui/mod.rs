@@ -4,7 +4,7 @@ mod app;
 pub mod console { pub use raven_riscv_engine::host::console::*; }
 pub mod debug_hitboxes;
 pub mod editor;
-mod input;
+pub(crate) mod input;
 pub mod pipeline;
 mod platform;
 pub mod screen { pub use raven_riscv_engine::host::screen::*; }

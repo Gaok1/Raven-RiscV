@@ -1,4 +1,4 @@
-# gcd_euclid.fas — Interactive GCD via Euclid's algorithm
+# gcd_euclid.s — Interactive GCD via Euclid's algorithm
 #
 # Reads two positive integers from stdin (syscall 1013 = read_int).
 # Computes gcd(a, b) iteratively: replace (a, b) with (b, a mod b) until b = 0.

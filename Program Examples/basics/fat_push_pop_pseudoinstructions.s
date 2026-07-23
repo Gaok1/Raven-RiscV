@@ -1,4 +1,4 @@
-# fat_push_pop_pseudoinstructions.fas — Recursive factorial with push/pop pseudos
+# fat_push_pop_pseudoinstructions.s — Recursive factorial with push/pop pseudos
 #
 # Reads N from stdin (valid range: 1..12; 13! overflows 32 bits).
 # Uses Raven push/pop pseudo-instructions — each expands to:
@@ -7,7 +7,7 @@
 #
 # Recursive definition: n! = n * (n-1)!,  base case: n < 2 → 1
 #
-# Compare with fatorial.fas (iterative, raw stack) to see both styles.
+# Compare with fatorial.s (iterative, raw stack) to see both styles.
 
 .data
 prompt:  .asciz "n (1..12): "

@@ -1,4 +1,4 @@
-# binary_search_tree.fas — BST with dynamic node allocation via brk
+# binary_search_tree.s — BST with dynamic node allocation via brk
 #
 # Node layout (12 bytes):
 #   +0  value  (i32)

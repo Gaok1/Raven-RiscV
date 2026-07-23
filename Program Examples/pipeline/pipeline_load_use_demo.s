@@ -1,4 +1,4 @@
-# pipeline_load_use_demo.fas — repeated load-use hazards
+# pipeline_load_use_demo.s — repeated load-use hazards
 #
 # Best viewed in the Pipeline tab with forwarding both on and off.
 # Each ADD immediately consumes the value loaded by the previous LW.

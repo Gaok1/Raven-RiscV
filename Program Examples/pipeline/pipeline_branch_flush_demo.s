@@ -1,4 +1,4 @@
-# pipeline_branch_flush_demo.fas — branch redirection and wrong-path squashes
+# pipeline_branch_flush_demo.s — branch redirection and wrong-path squashes
 #
 # Best viewed in the Pipeline tab with branch prediction enabled.
 # The instruction after JAL must be squashed every iteration.

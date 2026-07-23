@@ -118,14 +118,9 @@ pub(crate) enum PathInputAction {
     SaveFas,
     OpenBin,
     SaveBin,
-    OpenFcache,
-    SaveFcache,
-    OpenRcfg,
-    SaveRcfg,
-    OpenPcfg,
-    SavePcfg,
+    OpenConfig,
+    SaveConfig,
     SaveResults,
-    SavePipelineResults,
     /// Rename the active editor file — the query is a plain name, not a path.
     RenameFile,
 }

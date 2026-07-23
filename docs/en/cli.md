@@ -11,26 +11,22 @@ Run `raven help` at any time to see a summary.
 
 | Subcommand | Description |
 |---|---|
-| `raven build <file> [options]` | Assemble a `.fas` source file |
+| `raven build <file> [options]` | Assemble a `.s` source file |
 | `raven run <file> [options]` | Assemble and simulate |
-| `raven export-cache-config [options]` | Export the default cache config (`.fcache`) |
-| `raven check-cache-config <file> [options]` | Validate and inspect a `.fcache` file |
-| `raven export-sim-settings [options]` | Export the default sim settings (`.rcfg`) |
-| `raven check-sim-settings <file> [options]` | Validate and inspect a `.rcfg` file |
-| `raven export-pipeline-config [options]` | Export the default pipeline config (`.pcfg`) |
-| `raven check-pipeline-config <file> [options]` | Validate and inspect a `.pcfg` file |
+| `raven export-config [options]` | Export the default unified config (`.rcfg`) |
+| `raven check-config <file> [options]` | Validate and inspect a `.rcfg` file |
 | `raven debug-run-controls [options]` | Dump Run Controls text and hitboxes for hover debugging |
 | `raven debug-help-layout [options]` | Dump help button / popup layout for a tab |
 | `raven debug-pipeline-stage [options]` | Dump a pipeline stage line preview for layout debugging |
 | `raven help` | Print usage summary |
 
-> **Legacy aliases** — the old subcommand names (`export-config`, `import-config`, `export-settings`, `import-settings`, `export-pipeline`, `import-pipeline`) still work but are no longer shown in help output.
+> A single `.rcfg` file now holds **all** configuration — simulation settings, the cache hierarchy, and pipeline behavior — under `[sim]`, `[cache]` and `[pipeline]` sections. The old separate `.fcache` / `.pcfg` files and their subcommands have been removed.
 
 ---
 
 ## `raven build`
 
-Assembles a `.fas` source file and writes a FALC binary (`.bin`).
+Assembles a `.s` source file and writes a FALC binary (`.bin`).
 
 ```
 raven build <input> [output] [options]
@@ -38,7 +34,7 @@ raven build <input> [output] [options]
 
 | Argument / Flag | Description |
 |---|---|
-| `<input>` | Path to the `.fas` source file (required) |
+| `<input>` | Path to the `.s` source file (required) |
 | `[output]` | Output path for the `.bin` file (second positional arg) |
 | `--out <path>` | Same as above; takes priority over the positional arg |
 | `--nout` | Check-only — assemble but write no output file |
@@ -47,14 +43,14 @@ raven build <input> [output] [options]
 
 ```bash
 # Assemble and write program.bin
-raven build program.fas
+raven build program.s
 
 # Write to a custom path
-raven build program.fas out/prog.bin
-raven build program.fas --out out/prog.bin
+raven build program.s out/prog.bin
+raven build program.s --out out/prog.bin
 
 # Syntax-check only, no output
-raven build program.fas --nout
+raven build program.s --nout
 ```
 
 On success, Raven prints the instruction count and data size to stderr.
@@ -64,7 +60,7 @@ On error, it prints the offending line number and message, then exits with code 
 
 ## `raven run`
 
-Assembles and simulates a program. Accepts `.fas` source, FALC `.bin`, or ELF32 RISC-V binaries.
+Assembles and simulates a program. Accepts `.s` source, FALC `.bin`, or ELF32 RISC-V binaries.
 
 ```
 raven run <file> [options]
@@ -72,10 +68,8 @@ raven run <file> [options]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--cache-config <file>` | built-in defaults | Load cache hierarchy from a `.fcache` file |
-| `--sim-settings <file>` | built-in defaults | Load full Config-tab sim settings from a `.rcfg` file |
+| `--config <file>` | built-in defaults | Load the unified config (sim + cache + pipeline) from a `.rcfg` file |
 | `--pipeline` | off | Run with the pipeline simulator instead of the sequential executor |
-| `--pipeline-config <file>` | built-in defaults | Load pipeline behavior from a `.pcfg` file |
 | `--pipeline-trace-out <file>` | off | Write a per-cycle pipeline trace JSON file; requires `--pipeline` |
 | `--cores <n>` | settings or `1` | Maximum physical cores available to `hart_start` during the run |
 | `--mem <size>` | sim-settings or `16mb` | RAM size — accepts `kb`, `mb`, `gb` suffix (e.g. `256kb`, `1gb`) |
@@ -86,7 +80,7 @@ raven run <file> [options]
 | `--expect-mem <addr=value>` | off | Assert a final 32-bit memory word; repeatable |
 | `--out <file>` | stdout | Write simulation results to a file instead of stdout |
 | `--nout` | — | Suppress results output entirely (program stdout still shown) |
-| `--format json\|fstats\|csv` | `json` | Results format |
+| `--format json\|rstats\|csv` | `json` | Results format |
 
 > `--mem` takes priority over the `mem_kb` or legacy `mem_mb` value in `.rcfg`. If neither is given, the default is `16mb`.
 
@@ -94,34 +88,31 @@ raven run <file> [options]
 
 ```bash
 # Run with defaults, print JSON stats to stdout
-raven run program.fas
+raven run program.s
 
 # Run without printing stats
-raven run program.fas --nout
+raven run program.s --nout
 
 # Write stats to a file
-raven run program.fas --out results.json
+raven run program.s --out results.json
 
-# Use a custom cache config and write CSV stats
-raven run program.fas --cache-config l2.fcache --format csv --out stats.csv
+# Use a custom config (cache + CPI tuning + memory) and write CSV stats
+raven run program.s --config my.rcfg --format csv --out stats.csv
 
-# Apply sim settings (CPI tuning, memory size, cache on/off)
-raven run program.fas --sim-settings my.rcfg --nout
-
-# Run through the pipeline simulator with an explicit pipeline config
-raven run program.fas --pipeline --pipeline-config mypipe.pcfg --format json
+# Run through the pipeline simulator with an explicit config
+raven run program.s --pipeline --config my.rcfg --format json
 
 # Assert the final program state
-raven run program.fas --expect-exit 0 --expect-reg a0=42 --expect-mem 0x1000=0x2a
+raven run program.s --expect-exit 0 --expect-reg a0=42 --expect-mem 0x1000=0x2a
 
 # Emit a cycle-by-cycle pipeline trace
-raven run program.fas --pipeline --pipeline-trace-out trace.json --nout
+raven run program.s --pipeline --pipeline-trace-out trace.json --nout
 
 # Allow up to 4 cores for multi-hart programs
-raven run program.fas --cores 4 --nout
+raven run program.s --cores 4 --nout
 
 # Run with 64 MB RAM (overrides sim-settings)
-raven run program.fas --mem 64mb
+raven run program.s --mem 64mb
 
 # Run a pre-assembled binary or ELF
 raven run prog.bin
@@ -133,8 +124,8 @@ raven run target/riscv32im-unknown-none-elf/debug/my_crate
 If the program reads from stdin (syscalls 3 / 1003), `raven run` reads from the terminal interactively — any pending output is flushed before the prompt so the user sees it. Pipe or redirect stdin as usual:
 
 ```bash
-echo "hello" | raven run io_echo.fas --nout
-printf "42\n" | raven run calculator.fas --nout
+echo "hello" | raven run io_echo.s --nout
+printf "42\n" | raven run calculator.s --nout
 ```
 
 **Output formats**
@@ -142,7 +133,7 @@ printf "42\n" | raven run calculator.fas --nout
 | Format | Description |
 |---|---|
 | `json` | Machine-readable JSON with all stats |
-| `fstats` | Human-readable table (`.fstats`) |
+| `rstats` | Human-readable unified results (`.rstats`) with `[program]`, `[cache]`, `[pipeline]` and `[tlb]` sections |
 | `csv` | Spreadsheet-friendly CSV |
 
 When `--pipeline` is enabled, Raven still writes the normal cache statistics, but also includes a pipeline summary:
@@ -183,100 +174,36 @@ This option is only valid together with `--pipeline`.
 
 ---
 
-## `raven export-cache-config`
+## `raven export-config`
 
-Writes the built-in default cache configuration to a `.fcache` file so you can edit it.
-
-```
-raven export-cache-config [--out <file>]
-```
-
-If `--out` is omitted, the config is printed to stdout.
-
-```bash
-raven export-cache-config                        # print to stdout
-raven export-cache-config --out default.fcache   # write to file
-```
-
-See [Cache Config Reference](cache-config.md) for a full description of all `.fcache` fields.
-
----
-
-## `raven check-cache-config`
-
-Parses and validates a `.fcache` file, prints a human-readable summary of every cache level, and optionally re-exports the normalized config.
+Writes the built-in default unified configuration to a `.rcfg` file so you can edit it. The file contains `[sim]`, `[cache]` and `[pipeline]` sections.
 
 ```
-raven check-cache-config <file> [--out <file>]
-```
-
-```bash
-raven check-cache-config my.fcache
-raven check-cache-config my.fcache --out normalized.fcache
-```
-
----
-
-## `raven export-sim-settings`
-
-Writes the built-in default sim settings to a `.rcfg` file.
-
-```
-raven export-sim-settings [--out <file>]
-```
-
-If `--out` is omitted, the settings are printed to stdout.
-
-```bash
-raven export-sim-settings                        # print to stdout
-raven export-sim-settings --out default.rcfg     # write to file
-```
-
----
-
-## `raven check-sim-settings`
-
-Parses and validates a `.rcfg` file, prints a summary of all settings, and optionally re-exports the normalized config.
-
-```
-raven check-sim-settings <file> [--out <file>]
-```
-
-```bash
-raven check-sim-settings my.rcfg
-raven check-sim-settings my.rcfg --out normalized.rcfg
-```
-
----
-
-## `raven export-pipeline-config`
-
-Writes the built-in default pipeline configuration to a `.pcfg` file.
-
-```
-raven export-pipeline-config [--out <file>]
+raven export-config [--out <file>]
 ```
 
 If `--out` is omitted, the config is printed to stdout.
 
 ```bash
-raven export-pipeline-config
-raven export-pipeline-config --out default.pcfg
+raven export-config                        # print to stdout
+raven export-config --out default.rcfg     # write to file
 ```
+
+See the [Config file format](#config-file-format) section below for a full field description.
 
 ---
 
-## `raven check-pipeline-config`
+## `raven check-config`
 
-Parses and validates a `.pcfg` file, prints a summary of the pipeline settings, and optionally re-exports the normalized config.
+Parses and validates a `.rcfg` file, prints a summary of every section (sim settings, each cache level, pipeline behavior), and optionally re-exports the normalized config.
 
 ```
-raven check-pipeline-config <file> [--out <file>]
+raven check-config <file> [--out <file>]
 ```
 
 ```bash
-raven check-pipeline-config my.pcfg
-raven check-pipeline-config my.pcfg --out normalized.pcfg
+raven check-config my.rcfg
+raven check-config my.rcfg --out normalized.rcfg
 ```
 
 ---
@@ -356,28 +283,24 @@ raven debug-pipeline-stage --stage MEM --pred SPEC
 
 ---
 
-## Config file formats
+## Config file format
 
-### `.fcache` — cache hardware
-
-Describes the cache hierarchy: I-cache, D-cache, and any extra levels (L2, L3…).
-See [Cache Config Reference](cache-config.md) for the full field list.
-
-Export / import from the TUI: **Cache tab → `Ctrl+e` / `Ctrl+l`**
-
-### `.rcfg` — sim settings
-
-Controls the full global Config tab state: CPI per instruction class, cache enabled, pipeline enabled, syscall tracing, run scope, RAM size, and available core count.
+A single `.rcfg` file (`# Raven Config v3`) holds all configuration under three
+sections. Export it from the TUI with **`Ctrl+e`** and re-import with **`Ctrl+l`**
+from any of the Cache, Config or Pipeline tabs; on the CLI use
+`raven export-config` / `raven check-config`.
 
 ```ini
-# Raven Sim Config v2
+# Raven Config v3
+
+[sim]
 cache_enabled=true
 pipeline_enabled=true
+vm_mode=off
 trace_syscalls=false
 run_scope=focus
 max_cores=1
 mem_kb=16384
-
 # CPI (cycles per instruction)
 cpi.alu=1
 cpi.mul=3
@@ -389,25 +312,20 @@ cpi.branch_not_taken=1
 cpi.jump=2
 cpi.system=10
 cpi.fp=5
-```
 
-- `cache_enabled=false` bypasses the entire cache hierarchy (all accesses go directly to RAM).
-- `pipeline_enabled` toggles the global pipeline state used by the TUI Config tab.
-- `trace_syscalls` controls the syscall debug log.
-- `run_scope` accepts `all` or `focus`.
-- `max_cores` defaults to `1` when omitted and should stay in the range `1..=32`.
-- `mem_kb` sets the default RAM size in kilobytes and is snapped to the nearest power of two. Legacy `mem_mb` is still accepted. The `--mem` CLI flag overrides this value.
-- Headless `--pipeline` currently supports only `--cores 1`.
-- CPI values are extra cycles added on top of cache latency for the corresponding instruction class.
+[cache]
+levels=0
+icache.size=1024
+icache.line_size=16
+icache.associativity=2
+icache.replacement=Lru
+icache.write_policy=WriteBack
+icache.write_alloc=WriteAllocate
+icache.hit_latency=1
+icache.miss_penalty=50
+# ... dcache.* mirrors icache.* ; extra levels use l2.* / l3.* ; tlb.* for the TLB
 
-Export / import from the TUI: **Config tab → `Ctrl+e` / `Ctrl+l`**
-
-### `.pcfg` — pipeline settings
-
-Controls pipeline-specific behavior used by the TUI pipeline tab and by `raven run --pipeline`.
-
-```ini
-# Raven Pipeline Config v1
+[pipeline]
 enabled=true
 bypass.ex_to_ex=true
 bypass.mem_to_ex=true
@@ -425,20 +343,33 @@ predict=NotTaken
 speed=Normal
 ```
 
-Fields:
+### `[sim]` — simulation settings
+
+- `cache_enabled=false` bypasses the entire cache hierarchy (all accesses go directly to RAM).
+- `pipeline_enabled` toggles the global pipeline state used by the TUI Config tab.
+- `vm_mode` — `off`, `sv32`, `custom`, or `manual`.
+- `trace_syscalls` controls the syscall debug log.
+- `run_scope` accepts `all` or `focus`.
+- `max_cores` defaults to `1` when omitted and should stay in the range `1..=32`.
+- `mem_kb` sets the default RAM size in kilobytes and is snapped to the nearest power of two. Legacy `mem_mb` is still accepted. The `--mem` CLI flag overrides this value.
+- Headless `--pipeline` currently supports only `--cores 1`.
+- CPI values are extra cycles added on top of cache latency for the corresponding instruction class.
+
+### `[cache]` — cache hardware
+
+Describes the cache hierarchy: I-cache, D-cache, any extra levels (L2, L3…) and
+the unified TLB. See [Cache Config Reference](cache-config.md) for the full field
+list.
+
+### `[pipeline]` — pipeline behavior
 
 - `enabled` — pipeline enabled in the TUI
-- `bypass.ex_to_ex` — enable EX->EX bypass
-- `bypass.mem_to_ex` — enable MEM->EX bypass
-- `bypass.wb_to_id` — enable WB->ID bypass
-- `bypass.store_to_load` — enable store-to-load forwarding
-- `mode` — legacy field currently mapped in the UI as `Serialized` or `Parallel UFs`
-- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — number of functional units of each type used by `Parallel UFs` mode
+- `bypass.ex_to_ex` / `bypass.mem_to_ex` / `bypass.wb_to_id` / `bypass.store_to_load` — forwarding paths
+- `mode` — mapped in the UI as `Serialized` or `Parallel UFs`
+- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — functional-unit counts used by `Parallel UFs` mode
 - `branch_resolve` — `Id`, `Ex`, or `Mem`
 - `predict` — `NotTaken`, `Taken`, `Btfnt`, or `TwoBit`
 - `speed` — TUI playback speed (`Slow`, `Normal`, `Fast`, `Instant`)
-
-Export / import from the TUI: **Pipeline tab → `Ctrl+e` / `Ctrl+l`**
 
 ---
 

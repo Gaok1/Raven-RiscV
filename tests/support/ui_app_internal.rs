@@ -2117,7 +2117,7 @@ fn multi_file_workspace_assembles_across_tabs_and_maps_lines() {
         "    ecall".to_string(),
     ];
     app.add_file_with_lines(
-        "util.fas".to_string(),
+        "util.s".to_string(),
         vec![
             "helper:".to_string(),
             "    li a0, 7".to_string(),
@@ -2127,7 +2127,7 @@ fn multi_file_workspace_assembles_across_tabs_and_maps_lines() {
     app.assemble_and_load();
     assert_eq!(app.editor.last_compile_ok, Some(true));
 
-    // Active file is util.fas; its "li a0, 7" (local line 1) maps to an address.
+    // Active file is util.s; its "li a0, 7" (local line 1) maps to an address.
     assert_eq!(app.editor.active_file, 1);
     assert!(app.editor.line_to_addr.contains_key(&1));
 

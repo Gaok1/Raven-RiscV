@@ -1,4 +1,4 @@
-# cache_write_policy.fas — Write-policy comparison for the D-cache
+# cache_write_policy.s — Write-policy comparison for the D-cache
 #
 # Runs the same tight store loop under two different cache configurations
 # so students can compare how write policy affects RAM write traffic.

@@ -214,10 +214,10 @@ The RAM sidebar also distinguishes cache presence by source:
 
 The following example programs are intended specifically for pipeline inspection:
 
-- `Program Examples/pipeline/pipeline_forwarding_demo.fas`
-- `Program Examples/pipeline/pipeline_load_use_demo.fas`
-- `Program Examples/pipeline/pipeline_branch_flush_demo.fas`
-- `Program Examples/pipeline/pipeline_cache_stall_demo.fas`
+- `Program Examples/pipeline/pipeline_forwarding_demo.s`
+- `Program Examples/pipeline/pipeline_load_use_demo.s`
+- `Program Examples/pipeline/pipeline_branch_flush_demo.s`
+- `Program Examples/pipeline/pipeline_cache_stall_demo.s`
 
 Suggested workflow:
 

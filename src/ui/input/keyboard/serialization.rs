@@ -141,6 +141,137 @@ pub(super) fn parse_pcfg(text: &str) -> Result<crate::ui::pipeline::PipelineConf
     crate::ui::pipeline::parse_pipeline_config(text)
 }
 
+// ── Unified config (`.rcfg` v3) ──────────────────────────────────────────────
+//
+// One file merges the former `.rcfg` (sim), `.fcache` (cache) and `.pcfg`
+// (pipeline) formats under `[sim]` / `[cache]` / `[pipeline]` sections. The
+// section bodies are exactly the old per-format text, so the existing
+// serializers/parsers are reused verbatim.
+
+/// Strip a leading `# Raven ...` / `# FALCON ...` banner so section bodies can
+/// sit under a single top-level header.
+pub(crate) fn strip_leading_banner(text: &str) -> &str {
+    match text.split_once('\n') {
+        Some((first, rest)) if {
+            let t = first.trim_start();
+            t.starts_with("# Raven") || t.starts_with("# FALCON")
+        } =>
+        {
+            rest
+        }
+        _ => text,
+    }
+}
+
+/// Wrap three already-serialized config bodies into one `.rcfg` v3 document.
+pub(crate) fn wrap_config_v3(sim: &str, cache: &str, pipeline: &str) -> String {
+    let mut s = String::from("# Raven Config v3\n");
+    for (name, body) in [("sim", sim), ("cache", cache), ("pipeline", pipeline)] {
+        s.push_str(&format!("\n[{name}]\n"));
+        s.push_str(strip_leading_banner(body).trim_start_matches('\n'));
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+    }
+    s
+}
+
+/// Split a `.rcfg` v3 document into its `[sim]` / `[cache]` / `[pipeline]`
+/// section bodies (marker lines removed). Missing sections come back empty.
+pub(crate) fn split_config_v3(text: &str) -> (String, String, String) {
+    let (mut sim, mut cache, mut pipe) = (String::new(), String::new(), String::new());
+    let mut cur: Option<u8> = None;
+    for line in text.lines() {
+        match line.trim() {
+            "[sim]" => cur = Some(0),
+            "[cache]" => cur = Some(1),
+            "[pipeline]" => cur = Some(2),
+            _ => {
+                let dst = match cur {
+                    Some(0) => &mut sim,
+                    Some(1) => &mut cache,
+                    Some(2) => &mut pipe,
+                    _ => continue,
+                };
+                dst.push_str(line);
+                dst.push('\n');
+            }
+        }
+    }
+    (sim, cache, pipe)
+}
+
+pub(super) struct ConfigV3 {
+    pub(super) sim: RcfgSettings,
+    pub(super) icfg: CacheConfig,
+    pub(super) dcfg: CacheConfig,
+    pub(super) extra: Vec<CacheConfig>,
+    pub(super) tlb: TlbConfig,
+    pub(super) pipeline: crate::ui::pipeline::PipelineConfig,
+}
+
+/// Parse a unified `.rcfg` v3 document, delegating each section to its existing
+/// validated parser.
+pub(super) fn parse_config_v3(text: &str) -> Result<ConfigV3, String> {
+    let (sim_t, cache_t, pipe_t) = split_config_v3(text);
+    if sim_t.trim().is_empty() && cache_t.trim().is_empty() && pipe_t.trim().is_empty() {
+        return Err("not a Raven config: no [sim], [cache] or [pipeline] section".to_string());
+    }
+    let sim = parse_rcfg(&sim_t)?;
+    let (icfg, dcfg, extra, tlb) = parse_cache_configs(&cache_t)?;
+    let pipeline = parse_pcfg(&pipe_t)?;
+    Ok(ConfigV3 { sim, icfg, dcfg, extra, tlb, pipeline })
+}
+
+/// Serialize the whole live simulator config (sim + cache + pipeline) as a
+/// unified `.rcfg` v3 document.
+pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
+    let sim = serialize_rcfg(
+        &app.run.cpi_config,
+        app.run.cache_enabled,
+        app.run.pipeline().enabled,
+        app.vm_mode(),
+        &app.active_scheme(),
+        app.run.trace_syscalls,
+        app.run_scope,
+        app.run.mem_size / 1024,
+        app.max_cores,
+        app.run.jit_kind,
+    );
+    let cache = serialize_cache_configs(
+        &app.cache.pending_icache,
+        &app.cache.pending_dcache,
+        &app.cache.extra_pending,
+        &app.tlb.pending,
+    );
+    let pipeline = serialize_pcfg(&app.run.pipeline());
+    wrap_config_v3(&sim, &cache, &pipeline)
+}
+
+/// Apply a parsed unified config to the app (cache + pipeline + sim).
+fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
+    app.cache.pending_icache = cfg.icfg;
+    app.cache.pending_dcache = cfg.dcfg;
+    let n_extra = cfg.extra.len();
+    app.cache.extra_pending = cfg.extra;
+    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
+    for c in &app.cache.extra_pending {
+        app.run
+            .machine
+            .mem_mut_unjournaled()
+            .extra_levels
+            .push(crate::falcon::cache::Cache::new(c.clone()));
+    }
+    if app.cache.selected_level > n_extra {
+        app.cache.selected_level = n_extra;
+    }
+    app.tlb.pending = cfg.tlb.clone();
+    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg.tlb);
+    cfg.pipeline.apply_to_state(&mut app.run.pipeline_mut());
+    // Sim settings applied last: may trigger a simulation restart.
+    apply_rcfg(app, cfg.sim);
+}
+
 pub(super) struct RcfgSettings {
     pub(super) cpi: CpiConfig,
     pub(super) cache_enabled: bool,
@@ -621,26 +752,6 @@ fn capture_pipeline_snapshot(app: &App) -> Option<PipelineResultsSnapshot> {
     app.aggregate_pipeline_snapshot()
 }
 
-fn capture_selected_pipeline_export_snapshot(app: &App) -> CacheResultsSnapshot {
-    let mut snap = capture_snapshot(app);
-    if let Some(p) = app.selected_pipeline_snapshot() {
-        let ipc = if p.cycles > 0 {
-            p.committed as f64 / p.cycles as f64
-        } else {
-            0.0
-        };
-        snap.instruction_count = p.committed;
-        snap.total_cycles = p.cycles;
-        snap.base_cycles = 0;
-        snap.cpi = p.cpi;
-        snap.ipc = ipc;
-        snap.instr_end = p.committed;
-        snap.label = format!("[{}–{}]", snap.instr_start, snap.instr_end);
-        snap.pipeline = Some(p);
-    }
-    snap
-}
-
 // ── pub(crate) helpers used by the guided-learning module ────────────────────
 
 /// Apply a raw .rcfg text to the app (parse + apply, no file I/O).
@@ -680,23 +791,19 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
     Ok(())
 }
 
-pub(crate) fn do_export_cfg(app: &mut App) {
-    let text = serialize_cache_configs(
-        &app.cache.pending_icache,
-        &app.cache.pending_dcache,
-        &app.cache.extra_pending,
-        &app.tlb.pending,
-    );
+pub(crate) fn do_export_config(app: &mut App) {
+    let text = serialize_config_v3_from_app(app);
     if let Some(path) = OSFileDialog::new()
-        .add_filter("Cache Config", &["fcache"])
-        .set_file_name("cache.fcache")
+        .add_filter("Raven Config", &["rcfg"])
+        .set_file_name("config.rcfg")
         .save_file()
     {
+        let path = ensure_extension(path, "rcfg");
         match std::fs::write(&path, &text) {
             Ok(()) => {
                 app.cache.config_error = None;
                 app.cache.config_status = Some(format!(
-                    "Exported to {}",
+                    "Config exported to {}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }
@@ -706,38 +813,22 @@ pub(crate) fn do_export_cfg(app: &mut App) {
             }
         }
     } else {
-        open_path_input(app, PathInputAction::SaveFcache);
+        open_path_input(app, PathInputAction::SaveConfig);
     }
 }
 
-pub(crate) fn do_import_cfg(app: &mut App) {
+pub(crate) fn do_import_config(app: &mut App) {
     if let Some(path) = OSFileDialog::new()
-        .add_filter("Cache Config", &["fcache"])
+        .add_filter("Raven Config", &["rcfg"])
         .pick_file()
     {
         match std::fs::read_to_string(&path) {
-            Ok(text) => match parse_cache_configs(&text) {
-                Ok((icfg, dcfg, extra, tlb)) => {
-                    app.cache.pending_icache = icfg;
-                    app.cache.pending_dcache = dcfg;
-                    let n_extra = extra.len();
-                    app.cache.extra_pending = extra;
-                    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
-                    for cfg in &app.cache.extra_pending {
-                        app.run
-                            .machine
-                            .mem_mut_unjournaled()
-                            .extra_levels
-                            .push(crate::falcon::cache::Cache::new(cfg.clone()));
-                    }
-                    if app.cache.selected_level > n_extra {
-                        app.cache.selected_level = n_extra;
-                    }
-                    app.tlb.pending = tlb.clone();
-                    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
+            Ok(text) => match parse_config_v3(&text) {
+                Ok(cfg) => {
+                    apply_config_v3(app, cfg);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
-                        "Imported from {}",
+                        "Config imported from {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
                 }
@@ -752,145 +843,26 @@ pub(crate) fn do_import_cfg(app: &mut App) {
             }
         }
     } else {
-        open_path_input(app, PathInputAction::OpenFcache);
+        open_path_input(app, PathInputAction::OpenConfig);
     }
 }
 
-pub(crate) fn do_export_rcfg(app: &mut App) {
-    let text = serialize_rcfg(
-        &app.run.cpi_config,
-        app.run.cache_enabled,
-        app.run.pipeline().enabled,
-        app.vm_mode(),
-        &app.active_scheme(),
-        app.run.trace_syscalls,
-        app.run_scope,
-        app.run.mem_size / 1024,
-        app.max_cores,
-        app.run.jit_kind,
-    );
-    if let Some(path) = OSFileDialog::new()
-        .add_filter("Raven Sim Config", &["rcfg"])
-        .set_file_name("settings.rcfg")
-        .save_file()
-    {
-        match std::fs::write(&path, &text) {
-            Ok(()) => {
-                app.cache.config_error = None;
-                app.cache.config_status = Some(format!(
-                    "Settings exported to {}",
-                    path.file_name().unwrap_or_default().to_string_lossy()
-                ));
-            }
-            Err(e) => {
-                app.cache.config_status = None;
-                app.cache.config_error = Some(format!("Export failed: {e}"));
-            }
-        }
-    } else {
-        open_path_input(app, PathInputAction::SaveRcfg);
-    }
-}
-
-pub(crate) fn do_import_rcfg(app: &mut App) {
-    if let Some(path) = OSFileDialog::new()
-        .add_filter("Raven Sim Config", &["rcfg"])
-        .pick_file()
-    {
-        match std::fs::read_to_string(&path) {
-            Ok(text) => match parse_rcfg(&text) {
-                Ok(cfg) => {
-                    apply_rcfg(app, cfg);
-                    app.cache.config_error = None;
-                    app.cache.config_status = Some(format!(
-                        "Settings imported from {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-                Err(msg) => {
-                    app.cache.config_status = None;
-                    app.cache.config_error = Some(format!("Import failed: {msg}"));
-                }
-            },
-            Err(e) => {
-                app.cache.config_status = None;
-                app.cache.config_error = Some(format!("Import failed: {e}"));
-            }
-        }
-    } else {
-        open_path_input(app, PathInputAction::OpenRcfg);
-    }
-}
-
-pub(crate) fn do_export_pcfg(app: &mut App) {
-    let text = serialize_pcfg(&app.run.pipeline());
-    if let Some(path) = OSFileDialog::new()
-        .add_filter("Raven Pipeline Config", &["pcfg"])
-        .set_file_name("pipeline.pcfg")
-        .save_file()
-    {
-        let path = ensure_extension(path, "pcfg");
-        match std::fs::write(&path, &text) {
-            Ok(()) => {
-                app.run.pipeline_mut().status_error = None;
-                app.run.pipeline_mut().status_msg = Some(format!(
-                    "Pipeline config exported to {}",
-                    path.file_name().unwrap_or_default().to_string_lossy()
-                ));
-            }
-            Err(e) => {
-                app.run.pipeline_mut().status_msg = None;
-                app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
-            }
-        }
-    } else {
-        open_path_input(app, PathInputAction::SavePcfg);
-    }
-}
-
-pub(crate) fn do_import_pcfg(app: &mut App) {
-    if let Some(path) = OSFileDialog::new()
-        .add_filter("Raven Pipeline Config", &["pcfg"])
-        .pick_file()
-    {
-        match std::fs::read_to_string(&path) {
-            Ok(text) => match parse_pcfg(&text) {
-                Ok(cfg) => {
-                    cfg.apply_to_state(&mut app.run.pipeline_mut());
-                    app.run.pipeline_mut().status_error = None;
-                    app.run.pipeline_mut().status_msg = Some(format!(
-                        "Pipeline config imported from {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-                Err(msg) => {
-                    app.run.pipeline_mut().status_msg = None;
-                    app.run.pipeline_mut().status_error = Some(format!("Import failed: {msg}"));
-                }
-            },
-            Err(e) => {
-                app.run.pipeline_mut().status_msg = None;
-                app.run.pipeline_mut().status_error = Some(format!("Import failed: {e}"));
-            }
-        }
-    } else {
-        open_path_input(app, PathInputAction::OpenPcfg);
-    }
-}
-
+/// Unified results export: one `.rstats` (or `.csv`) file carrying program,
+/// cache, pipeline and TLB stats. The captured snapshot already includes the
+/// pipeline payload when the pipeline is enabled.
 pub(crate) fn do_export_results(app: &mut App) {
     let mut snap = capture_snapshot(app);
     if let Some(path) = OSFileDialog::new()
-        .add_filter("FALCON Stats", &["fstats"])
+        .add_filter("Raven Stats", &["rstats"])
         .add_filter("CSV Spreadsheet", &["csv"])
-        .set_file_name("results.fstats")
+        .set_file_name("results.rstats")
         .save_file()
     {
-        let path = ensure_extension(path, "fstats");
+        let path = ensure_extension(path, "rstats");
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
-            .unwrap_or("fstats");
+            .unwrap_or("rstats");
         snap.label = path
             .file_name()
             .unwrap_or_default()
@@ -900,7 +872,7 @@ pub(crate) fn do_export_results(app: &mut App) {
         let text = if ext == "csv" {
             serialize_results_csv(&snap, windows)
         } else {
-            serialize_results_fstats(&snap, windows)
+            serialize_results_rstats(&snap, windows)
         };
         match std::fs::write(&path, &text) {
             Ok(()) => {
@@ -917,47 +889,6 @@ pub(crate) fn do_export_results(app: &mut App) {
         }
     } else {
         open_path_input(app, PathInputAction::SaveResults);
-    }
-}
-
-pub(crate) fn do_export_pipeline_results(app: &mut App) {
-    let mut snap = capture_selected_pipeline_export_snapshot(app);
-    if let Some(path) = OSFileDialog::new()
-        .add_filter("Pipeline Stats", &["pstats"])
-        .add_filter("CSV Spreadsheet", &["csv"])
-        .set_file_name("pipeline.pstats")
-        .save_file()
-    {
-        let path = ensure_extension(path, "pstats");
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("pstats");
-        snap.label = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let text = if ext == "csv" {
-            serialize_pipeline_results_csv(&snap)
-        } else {
-            serialize_pipeline_results_pstats(&snap)
-        };
-        match std::fs::write(&path, &text) {
-            Ok(()) => {
-                app.run.pipeline_mut().status_msg = Some(format!(
-                    "Pipeline results exported to {}",
-                    path.file_name().unwrap_or_default().to_string_lossy()
-                ));
-                app.run.pipeline_mut().status_error = None;
-            }
-            Err(e) => {
-                app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
-                app.run.pipeline_mut().status_msg = None;
-            }
-        }
-    } else {
-        open_path_input(app, PathInputAction::SavePipelineResults);
     }
 }
 
@@ -981,16 +912,13 @@ pub(super) fn write_level_snap(s: &mut String, prefix: &str, l: &LevelSnapshot) 
     s.push_str(&format!("{prefix}.amat={:.4}\n", l.amat));
 }
 
-pub(super) fn serialize_results_fstats(
+pub(super) fn serialize_results_rstats(
     snap: &CacheResultsSnapshot,
     windows: &[CacheResultsSnapshot],
 ) -> String {
     let pipeline_mode = snap.pipeline.is_some();
-    let mut s = if pipeline_mode {
-        String::from("# FALCON-ASM Simulation Results v2\n")
-    } else {
-        String::from("# FALCON-ASM Simulation Results v1\n")
-    };
+    let mut s = String::from("# Raven Results v1\n");
+    s.push_str("\n[program]\n");
     s.push_str(&format!("label={}\n", snap.label));
     s.push_str(&format!(
         "prog.clock_model={}\n",
@@ -1010,6 +938,7 @@ pub(super) fn serialize_results_fstats(
     s.push_str(&format!("prog.cpi={:.4}\n", snap.cpi));
     s.push_str(&format!("prog.ipc={:.4}\n", snap.ipc));
     if let Some(p) = &snap.pipeline {
+        s.push_str("\n[pipeline]\n");
         s.push_str("pipeline.enabled=true\n");
         s.push_str(&format!("pipeline.scope={}\n", p.scope));
         s.push_str(&format!("pipeline.committed={}\n", p.committed));
@@ -1028,12 +957,14 @@ pub(super) fn serialize_results_fstats(
         s.push_str(&format!("pipeline.branch_resolve={}\n", p.branch_resolve));
         s.push_str(&format!("pipeline.branch_predict={}\n", p.branch_predict));
     }
+    s.push_str("\n[cache]\n");
     s.push_str(&format!("extra_levels={}\n", snap.extra_levels.len()));
     write_level_snap(&mut s, "icache", &snap.icache);
     write_level_snap(&mut s, "dcache", &snap.dcache);
     for (i, lvl) in snap.extra_levels.iter().enumerate() {
         write_level_snap(&mut s, &format!("l{}", i + 2), lvl);
     }
+    s.push_str("\n[tlb]\n");
     if let Some(t) = &snap.tlb {
         s.push_str("tlb.enabled=true\n");
         s.push_str(&format!("tlb.vm_mode={}\n", t.vm_mode));
@@ -1307,76 +1238,6 @@ pub(super) fn serialize_results_csv(
     s
 }
 
-pub(super) fn serialize_pipeline_results_pstats(snap: &CacheResultsSnapshot) -> String {
-    let mut s = String::from("# Raven Pipeline Results v2\n");
-    s.push_str(&format!("label={}\n", snap.label));
-    s.push_str("prog.clock_model=pipeline\n");
-    s.push_str(&format!("prog.instructions={}\n", snap.instruction_count));
-    s.push_str(&format!("prog.total_cycles={}\n", snap.total_cycles));
-    s.push_str(&format!("prog.cpi={:.4}\n", snap.cpi));
-    s.push_str(&format!("prog.ipc={:.4}\n", snap.ipc));
-
-    if let Some(p) = &snap.pipeline {
-        s.push_str("pipeline.enabled=true\n");
-        s.push_str(&format!("pipeline.scope={}\n", p.scope));
-        s.push_str(&format!("pipeline.committed={}\n", p.committed));
-        s.push_str(&format!("pipeline.cycles={}\n", p.cycles));
-        s.push_str(&format!("pipeline.stalls={}\n", p.stalls));
-        s.push_str(&format!("pipeline.flushes={}\n", p.flushes));
-        s.push_str(&format!("pipeline.cpi={:.4}\n", p.cpi));
-        s.push_str(&format!("pipeline.branches={}\n", p.branches));
-        s.push_str(&format!("pipeline.raw_stalls={}\n", p.raw_stalls));
-        s.push_str(&format!("pipeline.load_use_stalls={}\n", p.load_use_stalls));
-        s.push_str(&format!("pipeline.branch_stalls={}\n", p.branch_stalls));
-        s.push_str(&format!("pipeline.fu_stalls={}\n", p.fu_stalls));
-        s.push_str(&format!("pipeline.mem_stalls={}\n", p.mem_stalls));
-        s.push_str(&format!("pipeline.bypass={}\n", p.bypass));
-        s.push_str(&format!("pipeline.mode={}\n", p.mode));
-        s.push_str(&format!("pipeline.branch_resolve={}\n", p.branch_resolve));
-        s.push_str(&format!("pipeline.branch_predict={}\n", p.branch_predict));
-    } else {
-        s.push_str("pipeline.enabled=false\n");
-    }
-
-    s
-}
-
-pub(super) fn serialize_pipeline_results_csv(snap: &CacheResultsSnapshot) -> String {
-    let mut s = String::new();
-    s.push_str("PROGRAM SUMMARY\n");
-    s.push_str("Instructions,Total Cycles,CPI,IPC\n");
-    s.push_str(&format!(
-        "{},{},{:.4},{:.4}\n\n",
-        snap.instruction_count, snap.total_cycles, snap.cpi, snap.ipc
-    ));
-
-    s.push_str("PIPELINE SUMMARY\n");
-    s.push_str("Scope,Committed,Cycles,Stalls,Flushes,CPI,Control Ops,RAW Stalls,Load-Use Stalls,Branch Stalls,FU Stalls,Mem Stalls,Bypass,Mode,Branch Resolve,Branch Predict\n");
-    if let Some(p) = &snap.pipeline {
-        s.push_str(&format!(
-            "{},{},{},{},{},{:.4},{},{},{},{},{},{},{},{},{},{}\n",
-            p.scope,
-            p.committed,
-            p.cycles,
-            p.stalls,
-            p.flushes,
-            p.cpi,
-            p.branches,
-            p.raw_stalls,
-            p.load_use_stalls,
-            p.branch_stalls,
-            p.fu_stalls,
-            p.mem_stalls,
-            p.bypass,
-            p.mode,
-            p.branch_resolve,
-            p.branch_predict
-        ));
-    }
-
-    s
-}
-
 pub(super) fn apply_imem_search(app: &mut App) {
     let q = app.run.imem_search_query.trim().to_lowercase();
     if q.is_empty() {
@@ -1622,7 +1483,7 @@ pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path) {
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("opened.fas")
+            .unwrap_or("opened.s")
             .to_string();
         // Opened sources land in a new file tab so the workspace keeps its modules.
         app.add_file_with_lines(name, content.lines().map(|s| s.to_string()).collect());
@@ -1714,70 +1575,13 @@ pub(super) fn dispatch_path_input(
             bytes.extend_from_slice(&data);
             let _ = std::fs::write(&path, bytes);
         }
-        PathInputAction::OpenFcache => match std::fs::read_to_string(&path) {
-            Ok(text) => match parse_cache_configs(&text) {
-                Ok((icfg, dcfg, extra, tlb)) => {
-                    let n_extra = extra.len();
-                    app.cache.pending_icache = icfg;
-                    app.cache.pending_dcache = dcfg;
-                    app.cache.extra_pending = extra;
-                    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
-                    for cfg in &app.cache.extra_pending {
-                        app.run
-                            .machine
-                            .mem_mut_unjournaled()
-                            .extra_levels
-                            .push(crate::falcon::cache::Cache::new(cfg.clone()));
-                    }
-                    if app.cache.selected_level > n_extra {
-                        app.cache.selected_level = n_extra;
-                    }
-                    app.tlb.pending = tlb.clone();
-                    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
-                    app.cache.config_error = None;
-                    app.cache.config_status = Some(format!(
-                        "Imported from {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-                Err(msg) => {
-                    app.cache.config_status = None;
-                    app.cache.config_error = Some(format!("Import failed: {msg}"));
-                }
-            },
-            Err(e) => {
-                app.cache.config_status = None;
-                app.cache.config_error = Some(format!("Import failed: {e}"));
-            }
-        },
-        PathInputAction::SaveFcache => {
-            let text = serialize_cache_configs(
-                &app.cache.pending_icache,
-                &app.cache.pending_dcache,
-                &app.cache.extra_pending,
-                &app.tlb.pending,
-            );
-            match std::fs::write(&path, &text) {
-                Ok(()) => {
-                    app.cache.config_error = None;
-                    app.cache.config_status = Some(format!(
-                        "Exported to {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-                Err(e) => {
-                    app.cache.config_status = None;
-                    app.cache.config_error = Some(format!("Export failed: {e}"));
-                }
-            }
-        }
-        PathInputAction::OpenRcfg => match std::fs::read_to_string(&path) {
-            Ok(text) => match parse_rcfg(&text) {
+        PathInputAction::OpenConfig => match std::fs::read_to_string(&path) {
+            Ok(text) => match parse_config_v3(&text) {
                 Ok(cfg) => {
-                    apply_rcfg(app, cfg);
+                    apply_config_v3(app, cfg);
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
-                        "Settings imported from {}",
+                        "Config imported from {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
                 }
@@ -1791,61 +1595,14 @@ pub(super) fn dispatch_path_input(
                 app.cache.config_error = Some(format!("Import failed: {e}"));
             }
         },
-        PathInputAction::SaveRcfg => {
-            let text = serialize_rcfg(
-                &app.run.cpi_config,
-                app.run.cache_enabled,
-                app.run.pipeline().enabled,
-                app.vm_mode(),
-                &app.active_scheme(),
-                app.run.trace_syscalls,
-                app.run_scope,
-                app.run.mem_size / 1024,
-                app.max_cores,
-                app.run.jit_kind,
-            );
+        PathInputAction::SaveConfig => {
+            let path = ensure_extension(path, "rcfg");
+            let text = serialize_config_v3_from_app(app);
             match std::fs::write(&path, &text) {
                 Ok(()) => {
                     app.cache.config_error = None;
                     app.cache.config_status = Some(format!(
-                        "Settings exported to {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-                Err(e) => {
-                    app.cache.config_status = None;
-                    app.cache.config_error = Some(format!("Export failed: {e}"));
-                }
-            }
-        }
-        PathInputAction::OpenPcfg => match std::fs::read_to_string(&path) {
-            Ok(text) => match parse_pcfg(&text) {
-                Ok(cfg) => {
-                    cfg.apply_to_state(&mut app.run.pipeline_mut());
-                    app.cache.config_error = None;
-                    app.cache.config_status = Some(format!(
-                        "Pipeline config imported from {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-                Err(msg) => {
-                    app.cache.config_status = None;
-                    app.cache.config_error = Some(format!("Import failed: {msg}"));
-                }
-            },
-            Err(e) => {
-                app.cache.config_status = None;
-                app.cache.config_error = Some(format!("Import failed: {e}"));
-            }
-        },
-        PathInputAction::SavePcfg => {
-            let path = ensure_extension(path, "pcfg");
-            let text = serialize_pcfg(&app.run.pipeline());
-            match std::fs::write(&path, &text) {
-                Ok(()) => {
-                    app.cache.config_error = None;
-                    app.cache.config_status = Some(format!(
-                        "Pipeline config exported to {}",
+                        "Config exported to {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
                 }
@@ -1856,12 +1613,12 @@ pub(super) fn dispatch_path_input(
             }
         }
         PathInputAction::SaveResults => {
-            let path = ensure_extension(path, "fstats");
+            let path = ensure_extension(path, "rstats");
             let mut snap = capture_snapshot(app);
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .unwrap_or("fstats");
+                .unwrap_or("rstats");
             snap.label = path
                 .file_name()
                 .unwrap_or_default()
@@ -1871,7 +1628,7 @@ pub(super) fn dispatch_path_input(
             let text = if ext == "csv" {
                 serialize_results_csv(&snap, &windows)
             } else {
-                serialize_results_fstats(&snap, &windows)
+                serialize_results_rstats(&snap, &windows)
             };
             match std::fs::write(&path, &text) {
                 Ok(()) => {
@@ -1884,37 +1641,6 @@ pub(super) fn dispatch_path_input(
                 Err(e) => {
                     app.cache.config_error = Some(format!("Export failed: {e}"));
                     app.cache.config_status = None;
-                }
-            }
-        }
-        PathInputAction::SavePipelineResults => {
-            let path = ensure_extension(path, "pstats");
-            let mut snap = capture_selected_pipeline_export_snapshot(app);
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("pstats");
-            snap.label = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let text = if ext == "csv" {
-                serialize_pipeline_results_csv(&snap)
-            } else {
-                serialize_pipeline_results_pstats(&snap)
-            };
-            match std::fs::write(&path, &text) {
-                Ok(()) => {
-                    app.run.pipeline_mut().status_msg = Some(format!(
-                        "Pipeline results exported to {}",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                    app.run.pipeline_mut().status_error = None;
-                }
-                Err(e) => {
-                    app.run.pipeline_mut().status_error = Some(format!("Export failed: {e}"));
-                    app.run.pipeline_mut().status_msg = None;
                 }
             }
         }

@@ -1,4 +1,4 @@
-# fib.fas — First 15 Fibonacci numbers, iterative O(n) O(1)-space algorithm
+# fib.s — First 15 Fibonacci numbers, iterative O(n) O(1)-space algorithm
 #
 # F(0)=0  F(1)=1  F(n)=F(n-1)+F(n-2)
 #

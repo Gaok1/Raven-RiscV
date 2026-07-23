@@ -60,7 +60,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 - Políticas de inclusão: Não-inclusiva, Inclusiva, Exclusiva
 - Estatísticas ao vivo: hit rate, MPKI, tráfego de RAM, top miss PCs
 - Métricas acadêmicas: AMAT (hierárquico), IPC, breakdown de CPI por nível
-- Exportar resultados (`Ctrl+r`) para `.fstats` / `.csv`
+- Exportar resultados (`Ctrl+r`) para `.rstats` / `.csv`
 - Matriz visual de cache com scroll horizontal e drag por scrollbar
 
 ### Aba Virtual Memory / TLB (Aba 4)
@@ -73,7 +73,7 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 ### Aba Pipeline (Aba 5)
 - Visualização de pipeline clássico de 5 estágios com execução ciclo a ciclo
 - Sub-abas Main e Config para hazards, histórico, bypass e predição de desvio
-- Exportação/importação de `.pcfg` e exportação de `.pstats` / `.csv` com `Ctrl+e`, `Ctrl+l` e `Ctrl+r`
+- Exportação/importação da config unificada `.rcfg` e exportação de `.rstats` / `.csv` com `Ctrl+e`, `Ctrl+l` e `Ctrl+r`
 
 ### Configuração de CPI
 - Custos de ciclo por classe: ALU, MUL, DIV, LOAD, STORE, branch taken/not-taken, JUMP, SYSTEM, FP
@@ -150,9 +150,9 @@ Requer Rust 1.75+. Sem dependências externas além da toolchain Rust.
 
 O diretório `Program Examples/` está organizado por tema — `basics/`,
 `algorithms/`, `cache/`, `pipeline/`, `syscalls/`, `harts/` e `graphics/` — e
-inclui `algorithms/fib.fas`, `algorithms/bubble_sort_20.fas`,
-`algorithms/binary_search_tree.fas`, `cache/cache_locality.fas`,
-`graphics/snake.fas` (jogo completo nas syscalls gráficas) e mais.
+inclui `algorithms/fib.s`, `algorithms/bubble_sort_20.s`,
+`algorithms/binary_search_tree.s`, `cache/cache_locality.s`,
+`graphics/snake.s` (jogo completo nas syscalls gráficas) e mais.
 
 ---
 
@@ -161,14 +161,13 @@ inclui `algorithms/fib.fas`, `algorithms/bubble_sort_20.fas`,
 O Raven também pode ser usado pela linha de comando sem interface gráfica — montar, simular, exportar/importar configs e redirecionar saída para arquivos.
 
 ```bash
-raven build program.fas                             # montar
-raven run   program.fas --nout                      # executar, sem stats
-raven run   program.fas --out results.json          # executar, salvar stats
-raven run   program.fas --cache-config l2.fcache \
-                        --settings my.rcfg \
+raven build program.s                             # montar
+raven run   program.s --nout                      # executar, sem stats
+raven run   program.s --out results.json          # executar, salvar stats
+raven run   program.s --config my.rcfg \
                         --format csv --out stats.csv
-raven export-config  --out default.fcache           # exportar config de cache padrão
-raven export-settings --out default.rcfg            # exportar configurações padrão
+raven export-config --out default.rcfg              # exportar config unificada padrão
+raven check-config  my.rcfg                         # validar uma config
 ```
 
 Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
@@ -185,7 +184,7 @@ Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 - [Memória Virtual & TLB (PT-BR)](virtual-memory.md) — Sv32, os quatro modos de VM, a TLB, page faults, demand paging
 - [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md) | [Virtual memory (EN)](../en/virtual-memory.md)
 - `threads-plan.md` — plano de design para execução multi-core futura, usando o termo `hart` ("hardware thread") para manter a modelagem em nível de hardware, não de SO
-- `Program Examples/harts/hart_spawn_visual_demo.fas` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
+- `Program Examples/harts/hart_spawn_visual_demo.s` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
 
 ---
 

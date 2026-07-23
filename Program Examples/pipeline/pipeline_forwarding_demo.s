@@ -1,4 +1,4 @@
-# pipeline_forwarding_demo.fas — chained RAW dependencies with bypassing
+# pipeline_forwarding_demo.s — chained RAW dependencies with bypassing
 #
 # Best viewed in the Pipeline tab with forwarding enabled.
 # Watch:

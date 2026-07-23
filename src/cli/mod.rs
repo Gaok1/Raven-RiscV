@@ -24,11 +24,9 @@ const DEFAULT_MAX_CORES: usize = 1;
 
 pub struct RunArgs {
     pub file: String,
-    pub cache_config: Option<String>,
-    /// Path to a `.rcfg` sim-settings file (CPI + cache_enabled).
-    pub settings: Option<String>,
+    /// Path to a unified `.rcfg` config file (`[sim]` + `[cache]` + `[pipeline]`).
+    pub config: Option<String>,
     pub pipeline: bool,
-    pub pipeline_config: Option<String>,
     pub pipeline_trace_out: Option<String>,
     pub output: Option<String>,
     /// When true, simulation stats are not written/printed (program stdout still shown).
@@ -51,7 +49,7 @@ pub struct RunArgs {
 
 pub enum OutputFormat {
     Json,
-    Fstats,
+    Rstats,
     Csv,
 }
 
@@ -142,43 +140,6 @@ pub fn build_program(file: &str, output: Option<&str>, nout: bool) -> Result<(),
     Ok(())
 }
 
-// ── raven import-config ───────────────────────────────────────────────────────
-
-/// Parse and validate a .fcache file, print a human-readable summary.
-/// Optionally re-export the normalized config to `output`.
-pub fn import_config(file: &str, output: Option<&str>) -> Result<(), String> {
-    let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
-    let (icfg, dcfg, extra) = parse_cache_configs(&text)?;
-
-    icfg.validate()
-        .map_err(|e| format!("I-cache config error: {e}"))?;
-    dcfg.validate()
-        .map_err(|e| format!("D-cache config error: {e}"))?;
-    for (i, cfg) in extra.iter().enumerate() {
-        cfg.validate()
-            .map_err(|e| format!("L{} config error: {e}", i + 2))?;
-    }
-
-    eprintln!(
-        "{}: valid — {} cache level{}",
-        file,
-        1 + extra.len(),
-        if extra.is_empty() { "" } else { "s" }
-    );
-    print_config_row("  I-Cache L1", &icfg);
-    print_config_row("  D-Cache L1", &dcfg);
-    for (i, cfg) in extra.iter().enumerate() {
-        print_config_row(&format!("  L{} Unified ", i + 2), cfg);
-    }
-
-    if let Some(out) = output {
-        let normalized = serialize_cache_configs(&icfg, &dcfg, &extra);
-        std::fs::write(out, normalized).map_err(|e| format!("cannot write '{}': {e}", out))?;
-        eprintln!("  → {out}");
-    }
-    Ok(())
-}
-
 fn print_config_row(label: &str, cfg: &CacheConfig) {
     eprintln!(
         "  {:<14}  {:>5}KB  {}B lines  {}-way  {:?}/{:?}  lat={} pen={}",
@@ -196,13 +157,20 @@ fn print_config_row(label: &str, cfg: &CacheConfig) {
 // ── raven run ────────────────────────────────────────────────────────────────
 
 pub fn run_headless(args: RunArgs) -> Result<(), String> {
-    // ── 1. Load cache config ─────────────────────────────────────────────────
-    let (icfg, dcfg, extra_cfgs) = if let Some(path) = &args.cache_config {
+    // ── 0. Load unified config (.rcfg v3), split into sections ────────────────
+    let (sim_text, cache_text, pipe_text) = if let Some(path) = &args.config {
         let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("Cannot read cache config '{}': {e}", path))?;
-        parse_cache_configs(&text)?
+            .map_err(|e| format!("Cannot read config '{}': {e}", path))?;
+        let (s, c, p) = crate::ui::input::keyboard::split_config_v3(&text);
+        (Some(s), Some(c), Some(p))
     } else {
-        (CacheConfig::default(), CacheConfig::default(), vec![])
+        (None, None, None)
+    };
+
+    // ── 1. Load cache config ─────────────────────────────────────────────────
+    let (icfg, dcfg, extra_cfgs) = match &cache_text {
+        Some(t) if !t.trim().is_empty() => parse_cache_configs(t)?,
+        _ => (CacheConfig::default(), CacheConfig::default(), vec![]),
     };
 
     icfg.validate()
@@ -224,10 +192,8 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         _run_scope,
         settings_max_cores,
         settings_mem_size,
-    ) = if let Some(path) = &args.settings {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("Cannot read settings '{}': {e}", path))?;
-        parse_rcfg_cli_full(&text)?
+    ) = if let Some(t) = sim_text.as_deref().filter(|t| !t.trim().is_empty()) {
+        parse_rcfg_cli_full(t)?
     } else {
         (
             default_cpi_config(),
@@ -338,10 +304,8 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     }
 
     let pipeline_report = if args.pipeline {
-        let pcfg = if let Some(path) = &args.pipeline_config {
-            let text = std::fs::read_to_string(path)
-                .map_err(|e| format!("Cannot read pipeline config '{}': {e}", path))?;
-            parse_pipeline_config(&text)?
+        let pcfg = if let Some(t) = pipe_text.as_deref().filter(|t| !t.trim().is_empty()) {
+            parse_pipeline_config(t)?
         } else {
             PipelineConfig::default()
         };
@@ -413,7 +377,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         };
         let text = match args.format {
             OutputFormat::Json => format_json(&mem, &file_name, exit_code, pipeline_report),
-            OutputFormat::Fstats => format_fstats(&mem, &file_name, exit_code, pipeline_report),
+            OutputFormat::Rstats => format_rstats(&mem, &file_name, exit_code, pipeline_report),
             OutputFormat::Csv => format_csv(&mem, &file_name, pipeline_report),
         };
         match &args.output {
@@ -427,9 +391,13 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// Serialize the default cache config to a `.fcache` file (for `--export-config`).
-pub fn export_default_config(output: Option<&str>) -> Result<(), String> {
-    let text = serialize_cache_configs(&CacheConfig::default(), &CacheConfig::default(), &[]);
+/// Serialize the default unified config to a `.rcfg` v3 file (sim + cache +
+/// pipeline sections). Used by `raven export-config`.
+pub fn export_config(output: Option<&str>) -> Result<(), String> {
+    let sim = default_rcfg_text();
+    let cache = serialize_cache_configs(&CacheConfig::default(), &CacheConfig::default(), &[]);
+    let pipeline = serialize_pipeline_config(&PipelineConfig::default());
+    let text = crate::ui::input::keyboard::wrap_config_v3(&sim, &cache, &pipeline);
     match output {
         Some(path) => {
             std::fs::write(path, &text).map_err(|e| format!("Cannot write '{}': {e}", path))
@@ -441,88 +409,103 @@ pub fn export_default_config(output: Option<&str>) -> Result<(), String> {
     }
 }
 
-// ── raven export-settings / import-settings ───────────────────────────────────
+/// Validate a unified `.rcfg` v3 file and print a summary of every section.
+/// Optionally re-export the normalized config to `output`.
+pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
+    let (sim_t, cache_t, pipe_t) = crate::ui::input::keyboard::split_config_v3(&text);
+    if sim_t.trim().is_empty() && cache_t.trim().is_empty() && pipe_t.trim().is_empty() {
+        return Err(format!(
+            "{file}: not a Raven config (no [sim], [cache] or [pipeline] section)"
+        ));
+    }
 
-/// Default `.rcfg` content (same defaults as the TUI).
+    // [sim]
+    let (cpi, cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, run_scope, max_cores, mem_size) =
+        parse_rcfg_cli_full(&sim_t)?;
+    // [cache]
+    let (icfg, dcfg, extra) = parse_cache_configs(&cache_t)?;
+    icfg.validate().map_err(|e| format!("I-cache config error: {e}"))?;
+    dcfg.validate().map_err(|e| format!("D-cache config error: {e}"))?;
+    for (i, cfg) in extra.iter().enumerate() {
+        cfg.validate().map_err(|e| format!("L{} config error: {e}", i + 2))?;
+    }
+    // [pipeline]
+    let pcfg = parse_pipeline_config(&pipe_t)?;
+
+    eprintln!("{file}: valid");
+    eprintln!("[sim]");
+    eprintln!("  cache_enabled    = {cache_enabled}");
+    eprintln!("  pipeline_enabled = {pipeline_enabled}");
+    eprintln!("  vm_enabled       = {vm_enabled}");
+    eprintln!("  trace_syscalls   = {trace_syscalls}");
+    eprintln!("  run_scope        = {run_scope}");
+    eprintln!("  mem_kb           = {}", mem_size / 1024);
+    eprintln!("  max_cores        = {max_cores}");
+    eprintln!("[cache] — {} level{}", 1 + extra.len(), if extra.is_empty() { "" } else { "s" });
+    print_config_row("I-Cache L1", &icfg);
+    print_config_row("D-Cache L1", &dcfg);
+    for (i, cfg) in extra.iter().enumerate() {
+        print_config_row(&format!("L{} Unified", i + 2), cfg);
+    }
+    eprintln!("[pipeline]");
+    eprintln!("  enabled        = {}", pcfg.enabled);
+    eprintln!("  mode           = {:?}", pcfg.mode);
+    eprintln!("  branch_resolve = {:?}", pcfg.branch_resolve);
+    eprintln!("  predict        = {:?}", pcfg.predict);
+
+    if let Some(out) = output {
+        let sim = rebuild_rcfg_text(
+            &cpi, cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, mem_size / 1024,
+            max_cores, &run_scope,
+        );
+        let cache = serialize_cache_configs(&icfg, &dcfg, &extra);
+        let pipeline = serialize_pipeline_config(&pcfg);
+        let normalized = crate::ui::input::keyboard::wrap_config_v3(&sim, &cache, &pipeline);
+        std::fs::write(out, normalized).map_err(|e| format!("cannot write '{}': {e}", out))?;
+        eprintln!("  → {out}");
+    }
+    Ok(())
+}
+
+// ── Sim-settings text helpers (used by the unified config commands) ──────────
+
+/// Default `[sim]` section content (same defaults as the TUI).
 fn default_rcfg_text() -> String {
     let mut s = String::from(
-        "# Raven Sim Config v2\ncache_enabled=true\npipeline_enabled=true\nvm_enabled=false\ntrace_syscalls=false\nmem_kb=16384\nmax_cores=1\nrun_scope=focus\n\n# CPI (cycles per instruction)\n",
+        "# Raven Sim Config v2\ncache_enabled=true\npipeline_enabled=true\nvm_mode=off\ntrace_syscalls=false\nmem_kb=16384\nmax_cores=1\nrun_scope=focus\n\n# CPI (cycles per instruction)\n",
     );
     s.push_str("cpi.alu=1\ncpi.mul=3\ncpi.div=20\ncpi.load=0\ncpi.store=0\n");
     s.push_str("cpi.branch_taken=3\ncpi.branch_not_taken=1\ncpi.jump=2\ncpi.system=10\ncpi.fp=5\n");
     s
 }
 
-/// Serialize the default sim settings to a `.rcfg` file.
-pub fn export_sim_settings(output: Option<&str>) -> Result<(), String> {
-    let text = default_rcfg_text();
-    match output {
-        Some(path) => {
-            std::fs::write(path, &text).map_err(|e| format!("Cannot write '{}': {e}", path))
-        }
-        None => {
-            print!("{text}");
-            Ok(())
-        }
-    }
-}
-
-/// Parse and validate a `.rcfg` file, print a human-readable summary.
-/// Optionally re-export the normalized settings to `output`.
-pub fn import_sim_settings(file: &str, output: Option<&str>) -> Result<(), String> {
-    let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
-    // Reuse the same strict parser as `run --sim-settings`
-    let (cpi, cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, run_scope, max_cores, mem_size) =
-        parse_rcfg_cli_full(&text)?;
-    let mem_kb = mem_size / 1024;
-    let cpi_keys = [
-        "alu",
-        "mul",
-        "div",
-        "load",
-        "store",
-        "branch_taken",
-        "branch_not_taken",
-        "jump",
-        "system",
-        "fp",
-    ];
-    let cpi_vals = [
-        cpi.alu,
-        cpi.mul,
-        cpi.div,
-        cpi.load,
-        cpi.store,
-        cpi.branch_taken,
-        cpi.branch_not_taken,
-        cpi.jump,
-        cpi.system,
-        cpi.fp,
-    ];
-    eprintln!("{}: valid", file);
-    eprintln!("  cache_enabled = {}", cache_enabled);
-    eprintln!("  pipeline_enabled = {}", pipeline_enabled);
-    eprintln!("  vm_enabled = {}", vm_enabled);
-    eprintln!("  trace_syscalls = {}", trace_syscalls);
-    eprintln!("  run_scope     = {}", run_scope);
-    eprintln!("  mem_kb        = {}", mem_kb);
-    eprintln!("  max_cores     = {}", max_cores);
-    for (key, val) in cpi_keys.iter().zip(cpi_vals.iter()) {
-        eprintln!("  cpi.{:<20} = {}", key, val);
-    }
-    if let Some(out) = output {
-        let mut out_text = String::from("# Raven Sim Config v2\n");
-        out_text.push_str(&format!(
-            "cache_enabled={}\npipeline_enabled={}\nvm_enabled={}\ntrace_syscalls={}\nmem_kb={}\nmax_cores={}\nrun_scope={}\n\n# CPI (cycles per instruction)\n",
-            cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, mem_kb, max_cores, run_scope
-        ));
-        for (key, val) in cpi_keys.iter().zip(cpi_vals.iter()) {
-            out_text.push_str(&format!("cpi.{}={}\n", key, val));
-        }
-        std::fs::write(out, out_text).map_err(|e| format!("Cannot write '{}': {e}", out))?;
-        eprintln!("  → {out}");
-    }
-    Ok(())
+/// Re-serialize a parsed `[sim]` section to its normalized text form.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_rcfg_text(
+    cpi: &CpiConfig,
+    cache_enabled: bool,
+    pipeline_enabled: bool,
+    vm_enabled: bool,
+    trace_syscalls: bool,
+    mem_kb: usize,
+    max_cores: usize,
+    run_scope: &str,
+) -> String {
+    let vm_mode = if vm_enabled { "sv32" } else { "off" };
+    let mut s = String::from("# Raven Sim Config v2\n");
+    s.push_str(&format!(
+        "cache_enabled={cache_enabled}\npipeline_enabled={pipeline_enabled}\nvm_mode={vm_mode}\ntrace_syscalls={trace_syscalls}\nmem_kb={mem_kb}\nmax_cores={max_cores}\nrun_scope={run_scope}\n\n# CPI (cycles per instruction)\n"
+    ));
+    s.push_str(&format!(
+        "cpi.alu={}\ncpi.mul={}\ncpi.div={}\ncpi.load={}\ncpi.store={}\n",
+        cpi.alu, cpi.mul, cpi.div, cpi.load, cpi.store
+    ));
+    s.push_str(&format!(
+        "cpi.branch_taken={}\ncpi.branch_not_taken={}\ncpi.jump={}\ncpi.system={}\ncpi.fp={}\n",
+        cpi.branch_taken, cpi.branch_not_taken, cpi.jump, cpi.system, cpi.fp
+    ));
+    s
 }
 
 /// Parse a `.rcfg` and return `cache_enabled` (only field relevant to headless sim).
@@ -587,10 +570,14 @@ fn parse_rcfg_cli_full(
         .get("pipeline_enabled")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
         .unwrap_or(true);
-    let vm_enabled = map
-        .get("vm_enabled")
-        .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
-        .unwrap_or(false);
+    // Prefer the current `vm_mode` key; fall back to the legacy `vm_enabled`.
+    let vm_enabled = match map.get("vm_mode").map(String::as_str) {
+        Some(m) => matches!(m, "sv32" | "custom"),
+        None => map
+            .get("vm_enabled")
+            .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
+            .unwrap_or(false),
+    };
     let trace_syscalls = map
         .get("trace_syscalls")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
@@ -947,44 +934,6 @@ fn run_headless_pipeline(
         },
         trace_steps,
     ))
-}
-
-// ── raven export-pipeline / import-pipeline ──────────────────────────────────
-
-pub fn export_pipeline_settings(output: Option<&str>) -> Result<(), String> {
-    let text = serialize_pipeline_config(&PipelineConfig::default());
-    match output {
-        Some(path) => {
-            std::fs::write(path, &text).map_err(|e| format!("Cannot write '{}': {e}", path))
-        }
-        None => {
-            print!("{text}");
-            Ok(())
-        }
-    }
-}
-
-pub fn import_pipeline_settings(file: &str, output: Option<&str>) -> Result<(), String> {
-    let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
-    let cfg = parse_pipeline_config(&text)?;
-
-    eprintln!("{}: valid", file);
-    eprintln!("  enabled        = {}", cfg.enabled);
-    eprintln!("  bypass.ex_to_ex     = {}", cfg.bypass.ex_to_ex);
-    eprintln!("  bypass.mem_to_ex    = {}", cfg.bypass.mem_to_ex);
-    eprintln!("  bypass.wb_to_id     = {}", cfg.bypass.wb_to_id);
-    eprintln!("  bypass.store_to_load= {}", cfg.bypass.store_to_load);
-    eprintln!("  mode           = {:?}", cfg.mode);
-    eprintln!("  branch_resolve = {:?}", cfg.branch_resolve);
-    eprintln!("  predict        = {:?}", cfg.predict);
-    eprintln!("  speed          = {:?}", cfg.speed);
-
-    if let Some(out) = output {
-        let normalized = serialize_pipeline_config(&cfg);
-        std::fs::write(out, normalized).map_err(|e| format!("Cannot write '{}': {e}", out))?;
-        eprintln!("  → {out}");
-    }
-    Ok(())
 }
 
 // ── Build helpers ─────────────────────────────────────────────────────────────

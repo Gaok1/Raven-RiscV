@@ -1,4 +1,4 @@
-# cache_conflict.fas — Cache conflict-miss demonstration
+# cache_conflict.s — Cache conflict-miss demonstration
 #
 # Accesses two (Phase A) or three (Phase B) memory lines that map to the
 # SAME cache set under the default config (1 KB capacity / 16 B lines / 2-way).

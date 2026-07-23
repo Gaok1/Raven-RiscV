@@ -1,4 +1,4 @@
-# array_sum.fas — Sum a random integer array; output via Linux write + Raven print_int
+# array_sum.s — Sum a random integer array; output via Linux write + Raven print_int
 #
 # The array is filled at run time via the Linux getrandom(2) syscall,
 # so the sum differs on every execution.

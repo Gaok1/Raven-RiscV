@@ -1,5 +1,5 @@
 use super::{
-    HeadlessHart, PipelineReport, format_csv, format_fstats, format_json, parse_expect_mem_spec,
+    HeadlessHart, PipelineReport, format_csv, format_json, format_rstats, parse_expect_mem_spec,
     parse_expect_reg_spec, run_headless_multihart_sequential, run_headless_sequential,
     service_pending_hart_start, validate_expectations,
 };
@@ -272,20 +272,20 @@ fn pipeline_output_formats_do_not_emit_serial_cycle_breakdown() {
         cpi: 11.0 / 3.0,
     };
 
-    let json = format_json(&mem, "demo.fas", Some(0), Some(pipeline));
+    let json = format_json(&mem, "demo.s", Some(0), Some(pipeline));
     assert!(json.contains("\"clock_model\": \"pipeline\""));
     assert!(json.contains("\"total_cycles\": 11"));
     assert!(!json.contains("\"base_cycles\""));
     assert!(!json.contains("\"cache_cycles\""));
 
-    let fstats = format_fstats(&mem, "demo.fas", Some(0), Some(pipeline));
-    assert!(fstats.starts_with("# FALCON-ASM Simulation Results v2\n"));
-    assert!(fstats.contains("prog.clock_model=pipeline\n"));
-    assert!(fstats.contains("prog.total_cycles=11\n"));
-    assert!(!fstats.contains("prog.base_cycles="));
-    assert!(!fstats.contains("prog.cache_cycles="));
+    let rstats = format_rstats(&mem, "demo.s", Some(0), Some(pipeline));
+    assert!(rstats.starts_with("# Raven Results v1\n"));
+    assert!(rstats.contains("prog.clock_model=pipeline\n"));
+    assert!(rstats.contains("prog.total_cycles=11\n"));
+    assert!(!rstats.contains("prog.base_cycles="));
+    assert!(!rstats.contains("prog.cache_cycles="));
 
-    let csv = format_csv(&mem, "demo.fas", Some(pipeline));
+    let csv = format_csv(&mem, "demo.s", Some(pipeline));
     assert!(csv.contains("Clock Model,Instructions,Total Cycles,CPI,IPC\n"));
     assert!(csv.contains("pipeline,3,11,"));
     assert!(!csv.contains("Base Cycles"));

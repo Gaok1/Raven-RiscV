@@ -574,7 +574,7 @@ A aba **Virtual Memory** é o painel central de tudo que este documento explica.
 
 ### stats
 - Gauge de hit rate e contadores: `Hits`, `Misses`, `Evictions`, `Page Faults`, mais um gráfico de histórico rolante de 300 ciclos.
-- **Snapshots de sessão** (compartilhados com a aba Cache): aperte `s` para capturar a janela atual; `↑`/`↓` seleciona, `Enter` abre o popup de detalhes (agora com um bloco TLB), `D` apaga. Os snapshots vão junto no export de resultados (`results` / `Ctrl+r`) — o `.fstats` / `.csv` ganha uma seção `tlb.*`.
+- **Snapshots de sessão** (compartilhados com a aba Cache): aperte `s` para capturar a janela atual; `↑`/`↓` seleciona, `Enter` abre o popup de detalhes (agora com um bloco TLB), `D` apaga. Os snapshots vão junto no export de resultados (`results` / `Ctrl+r`) — o `.rstats` / `.csv` ganha uma seção `tlb.*`.
 
 ### settings (painel de controle de VM)
 Onde você remodela a memória virtual **sem escrever uma linha de código**. Quatro blocos, de cima para baixo:
@@ -585,7 +585,7 @@ Onde você remodela a memória virtual **sem escrever uma linha de código**. Qu
 4. **Geometria da TLB** — `Entries` (potência de 2), `Associativity`, `Replacement Policy`, `Hit Latency`, `Miss Penalty`, mais presets **small / med / large**.
 
 Tudo é preparado em rascunho: as edições só surtem efeito quando você aperta **apply** (que reconfigura a TLB e, nos modos automáticos, reinstala o mapa e reaponta o `satp`). **flush tlb** apenas descarta as traduções cacheadas sem mexer no mapa. Clique num campo para editar ou alternar; `Tab` / `↑` `↓` movem entre os campos numéricos durante a edição. É o sandbox seguro: quebre o mapeamento aqui e nada trava — você só vê faults que consegue raciocinar.
-- Salvar/carregar config via export/import (`export cfg` / `import cfg`, ou `Ctrl+e` / `Ctrl+l`); o bloco `[tlb]` viaja no `.fcache` / `.rcfg` compartilhado (ver [Config de cache](cache-config.md)).
+- Salvar/carregar config via export/import (`export cfg` / `import cfg`, ou `Ctrl+e` / `Ctrl+l`); o bloco `[tlb]` viaja na seção `[cache]` do `.rcfg` unificado (ver [Config de cache](cache-config.md)).
 
 ---
 
@@ -728,6 +728,6 @@ Pra ver ao vivo: selecione o modo **Manual** (na subaba overview/settings da **V
 ## 21. Veja também
 
 - [Mapa de memória](memory-allocation.md) — layout de endereços físicos que serve de backing store.
-- [Config de cache](cache-config.md) — campos do `.fcache` / `.rcfg` incluindo o bloco `[tlb]`.
+- [Config de cache](cache-config.md) — campos `[cache]` do `.rcfg` incluindo o bloco `[tlb]`.
 - [Simulação de pipeline](pipeline.md) — onde os stalls da MMU aparecem no Gantt.
 - [Simulação de cache](cache.md) — terminologia comum (sets, ways, políticas) que a TLB herda.

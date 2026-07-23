@@ -1,4 +1,4 @@
-# print.fas — "Hello, Raven!" via the Linux write syscall
+# print.s — "Hello, Raven!" via the Linux write syscall
 #
 # Demonstrates the raw ecall calling convention (no pseudo-instructions):
 #   a7 = syscall number

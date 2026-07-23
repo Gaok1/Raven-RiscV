@@ -120,7 +120,7 @@ pub(super) fn handle_common_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
 
 fn open_file(app: &mut App) {
     if let Some(path) = OSFileDialog::new()
-        .add_filter("Assembly / ELF", &["fas", "asm", "elf", "bin"])
+        .add_filter("Assembly / ELF", &["s", "asm", "elf", "bin"])
         .add_filter("All Files", &["*"])
         .pick_file()
     {
@@ -136,9 +136,9 @@ fn save_file(app: &mut App) {
         .files
         .get(app.editor.active_file)
         .map(|f| f.name.clone())
-        .unwrap_or_else(|| "program.fas".to_string());
+        .unwrap_or_else(|| "program.s".to_string());
     if let Some(path) = OSFileDialog::new()
-        .add_filter("Falcon ASM", &["fas", "asm"])
+        .add_filter("Falcon ASM", &["s", "asm"])
         .set_file_name(&name)
         .save_file()
     {

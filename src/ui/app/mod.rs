@@ -327,7 +327,7 @@ impl App {
             editor: EditorState {
                 buf: Editor::with_sample(),
                 files: vec![EditorFile {
-                    name: "main.fas".to_string(),
+                    name: "main.s".to_string(),
                     buf: Editor::empty(),
                 }],
                 active_file: 0,
@@ -714,7 +714,7 @@ impl App {
     pub(crate) fn new_file(&mut self) {
         let mut n = self.editor.files.len() + 1;
         let name = loop {
-            let candidate = format!("file{n}.fas");
+            let candidate = format!("file{n}.s");
             if !self.editor.files.iter().any(|f| f.name == candidate) {
                 break candidate;
             }

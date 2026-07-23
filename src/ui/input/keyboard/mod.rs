@@ -17,14 +17,12 @@ pub(crate) use self::tlb_keys::select as tlb_select;
 #[cfg(test)]
 use self::paste::{paste_imem_search, paste_mem_search};
 pub(crate) use self::serialization::{
-    apply_fcache_text, apply_pcfg_text, apply_rcfg_text, do_export_cfg, do_export_pcfg,
-    do_export_pipeline_results, do_export_rcfg, do_export_results, do_import_cfg, do_import_pcfg,
-    do_import_rcfg, open_path_input,
+    apply_fcache_text, apply_pcfg_text, apply_rcfg_text, do_export_config, do_export_results,
+    do_import_config, open_path_input, split_config_v3, wrap_config_v3,
 };
 #[cfg(test)]
 use self::serialization::{
-    apply_imem_search, capture_snapshot, serialize_pipeline_results_pstats, serialize_results_csv,
-    serialize_results_fstats,
+    apply_imem_search, capture_snapshot, serialize_results_csv, serialize_results_rstats,
 };
 
 use crate::ui::app::{App, EditorMode, Tab};
@@ -102,36 +100,16 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
 
     if ctrl {
         match (key.code, app.tab) {
-            (KeyCode::Char('e'), Tab::Cache | Tab::Tlb) => {
-                serialization::do_export_cfg(app);
+            (KeyCode::Char('e'), Tab::Cache | Tab::Tlb | Tab::Settings | Tab::Pipeline) => {
+                serialization::do_export_config(app);
                 return true;
             }
-            (KeyCode::Char('l'), Tab::Cache | Tab::Tlb) => {
-                serialization::do_import_cfg(app);
+            (KeyCode::Char('l'), Tab::Cache | Tab::Tlb | Tab::Settings | Tab::Pipeline) => {
+                serialization::do_import_config(app);
                 return true;
             }
-            (KeyCode::Char('e'), Tab::Settings) => {
-                serialization::do_export_rcfg(app);
-                return true;
-            }
-            (KeyCode::Char('l'), Tab::Settings) => {
-                serialization::do_import_rcfg(app);
-                return true;
-            }
-            (KeyCode::Char('e'), Tab::Pipeline) => {
-                serialization::do_export_pcfg(app);
-                return true;
-            }
-            (KeyCode::Char('l'), Tab::Pipeline) => {
-                serialization::do_import_pcfg(app);
-                return true;
-            }
-            (KeyCode::Char('r'), Tab::Cache | Tab::Tlb) => {
+            (KeyCode::Char('r'), Tab::Cache | Tab::Tlb | Tab::Pipeline) => {
                 serialization::do_export_results(app);
-                return true;
-            }
-            (KeyCode::Char('r'), Tab::Pipeline) => {
-                serialization::do_export_pipeline_results(app);
                 return true;
             }
             _ => {}

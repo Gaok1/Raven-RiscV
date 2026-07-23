@@ -421,27 +421,19 @@ pub(super) fn format_pipeline_trace_json(steps: &[PipelineTraceStep]) -> String 
 
 // ── fstats output (compatible with TUI import) ────────────────────────────────
 
-pub(super) fn format_fstats(
+pub(super) fn format_rstats(
     mem: &CacheController,
     file: &str,
     exit_code: Option<u32>,
     pipeline: Option<PipelineReport>,
 ) -> String {
-    let (instr, total_cyc, base_cyc, cpi, ipc, header, clock_model) = if let Some(p) = pipeline {
+    let (instr, total_cyc, base_cyc, cpi, ipc, clock_model) = if let Some(p) = pipeline {
         let ipc = if p.cycles > 0 {
             p.committed as f64 / p.cycles as f64
         } else {
             0.0
         };
-        (
-            p.committed,
-            p.cycles,
-            None,
-            p.cpi,
-            ipc,
-            "# FALCON-ASM Simulation Results v2\n",
-            "pipeline",
-        )
+        (p.committed, p.cycles, None, p.cpi, ipc, "pipeline")
     } else {
         (
             mem.instruction_count,
@@ -449,12 +441,12 @@ pub(super) fn format_fstats(
             Some(mem.extra_cycles),
             mem.overall_cpi(),
             mem.ipc(),
-            "# FALCON-ASM Simulation Results v1\n",
             "serial",
         )
     };
 
-    let mut s = String::from(header);
+    let mut s = String::from("# Raven Results v1\n");
+    s.push_str("\n[program]\n");
     s.push_str(&format!("label={file}\n"));
     s.push_str(&format!("prog.clock_model={clock_model}\n"));
     if let Some(code) = exit_code {
@@ -471,8 +463,8 @@ pub(super) fn format_fstats(
     }
     s.push_str(&format!("prog.cpi={cpi:.4}\n"));
     s.push_str(&format!("prog.ipc={ipc:.4}\n"));
-    s.push_str(&format!("extra_levels={}\n", mem.extra_levels.len()));
     if let Some(p) = pipeline {
+        s.push_str("\n[pipeline]\n");
         s.push_str("pipeline.enabled=true\n");
         s.push_str(&format!("pipeline.committed={}\n", p.committed));
         s.push_str(&format!("pipeline.cycles={}\n", p.cycles));
@@ -481,6 +473,8 @@ pub(super) fn format_fstats(
         s.push_str(&format!("pipeline.cpi={:.4}\n", p.cpi));
     }
 
+    s.push_str("\n[cache]\n");
+    s.push_str(&format!("extra_levels={}\n", mem.extra_levels.len()));
     write_cache_level_fstats(
         &mut s,
         "icache",

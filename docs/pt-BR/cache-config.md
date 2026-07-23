@@ -1,6 +1,6 @@
-# Raven — Arquivo de Configuração de Cache (`.fcache`)
+# Raven — Configuração de Cache (seção `[cache]` do `.rcfg`)
 
-Este guia explica cada campo de um arquivo de configuração de cache do Raven para que você (ou um LLM) possa escrever configs válidas do zero. Importe qualquer `.fcache` no Raven via **Cache → ↓ Import cfg**.
+Este guia explica cada campo de cache de uma config do Raven para que você (ou um LLM) possa escrever configs válidas do zero. A hierarquia de cache fica na seção `[cache]` do arquivo unificado `.rcfg` (junto de `[sim]` e `[pipeline]`). Importe qualquer `.rcfg` no Raven via **Cache → ↓ Import cfg** (ou `Ctrl+l`).
 
 ---
 
@@ -16,7 +16,7 @@ chave=valor
 - Espaços em branco ao redor do `=` são removidos.
 - Chaves desconhecidas são silenciosamente ignoradas (compatibilidade futura).
 - Valores de enum são **PascalCase sensível a maiúsculas** (ex: `Lru`, não `lru`).
-- A extensão do arquivo deve ser `.fcache`.
+- Estas chaves ficam na seção `[cache]` de um arquivo `.rcfg`.
 
 ---
 
@@ -197,7 +197,7 @@ Todos os valores são inteiros sem sinal ≥ 0.
 
 ## TLB unificada (`tlb.*`)
 
-A MMU do Raven é fronteada por uma única TLB compartilhada pelas traduções de instrução e de dados. Sua geometria é salva no `.fcache` junto com os níveis de cache, então uma config pode levar um layout de TLB ao lado dos parâmetros de CPI e cache.
+A MMU do Raven é fronteada por uma única TLB compartilhada pelas traduções de instrução e de dados. Sua geometria é salva na seção `[cache]` junto com os níveis de cache, então uma config pode levar um layout de TLB ao lado dos parâmetros de CPI e cache.
 
 ```
 # Unified TLB
@@ -218,9 +218,9 @@ tlb.miss_penalty=20
 
 > **Atenção — a grafia difere da chave `replacement` do cache.** A política da TLB é em **minúsculas**: `lru`, `fifo`, `random`, `lfu`, `clock`, `mru`. (Os níveis de cache usam PascalCase `Lru`, `Fifo`, … — são chaves separadas.)
 
-### Modo de memória virtual (somente `.rcfg`)
+### Modo de memória virtual (seção `[sim]`)
 
-O *modo* de VM e o esquema de paginação Custom são configurações do simulador, não do cache, então vivem no arquivo `.rcfg` (sim settings), não no `.fcache`:
+O *modo* de VM e o esquema de paginação Custom são configurações do simulador, não do cache, então vivem na seção `[sim]`, não em `[cache]`:
 
 | Chave | Tipo | Valores | Notas |
 |-------|------|---------|-------|

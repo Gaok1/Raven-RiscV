@@ -1,4 +1,4 @@
-# icache_multilevel_demo.fas
+# icache_multilevel_demo.s
 #
 # Short front-end workload for manual validation of multi-level I-cache stalls.
 # Best used with a tiny L1/L2/L3 so each aligned block fetches from a new line.

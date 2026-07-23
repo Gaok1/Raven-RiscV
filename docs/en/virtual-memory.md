@@ -574,7 +574,7 @@ The **Virtual Memory** tab is the central panel for everything this document exp
 
 ### stats
 - Hit-rate gauge and counters: `Hits`, `Misses`, `Evictions`, `Page Faults`, plus a rolling 300-cycle history chart of the hit rate.
-- **Session snapshots** (shared with the Cache tab): press `s` to capture the current window; `↑`/`↓` select, `Enter` opens the details popup (now with a TLB block), `D` deletes. Snapshots ride along in the results export (`results` / `Ctrl+r`) — the `.fstats` / `.csv` gain a `tlb.*` section.
+- **Session snapshots** (shared with the Cache tab): press `s` to capture the current window; `↑`/`↓` select, `Enter` opens the details popup (now with a TLB block), `D` deletes. Snapshots ride along in the results export (`results` / `Ctrl+r`) — the `.rstats` / `.csv` gain a `tlb.*` section.
 
 ### settings (the VM control panel)
 Where you reshape virtual memory **without writing a line of code**. Four blocks, top to bottom:
@@ -585,7 +585,7 @@ Where you reshape virtual memory **without writing a line of code**. Four blocks
 4. **TLB geometry** — `Entries` (power of two), `Associativity`, `Replacement Policy`, `Hit Latency`, `Miss Penalty`, plus **small / med / large** presets.
 
 Everything is staged: edits only take effect when you hit **apply** (which reconfigures the TLB and, in the auto modes, reinstalls the map and re-points `satp`). **flush tlb** just drops cached translations without touching the map. Click a field to edit or toggle it; `Tab` / `↑` `↓` move between numeric fields while editing. It's the safe sandbox: break the mapping here and nothing crashes — you just see faults you can reason about.
-- Save/load config via export/import (`export cfg` / `import cfg`, or `Ctrl+e` / `Ctrl+l`); the `[tlb]` block travels in the shared `.fcache` / `.rcfg` (see [Cache config](cache-config.md)).
+- Save/load config via export/import (`export cfg` / `import cfg`, or `Ctrl+e` / `Ctrl+l`); the `[tlb]` block travels in the `[cache]` section of the unified `.rcfg` (see [Cache config](cache-config.md)).
 
 ---
 
@@ -728,6 +728,6 @@ To watch it live: pick **Manual** mode (in the **Virtual Memory** overview/setti
 ## 21. See also
 
 - [Memory map](memory-allocation.md) — the physical address layout used as the backing store.
-- [Cache config](cache-config.md) — `.fcache` / `.rcfg` fields including the `[tlb]` block.
+- [Cache config](cache-config.md) — `.rcfg` `[cache]` fields including the `[tlb]` block.
 - [Pipeline simulation](pipeline.md) — where MMU stalls show up in the Gantt view.
 - [Cache simulation](cache.md) — the shared terminology (sets, ways, policies) the TLB inherits.

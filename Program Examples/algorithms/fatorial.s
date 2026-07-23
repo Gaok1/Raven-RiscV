@@ -1,4 +1,4 @@
-# fatorial.fas — Iterative factorial using a raw stack frame (no push/pop pseudos)
+# fatorial.s — Iterative factorial using a raw stack frame (no push/pop pseudos)
 #
 # Computes n! for n read from stdin (valid range: 1..12; 13! overflows 32 bits).
 # Demonstrates explicit stack manipulation:
@@ -7,7 +7,7 @@
 #   lw   reg, off(sp) — reload register
 #   addi sp, sp, +N   — deallocate frame
 #
-# Compare with fat_push_pop_pseudoinstructions.fas which does the same
+# Compare with fat_push_pop_pseudoinstructions.s which does the same
 # thing recursively using the push/pop shorthand.
 
 .data

@@ -1,4 +1,4 @@
-# string_length.fas — Manual strlen vs Raven strlen syscall (1052)
+# string_length.s — Manual strlen vs Raven strlen syscall (1052)
 #
 # Implements the same measurement two ways and prints both results.
 # They must agree — if they don't, something is wrong.

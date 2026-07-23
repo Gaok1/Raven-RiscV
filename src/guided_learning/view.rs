@@ -136,15 +136,15 @@ fn render_info_panel(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let program: &str = match preset {
-        GuidedPreset::D1_01 => "D101.fas",
-        GuidedPreset::D1_02 | GuidedPreset::D6_01 | GuidedPreset::D6_02 => "D102.fas",
-        GuidedPreset::D2_01 => "D201.fas",
-        GuidedPreset::D2_02 => "D202.fas",
-        GuidedPreset::D3_01 | GuidedPreset::D3_02 => "D301b.fas",
-        GuidedPreset::D3_03 | GuidedPreset::D3_04 => "D301.fas",
-        GuidedPreset::D3_05 => "D302.fas",
-        GuidedPreset::D4_01 => "D401.fas",
-        GuidedPreset::D5_01 => "D501.fas",
+        GuidedPreset::D1_01 => "D101.s",
+        GuidedPreset::D1_02 | GuidedPreset::D6_01 | GuidedPreset::D6_02 => "D102.s",
+        GuidedPreset::D2_01 => "D201.s",
+        GuidedPreset::D2_02 => "D202.s",
+        GuidedPreset::D3_01 | GuidedPreset::D3_02 => "D301b.s",
+        GuidedPreset::D3_03 | GuidedPreset::D3_04 => "D301.s",
+        GuidedPreset::D3_05 => "D302.s",
+        GuidedPreset::D4_01 => "D401.s",
+        GuidedPreset::D5_01 => "D501.s",
     };
 
     let tab = preset.suggested_tab().label();

@@ -1,4 +1,4 @@
-# snake.fas — Snake game on the Raven graphics syscalls (2000+)
+# snake.s — Snake game on the Raven graphics syscalls (2000+)
 #
 # A complete game using only raw ecalls, the way a student compiler would
 # emit them.  Controls: WASD or arrow keys.  Eat the red food, don't hit
