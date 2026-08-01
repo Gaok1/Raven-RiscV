@@ -43,6 +43,38 @@ pub(super) fn format_stale_value(app: &App, addr: u32) -> String {
     }
 }
 
+/// Format a register of any declared width, so the sidebar can draw an 8-bit
+/// SAP accumulator and a 32-bit RV32 register with the same code.
+///
+/// Widths are padded to their own size rather than a fixed 32 bits — an 8-bit
+/// register shown as `0x0000002a` would misstate how wide it is.
+pub(super) fn format_register_value(
+    value: u64,
+    bits: u8,
+    fmt: FormatMode,
+    show_signed: bool,
+) -> String {
+    let bits = bits.clamp(1, 64);
+    let hex_width = usize::from(bits).div_ceil(4);
+    let width = usize::from(bits);
+    match fmt {
+        FormatMode::Hex => format!("0x{value:0hex_width$x}"),
+        FormatMode::Dec if show_signed => format!("{}", sign_extend(value, bits)),
+        FormatMode::Dec => format!("{value}"),
+        FormatMode::Bin => format!("0b{value:0width$b}"),
+        FormatMode::Str => ascii_bytes(&value.to_le_bytes()[..usize::from(bits).div_ceil(8)]),
+    }
+}
+
+/// Reinterpret the low `bits` of `value` as a two's-complement signed number.
+fn sign_extend(value: u64, bits: u8) -> i64 {
+    if bits >= 64 {
+        return value as i64;
+    }
+    let shift = 64 - u32::from(bits);
+    ((value << shift) as i64) >> shift
+}
+
 pub(super) fn format_u32_value(value: u32, fmt: FormatMode, show_signed: bool) -> String {
     match fmt {
         FormatMode::Hex => format!("0x{value:08x}"),

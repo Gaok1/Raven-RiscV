@@ -34,6 +34,7 @@
 
 #![allow(dead_code)] // Phase 1: standalone module; wired into RunState in Phase 2.
 
+mod capability;
 pub mod journal;
 pub mod parse;
 pub mod types;

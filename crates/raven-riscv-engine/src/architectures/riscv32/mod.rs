@@ -15,7 +15,7 @@ use crate::capability::{
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::jit::ExecOutcome;
 use crate::falcon::machine::Machine as FalconMachine;
-use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
+use crate::falcon::machine::types::MemWidth;
 use crate::falcon::memory::Bus;
 use crate::falcon::pipeline::PipelineSimState;
 use crate::host::Console;
@@ -506,150 +506,68 @@ impl Machine for RiscV32Machine {
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
 
-/// Two banks: the integer file every RV32 program uses, and the float file the
-/// F extension adds. Both are 32 registers of 32 bits, but nothing outside this
-/// module needs to know that.
-static BANKS: [RegisterBank; 2] = [
-    RegisterBank {
-        prefix: "x",
-        label: "Integer",
-        count: 32,
-        bits: 32,
-    },
-    RegisterBank {
-        prefix: "f",
-        label: "Float",
-        count: 32,
-        bits: 32,
-    },
-];
-
-const INTEGER_BANK: usize = 0;
-const FLOAT_BANK: usize = 1;
-
-/// RISC-V calling-convention names, indexed by register number.
-const INTEGER_ALIASES: [&str; 32] = [
-    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
-    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
-    "t5", "t6",
-];
-
-const FLOAT_ALIASES: [&str; 32] = [
-    "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fa0", "fa1", "fa2",
-    "fa3", "fa4", "fa5", "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7", "fs8", "fs9",
-    "fs10", "fs11", "ft8", "ft9", "ft10", "ft11",
-];
-
+/// Registers delegate wholesale to the runtime: the same banks, aliases and
+/// journaled writes a host sees when it drives the [`FalconMachine`] directly.
 impl RegisterFile for RiscV32Machine {
     fn banks(&self) -> &[RegisterBank] {
-        &BANKS
+        self.machine.banks()
     }
 
     fn read(&self, id: RegisterId) -> Option<u64> {
-        let index = u8::try_from(id.index).ok()?;
-        match id.bank {
-            INTEGER_BANK if id.index < 32 => Some(u64::from(self.cpu().read(index))),
-            FLOAT_BANK if id.index < 32 => Some(u64::from(self.cpu().fread_bits(index))),
-            _ => None,
-        }
+        self.machine.read(id)
     }
 
     fn write(&mut self, id: RegisterId, value: u64) -> Result<(), MachineError> {
-        let value = u32::try_from(value)
-            .map_err(|_| MachineError::new("register value exceeds 32 bits"))?;
-        let index =
-            u8::try_from(id.index).map_err(|_| MachineError::new("no such RV32 register"))?;
-        // Journaled, so a host's step-back undoes an edit the same way it
-        // undoes an instruction. `write_reg` is also where x0's immutability
-        // is enforced, so this cannot drift from the runtime's own rule.
-        match id.bank {
-            INTEGER_BANK if id.index < 32 => {
-                let target = RegId::new(index)
-                    .map(RegTarget::X)
-                    .ok_or_else(|| MachineError::new("no such RV32 register"))?;
-                self.machine
-                    .write_reg(target, value)
-                    .map_err(|e| MachineError::new(e.to_string()))
-            }
-            FLOAT_BANK if id.index < 32 => {
-                let freg = FRegId::new(index)
-                    .ok_or_else(|| MachineError::new("no such RV32 register"))?;
-                self.machine.write_freg(freg, value);
-                Ok(())
-            }
-            _ => Err(MachineError::new("no such RV32 register")),
-        }
+        self.machine.write(id, value)
     }
 
     fn program_counter(&self) -> u64 {
-        u64::from(self.cpu().pc)
+        self.machine.program_counter()
     }
 
     fn set_program_counter(&mut self, value: u64) -> Result<(), MachineError> {
-        let pc = u32::try_from(value).map_err(|_| MachineError::new("PC exceeds RV32"))?;
-        self.machine
-            .write_reg(RegTarget::Pc, pc)
-            .map_err(|e| MachineError::new(e.to_string()))
+        self.machine.set_program_counter(value)
     }
 
     fn alias(&self, id: RegisterId) -> Option<&'static str> {
-        match id.bank {
-            INTEGER_BANK => INTEGER_ALIASES.get(id.index).copied(),
-            FLOAT_BANK => FLOAT_ALIASES.get(id.index).copied(),
-            _ => None,
-        }
+        self.machine.alias(id)
     }
 
-    /// Delegates to the assembler's parser so the Run tab accepts exactly the
-    /// names a source file may use — including `fp` for `x8`, which is an alias
-    /// the generated list does not carry.
     fn resolve(&self, name: &str) -> Option<RegisterId> {
-        if let Some(index) = crate::falcon::asm::utils::parse_reg(name) {
-            return Some(RegisterId::new(INTEGER_BANK, usize::from(index)));
-        }
-        crate::falcon::asm::utils::parse_freg(name)
-            .map(|index| RegisterId::new(FLOAT_BANK, usize::from(index)))
+        self.machine.resolve(name)
     }
 }
 
 impl MemoryInspect for RiscV32Machine {
+    /// The size the machine was built with, which is authoritative even before
+    /// an image is loaded.
     fn size(&self) -> u64 {
         self.memory_size as u64
     }
 
-    /// Reads through `effective_read8`, so a byte still sitting dirty in a
-    /// cache line shows its real value rather than the stale one in RAM.
     fn peek(&self, address: u64, bytes: usize) -> Vec<u8> {
-        let Ok(start) = u32::try_from(address) else {
-            return Vec::new();
-        };
-        (0..bytes)
-            .map_while(|offset| {
-                let at = start.checked_add(u32::try_from(offset).ok()?)?;
-                self.mem().effective_read8(at).ok()
-            })
-            .collect()
+        self.machine.peek(address, bytes)
     }
 
     fn poke(&mut self, address: u64, bytes: &[u8]) -> Result<(), MachineError> {
         self.write_memory(address, bytes)
     }
 
-    /// Data comes from the loaded image, the heap from the program break, and
-    /// the stack from the pointer — clamped to the last readable byte, because
-    /// RV32 starts `sp` one past the top of RAM to mean "empty".
+    /// Same heap and stack the runtime reports, but `.data` comes from the
+    /// loaded image rather than standing in the PC for it — this adapter is the
+    /// layer that keeps the image around.
     fn regions(&self) -> Vec<MemoryRegion> {
-        let top = self.size().saturating_sub(1);
+        let top = MemoryInspect::size(self).saturating_sub(1);
+        let mut regions = self.machine.regions();
         let data = self
             .image
             .as_ref()
             .and_then(|image| image.data_segment())
             .map_or_else(|| u64::from(self.cpu().pc), |segment| segment.address);
-        vec![
-            MemoryRegion::new("Data", data.min(top)),
-            MemoryRegion::new("Heap", u64::from(self.cpu().heap_break).min(top)),
-            MemoryRegion::new("Stack", u64::from(self.cpu().read(2)).min(top)),
-        ]
+        if let Some(first) = regions.first_mut() {
+            *first = MemoryRegion::new("Data", data.min(top));
+        }
+        regions
     }
 }
 

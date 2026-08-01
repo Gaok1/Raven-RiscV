@@ -151,7 +151,7 @@ fn target_console(term: Rect, app: &App) -> Option<Rect> {
 
 fn setup_show_registers(app: &mut App) {
     app.run.show_registers = true;
-    app.run.show_float_regs = false;
+    app.run.reg_bank = 0;
 }
 
 fn setup_show_ram(app: &mut App) {

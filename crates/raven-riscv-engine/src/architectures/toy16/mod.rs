@@ -498,12 +498,7 @@ impl Machine for Toy16Machine {
 // two-byte instructions instead of four, and no calling convention at all. If
 // anything here needs a special case in a host, the surface leaked RISC-V.
 
-static BANKS: [RegisterBank; 1] = [RegisterBank {
-    prefix: "r",
-    label: "Registers",
-    count: 8,
-    bits: 16,
-}];
+static BANKS: [RegisterBank; 1] = [RegisterBank::integer("r", "Registers", 8, 16)];
 
 impl RegisterFile for Toy16Machine {
     fn banks(&self) -> &[RegisterBank] {

@@ -7,6 +7,19 @@
 
 use crate::MachineError;
 
+/// How a bank's raw bits should be read back to a person.
+///
+/// A register pane cannot infer this: the same 32 bits are a count in one bank
+/// and a float in the next, and only the backend knows which.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RegisterFormat {
+    /// Plain integer — hex, or signed/unsigned decimal at the host's choosing.
+    #[default]
+    Integer,
+    /// IEEE-754 bits, to be shown as a decimal number.
+    Float,
+}
+
 /// One group of registers that share a width and a naming scheme.
 ///
 /// Toy16 has a single bank of 8 sixteen-bit registers; RV32 has two banks of 32
@@ -19,6 +32,22 @@ pub struct RegisterBank {
     pub label: &'static str,
     pub count: usize,
     pub bits: u8,
+    /// How to render this bank's values. Defaults to [`RegisterFormat::Integer`]
+    /// via [`RegisterBank::integer`].
+    pub format: RegisterFormat,
+}
+
+impl RegisterBank {
+    /// The common case: a bank of plain integers.
+    pub const fn integer(prefix: &'static str, label: &'static str, count: usize, bits: u8) -> Self {
+        Self {
+            prefix,
+            label,
+            count,
+            bits,
+            format: RegisterFormat::Integer,
+        }
+    }
 }
 
 impl RegisterBank {
@@ -26,6 +55,36 @@ impl RegisterBank {
     pub fn hex_width(&self) -> usize {
         usize::from(self.bits).div_ceil(4)
     }
+}
+
+impl RegisterEntry {
+    /// The value rendered the way its bank asks for — the decimal a float bank
+    /// means, or `None` for an integer bank, which the host formats with its own
+    /// hex/signed/unsigned setting.
+    pub fn formatted(&self, format: RegisterFormat) -> Option<String> {
+        match format {
+            RegisterFormat::Integer => None,
+            RegisterFormat::Float => Some(format_float(self.value, self.bits)),
+        }
+    }
+}
+
+/// IEEE-754 bits as a readable decimal. Non-finite values get a short label
+/// rather than Rust's `inf`/`NaN` spelling, which reads as a bug in a register
+/// pane.
+fn format_float(value: u64, bits: u8) -> String {
+    let float = if bits <= 32 {
+        f64::from(f32::from_bits(value as u32))
+    } else {
+        f64::from_bits(value)
+    };
+    if float.is_nan() {
+        return "NaN".to_string();
+    }
+    if float.is_infinite() {
+        return if float.is_sign_positive() { "+Inf" } else { "-Inf" }.to_string();
+    }
+    format!("{float:.6}")
 }
 
 /// Identifies one register: which bank, and which index inside it.

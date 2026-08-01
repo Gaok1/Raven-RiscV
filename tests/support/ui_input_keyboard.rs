@@ -249,7 +249,7 @@ fn run_float_register_view_p_key_does_not_toggle_integer_pins() {
     app.tab = Tab::Run;
     app.mode = EditorMode::Command;
     app.run.show_registers = true;
-    app.run.show_float_regs = true;
+    app.run.reg_bank = 1;
     app.run.reg_cursor = 2;
     app.run.pinned_regs.push(7);
 

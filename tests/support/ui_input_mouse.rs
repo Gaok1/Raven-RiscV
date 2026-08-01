@@ -173,7 +173,7 @@ fn run_float_register_view_click_does_not_toggle_integer_pins() {
     let mut app = App::new(None);
     app.tab = Tab::Run;
     app.run.show_registers = true;
-    app.run.show_float_regs = true;
+    app.run.reg_bank = 1;
     app.run.pinned_regs.push(3);
     let area = Rect::new(0, 0, 160, 40);
     let cols = run_cols(&app, area);

@@ -49,6 +49,14 @@ use super::{
     input::{handle_key, handle_mouse},
     view::ui,
 };
+use raven_riscv_engine::capability::{
+    CacheHierarchy, InstructionCodec, MemoryInspect, PipelineInspect, RegisterBank, RegisterEntry,
+    RegisterFile, RegisterId,
+};
+
+/// Register age meaning "not changed recently", so the sidebar draws it plain.
+pub(crate) const NO_REG_AGE: u8 = 255;
+
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::machine::parse::{CellFormat, parse_cell};
 use crate::falcon::machine::types::{MemWidth, RegTarget};
@@ -372,7 +380,7 @@ impl App {
                 show_dyn: false,
                 dyn_mem_access: None,
                 hover_reg_row: None,
-                show_float_regs: false,
+                reg_bank: 0,
                 prev_f: [0u32; 32],
                 f_age: [255u8; 32],
                 f_last_write_pc: [None; 32],
@@ -578,13 +586,126 @@ impl App {
         self.machine.as_ref().map(|machine| machine.snapshot())
     }
 
-    pub(crate) fn cache_hierarchy(
-        &self,
-    ) -> Option<&dyn raven_riscv_engine::capability::CacheHierarchy> {
+    // ── Capability accessors ─────────────────────────────────────────────
+    //
+    // The one way the view layer reaches backend state. Each answers for the
+    // active architecture whichever runtime it happens to live in, so a view
+    // never asks *which* backend it is drawing — it asks what the backend can
+    // do, and draws that. `None` means "this architecture does not offer it";
+    // the caller shows one pane fewer.
+
+    pub(crate) fn registers(&self) -> Option<&dyn RegisterFile> {
+        match self.machine.as_deref() {
+            Some(machine) => machine.registers(),
+            None => Some(self.run.machine()),
+        }
+    }
+
+    pub(crate) fn registers_mut(&mut self) -> Option<&mut dyn RegisterFile> {
+        match self.machine.as_deref_mut() {
+            Some(machine) => machine.registers_mut(),
+            None => Some(self.run.machine_mut()),
+        }
+    }
+
+    pub(crate) fn memory(&self) -> Option<&dyn MemoryInspect> {
+        match self.machine.as_deref() {
+            Some(machine) => machine.memory(),
+            None => Some(self.run.machine()),
+        }
+    }
+
+    pub(crate) fn memory_mut(&mut self) -> Option<&mut dyn MemoryInspect> {
+        match self.machine.as_deref_mut() {
+            Some(machine) => machine.memory_mut(),
+            None => Some(self.run.machine_mut()),
+        }
+    }
+
+    pub(crate) fn code(&self) -> Option<&dyn InstructionCodec> {
+        match self.machine.as_deref() {
+            Some(machine) => machine.code(),
+            None => Some(&raven_riscv_engine::architectures::riscv32::RiscV32Codec),
+        }
+    }
+
+    pub(crate) fn cache_hierarchy(&self) -> Option<&dyn CacheHierarchy> {
         match self.machine.as_deref() {
             Some(machine) => machine.caches(),
             None => Some(self.run.mem()),
         }
+    }
+
+    pub(crate) fn pipeline(&self) -> Option<&dyn PipelineInspect> {
+        match self.machine.as_deref() {
+            Some(machine) => machine.pipeline(),
+            None => Some(self.run.pipeline_inspect()),
+        }
+    }
+
+    /// The register bank the sidebar is showing, clamped to what this backend
+    /// actually has — so the "next bank" key is a no-op on a single-bank ISA
+    /// rather than a way to scroll into nothing.
+    pub(crate) fn visible_register_bank(&self) -> usize {
+        let banks = self.registers().map_or(0, |file| file.banks().len());
+        self.run.reg_bank.min(banks.saturating_sub(1))
+    }
+
+    /// Show the next register bank, wrapping. On a single-bank ISA this stays
+    /// put, which is why the key needs no per-architecture guard.
+    pub(crate) fn cycle_register_bank(&mut self) {
+        let banks = self.registers().map_or(0, |file| file.banks().len());
+        if banks > 1 {
+            self.run.reg_bank = (self.visible_register_bank() + 1) % banks;
+            self.run.regs_scroll = 0;
+        }
+    }
+
+    /// The banks this backend declares, empty when it has no register file.
+    pub(crate) fn register_banks(&self) -> Vec<RegisterBank> {
+        self.registers().map_or_else(Vec::new, |file| file.banks().to_vec())
+    }
+
+    /// Every register in the visible bank, in display order.
+    pub(crate) fn visible_register_entries(&self) -> Vec<RegisterEntry> {
+        let bank = self.visible_register_bank();
+        self.registers().map_or_else(Vec::new, |file| {
+            file.entries()
+                .into_iter()
+                .filter(|entry| entry.id.bank == bank)
+                .collect()
+        })
+    }
+
+    /// How many steps ago `id` last changed; `NO_REG_AGE` means "not recently",
+    /// which the sidebar draws unhighlighted.
+    ///
+    /// Only the RV32 runtime records this today, so other backends get a steady
+    /// pane rather than a wrong one.
+    pub(crate) fn register_age(&self, id: RegisterId) -> u8 {
+        if self.machine.is_some() {
+            return NO_REG_AGE;
+        }
+        let ages: &[u8; 32] = match id.bank {
+            0 => &self.run.reg_age,
+            1 => &self.run.f_age,
+            _ => return NO_REG_AGE,
+        };
+        ages.get(id.index).copied().unwrap_or(NO_REG_AGE)
+    }
+
+    /// The PC of the instruction that last wrote `id`, when the runtime tracks
+    /// it.
+    pub(crate) fn register_last_write(&self, id: RegisterId) -> Option<u64> {
+        if self.machine.is_some() || id.bank != 0 {
+            return None;
+        }
+        self.run
+            .reg_last_write_pc
+            .get(id.index)
+            .copied()
+            .flatten()
+            .map(u64::from)
     }
 
     /// Assemble the workspace for export ("save binary"), at the same base

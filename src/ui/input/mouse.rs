@@ -1737,7 +1737,9 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     if !app.run_sidebar_shows_registers() {
         return;
     }
-    if app.run.show_float_regs {
+    // Pinning and inline edits are wired to the integer bank; any other bank
+    // routes to the plain per-row hit-test.
+    if app.visible_register_bank() != 0 {
         handle_float_register_click(app, me, area);
         return;
     }

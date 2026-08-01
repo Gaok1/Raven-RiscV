@@ -2,11 +2,13 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell, List, ListItem, Paragraph, Row, Table};
 
-use super::formatting::{format_memory_value, format_stale_value, format_u32_value};
-use super::registers::reg_name;
+use super::formatting::{
+    format_memory_value, format_register_value, format_stale_value, format_u32_value,
+};
 use super::{App, MemRegion};
 use crate::falcon::machine::types::{RegId, RegTarget};
-use crate::ui::app::RunEditTarget;
+use crate::ui::app::{NO_REG_AGE, RunEditTarget};
+use raven_riscv_engine::capability::{RegisterEntry, RegisterId};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{SbGeom, vertical_scrollbar};
@@ -42,45 +44,45 @@ fn mem_edit_overlay(app: &App, addr: u32) -> Option<String> {
 }
 
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
-    if app.run.show_dyn {
-        // STORE → show where data was written; LOAD/ALU/branch → show registers
-        let show_mem = matches!(app.run.dyn_mem_access, Some((_, _, true)));
-        if show_mem {
-            render_memory_view(f, area, app);
-        } else if app.run.show_float_regs {
-            render_float_register_table(f, area, app);
-        } else {
-            render_register_table(f, area, app);
-        }
-    } else if app.run.show_registers {
-        if app.run.show_float_regs {
-            render_float_register_table(f, area, app);
-        } else {
-            render_register_table(f, area, app);
-        }
-    } else {
+    // STORE → show where data was written; LOAD/ALU/branch → show registers.
+    let dyn_shows_memory =
+        app.run.show_dyn && matches!(app.run.dyn_mem_access, Some((_, _, true)));
+    if dyn_shows_memory || !(app.run.show_dyn || app.run.show_registers) {
         render_memory_view(f, area, app);
+    } else if app.visible_register_bank() == 0 {
+        render_register_table(f, area, app);
+    } else {
+        render_secondary_bank_table(f, area, app);
     }
 }
 
 // ── Register table ────────────────────────────────────────────────────────────
 
+/// Number of rows the primary table holds: the PC, then every register in the
+/// visible bank.
+fn primary_row_count(app: &App) -> usize {
+    1 + app.visible_register_entries().len()
+}
+
 fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
     // Feature 8: show last write PC in title
-    let cursor_info = if app.run.reg_cursor >= 1 && app.run.reg_cursor <= 32 {
-        let reg = (app.run.reg_cursor - 1) as usize;
-        match app.run.reg_last_write_pc[reg] {
-            Some(pc) => format!("  [last write @ 0x{pc:08x}]"),
-            None => String::new(),
-        }
-    } else {
-        String::new()
+    let cursor_info = match cursor_register(app).and_then(|id| app.register_last_write(id)) {
+        Some(pc) => format!("  [last write @ 0x{pc:08x}]"),
+        None => String::new(),
     };
 
+    // The bank the [Tab] key moves to, named by the backend rather than
+    // assumed to be "float".
+    let banks = app.register_banks();
+    let next_bank = (banks.len() > 1)
+        .then(|| banks[(app.visible_register_bank() + 1) % banks.len()].label)
+        .unwrap_or("");
     let block = panel::panel_frame(PanelKind::Plain).title(if app.run.show_dyn {
         format!("Registers [Dyn]{cursor_info}")
+    } else if next_bank.is_empty() {
+        format!("Registers  [P]=pin{cursor_info}")
     } else {
-        format!("Registers  [P]=pin  [Tab]=float{cursor_info}")
+        format!("Registers  [P]=pin  [Tab]={next_bank}{cursor_info}")
     });
     let inner = block.inner(area);
     let rows = build_register_rows(inner, app);
@@ -89,7 +91,7 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
 
     // Draggable scrollbar over the regular (non-pinned) section; window math
     // mirrors `build_register_rows`.
-    let total = 33usize;
+    let total = primary_row_count(app);
     let visible = inner.height.saturating_sub(2) as usize;
     let pins = app.run.pinned_regs.len();
     let offset = if pins == 0 { 0 } else { pins + 1 };
@@ -112,8 +114,8 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
-    // Total list: 0=PC, 1..=32=x0..x31
-    let total = 33usize;
+    // Total list: row 0 = PC, then one row per register in the visible bank.
+    let total = primary_row_count(app);
     let visible = inner.height.saturating_sub(2) as usize;
     let pinned = &app.run.pinned_regs;
     let hover = app.run.hover_reg_row;
@@ -222,77 +224,109 @@ fn age_style(age: u8) -> Style {
     }
 }
 
-/// Returns (label, value, age).
-fn register_entry(index: usize, app: &App) -> (String, String, u8) {
-    if index == 0 {
-        let age = if app.run.cpu().pc != app.run.prev_pc {
-            0
-        } else {
-            255
-        };
-        let val = format_u32_value(app.run.cpu().pc, app.run.fmt_mode, app.run.show_signed);
-        ("PC".to_string(), val, age)
-    } else {
-        let reg_index = (index - 1) as u8;
-        let val = format_u32_value(
-            app.run.cpu().x[reg_index as usize],
+/// The register the row cursor is on, or `None` when it sits on the PC row.
+fn cursor_register(app: &App) -> Option<RegisterId> {
+    let index = app.run.reg_cursor.checked_sub(1)?;
+    app.visible_register_entries()
+        .get(index)
+        .map(|entry| entry.id)
+}
+
+/// One register drawn the way its bank asks: a float bank supplies its own
+/// decimal, an integer bank defers to the pane's hex/dec/bin setting.
+fn entry_value(app: &App, entry: &RegisterEntry) -> String {
+    let format = app
+        .register_banks()
+        .get(entry.id.bank)
+        .map(|bank| bank.format)
+        .unwrap_or_default();
+    entry.formatted(format).unwrap_or_else(|| {
+        format_register_value(
+            entry.value,
+            entry.bits,
             app.run.fmt_mode,
             app.run.show_signed,
-        );
-        (
-            format!("x{reg_index:02} ({})", reg_name(reg_index)),
-            val,
-            app.run.reg_age[reg_index as usize],
         )
+    })
+}
+
+/// `name (alias)` when the ISA has both, otherwise just the name — so RV32
+/// keeps `x10 (a0)` while a toy ISA shows a bare `r2`.
+fn entry_label(entry: &RegisterEntry) -> String {
+    match &entry.alias {
+        Some(alias) => format!("{} ({alias})", entry.name),
+        None => entry.name.clone(),
     }
 }
 
-/// Returns (label, value, age) for pinned register.
+/// Returns (label, value, age) for row `index`: 0 is the PC, the rest index the
+/// visible bank.
+fn register_entry(index: usize, app: &App) -> (String, String, u8) {
+    let Some(entry) = index
+        .checked_sub(1)
+        .and_then(|i| app.visible_register_entries().into_iter().nth(i))
+    else {
+        let pc = app.registers().map_or(0, |file| file.program_counter());
+        let age = if pc != u64::from(app.run.prev_pc) {
+            0
+        } else {
+            NO_REG_AGE
+        };
+        let bits = app.register_banks().first().map_or(32, |bank| bank.bits);
+        let val = format_register_value(pc, bits, app.run.fmt_mode, app.run.show_signed);
+        return ("PC".to_string(), val, age);
+    };
+    let age = app.register_age(entry.id);
+    (entry_label(&entry), entry_value(app, &entry), age)
+}
+
+/// Returns (label, value, age) for a pinned register.
 fn register_entry_reg(reg_idx: u8, app: &App) -> (String, String, u8) {
-    let val = format_u32_value(
-        app.run.cpu().x[reg_idx as usize],
-        app.run.fmt_mode,
-        app.run.show_signed,
-    );
-    (
-        format!("x{reg_idx:02} ({})", reg_name(reg_idx)),
-        val,
-        app.run.reg_age[reg_idx as usize],
-    )
+    let Some(entry) = app
+        .visible_register_entries()
+        .into_iter()
+        .nth(usize::from(reg_idx))
+    else {
+        return (format!("x{reg_idx:02}"), String::new(), NO_REG_AGE);
+    };
+    let age = app.register_age(entry.id);
+    (entry_label(&entry), entry_value(app, &entry), age)
 }
 
 // ── Float register table (RV32F) ──────────────────────────────────────────────
 
-fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
-    let block = panel::panel_frame(PanelKind::Plain).title("Float Regs (f0–f31)  [Tab]=int regs");
+/// Any bank other than the primary one, drawn as a plain scrolling list.
+///
+/// No pins and no PC row: those belong to the bank the ISA executes against.
+/// The heading is whatever the backend calls the bank, so this is the same code
+/// for RV32's float file as for a flag bank on an 8-bit ISA.
+fn render_secondary_bank_table(f: &mut Frame, area: Rect, app: &App) {
+    let banks = app.register_banks();
+    let bank_index = app.visible_register_bank();
+    let Some(bank) = banks.get(bank_index) else {
+        return;
+    };
+    let entries = app.visible_register_entries();
+    let total = entries.len();
+    let primary = banks.first().map_or("registers", |first| first.label);
+    let block = panel::panel_frame(PanelKind::Plain)
+        .title(format!("{} ({total})  [Tab]={primary}", bank.label));
     let inner = block.inner(area);
 
     let visible = inner.height.saturating_sub(2) as usize;
-    let scroll = app.run.regs_scroll.min(32usize.saturating_sub(visible));
+    let scroll = app.run.regs_scroll.min(total.saturating_sub(visible));
 
-    let rows: Vec<Row<'static>> = (0u8..32u8)
+    let rows: Vec<Row<'static>> = entries
+        .iter()
         .skip(scroll)
         .take(visible)
-        .map(|i| {
-            let age = app.run.f_age[i as usize];
-            let bits = app.run.cpu().f[i as usize];
-            let val = f32::from_bits(bits);
-            let label = format!("f{i:02} ({}) ", freg_name_short(i));
-            let value = if val.is_nan() {
-                "NaN".to_string()
-            } else if val.is_infinite() {
-                if val.is_sign_positive() {
-                    "+Inf".to_string()
-                } else {
-                    "-Inf".to_string()
-                }
-            } else {
-                format!("{val:.6}")
-            };
+        .map(|entry| {
+            let age = app.register_age(entry.id);
             let style = age_style(age);
-            let (value, value_style) = match freg_edit_overlay(app, i) {
+            let label = format!("{} ", entry_label(entry));
+            let (value, value_style) = match freg_edit_overlay(app, entry.id.index as u8) {
                 Some(overlay) => (overlay, edit_value_style()),
-                None => (value, style),
+                None => (entry_value(app, entry), style),
             };
             Row::new(vec![
                 Cell::from(label).style(style),
@@ -304,16 +338,16 @@ fn render_float_register_table(f: &mut Frame, area: Rect, app: &App) {
     let table = Table::new(rows, [Constraint::Length(13), Constraint::Min(0)]).block(block);
     f.render_widget(table, area);
 
-    // Draggable scrollbar (shares `regs_scroll` with the int register table).
-    if 32usize > visible && visible > 0 {
-        let max_scroll = 32usize - visible;
+    // Draggable scrollbar (shares `regs_scroll` with the primary table).
+    if total > visible && visible > 0 {
+        let max_scroll = total - visible;
         let sb_area = Rect::new(inner.x, inner.y, inner.width, visible as u16);
-        vertical_scrollbar(f, sb_area, 32, visible, scroll);
+        vertical_scrollbar(f, sb_area, total, visible, scroll);
         app.run.regs_sb.set(Some(SbGeom {
             start: sb_area.y,
             len: sb_area.height,
             cross: inner.x + inner.width.saturating_sub(1),
-            content: 32,
+            content: total,
             viewport: visible,
             offset: scroll,
             max: max_scroll,

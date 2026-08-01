@@ -231,6 +231,21 @@ impl RunState {
         base & align_mask
     }
 
+    /// The runtime seen through the engine's capability traits, which it
+    /// implements directly — this is what lets the view layer draw RV32's
+    /// registers and memory with the same code it uses for every other
+    /// architecture.
+    pub(crate) fn machine(&self) -> &Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState>
+    {
+        &self.machine
+    }
+
+    pub(crate) fn machine_mut(
+        &mut self,
+    ) -> &mut Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState> {
+        &mut self.machine
+    }
+
     /// Shared read access to the CPU. The `~117` `run.cpu` read sites borrow
     /// through here; mutation must go through a `Machine` method.
     pub(crate) fn cpu(&self) -> &Cpu {
@@ -452,9 +467,14 @@ pub(crate) struct RunState {
     /// Screen sub-view (so Esc doesn't get overridden on the next frame).
     pub(crate) screen_seen: bool,
 
-    // RV32F: float register sidebar
-    pub(crate) show_float_regs: bool, // toggle between int / float register view
-    pub(crate) prev_f: [u32; 32],     // previous float register values (for highlighting)
+    /// Which register bank the sidebar shows, as an index into the backend's
+    /// [`RegisterFile::banks`]. RV32 cycles integer → float; a single-bank ISA
+    /// stays on 0. Read it through `App::visible_register_bank`, which clamps it
+    /// to the active backend.
+    ///
+    /// [`RegisterFile::banks`]: raven_riscv_engine::capability::RegisterFile::banks
+    pub(crate) reg_bank: usize,
+    pub(crate) prev_f: [u32; 32], // previous float register values (for highlighting)
     pub(crate) f_age: [u8; 32],       // highlight age for float registers (0=just changed)
     pub(crate) f_last_write_pc: [Option<u32>; 32], // last instruction that wrote each f-reg
 

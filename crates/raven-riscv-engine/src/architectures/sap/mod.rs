@@ -482,18 +482,8 @@ impl Machine for SapMachine {
 }
 
 static BANKS: [RegisterBank; 2] = [
-    RegisterBank {
-        prefix: "",
-        label: "Registers",
-        count: 3,
-        bits: 8,
-    },
-    RegisterBank {
-        prefix: "",
-        label: "Flags",
-        count: 2,
-        bits: 1,
-    },
+    RegisterBank::integer("", "Registers", 3, 8),
+    RegisterBank::integer("", "Flags", 2, 1),
 ];
 
 impl RegisterFile for SapMachine {

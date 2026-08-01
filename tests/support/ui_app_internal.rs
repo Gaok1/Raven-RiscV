@@ -2139,7 +2139,7 @@ mod run_edit {
     #[test]
     fn commit_writes_float_register() {
         let mut app = loaded_app();
-        app.run.show_float_regs = true;
+        app.run.reg_bank = 1;
         app.begin_run_edit(RunEditTarget::FReg(FRegId::new(3).unwrap()));
         app.run.run_edit_buf = "1.5".to_string();
         app.commit_run_edit();
@@ -2357,6 +2357,52 @@ fn cycling_visits_every_registered_architecture() {
     // One more hop wraps back to where we started.
     app.cycle_architecture();
     assert_eq!(app.architecture_id(), expected[0]);
+}
+
+/// The view layer reaches backend state only through these, so every
+/// architecture must answer them — otherwise a pane silently draws nothing.
+#[test]
+fn capability_accessors_answer_for_every_backend() {
+    for id in crate::arch::registry().ids() {
+        let app =
+            App::new_with_architecture(Some(64 * 1024), crate::falcon::jit::BackendKind::None, id)
+                .unwrap();
+
+        let registers = app.registers().unwrap_or_else(|| panic!("{id}: registers"));
+        assert!(!registers.banks().is_empty(), "{id} declares no banks");
+        assert!(app.memory().is_some(), "{id}: memory");
+        assert!(app.code().is_some(), "{id}: code");
+
+        // The sidebar indexes the visible bank directly, so it must stay in
+        // range no matter how many banks the backend has.
+        assert!(app.visible_register_bank() < registers.banks().len());
+        assert_eq!(
+            app.visible_register_entries().len(),
+            registers.banks()[app.visible_register_bank()].count,
+            "{id}: visible entries do not match the bank"
+        );
+    }
+}
+
+/// Cycling wraps within the backend's own banks, and stays put when there is
+/// only one — the key needs no per-architecture guard.
+#[test]
+fn register_bank_cycling_stays_within_the_backend() {
+    for id in crate::arch::registry().ids() {
+        let mut app =
+            App::new_with_architecture(Some(64 * 1024), crate::falcon::jit::BackendKind::None, id)
+                .unwrap();
+        let banks = app.register_banks().len();
+
+        for _ in 0..banks {
+            app.cycle_register_bank();
+        }
+        assert_eq!(
+            app.visible_register_bank(),
+            0,
+            "{id}: a full cycle should return to the first bank"
+        );
+    }
 }
 
 #[test]

@@ -78,4 +78,6 @@ pub use pipeline::{
     PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell, PipelineTimelineRow,
     PipelineTimelineState, PipelineTraceKind, PipelineTraceView, PipelineUnitView,
 };
-pub use registers::{RegisterBank, RegisterEntry, RegisterFile, RegisterId};
+pub use registers::{
+    RegisterBank, RegisterEntry, RegisterFile, RegisterFormat, RegisterId,
+};
