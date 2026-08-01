@@ -392,3 +392,198 @@ fn tgkill_with_harmless_signal_is_a_noop() {
     assert_eq!(cpu.read(10), 0);
     assert!(cpu.exit_code.is_none());
 }
+
+// ── File simulation (openat/read/write/close/lseek/fstat/unlinkat/mkdirat) ──
+
+fn scratch_root(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "raven_fs_test_{name}_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn write_cstr(mem: &mut Ram, addr: u32, s: &str) {
+    for (i, b) in s.bytes().enumerate() {
+        mem.store8(addr + i as u32, b).unwrap();
+    }
+    mem.store8(addr + s.len() as u32, 0).unwrap();
+}
+
+const O_WRONLY: u32 = 0o1;
+const O_RDWR: u32 = 0o2;
+const O_CREAT: u32 = 0o100;
+const O_TRUNC: u32 = 0o1000;
+
+#[test]
+fn openat_write_read_close_roundtrip() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+    console.filesystem.set_root(scratch_root("roundtrip"));
+
+    let path_addr = 0x100;
+    write_cstr(&mut mem, path_addr, "hello.txt");
+
+    // openat(AT_FDCWD, "hello.txt", O_CREAT|O_WRONLY|O_TRUNC, 0644)
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, path_addr);
+    cpu.write(12, O_CREAT | O_WRONLY | O_TRUNC);
+    cpu.write(13, 0o644);
+    assert!(handle_syscall(56, &mut cpu, &mut mem, &mut console).unwrap());
+    let fd = cpu.read(10) as i32;
+    assert!(fd >= 3, "expected a real fd, got {fd}");
+
+    // write(fd, "hi", 2)
+    let data_addr = 0x200;
+    write_cstr(&mut mem, data_addr, "hi");
+    cpu.write(10, fd as u32);
+    cpu.write(11, data_addr);
+    cpu.write(12, 2);
+    assert!(handle_syscall(64, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 2);
+
+    // close(fd)
+    cpu.write(10, fd as u32);
+    assert!(handle_syscall(57, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 0);
+
+    // openat again, read-only this time
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, path_addr);
+    cpu.write(12, 0); // O_RDONLY
+    cpu.write(13, 0);
+    assert!(handle_syscall(56, &mut cpu, &mut mem, &mut console).unwrap());
+    let fd2 = cpu.read(10) as i32;
+    assert!(fd2 >= 3);
+
+    let read_addr = 0x300;
+    cpu.write(10, fd2 as u32);
+    cpu.write(11, read_addr);
+    cpu.write(12, 16);
+    assert!(handle_syscall(63, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 2);
+    assert_eq!(mem.load8(read_addr).unwrap(), b'h');
+    assert_eq!(mem.load8(read_addr + 1).unwrap(), b'i');
+}
+
+#[test]
+fn openat_rejects_path_traversal_above_root() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+    console.filesystem.set_root(scratch_root("traversal"));
+
+    let path_addr = 0x100;
+    write_cstr(&mut mem, path_addr, "../../../etc/passwd");
+
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, path_addr);
+    cpu.write(12, O_RDWR);
+    cpu.write(13, 0);
+    assert!(handle_syscall(56, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10) as i32, -13); // -EACCES: blocked at the root
+}
+
+#[test]
+fn fstat_reports_real_file_size() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+    console.filesystem.set_root(scratch_root("fstat"));
+
+    let path_addr = 0x100;
+    write_cstr(&mut mem, path_addr, "sized.txt");
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, path_addr);
+    cpu.write(12, O_CREAT | O_WRONLY);
+    cpu.write(13, 0o644);
+    assert!(handle_syscall(56, &mut cpu, &mut mem, &mut console).unwrap());
+    let fd = cpu.read(10) as i32;
+
+    let data_addr = 0x200;
+    write_cstr(&mut mem, data_addr, "abcd");
+    cpu.write(10, fd as u32);
+    cpu.write(11, data_addr);
+    cpu.write(12, 4);
+    assert!(handle_syscall(64, &mut cpu, &mut mem, &mut console).unwrap());
+
+    let stat_addr = 0x300;
+    cpu.write(10, fd as u32);
+    cpu.write(11, stat_addr);
+    assert!(handle_syscall(80, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 0);
+    let size = mem.user_load32(stat_addr + 48).unwrap();
+    assert_eq!(size, 4);
+    let mode = mem.user_load32(stat_addr + 16).unwrap();
+    assert_eq!(mode & 0o170000, 0o100000); // S_IFREG
+}
+
+#[test]
+fn mkdirat_then_unlinkat_roundtrip() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+    let root = scratch_root("mkdir_unlink");
+    console.filesystem.set_root(root.clone());
+
+    // mkdirat(AT_FDCWD, "sub", 0755)
+    let path_addr = 0x100;
+    write_cstr(&mut mem, path_addr, "sub");
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, path_addr);
+    cpu.write(12, 0o755);
+    assert!(handle_syscall(34, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 0);
+    assert!(root.join("sub").is_dir());
+
+    // faccessat(AT_FDCWD, "sub", F_OK, 0) -> exists
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, path_addr);
+    cpu.write(12, 0);
+    cpu.write(13, 0);
+    assert!(handle_syscall(48, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 0);
+
+    // a plain file to unlink
+    let file_addr = 0x200;
+    write_cstr(&mut mem, file_addr, "todelete.txt");
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, file_addr);
+    cpu.write(12, O_CREAT | O_WRONLY);
+    cpu.write(13, 0o644);
+    assert!(handle_syscall(56, &mut cpu, &mut mem, &mut console).unwrap());
+    let fd = cpu.read(10) as i32;
+    cpu.write(10, fd as u32);
+    assert!(handle_syscall(57, &mut cpu, &mut mem, &mut console).unwrap()); // close
+    assert!(root.join("todelete.txt").is_file());
+
+    // unlinkat(AT_FDCWD, "todelete.txt", 0)
+    cpu.write(10, (-100i32) as u32);
+    cpu.write(11, file_addr);
+    cpu.write(12, 0);
+    assert!(handle_syscall(35, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 0);
+    assert!(!root.join("todelete.txt").exists());
+}
+
+#[test]
+fn getcwd_reports_sandbox_root_as_slash() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+    console.filesystem.set_root(scratch_root("getcwd"));
+
+    let buf_addr = 0x100;
+    cpu.write(10, buf_addr);
+    cpu.write(11, 64);
+    assert!(handle_syscall(17, &mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.read(10), 2); // "/" + NUL
+    assert_eq!(mem.load8(buf_addr).unwrap(), b'/');
+    assert_eq!(mem.load8(buf_addr + 1).unwrap(), 0);
+}

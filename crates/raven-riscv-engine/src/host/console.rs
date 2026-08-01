@@ -52,6 +52,9 @@ pub struct Console {
     pub screen_target: crate::ui::screen::ScreenTarget,
     /// One-shot guard so "draw before screen_init" warns once, not per frame.
     pub screen_uninit_warned: bool,
+    /// Real filesystem access for guest syscalls (`openat`/`read`/`write`/...),
+    /// sandboxed to a root directory (defaults to the process's cwd).
+    pub filesystem: crate::host::fs_sim::FileSim,
 }
 
 impl Console {

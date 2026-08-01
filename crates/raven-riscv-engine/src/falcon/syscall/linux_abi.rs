@@ -3,19 +3,33 @@
 //! `a7` = syscall number, `a0..a5` = args, `a0` = return value (negative
 //! values mean `-errno`, represented as `u32`).
 //!
-//! Raven has no real filesystem, process tree, signal delivery, or thread
-//! scheduler, so most syscalls here are either genuinely emulated (read,
-//! write, brk, mmap, clock_gettime, ...) or deliberate no-ops that return a
-//! plausible success/errno so well-behaved libc startup code (musl/glibc)
-//! doesn't trip over a missing feature. Anything not listed in this module
-//! falls through to the dispatcher's ENOSYS default in `syscall.rs` — it
-//! never aborts the run.
+//! Raven has no real process tree, signal delivery, or thread scheduler, so
+//! most non-file syscalls here are deliberate no-ops that return a plausible
+//! success/errno so well-behaved libc startup code (musl/glibc) doesn't trip
+//! over a missing feature. Filesystem syscalls (openat/read/write/close/
+//! lseek/fstat/unlinkat/mkdirat/faccessat/getcwd) are real: they operate on
+//! actual host files through [`crate::host::fs_sim::FileSim`], sandboxed to
+//! a root directory (like a chroot) so a guest program can only touch files
+//! inside it. Anything not listed in this module falls through to the
+//! dispatcher's ENOSYS default in `syscall.rs` — it never aborts the run.
 
 use super::abi::{SyscallAbi, SyscallCtx};
 use super::errno::*;
-use super::helpers::{console_write_bytes, console_write_bytes_colored};
+use super::helpers::{console_write_bytes, console_write_bytes_colored, read_zstr};
 use crate::falcon::{errors::FalconError, memory::Bus, registers::Cpu};
+use crate::host::fs_sim::FsError;
 use crate::ui::Console;
+
+fn fs_errno(e: FsError) -> u32 {
+    match e {
+        FsError::NotFound => LINUX_ENOENT,
+        FsError::PermissionDenied => LINUX_EACCES,
+        FsError::IsADirectory => LINUX_EISDIR,
+        FsError::AlreadyExists => LINUX_EEXIST,
+        FsError::InvalidFd => LINUX_EBADF,
+        FsError::Io => LINUX_EIO,
+    }
+}
 
 const SYS_GETCWD: u32 = 17;
 const SYS_DUP: u32 = 23;
@@ -212,28 +226,41 @@ impl<B: Bus> SyscallAbi<B> for LinuxAbi {
             SYS_UNAME => linux_uname(cpu, mem),
 
             // --- File descriptor / filesystem subset ---
-            // Raven has no real filesystem; fd 0/1/2 are the console, and any
-            // "open a file" syscall fails cleanly with ENOENT so the caller's
-            // normal error path runs instead of the emulator crashing.
+            // Real host files, sandboxed to a root directory (see
+            // crate::host::fs_sim::FileSim) — fd 0/1/2 stay the console.
+            SYS_OPENAT => linux_openat(cpu, mem, console),
             SYS_CLOSE => {
-                cpu.write(10, 0);
-                Ok(true)
-            }
-            SYS_DUP | SYS_DUP3 => {
-                // No fd table: echo the requested fd back as "the same fd".
-                cpu.write(10, cpu.read(10));
-                Ok(true)
-            }
-            SYS_LSEEK => {
-                let fd = cpu.read(10);
-                if (0..=2).contains(&fd) {
-                    cpu.write(10, LINUX_ESPIPE);
+                let fd = cpu.read(10) as i32;
+                if (0..=2).contains(&fd) || console.filesystem.close(fd) {
+                    cpu.write(10, 0);
                 } else {
                     cpu.write(10, LINUX_EBADF);
                 }
                 Ok(true)
             }
-            SYS_FSTAT => linux_fstat(cpu, mem),
+            SYS_DUP | SYS_DUP3 => {
+                // No fd table beyond FileSim's own: echo the requested fd
+                // back as "the same fd" (real files keep working through
+                // their original fd; this only breaks a program that
+                // expects dup'd fds to have independent seek positions).
+                cpu.write(10, cpu.read(10));
+                Ok(true)
+            }
+            SYS_LSEEK => {
+                let fd = cpu.read(10) as i32;
+                let offset = cpu.read(11) as i32 as i64;
+                let whence = cpu.read(12);
+                if (0..=2).contains(&fd) {
+                    cpu.write(10, LINUX_ESPIPE);
+                } else {
+                    match console.filesystem.seek(fd, offset, whence) {
+                        Ok(pos) => cpu.write(10, pos as u32),
+                        Err(e) => cpu.write(10, fs_errno(e)),
+                    }
+                }
+                Ok(true)
+            }
+            SYS_FSTAT => linux_fstat(cpu, mem, console),
             SYS_IOCTL => {
                 let fd = cpu.read(10);
                 cpu.write(
@@ -251,9 +278,26 @@ impl<B: Bus> SyscallAbi<B> for LinuxAbi {
                 cpu.write(10, 0);
                 Ok(true)
             }
-            SYS_OPENAT | SYS_READLINKAT | SYS_FACCESSAT | SYS_UNLINKAT | SYS_MKDIRAT
-            | SYS_GETCWD => {
-                cpu.write(10, LINUX_ENOENT);
+            SYS_FACCESSAT => linux_faccessat(cpu, mem, console),
+            SYS_UNLINKAT => linux_unlinkat(cpu, mem, console),
+            SYS_MKDIRAT => linux_mkdirat(cpu, mem, console),
+            SYS_GETCWD => {
+                // The guest's cwd is always the fs-sim root, presented as "/".
+                let buf = cpu.read(10);
+                let size = cpu.read(11) as usize;
+                if size < 2 {
+                    cpu.write(10, LINUX_EINVAL);
+                } else if mem.store8(buf, b'/').is_err() || mem.store8(buf + 1, 0).is_err() {
+                    cpu.write(10, LINUX_EFAULT);
+                } else {
+                    cpu.write(10, 2); // bytes written, including NUL (raw syscall convention)
+                }
+                Ok(true)
+            }
+            SYS_READLINKAT => {
+                // No symlinks modeled: EINVAL is the correct errno for
+                // "path exists but is not a symbolic link".
+                cpu.write(10, LINUX_EINVAL);
                 Ok(true)
             }
 
@@ -301,14 +345,12 @@ fn linux_read<B: Bus>(
     mem: &mut B,
     console: &mut Console,
 ) -> Result<bool, FalconError> {
-    let fd = cpu.read(10);
+    let fd = cpu.read(10) as i32;
     let buf = cpu.read(11);
     let count = cpu.read(12) as usize;
 
     if fd != 0 {
-        cpu.write(10, LINUX_EBADF);
-        console.push_error(format!("read: unsupported fd {fd} (only fd=0 supported)"));
-        return Ok(true);
+        return linux_read_file(cpu, mem, console, fd, buf, count);
     }
     if count == 0 {
         cpu.write(10, 0);
@@ -342,21 +384,47 @@ fn linux_read<B: Bus>(
     Ok(true)
 }
 
+/// `read()` against a real fs-sim file (any fd other than stdin).
+fn linux_read_file<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+    fd: i32,
+    buf: u32,
+    count: usize,
+) -> Result<bool, FalconError> {
+    if count == 0 {
+        cpu.write(10, 0);
+        return Ok(true);
+    }
+    let mut tmp = vec![0u8; count];
+    match console.filesystem.read(fd, &mut tmp) {
+        Ok(n) => {
+            for (i, &b) in tmp[..n].iter().enumerate() {
+                if let Err(e) = mem.store8(buf.wrapping_add(i as u32), b) {
+                    cpu.write(10, LINUX_EFAULT);
+                    console.push_error(format!("read: {e}"));
+                    return Ok(true);
+                }
+            }
+            cpu.write(10, n as u32);
+        }
+        Err(e) => cpu.write(10, fs_errno(e)),
+    }
+    Ok(true)
+}
+
 fn linux_write<B: Bus>(
     cpu: &mut Cpu,
     mem: &mut B,
     console: &mut Console,
 ) -> Result<bool, FalconError> {
-    let fd = cpu.read(10);
+    let fd = cpu.read(10) as i32;
     let buf = cpu.read(11);
     let count = cpu.read(12) as usize;
 
     if fd != 1 && fd != 2 {
-        cpu.write(10, LINUX_EBADF);
-        console.push_error(format!(
-            "write: unsupported fd {fd} (only fd=1/2 supported)"
-        ));
-        return Ok(true);
+        return linux_write_file(cpu, mem, console, fd, buf, count);
     }
     if count == 0 {
         cpu.write(10, 0);
@@ -383,6 +451,37 @@ fn linux_write<B: Bus>(
         console_write_bytes(console, &bytes);
     }
     cpu.write(10, count as u32);
+    Ok(true)
+}
+
+/// `write()` against a real fs-sim file (any fd other than stdout/stderr).
+fn linux_write_file<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+    fd: i32,
+    buf: u32,
+    count: usize,
+) -> Result<bool, FalconError> {
+    if count == 0 {
+        cpu.write(10, 0);
+        return Ok(true);
+    }
+    let mut bytes = Vec::with_capacity(count);
+    for i in 0..count {
+        match mem.user_load8(buf.wrapping_add(i as u32)) {
+            Ok(b) => bytes.push(b),
+            Err(e) => {
+                cpu.write(10, LINUX_EFAULT);
+                console.push_error(format!("write: {e}"));
+                return Ok(true);
+            }
+        }
+    }
+    match console.filesystem.write(fd, &bytes) {
+        Ok(n) => cpu.write(10, n as u32),
+        Err(e) => cpu.write(10, fs_errno(e)),
+    }
     Ok(true)
 }
 
@@ -662,35 +761,118 @@ fn linux_uname<B: Bus>(cpu: &mut Cpu, mem: &mut B) -> Result<bool, FalconError> 
     Ok(true)
 }
 
-fn linux_fstat<B: Bus>(cpu: &mut Cpu, mem: &mut B) -> Result<bool, FalconError> {
+fn linux_fstat<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
     // fstat(fd=a0, stat_ptr=a1) -> 0 or -errno
-    // We only model fd 0/1/2 as character devices; everything else is EBADF.
-    // Layout matches the rv32 `struct stat` closely enough for callers that
-    // merely check `S_ISCHR(st_mode)` / non-error return, which is the
-    // common isatty()-style usage.
-    let fd = cpu.read(10);
-    if !(0..=2).contains(&fd) {
-        cpu.write(10, LINUX_EBADF);
-        return Ok(true);
-    }
-    let ptr = cpu.read(11);
-    const ST_MODE_OFFSET: u32 = 16; // st_mode field offset in rv32 struct stat
+    // Layout matches the rv32/rv64 generic `struct stat` (128 bytes,
+    // 8-byte-aligned 64-bit fields) closely enough for callers that check
+    // `S_ISCHR`/`S_ISREG`/`S_ISDIR` on st_mode and st_size for real files.
+    const ST_MODE_OFFSET: u32 = 16;
+    const ST_NLINK_OFFSET: u32 = 20;
+    const ST_SIZE_OFFSET: u32 = 48;
     const S_IFCHR: u32 = 0o020000;
-    // Zero the commonly-sized struct stat (128 bytes covers glibc/musl rv32 layouts).
+    const S_IFDIR: u32 = 0o040000;
+    const S_IFREG: u32 = 0o100000;
+
+    let fd = cpu.read(10) as i32;
+    let ptr = cpu.read(11);
+
+    let (mode, size) = if (0..=2).contains(&fd) {
+        (S_IFCHR | 0o666, 0u64)
+    } else {
+        match console.filesystem.stat_fd(fd) {
+            Ok(st) if st.is_dir => (S_IFDIR | 0o755, 0),
+            Ok(st) => (S_IFREG | 0o644, st.size),
+            Err(e) => {
+                cpu.write(10, fs_errno(e));
+                return Ok(true);
+            }
+        }
+    };
+
     for i in 0..128u32 {
         if mem.store8(ptr.wrapping_add(i), 0).is_err() {
             cpu.write(10, LINUX_EFAULT);
             return Ok(true);
         }
     }
-    if mem
-        .store32(ptr.wrapping_add(ST_MODE_OFFSET), S_IFCHR | 0o666)
-        .is_err()
-    {
+    let size_bytes = size.to_le_bytes();
+    let write_ok = mem.store32(ptr.wrapping_add(ST_MODE_OFFSET), mode).is_ok()
+        && mem.store32(ptr.wrapping_add(ST_NLINK_OFFSET), 1).is_ok()
+        && size_bytes.chunks(4).enumerate().all(|(i, chunk)| {
+            let word = u32::from_le_bytes(chunk.try_into().unwrap());
+            mem.store32(ptr.wrapping_add(ST_SIZE_OFFSET + i as u32 * 4), word)
+                .is_ok()
+        });
+    if !write_ok {
         cpu.write(10, LINUX_EFAULT);
         return Ok(true);
     }
     cpu.write(10, 0);
+    Ok(true)
+}
+
+fn linux_openat<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
+    let path = read_zstr(mem, cpu.read(11))?;
+    let path = String::from_utf8_lossy(&path).into_owned();
+    let flags = cpu.read(12);
+    match console.filesystem.open(&path, flags) {
+        Ok(fd) => cpu.write(10, fd as u32),
+        Err(e) => cpu.write(10, fs_errno(e)),
+    }
+    Ok(true)
+}
+
+fn linux_faccessat<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
+    let path = read_zstr(mem, cpu.read(11))?;
+    let path = String::from_utf8_lossy(&path);
+    cpu.write(
+        10,
+        if console.filesystem.exists(&path) {
+            0
+        } else {
+            LINUX_ENOENT
+        },
+    );
+    Ok(true)
+}
+
+fn linux_unlinkat<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
+    let path = read_zstr(mem, cpu.read(11))?;
+    let path = String::from_utf8_lossy(&path);
+    match console.filesystem.unlink(&path) {
+        Ok(()) => cpu.write(10, 0),
+        Err(e) => cpu.write(10, fs_errno(e)),
+    }
+    Ok(true)
+}
+
+fn linux_mkdirat<B: Bus>(
+    cpu: &mut Cpu,
+    mem: &mut B,
+    console: &mut Console,
+) -> Result<bool, FalconError> {
+    let path = read_zstr(mem, cpu.read(11))?;
+    let path = String::from_utf8_lossy(&path);
+    match console.filesystem.mkdir(&path) {
+        Ok(()) => cpu.write(10, 0),
+        Err(e) => cpu.write(10, fs_errno(e)),
+    }
     Ok(true)
 }
 

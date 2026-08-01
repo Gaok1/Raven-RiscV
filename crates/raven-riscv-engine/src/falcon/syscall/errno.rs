@@ -3,7 +3,10 @@
 pub const LINUX_ENOENT: u32 = (-2i32) as u32;
 pub const LINUX_EIO: u32 = (-5i32) as u32;
 pub const LINUX_EBADF: u32 = (-9i32) as u32;
+pub const LINUX_EACCES: u32 = (-13i32) as u32;
 pub const LINUX_ENOMEM: u32 = (-12i32) as u32;
+pub const LINUX_EEXIST: u32 = (-17i32) as u32;
+pub const LINUX_EISDIR: u32 = (-21i32) as u32;
 pub const LINUX_EFAULT: u32 = (-14i32) as u32;
 pub const LINUX_EINVAL: u32 = (-22i32) as u32;
 pub const LINUX_ENOTTY: u32 = (-25i32) as u32;
