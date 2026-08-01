@@ -314,27 +314,28 @@ anywhere on this page returns **`-ENOSYS`** in `a0` and execution continues
 normally, exactly like a real Linux kernel handling an unimplemented syscall.
 
 The syscalls below are recognized and handled explicitly, beyond the ones
-documented above. RAVEN has no real filesystem, process tree, signal
-delivery, or scheduler, so most of these are deliberate best-effort
-behaviors rather than full implementations — good enough for libc startup
-code and simple programs to proceed instead of getting stuck.
+documented above. RAVEN has no real process tree, signal delivery, or
+scheduler, so most non-file syscalls are deliberate best-effort behaviors
+rather than full implementations — good enough for libc startup code and
+simple programs to proceed instead of getting stuck. Filesystem syscalls,
+however, are real (see "Filesystem simulation" below).
 
 | Num | Name | Behavior |
 |-----|------|----------|
-| 17  | `getcwd` | `-ENOENT` (no filesystem) |
+| 17  | `getcwd` | writes `"/"` — the guest's cwd is always the fs-sim root |
 | 23  | `dup` | echoes the fd back unchanged (no fd table) |
 | 24  | `dup3` | same as `dup` |
 | 25  | `fcntl` | always succeeds (`0`), no fd flags tracked |
 | 29  | `ioctl` | `0` for fd 0/1/2 (console), `-ENOTTY` otherwise |
-| 34  | `mkdirat` | `-ENOENT` |
-| 35  | `unlinkat` | `-ENOENT` |
-| 48  | `faccessat` | `-ENOENT` |
-| 56  | `openat` | `-ENOENT` (no filesystem to open from) |
-| 57  | `close` | always succeeds (`0`) |
-| 62  | `lseek` | `-ESPIPE` for fd 0/1/2, `-EBADF` otherwise |
+| 34  | `mkdirat` | creates a real directory under the fs-sim root |
+| 35  | `unlinkat` | deletes a real file under the fs-sim root |
+| 48  | `faccessat` | `0` if the path exists under the fs-sim root, else `-ENOENT` |
+| 56  | `openat` | opens/creates a real file under the fs-sim root; returns a real fd (3+) |
+| 57  | `close` | closes a real fs-sim fd, or `0` for fd 0/1/2 |
+| 62  | `lseek` | seeks a real fs-sim file; `-ESPIPE` for fd 0/1/2 |
 | 65  | `readv` | scatter-read from stdin, same line-buffered model as `read` |
-| 78  | `readlinkat` | `-ENOENT` |
-| 80  | `fstat` | fills a minimal `struct stat` marking fd 0/1/2 as a char device; `-EBADF` otherwise |
+| 78  | `readlinkat` | `-EINVAL` (no symlinks modeled) |
+| 80  | `fstat` | real size/mode (`S_IFREG`/`S_IFDIR`) for fs-sim files; char-device stat for fd 0/1/2 |
 | 96  | `set_tid_address` | returns a synthetic tid (`hart_id + 1`) |
 | 98  | `futex` | always reports success immediately (no real waiters to synchronize — single-hart-per-address-space model) |
 | 99  | `set_robust_list` | no-op, returns `0` |
@@ -351,6 +352,21 @@ code and simple programs to proceed instead of getting stuck.
 | 226 | `mprotect` | no-op, returns `0` (no real page protection) |
 | 233 | `madvise` | no-op, returns `0` |
 | 261 | `prlimit64` | reports every limit as unlimited, returns `0` |
+
+### Filesystem simulation
+
+`openat`/`read`/`write`/`close`/`lseek`/`fstat`/`faccessat`/`unlinkat`/`mkdirat`/`getcwd`
+operate on **real host files**, not a fake in-memory filesystem. The guest's
+`/` maps onto a real directory on disk — the "fs-sim root", defaulting to the
+process's current working directory — the same way a chroot jail works: a
+guest program can genuinely create, read, write, stat and delete files, but
+every path it passes is resolved inside that root, and `..` can never walk
+above it (blocked with `-EACCES`, matching a real chroot). fd 0/1/2 are
+untouched (still the console); real files get fd 3 and up.
+
+There's no CLI/TUI flag to change the fs-sim root today; embedders of the
+engine crate can point it elsewhere via `Console::filesystem.set_root(path)`
+before running a program.
 
 ---
 
@@ -926,10 +942,14 @@ loop:
 
 | Code | POSIX name | Meaning in RAVEN |
 |------|-----------|-------------------|
-| `-5`  | `EIO`    | getrandom OS failure |
+| `-2`  | `ENOENT` | path doesn't exist under the fs-sim root |
+| `-5`  | `EIO`    | getrandom OS failure, or a real file I/O error |
 | `-9`  | `EBADF`  | unsupported fd |
 | `-12` | `ENOMEM` | heap exhausted (mmap) |
+| `-13` | `EACCES` | path resolution tried to walk above the fs-sim root |
 | `-14` | `EFAULT` | address out of bounds |
+| `-17` | `EEXIST` | `openat` with `O_CREAT\|O_EXCL`, or `mkdirat`, on an existing path |
+| `-21` | `EISDIR` | `unlinkat` on a directory |
 | `-22` | `EINVAL` | unsupported flags / bad arguments |
 | `-25` | `ENOTTY` | `ioctl` on a non-console fd |
 | `-29` | `ESPIPE` | `lseek` on a non-seekable fd (console) |

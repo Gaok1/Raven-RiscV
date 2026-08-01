@@ -304,28 +304,29 @@ continua normalmente, exatamente como um kernel Linux real faria com uma
 syscall não implementada.
 
 As syscalls abaixo são reconhecidas e tratadas explicitamente, além das já
-documentadas acima. O RAVEN não tem sistema de arquivos, árvore de processos,
-entrega de sinais ou escalonador reais, então a maioria destes são
-comportamentos de melhor esforço, não implementações completas — suficiente
-para o código de inicialização da libc e programas simples avançarem em vez
-de travar.
+documentadas acima. O RAVEN não tem árvore de processos, entrega de sinais
+ou escalonador reais, então a maioria das syscalls não-relacionadas a
+arquivo são comportamentos de melhor esforço, não implementações completas —
+suficiente para o código de inicialização da libc e programas simples
+avançarem em vez de travar. As syscalls de arquivo, porém, são reais (veja
+"Simulação de sistema de arquivos" abaixo).
 
 | Num | Nome | Comportamento |
 |-----|------|----------------|
-| 17  | `getcwd` | `-ENOENT` (sem sistema de arquivos) |
+| 17  | `getcwd` | escreve `"/"` — o cwd do guest é sempre a raiz do fs-sim |
 | 23  | `dup` | devolve o mesmo fd (sem tabela de fd) |
 | 24  | `dup3` | igual a `dup` |
 | 25  | `fcntl` | sempre sucesso (`0`), nenhuma flag de fd é rastreada |
 | 29  | `ioctl` | `0` para fd 0/1/2 (console), `-ENOTTY` nos demais |
-| 34  | `mkdirat` | `-ENOENT` |
-| 35  | `unlinkat` | `-ENOENT` |
-| 48  | `faccessat` | `-ENOENT` |
-| 56  | `openat` | `-ENOENT` (não há sistema de arquivos para abrir) |
-| 57  | `close` | sempre sucesso (`0`) |
-| 62  | `lseek` | `-ESPIPE` para fd 0/1/2, `-EBADF` nos demais |
+| 34  | `mkdirat` | cria um diretório real dentro da raiz do fs-sim |
+| 35  | `unlinkat` | apaga um arquivo real dentro da raiz do fs-sim |
+| 48  | `faccessat` | `0` se o caminho existir na raiz do fs-sim, senão `-ENOENT` |
+| 56  | `openat` | abre/cria um arquivo real dentro da raiz do fs-sim; retorna um fd real (3+) |
+| 57  | `close` | fecha um fd real do fs-sim, ou `0` para fd 0/1/2 |
+| 62  | `lseek` | reposiciona um arquivo real do fs-sim; `-ESPIPE` para fd 0/1/2 |
 | 65  | `readv` | leitura dispersa a partir do stdin, mesmo modelo por linha do `read` |
-| 78  | `readlinkat` | `-ENOENT` |
-| 80  | `fstat` | preenche um `struct stat` mínimo marcando fd 0/1/2 como dispositivo de caractere; `-EBADF` nos demais |
+| 78  | `readlinkat` | `-EINVAL` (sem symlinks modelados) |
+| 80  | `fstat` | tamanho/modo reais (`S_IFREG`/`S_IFDIR`) para arquivos do fs-sim; stat de dispositivo de caractere para fd 0/1/2 |
 | 96  | `set_tid_address` | retorna um tid sintético (`hart_id + 1`) |
 | 98  | `futex` | sempre reporta sucesso imediato (não há esperas reais a sincronizar — modelo de um hart por espaço de endereçamento) |
 | 99  | `set_robust_list` | no-op, retorna `0` |
@@ -342,6 +343,22 @@ de travar.
 | 226 | `mprotect` | no-op, retorna `0` (sem proteção real de páginas) |
 | 233 | `madvise` | no-op, retorna `0` |
 | 261 | `prlimit64` | reporta todo limite como ilimitado, retorna `0` |
+
+### Simulação de sistema de arquivos
+
+`openat`/`read`/`write`/`close`/`lseek`/`fstat`/`faccessat`/`unlinkat`/`mkdirat`/`getcwd`
+operam sobre **arquivos reais do host**, não um sistema de arquivos falso em
+memória. O `/` do guest mapeia para um diretório real em disco — a "raiz do
+fs-sim", que por padrão é o diretório de trabalho atual do processo — do
+mesmo jeito que um chroot funciona: um programa guest pode de fato criar,
+ler, escrever, dar stat e apagar arquivos, mas todo caminho passado é
+resolvido dentro dessa raiz, e `..` nunca consegue subir acima dela (bloqueado
+com `-EACCES`, igual a um chroot real). fd 0/1/2 continuam intocados (ainda o
+console); arquivos reais recebem fd 3 em diante.
+
+Não há flag de CLI/TUI para mudar a raiz do fs-sim hoje; quem incorpora a
+crate do engine pode apontá-la para outro lugar via
+`Console::filesystem.set_root(path)` antes de rodar um programa.
 
 ---
 
@@ -714,9 +731,13 @@ loop:
 
 | Código | Nome POSIX | Significado no RAVEN |
 |--------|-----------|----------------------|
-| `-5`   | `EIO`     | falha do SO em getrandom |
+| `-2`   | `ENOENT`  | caminho não existe dentro da raiz do fs-sim |
+| `-5`   | `EIO`     | falha do SO em getrandom, ou erro real de I/O de arquivo |
 | `-9`   | `EBADF`   | fd não suportado |
+| `-13`  | `EACCES`  | resolução de caminho tentou subir acima da raiz do fs-sim |
 | `-14`  | `EFAULT`  | endereço fora dos limites |
+| `-17`  | `EEXIST`  | `openat` com `O_CREAT\|O_EXCL`, ou `mkdirat`, em caminho já existente |
+| `-21`  | `EISDIR`  | `unlinkat` em um diretório |
 | `-22`  | `EINVAL`  | flags não suportadas |
 | `-25`  | `ENOTTY`  | `ioctl` em fd que não é console |
 | `-29`  | `ESPIPE`  | `lseek` em fd não posicionável (console) |
