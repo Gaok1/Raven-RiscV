@@ -455,6 +455,27 @@ fn syscall_read_waits_for_input() {
 }
 
 #[test]
+fn unknown_syscall_advances_pc_instead_of_halting() {
+    // Regression test: an `ecall` for a syscall number no ABI module
+    // recognizes must not stop the run — it should behave like any other
+    // instruction (advance the PC) after reporting -ENOSYS in a0. Before the
+    // ABI dispatcher had an explicit ENOSYS fallback, this fell through to
+    // `Ok(false)` and looked exactly like a fatal halt.
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(16);
+    let mut console = crate::ui::Console::default();
+    cpu.write(17, 12345); // not claimed by Linux/Falcon/Gfx ABI
+    let ecall = encoder::encode(Instruction::Ecall).unwrap();
+    let next = encoder::encode(Instruction::Ecall).unwrap();
+    mem.store32(0, ecall).unwrap();
+    mem.store32(4, next).unwrap();
+
+    assert!(step(&mut cpu, &mut mem, &mut console).unwrap());
+    assert_eq!(cpu.pc, 4);
+    assert_eq!(cpu.read(10) as i32, -38); // -ENOSYS
+}
+
+#[test]
 fn linux_write_writes_stdout() {
     let mut cpu = Cpu::default();
     let mut mem = Ram::new(64);

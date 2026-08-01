@@ -305,6 +305,55 @@ Time is approximated at 10 ns per instruction (100 MHz equivalent).
 
 ---
 
+## Linux userspace compatibility
+
+RAVEN never halts execution just because a program issues a syscall number it
+doesn't model — this is the contract that lets real (musl/glibc) static
+RISC-V binaries run instead of only hand-written asm. Any syscall not listed
+anywhere on this page returns **`-ENOSYS`** in `a0` and execution continues
+normally, exactly like a real Linux kernel handling an unimplemented syscall.
+
+The syscalls below are recognized and handled explicitly, beyond the ones
+documented above. RAVEN has no real filesystem, process tree, signal
+delivery, or scheduler, so most of these are deliberate best-effort
+behaviors rather than full implementations — good enough for libc startup
+code and simple programs to proceed instead of getting stuck.
+
+| Num | Name | Behavior |
+|-----|------|----------|
+| 17  | `getcwd` | `-ENOENT` (no filesystem) |
+| 23  | `dup` | echoes the fd back unchanged (no fd table) |
+| 24  | `dup3` | same as `dup` |
+| 25  | `fcntl` | always succeeds (`0`), no fd flags tracked |
+| 29  | `ioctl` | `0` for fd 0/1/2 (console), `-ENOTTY` otherwise |
+| 34  | `mkdirat` | `-ENOENT` |
+| 35  | `unlinkat` | `-ENOENT` |
+| 48  | `faccessat` | `-ENOENT` |
+| 56  | `openat` | `-ENOENT` (no filesystem to open from) |
+| 57  | `close` | always succeeds (`0`) |
+| 62  | `lseek` | `-ESPIPE` for fd 0/1/2, `-EBADF` otherwise |
+| 65  | `readv` | scatter-read from stdin, same line-buffered model as `read` |
+| 78  | `readlinkat` | `-ENOENT` |
+| 80  | `fstat` | fills a minimal `struct stat` marking fd 0/1/2 as a char device; `-EBADF` otherwise |
+| 96  | `set_tid_address` | returns a synthetic tid (`hart_id + 1`) |
+| 98  | `futex` | always reports success immediately (no real waiters to synchronize — single-hart-per-address-space model) |
+| 99  | `set_robust_list` | no-op, returns `0` |
+| 101 | `nanosleep` | reports elapsed instantly (`0`), zeroes the remainder output if given |
+| 124 | `sched_yield` | no-op, returns `0` |
+| 129/130/131 | `kill`/`tkill`/`tgkill` | if the signal is one that would normally terminate the process (`SIGINT`, `SIGQUIT`, `SIGILL`, `SIGABRT`, `SIGBUS`, `SIGFPE`, `SIGKILL`, `SIGSEGV`, `SIGTERM`) the program exits with code `128 + signal` — this is what makes `abort()` actually stop the run instead of spinning. Any other signal is a silent no-op. |
+| 132/134/135 | `sigaltstack`/`rt_sigaction`/`rt_sigprocmask` | no-op, returns `0` (no signal delivery) |
+| 160 | `uname` | fills `struct utsname` with a synthetic `Linux`/`raven` identity |
+| 163/164 | `getrlimit`/`setrlimit` | no-op, returns `0` |
+| 169 | `gettimeofday` | same clock as `clock_gettime`, `struct timeval` layout |
+| 173 | `getppid` | `1` |
+| 175/177 | `geteuid`/`getegid` | `0` |
+| 178 | `gettid` | synthetic tid (`hart_id + 1`) |
+| 226 | `mprotect` | no-op, returns `0` (no real page protection) |
+| 233 | `madvise` | no-op, returns `0` |
+| 261 | `prlimit64` | reports every limit as unlimited, returns `0` |
+
+---
+
 ## Raven teaching extensions (syscall 1000+)
 
 These are RAVEN-specific syscalls designed for classroom use. They are higher
@@ -882,6 +931,9 @@ loop:
 | `-12` | `ENOMEM` | heap exhausted (mmap) |
 | `-14` | `EFAULT` | address out of bounds |
 | `-22` | `EINVAL` | unsupported flags / bad arguments |
+| `-25` | `ENOTTY` | `ioctl` on a non-console fd |
+| `-29` | `ESPIPE` | `lseek` on a non-seekable fd (console) |
+| `-38` | `ENOSYS` | syscall number not recognized by any RAVEN ABI module |
 
 Return values are returned as `u32` wrapping of the negative `i32` (e.g. `-9` → `0xFFFFFFF7`).
 

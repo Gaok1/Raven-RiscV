@@ -1,6 +1,6 @@
 use super::{
-    FALCON_HART_START, FALCON_MAP_EXEC, GFX_FILL_RECT, GFX_POLL_KEY, GFX_PRESENT,
-    GFX_SCREEN_INIT, GFX_SET_PIXEL, GFX_SLEEP_MS, handle_syscall,
+    FALCON_HART_START, FALCON_MAP_EXEC, GFX_FILL_RECT, GFX_POLL_KEY, GFX_PRESENT, GFX_SCREEN_INIT,
+    GFX_SET_PIXEL, GFX_SLEEP_MS, handle_syscall,
 };
 use crate::falcon::memory::{Bus, Ram};
 use crate::falcon::registers::Cpu;
@@ -277,4 +277,118 @@ fn syscall_trace_skips_io_calls() {
 
     assert!(cont);
     assert!(console.lines.is_empty());
+}
+
+// ── Linux ABI coverage: unknown codes never halt, common syscalls behave ───
+
+#[test]
+fn unknown_but_plausible_syscall_never_halts() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    // 999 is not claimed by any ABI module: must report -ENOSYS and keep
+    // the run alive instead of stopping it (the core contract of this
+    // module — see crates/raven-riscv-engine/src/falcon/syscall.rs).
+    let cont = handle_syscall(999, &mut cpu, &mut mem, &mut console).expect("syscall");
+
+    assert!(cont);
+    assert_eq!(cpu.read(10) as i32, -38); // -ENOSYS
+}
+
+#[test]
+fn fstat_reports_stdio_as_char_device() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    cpu.write(10, 1); // fd = stdout
+    cpu.write(11, 0x100); // stat buf
+    let cont = handle_syscall(80, &mut cpu, &mut mem, &mut console).expect("syscall");
+    assert!(cont);
+    assert_eq!(cpu.read(10), 0);
+    let st_mode = mem.user_load32(0x100 + 16).unwrap();
+    assert_eq!(st_mode & 0o170000, 0o020000); // S_IFCHR
+
+    cpu.write(10, 5); // unknown fd
+    let cont = handle_syscall(80, &mut cpu, &mut mem, &mut console).expect("syscall");
+    assert!(cont);
+    assert_eq!(cpu.read(10) as i32, -9); // -EBADF
+}
+
+#[test]
+fn uname_fills_sysname() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    cpu.write(10, 0x200);
+    let cont = handle_syscall(160, &mut cpu, &mut mem, &mut console).expect("syscall");
+    assert!(cont);
+    assert_eq!(cpu.read(10), 0);
+    let mut bytes = Vec::new();
+    let mut addr = 0x200u32;
+    loop {
+        let b = mem.user_load8(addr).unwrap();
+        if b == 0 {
+            break;
+        }
+        bytes.push(b);
+        addr += 1;
+    }
+    assert_eq!(String::from_utf8(bytes).unwrap(), "Linux");
+}
+
+#[test]
+fn gettimeofday_succeeds() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    cpu.write(10, 0x300);
+    let cont = handle_syscall(169, &mut cpu, &mut mem, &mut console).expect("syscall");
+    assert!(cont);
+    assert_eq!(cpu.read(10), 0);
+}
+
+#[test]
+fn futex_never_blocks() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    let cont = handle_syscall(98, &mut cpu, &mut mem, &mut console).expect("syscall");
+    assert!(cont);
+    assert_eq!(cpu.read(10), 0);
+}
+
+#[test]
+fn tgkill_with_sigabrt_terminates_like_exit() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    cpu.write(10, 1); // tgid
+    cpu.write(11, 1); // tid
+    cpu.write(12, 6); // SIGABRT
+    let cont = handle_syscall(131, &mut cpu, &mut mem, &mut console).expect("syscall");
+
+    assert!(!cont);
+    assert_eq!(cpu.exit_code, Some(128 + 6));
+}
+
+#[test]
+fn tgkill_with_harmless_signal_is_a_noop() {
+    let mut cpu = Cpu::default();
+    let mut mem = Ram::new(4096);
+    let mut console = Console::default();
+
+    cpu.write(10, 1);
+    cpu.write(11, 1);
+    cpu.write(12, 28); // SIGWINCH: not in the terminating set
+    let cont = handle_syscall(131, &mut cpu, &mut mem, &mut console).expect("syscall");
+
+    assert!(cont);
+    assert_eq!(cpu.read(10), 0);
+    assert!(cpu.exit_code.is_none());
 }
