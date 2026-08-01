@@ -1,14 +1,27 @@
 //! Adapter from the RV32 pipeline simulator to the engine-level observer API.
 
 use crate::capability::{
-    PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
-    PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell, PipelineTimelineRow,
-    PipelineTimelineState, PipelineTraceKind, PipelineTraceView, PipelineUnitView,
+    PipelineEdge, PipelineEdgeKind, PipelineHazardKind, PipelineInspect, PipelineInstructionClass,
+    PipelineSlotView, PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus,
+    PipelineTimelineCell, PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind,
+    PipelineTraceView, PipelineUnitView,
 };
 
 use super::{
     FuKind, GanttCell, HazardType, InstrClass, PipeSlot, PipelineSimState, Stage, TraceKind,
 };
+
+/// The one place RV32's stage names are mapped to their roles; the stage view
+/// and the timeline both read it, so they cannot disagree.
+fn stage_role(stage: Stage) -> PipelineStageRole {
+    match stage {
+        Stage::IF => PipelineStageRole::Fetch,
+        Stage::ID => PipelineStageRole::Decode,
+        Stage::EX => PipelineStageRole::Execute,
+        Stage::MEM => PipelineStageRole::Memory,
+        Stage::WB => PipelineStageRole::Writeback,
+    }
+}
 
 fn instruction_class(class: InstrClass) -> PipelineInstructionClass {
     match class {
@@ -125,11 +138,27 @@ impl PipelineInspect for PipelineSimState {
     }
 
     fn stage(&self, index: usize) -> Option<PipelineStageView<'_>> {
-        let name = Stage::all().get(index)?.label();
+        let stage = *Stage::all().get(index)?;
         Some(PipelineStageView {
-            name,
+            name: stage.label(),
             slot: self.stages[index].as_ref().map(slot_view),
+            role: stage_role(stage),
         })
+    }
+
+    /// The classic five-stage chain, plus the redirect from EX back to IF that
+    /// a resolved branch takes — the default linear chain alone would not show
+    /// why a flush happens.
+    fn edges(&self) -> Vec<PipelineEdge> {
+        let mut edges: Vec<_> = (1..self.stages.len())
+            .map(|to| PipelineEdge::sequential(to - 1, to))
+            .collect();
+        edges.push(PipelineEdge {
+            from: Stage::EX as usize,
+            to: Stage::IF as usize,
+            kind: PipelineEdgeKind::Feedback,
+        });
+        edges
     }
 
     fn unit_count(&self) -> usize {
@@ -237,19 +266,33 @@ impl PipelineInspect for PipelineSimState {
 
     fn timeline_cell(&self, row: usize, cell: usize) -> Option<PipelineTimelineCell<'_>> {
         let cell = *self.gantt.get(row)?.cells.get(cell)?;
-        let (label, state) = match cell {
-            GanttCell::Empty => ("·", PipelineTimelineState::Empty),
-            GanttCell::InStage(stage) => (stage.label(), PipelineTimelineState::Active),
-            GanttCell::InFu(_) => ("EX", PipelineTimelineState::Active),
-            GanttCell::Speculative(stage) => {
-                (stage.label(), PipelineTimelineState::Speculative)
-            }
-            GanttCell::SpeculativeFu(_) => ("EX", PipelineTimelineState::Speculative),
-            GanttCell::Stall => ("──", PipelineTimelineState::Stalled),
-            GanttCell::Bubble => ("NOP", PipelineTimelineState::Bubble),
-            GanttCell::Flush => ("◀FL", PipelineTimelineState::Flushed),
+        let (label, state, role) = match cell {
+            GanttCell::Empty => ("·", PipelineTimelineState::Empty, PipelineStageRole::Other),
+            GanttCell::InStage(stage) => (
+                stage.label(),
+                PipelineTimelineState::Active,
+                stage_role(stage),
+            ),
+            GanttCell::InFu(_) => (
+                "EX",
+                PipelineTimelineState::Active,
+                PipelineStageRole::Execute,
+            ),
+            GanttCell::Speculative(stage) => (
+                stage.label(),
+                PipelineTimelineState::Speculative,
+                stage_role(stage),
+            ),
+            GanttCell::SpeculativeFu(_) => (
+                "EX",
+                PipelineTimelineState::Speculative,
+                PipelineStageRole::Execute,
+            ),
+            GanttCell::Stall => ("──", PipelineTimelineState::Stalled, PipelineStageRole::Other),
+            GanttCell::Bubble => ("NOP", PipelineTimelineState::Bubble, PipelineStageRole::Other),
+            GanttCell::Flush => ("◀FL", PipelineTimelineState::Flushed, PipelineStageRole::Other),
         };
-        Some(PipelineTimelineCell { label, state })
+        Some(PipelineTimelineCell { label, state, role })
     }
 }
 

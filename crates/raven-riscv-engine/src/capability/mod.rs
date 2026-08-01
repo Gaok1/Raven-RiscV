@@ -76,9 +76,10 @@ pub use code::{
 };
 pub use memory::{MemoryInspect, MemoryRegion};
 pub use pipeline::{
-    PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
-    PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell, PipelineTimelineRow,
-    PipelineTimelineState, PipelineTraceKind, PipelineTraceView, PipelineUnitView,
+    PipelineEdge, PipelineEdgeKind, PipelineHazardKind, PipelineInspect, PipelineInstructionClass,
+    PipelineSlotView, PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus,
+    PipelineTimelineCell, PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind,
+    PipelineTraceView, PipelineUnitView,
 };
 pub use registers::{
     RegisterBank, RegisterEntry, RegisterFile, RegisterFormat, RegisterId,

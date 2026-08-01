@@ -1,5 +1,9 @@
 use raven_riscv_engine::architectures::riscv32;
-use raven_riscv_engine::capability::{CacheRole, InstructionCodec, RegisterId};
+use raven_riscv_engine::capability::{
+    CacheRole, InstructionCodec, PipelineEdge, PipelineEdgeKind, PipelineInspect,
+    PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell,
+    PipelineTimelineRow, PipelineTraceView, PipelineUnitView, RegisterId,
+};
 use raven_riscv_engine::falcon::memory::{Bus, Ram};
 use raven_riscv_engine::{
     ArchitectureRegistry, Engine, MachineState, ProgramImage, ProgramSegment, StepOutcome, ZeroFill,
@@ -878,6 +882,126 @@ fn every_backend_describes_a_complete_instruction_bit_layout() {
             "{id}: a layout segment has no label to draw"
         );
     }
+}
+
+/// The pipeline is a graph the host lays out, so the graph has to be coherent:
+/// edges must name real stages, and every stage must appear exactly once in the
+/// layout order or it would silently vanish from the diagram.
+#[test]
+fn the_pipeline_graph_is_well_formed() {
+    let architecture = ArchitectureRegistry::builtin()
+        .get(riscv32::ID)
+        .unwrap();
+    let machine = Engine::new(architecture.clone())
+        .create_machine(architecture.descriptor().default_memory_size)
+        .unwrap();
+    let pipeline = machine.pipeline().unwrap();
+
+    let count = pipeline.stage_count();
+    for edge in pipeline.edges() {
+        assert!(edge.from < count && edge.to < count, "dangling edge {edge:?}");
+    }
+
+    let mut order = pipeline.stage_order();
+    assert_eq!(order.len(), count, "layout order must cover every stage");
+    order.sort_unstable();
+    order.dedup();
+    assert_eq!(order.len(), count, "a stage appears twice in layout order");
+
+    // RV32 declares the branch redirect, so the graph carries more than the
+    // straight chain the default would give.
+    assert!(
+        pipeline
+            .edges()
+            .iter()
+            .any(|e| e.kind == PipelineEdgeKind::Feedback),
+        "RV32 should describe its branch-redirect path"
+    );
+}
+
+/// A host must lay out a pipeline that is not a straight line. This stands in
+/// for a backend Raven does not ship yet — the point is that nothing in the
+/// contract assumes stages sit in a row in index order.
+#[test]
+fn a_branching_pipeline_lays_out_in_flow_order() {
+    struct Superscalar;
+
+    // 0: fetch → 1: decode → {2: ALU, 3: memory} → 4: commit
+    impl PipelineInspect for Superscalar {
+        fn status(&self) -> PipelineStatus {
+            PipelineStatus {
+                enabled: true,
+                sequential: false,
+                halted: false,
+                faulted: false,
+            }
+        }
+        fn stats(&self) -> PipelineStats {
+            PipelineStats::default()
+        }
+        fn stage_count(&self) -> usize {
+            5
+        }
+        fn stage(&self, index: usize) -> Option<PipelineStageView<'_>> {
+            let (name, role) = match index {
+                0 => ("F", PipelineStageRole::Fetch),
+                1 => ("D", PipelineStageRole::Decode),
+                2 => ("ALU", PipelineStageRole::Execute),
+                3 => ("MEM", PipelineStageRole::Memory),
+                4 => ("C", PipelineStageRole::Commit),
+                _ => return None,
+            };
+            Some(PipelineStageView {
+                name,
+                slot: None,
+                role,
+            })
+        }
+        fn edges(&self) -> Vec<PipelineEdge> {
+            vec![
+                PipelineEdge::sequential(0, 1),
+                PipelineEdge::sequential(1, 2),
+                PipelineEdge::sequential(1, 3),
+                PipelineEdge::sequential(2, 4),
+                PipelineEdge::sequential(3, 4),
+            ]
+        }
+        fn unit_count(&self) -> usize {
+            0
+        }
+        fn unit(&self, _: usize) -> Option<PipelineUnitView<'_>> {
+            None
+        }
+        fn trace_count(&self) -> usize {
+            0
+        }
+        fn trace(&self, _: usize) -> Option<PipelineTraceView<'_>> {
+            None
+        }
+        fn status_message(&self) -> Option<&str> {
+            None
+        }
+        fn timeline_len(&self) -> usize {
+            0
+        }
+        fn timeline_row(&self, _: usize) -> Option<PipelineTimelineRow<'_>> {
+            None
+        }
+        fn timeline_cell(&self, _: usize, _: usize) -> Option<PipelineTimelineCell<'_>> {
+            None
+        }
+    }
+
+    let pipeline = Superscalar;
+    assert_eq!(pipeline.entry_stages(), vec![0], "only fetch has no feeder");
+
+    // Fetch and decode come first, the parallel pair next, commit last — and
+    // every stage appears exactly once even though the graph forks and rejoins.
+    let order = pipeline.stage_order();
+    assert_eq!(order.len(), 5);
+    assert_eq!(&order[..2], &[0, 1]);
+    assert_eq!(*order.last().unwrap(), 4);
+    assert!(order[2..4].contains(&2) && order[2..4].contains(&3));
 }
 
 #[test]

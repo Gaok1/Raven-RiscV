@@ -1,10 +1,9 @@
 use crate::ui::app::App;
-use crate::ui::pipeline::{
-    FuKind, InstrClass, Stage, gantt_visible_rows,
-};
+use crate::ui::pipeline::{FuKind, InstrClass, gantt_visible_rows};
 use raven_riscv_engine::capability::{
     PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
-    PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
+    PipelineStageRole, PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind,
+    PipelineTraceView,
 };
 use crate::ui::theme;
 use crate::ui::view::style;
@@ -192,7 +191,7 @@ fn render_collapsed_strip(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInsp
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-// ── 5-stage boxes ─────────────────────────────────────────────────────────────
+// ── Stage boxes ───────────────────────────────────────────────────────────────
 
 fn render_stages(
     f: &mut Frame,
@@ -200,14 +199,21 @@ fn render_stages(
     pipeline: &dyn PipelineInspect,
     fu_in_ex_title: bool,
 ) {
-    let stage_count = pipeline.stage_count().max(1);
+    // Laid out in the graph's flow order, not index order: a backend whose
+    // stages are not numbered along the datapath still draws left to right in
+    // the order instructions actually move through it.
+    let order = pipeline.stage_order();
+    let stage_count = order.len().max(1);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(vec![Constraint::Ratio(1, stage_count as u32); stage_count])
         .split(area);
 
-    for i in 0..pipeline.stage_count() {
-        let stage = pipeline.stage(i).unwrap();
+    for (column, &i) in order.iter().enumerate() {
+        let Some(stage) = pipeline.stage(i) else {
+            continue;
+        };
+        let column_area = cols[column];
         let slot = stage.slot;
         let mut stage_badges = stage_status_badges(pipeline, i, slot.as_ref());
 
@@ -231,9 +237,10 @@ fn render_stages(
             }
             _ => stage.name.to_string(),
         };
-        // With the FU strip folded away, surface overall FU occupancy here so
-        // functional-unit pressure stays visible.
-        if stage.name == "EX" && fu_in_ex_title {
+        // With the FU strip folded away, surface overall FU occupancy on the
+        // stage that owns the functional units — the one that executes,
+        // whatever this ISA calls it.
+        if stage.role == PipelineStageRole::Execute && fu_in_ex_title {
             let units: Vec<_> = (0..pipeline.unit_count())
                 .filter_map(|unit| pipeline.unit(unit))
                 .collect();
@@ -250,8 +257,8 @@ fn render_stages(
                 border_style.add_modifier(Modifier::BOLD),
             ));
 
-        let inner = block.inner(cols[i]);
-        f.render_widget(block, cols[i]);
+        let inner = block.inner(column_area);
+        f.render_widget(block, column_area);
         if inner.height == 0 || inner.width == 0 {
             continue;
         }
@@ -262,7 +269,7 @@ fn render_stages(
                 Style::default().fg(theme::BORDER),
             ))],
             Some(slot) if slot.bubble => {
-                let label = bubble_label_for_stage(i, slot);
+                let label = bubble_label_for_stage(stage.role, slot);
                 vec![Line::from(Span::styled(
                     label,
                     border_style.add_modifier(Modifier::BOLD),
@@ -282,7 +289,7 @@ fn render_stages(
                     Line::from(Span::styled(slot.disassembly.to_string(), dim)),
                 ]
             }
-            Some(slot) => stage_slot_lines(i, slot, inner, &mut stage_badges),
+            Some(slot) => stage_slot_lines(stage.role, slot, inner, &mut stage_badges),
         };
 
         let visible_lines: Vec<_> = lines.into_iter().take(inner.height as usize).collect();
@@ -294,7 +301,7 @@ fn render_stages(
 /// (PC + badges / disasm / class + regs), two when squeezed
 /// (disasm + badges / PC + regs).
 fn stage_slot_lines(
-    stage_idx: usize,
+    role: PipelineStageRole,
     slot: &PipelineSlotView<'_>,
     inner: Rect,
     stage_badges: &mut Vec<(String, Style)>,
@@ -303,10 +310,7 @@ fn stage_slot_lines(
     let pc_str = format!("0x{:04X}", slot.address);
     let hazard_indicator = slot.hazard.map(|hazard| {
         Span::styled(
-            format!(
-                " ⚠{}",
-                compact_stage_hazard_label(stage_idx, Some(slot), hazard)
-            ),
+            format!(" ⚠{}", compact_stage_hazard_label(role, Some(slot), hazard)),
             Style::default().fg(hazard_color(hazard)),
         )
     });
@@ -404,6 +408,10 @@ fn stage_status_badges(
     slot: Option<&PipelineSlotView<'_>>,
 ) -> Vec<(String, Style)> {
     let mut tags: Vec<(String, Style)> = Vec::new();
+    let role = pipeline
+        .stage(stage_idx)
+        .map(|stage| stage.role)
+        .unwrap_or_default();
 
     if let Some(slot) = slot {
         if slot.atomic {
@@ -416,7 +424,7 @@ fn stage_status_badges(
         if let Some(hazard) = slot.hazard {
             push_badge(
                 &mut tags,
-                compact_stage_hazard_label(stage_idx, Some(slot), hazard).to_string(),
+                compact_stage_hazard_label(role, Some(slot), hazard).to_string(),
                 Style::default().fg(hazard_color(hazard)),
             );
         }
@@ -443,7 +451,7 @@ fn stage_status_badges(
             PipelineTraceKind::Hazard(hazard) => {
                 push_badge(
                     &mut tags,
-                    compact_stage_hazard_label(stage_idx, slot, hazard).to_string(),
+                    compact_stage_hazard_label(role, slot, hazard).to_string(),
                     Style::default().fg(hazard_color(hazard)),
                 );
             }
@@ -463,20 +471,24 @@ fn push_badge(tags: &mut Vec<(String, Style)>, label: String, style: Style) {
     tags.push((label, style));
 }
 
-fn bubble_label_for_stage(stage_idx: usize, slot: &PipelineSlotView<'_>) -> &'static str {
+/// Why a stage is holding a bubble, phrased from the stage's role rather than
+/// its index — "waiting for fetch" is true of any pipeline, "waiting for IF"
+/// only of one that names a stage IF.
+fn bubble_label_for_stage(role: PipelineStageRole, slot: &PipelineSlotView<'_>) -> &'static str {
+    use PipelineStageRole::*;
     match slot.hazard {
         Some(PipelineHazardKind::BranchFlush) => "✕ squashed",
-        Some(PipelineHazardKind::MemoryLatency) => match stage_idx {
-            x if x == Stage::ID as usize => "waiting for IF",
-            x if x > Stage::ID as usize => "front-end bubble",
-            _ => "wait",
+        Some(PipelineHazardKind::MemoryLatency) => match role {
+            Decode => "waiting for fetch",
+            Issue | Execute | Memory | Writeback | Commit => "front-end bubble",
+            Fetch | Other => "wait",
         },
         _ => "NOP bubble",
     }
 }
 
 fn compact_stage_hazard_label(
-    stage_idx: usize,
+    role: PipelineStageRole,
     slot: Option<&PipelineSlotView<'_>>,
     hazard: PipelineHazardKind,
 ) -> &'static str {
@@ -487,17 +499,17 @@ fn compact_stage_hazard_label(
         PipelineHazardKind::FunctionalUnitBusy => "FU",
         PipelineHazardKind::MemoryLatency => {
             if slot.is_some_and(|slot| slot.bubble) {
-                if stage_idx == Stage::ID as usize {
+                if role == PipelineStageRole::Decode {
                     "UP"
                 } else {
                     "BUBL"
                 }
-            } else if stage_idx == Stage::IF as usize {
-                "IFWT"
-            } else if stage_idx == Stage::MEM as usize {
-                "MEMWT"
             } else {
-                "WAIT"
+                match role {
+                    PipelineStageRole::Fetch => "IFWT",
+                    PipelineStageRole::Memory => "MEMWT",
+                    _ => "WAIT",
+                }
             }
         }
         PipelineHazardKind::WriteAfterWrite => "WAW",
@@ -903,12 +915,14 @@ fn render_gantt(
                 PipelineTimelineCell {
                     label: "·",
                     state: PipelineTimelineState::Empty,
+                    role: PipelineStageRole::Other,
                 }
             } else {
                 let cell_idx = (c - row.first_cycle) as usize;
                 pipeline.timeline_cell(row_index, cell_idx).unwrap_or(PipelineTimelineCell {
                     label: "·",
                     state: PipelineTimelineState::Empty,
+                    role: PipelineStageRole::Other,
                 })
             };
             let (text, style) = if is_invalid {
@@ -958,9 +972,15 @@ fn timeline_window_bounds(
 fn cell_to_span(cell: PipelineTimelineCell<'_>) -> (&str, Style) {
     let style = match cell.state {
         PipelineTimelineState::Empty => Style::default().fg(theme::BORDER),
-        PipelineTimelineState::Active => match cell.label {
-            "IF" | "WB" => Style::default().fg(theme::ACCENT),
-            "ID" | "MEM" => Style::default().fg(theme::LABEL_Y),
+        // Coloured by the stage's role, so the timeline matches the stage
+        // boxes on any ISA rather than only where stages are named IF/ID/…
+        PipelineTimelineState::Active => match cell.role {
+            PipelineStageRole::Fetch | PipelineStageRole::Writeback => {
+                Style::default().fg(theme::ACCENT)
+            }
+            PipelineStageRole::Decode | PipelineStageRole::Memory => {
+                Style::default().fg(theme::LABEL_Y)
+            }
             _ => style::success(),
         },
         PipelineTimelineState::Speculative => Style::default().fg(theme::SPECULATIVE),
@@ -981,8 +1001,8 @@ mod tests {
         FuKind, FuState, GanttCell, HazardTrace, HazardType, PipeSlot, Stage, TraceKind,
     };
     use raven_riscv_engine::capability::{
-        PipelineHazardKind, PipelineInstructionClass, PipelineSlotView, PipelineTimelineCell,
-        PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
+        PipelineHazardKind, PipelineInstructionClass, PipelineSlotView, PipelineStageRole,
+        PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
     };
 
     fn slot(hazard: Option<PipelineHazardKind>, bubble: bool) -> PipelineSlotView<'static> {
@@ -1001,17 +1021,19 @@ mod tests {
         }
     }
 
+    /// Stage wording follows the stage's *role*, so it stays true on a backend
+    /// that does not call its stages IF/ID/EX/MEM/WB.
     #[test]
-    fn mem_latency_bubble_in_id_reads_as_waiting_for_if() {
+    fn mem_latency_bubble_in_decode_reads_as_waiting_for_fetch() {
         let slot = slot(Some(PipelineHazardKind::MemoryLatency), true);
 
         assert_eq!(
-            bubble_label_for_stage(Stage::ID as usize, &slot),
-            "waiting for IF"
+            bubble_label_for_stage(PipelineStageRole::Decode, &slot),
+            "waiting for fetch"
         );
         assert_eq!(
             compact_stage_hazard_label(
-                Stage::ID as usize,
+                PipelineStageRole::Decode,
                 Some(&slot),
                 PipelineHazardKind::MemoryLatency
             ),
@@ -1020,26 +1042,26 @@ mod tests {
     }
 
     #[test]
-    fn mem_latency_on_if_and_mem_uses_stage_specific_badges() {
-        let if_slot = slot(Some(PipelineHazardKind::MemoryLatency), false);
-        let mem_slot = slot(Some(PipelineHazardKind::MemoryLatency), false);
+    fn mem_latency_badges_follow_the_stage_role() {
+        let waiting = slot(Some(PipelineHazardKind::MemoryLatency), false);
 
-        assert_eq!(
-            compact_stage_hazard_label(
-                Stage::IF as usize,
-                Some(&if_slot),
-                PipelineHazardKind::MemoryLatency
-            ),
-            "IFWT"
-        );
-        assert_eq!(
-            compact_stage_hazard_label(
-                Stage::MEM as usize,
-                Some(&mem_slot),
-                PipelineHazardKind::MemoryLatency
-            ),
-            "MEMWT"
-        );
+        for (role, expected) in [
+            (PipelineStageRole::Fetch, "IFWT"),
+            (PipelineStageRole::Memory, "MEMWT"),
+            // A role with no specific wording still gets a sensible badge
+            // rather than falling through to a fetch/memory one.
+            (PipelineStageRole::Commit, "WAIT"),
+        ] {
+            assert_eq!(
+                compact_stage_hazard_label(
+                    role,
+                    Some(&waiting),
+                    PipelineHazardKind::MemoryLatency
+                ),
+                expected,
+                "{role:?}"
+            );
+        }
     }
 
     #[test]
@@ -1153,6 +1175,7 @@ mod tests {
     fn gantt_fu_cells_render_as_ex_in_history() {
         assert_eq!(
             cell_to_span(PipelineTimelineCell {
+                role: PipelineStageRole::Other,
                 label: "EX",
                 state: PipelineTimelineState::Active,
             })
@@ -1161,6 +1184,7 @@ mod tests {
         );
         assert_eq!(
             cell_to_span(PipelineTimelineCell {
+                role: PipelineStageRole::Execute,
                 label: "EX",
                 state: PipelineTimelineState::Speculative,
             })
@@ -1169,6 +1193,7 @@ mod tests {
         );
         assert_eq!(
             cell_to_span(PipelineTimelineCell {
+                role: PipelineStageRole::Other,
                 label: "──",
                 state: PipelineTimelineState::Stalled,
             })
