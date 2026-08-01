@@ -209,7 +209,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                             app.tlb.vm_settings_scroll.saturating_add(1).min(max);
                     }
                     VmSubtab::Tlb => {
-                        let total = app.native().mem().mmu().tlb.entries.len();
+                        let total =
+                            app.rv32().map_or(0, |rv32| rv32.mem().mmu().tlb.entries.len());
                         let next = app.tlb.entries_scroll.saturating_add(1);
                         app.tlb.entries_scroll = next.min(total.saturating_sub(1));
                     }
@@ -592,7 +593,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::Region => {
             match app.run.mem_region {
                 MemRegion::Data | MemRegion::Custom => {
-                    let sp = app.native().cpu().x[2];
+                    let sp = app.rv32().map_or(0, |rv32| rv32.cpu().x[2]);
                     app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
                     app.run.mem_region = MemRegion::Stack;
                 }
@@ -600,7 +601,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                     app.run.mem_region = MemRegion::Access;
                 }
                 MemRegion::Access => {
-                    let hb = app.native().cpu().heap_break;
+                    let hb = app.rv32().map_or(0, |rv32| rv32.cpu().heap_break);
                     app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
                     app.run.mem_region = MemRegion::Heap;
                 }
@@ -1546,10 +1547,13 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
             if let Some((last_addr, at)) = app.run.last_imem_click {
                 if last_addr == addr && at.elapsed() <= DOUBLE_CLICK {
                     app.run.last_imem_click = None;
-                    app.run.prev_pc = app.native().cpu().pc;
-                    app.native_mut().cpu_mut_unjournaled().pc = addr;
-                    if app.native().pipeline().enabled {
-                        app.run.redirect_pipeline_pc(addr);
+                    if let Some(runtime) = app.rv32_mut() {
+                        let previous = runtime.cpu().pc;
+                        runtime.cpu_mut_unjournaled().pc = addr;
+                        app.run.prev_pc = previous;
+                    }
+                    if app.pipeline_status().is_some_and(|status| status.enabled) {
+                        app.redirect_pipeline_pc(addr);
                     }
                     return;
                 }
@@ -2439,24 +2443,29 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
     }
     app.cache.config_error = None;
     let extra = app.cache.extra_pending.clone();
-    if keep_history {
-        app.cache.config_status = Some("Settings applied (history kept).".to_string());
-        let old_istats = std::mem::take(&mut app.native_mut().mem_mut_unjournaled().icache.stats);
-        let old_dstats = std::mem::take(&mut app.native_mut().mem_mut_unjournaled().dcache.stats);
-        app.run
-            .machine
-            .mem_mut_unjournaled()
-            .apply_config(icfg, dcfg, extra);
-        app.native_mut().mem_mut_unjournaled().icache.stats.history = old_istats.history;
-        app.native_mut().mem_mut_unjournaled().dcache.stats.history = old_dstats.history;
+    app.cache.config_status = Some(if keep_history {
+        "Settings applied (history kept).".to_string()
     } else {
-        app.cache.config_status = Some("Settings applied (stats reset).".to_string());
-        app.run
-            .machine
-            .mem_mut_unjournaled()
-            .apply_config(icfg, dcfg, extra);
+        "Settings applied (stats reset).".to_string()
+    });
+    let bypass = !app.run.cache_enabled;
+    // Only a backend whose hierarchy the host built can have it rebuilt; the
+    // pending geometry above is kept either way, which is what the tab shows.
+    let Some(memory) = app.rv32_mut().map(|rv32| rv32.mem_mut_unjournaled()) else {
+        return;
+    };
+    let kept = keep_history.then(|| {
+        (
+            std::mem::take(&mut memory.icache.stats),
+            std::mem::take(&mut memory.dcache.stats),
+        )
+    });
+    memory.apply_config(icfg, dcfg, extra);
+    if let Some((icache, dcache)) = kept {
+        memory.icache.stats.history = icache.history;
+        memory.dcache.stats.history = dcache.history;
     }
-    app.native_mut().mem_mut_unjournaled().bypass = !app.run.cache_enabled;
+    memory.bypass = bypass;
     app.cache.view_scroll = 0;
     app.cache.view_scroll_d = 0;
     app.cache.stats_scroll = 0;
@@ -2521,29 +2530,18 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
         return;
     }
     app.cache.config_error = None;
-    if keep_history {
-        app.cache.config_status = Some("Settings applied (history kept).".to_string());
-        let old_stats = if extra_idx < app.native().mem().extra_levels.len() {
-            Some(std::mem::take(
-                &mut app.native_mut().mem_mut_unjournaled().extra_levels[extra_idx].stats,
-            ))
-        } else {
-            None
-        };
-        if extra_idx < app.native().mem().extra_levels.len() {
-            app.native_mut().mem_mut_unjournaled().extra_levels[extra_idx] =
-                crate::falcon::cache::Cache::new(cfg);
-            if let Some(s) = old_stats {
-                app.native_mut().mem_mut_unjournaled().extra_levels[extra_idx]
-                    .stats
-                    .history = s.history;
-            }
-        }
+    app.cache.config_status = Some(if keep_history {
+        "Settings applied (history kept).".to_string()
     } else {
-        app.cache.config_status = Some("Settings applied (stats reset).".to_string());
-        if extra_idx < app.native().mem().extra_levels.len() {
-            app.native_mut().mem_mut_unjournaled().extra_levels[extra_idx] =
-                crate::falcon::cache::Cache::new(cfg);
+        "Settings applied (stats reset).".to_string()
+    });
+    if let Some(memory) = app.rv32_mut().map(|rv32| rv32.mem_mut_unjournaled())
+        && let Some(level) = memory.extra_levels.get_mut(extra_idx)
+    {
+        let kept = keep_history.then(|| std::mem::take(&mut level.stats));
+        *level = crate::falcon::cache::Cache::new(cfg);
+        if let Some(stats) = kept {
+            level.stats.history = stats.history;
         }
     }
     app.cache.view_scroll = 0;
@@ -2692,7 +2690,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 
     let (pipe_y, _, _) = app.settings.bool_btn_pipeline_rect.get();
     if me.row == pipe_y {
-        app.set_pipeline_enabled(!app.native().pipeline().enabled);
+        app.set_pipeline_enabled(!app.pipeline_status().is_some_and(|status| status.enabled));
         app.settings.selected = SETTINGS_ROW_PIPELINE_ENABLED;
         return;
     }
@@ -2753,7 +2751,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 // ── Pipeline tab mouse ────────────────────────────────────────────────────────
 
 fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
-    let state_clickable = !app.native().pipeline().faulted;
+    let state_clickable = !app.pipeline_status().is_some_and(|status| status.faulted);
     let p = app.run.pipeline_view_mut();
     p.hover_subtab_main = false;
     p.hover_subtab_config = false;
@@ -2858,8 +2856,8 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
     }
     let (st_y, st_x0, st_x1) = app.run.pipeline_view().btn_state_rect.get();
     if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
-        if app.native().pipeline().enabled && !app.native().pipeline().faulted {
-            if app.native().pipeline().halted {
+        if app.pipeline_status().is_some_and(|status| status.enabled && !status.faulted) {
+            if app.pipeline_status().is_some_and(|status| status.halted) {
                 app.restart_simulation();
                 if app.can_start_run() {
                     app.run.is_running = true;
@@ -2897,98 +2895,101 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         for i in 0..PipelineBypassConfig::CONFIG_ROWS {
             let (ry, rx0, rx1) = rects[i];
             if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
+                let Some(pipeline) = app.pipeline_config_mut() else {
+                    return;
+                };
                 match i {
                     0 => {
-                        app.native_mut().pipeline_mut().bypass.ex_to_ex =
-                            !app.native_mut().pipeline_mut().bypass.ex_to_ex
+                        pipeline.bypass.ex_to_ex =
+                            !pipeline.bypass.ex_to_ex
                     }
                     1 => {
-                        app.native_mut().pipeline_mut().bypass.mem_to_ex =
-                            !app.native_mut().pipeline_mut().bypass.mem_to_ex
+                        pipeline.bypass.mem_to_ex =
+                            !pipeline.bypass.mem_to_ex
                     }
                     2 => {
-                        app.native_mut().pipeline_mut().bypass.wb_to_id =
-                            !app.native_mut().pipeline_mut().bypass.wb_to_id
+                        pipeline.bypass.wb_to_id =
+                            !pipeline.bypass.wb_to_id
                     }
                     3 => {
-                        app.native_mut().pipeline_mut().bypass.store_to_load =
-                            !app.native_mut().pipeline_mut().bypass.store_to_load
+                        pipeline.bypass.store_to_load =
+                            !pipeline.bypass.store_to_load
                     }
                     4 => {
-                        app.native_mut().pipeline_mut().mode = match app.native_mut().pipeline_mut().mode {
+                        pipeline.mode = match pipeline.mode {
                             PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
                             PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
                         }
                     }
                     5 => {
-                        app.native_mut().pipeline_mut().branch_resolve =
-                            match app.native_mut().pipeline_mut().branch_resolve {
+                        pipeline.branch_resolve =
+                            match pipeline.branch_resolve {
                                 BranchResolve::Id => BranchResolve::Ex,
                                 BranchResolve::Ex => BranchResolve::Mem,
                                 BranchResolve::Mem => BranchResolve::Id,
                             }
                     }
                     6 => {
-                        let next = match app.native().pipeline().predict {
+                        let next = match pipeline.predict {
                             BranchPredict::NotTaken => BranchPredict::Taken,
                             BranchPredict::Taken => BranchPredict::Btfnt,
                             BranchPredict::Btfnt => BranchPredict::TwoBit,
                             BranchPredict::TwoBit => BranchPredict::NotTaken,
                         };
-                        app.native_mut().pipeline_mut().set_predict(next);
+                        pipeline.set_predict(next);
                     }
                     7 => {
                         let idx = crate::ui::pipeline::FuKind::Alu.index();
-                        app.native_mut().pipeline_mut().fu_capacity[idx] =
-                            if app.native_mut().pipeline_mut().fu_capacity[idx] >= 8 {
+                        pipeline.fu_capacity[idx] =
+                            if pipeline.fu_capacity[idx] >= 8 {
                                 1
                             } else {
-                                app.native_mut().pipeline_mut().fu_capacity[idx] + 1
+                                pipeline.fu_capacity[idx] + 1
                             };
                     }
                     8 => {
                         let idx = crate::ui::pipeline::FuKind::Mul.index();
-                        app.native_mut().pipeline_mut().fu_capacity[idx] =
-                            if app.native_mut().pipeline_mut().fu_capacity[idx] >= 8 {
+                        pipeline.fu_capacity[idx] =
+                            if pipeline.fu_capacity[idx] >= 8 {
                                 1
                             } else {
-                                app.native_mut().pipeline_mut().fu_capacity[idx] + 1
+                                pipeline.fu_capacity[idx] + 1
                             };
                     }
                     9 => {
                         let idx = crate::ui::pipeline::FuKind::Div.index();
-                        app.native_mut().pipeline_mut().fu_capacity[idx] =
-                            if app.native_mut().pipeline_mut().fu_capacity[idx] >= 8 {
+                        pipeline.fu_capacity[idx] =
+                            if pipeline.fu_capacity[idx] >= 8 {
                                 1
                             } else {
-                                app.native_mut().pipeline_mut().fu_capacity[idx] + 1
+                                pipeline.fu_capacity[idx] + 1
                             };
                     }
                     10 => {
                         let idx = crate::ui::pipeline::FuKind::Fpu.index();
-                        app.native_mut().pipeline_mut().fu_capacity[idx] =
-                            if app.native_mut().pipeline_mut().fu_capacity[idx] >= 8 {
+                        pipeline.fu_capacity[idx] =
+                            if pipeline.fu_capacity[idx] >= 8 {
                                 1
                             } else {
-                                app.native_mut().pipeline_mut().fu_capacity[idx] + 1
+                                pipeline.fu_capacity[idx] + 1
                             };
                     }
                     11 => {
                         let idx = crate::ui::pipeline::FuKind::Lsu.index();
-                        app.native_mut().pipeline_mut().fu_capacity[idx] =
-                            if app.native_mut().pipeline_mut().fu_capacity[idx] >= 8 {
+                        pipeline.fu_capacity[idx] =
+                            if pipeline.fu_capacity[idx] >= 8 {
                                 1
                             } else {
-                                app.native_mut().pipeline_mut().fu_capacity[idx] + 1
+                                pipeline.fu_capacity[idx] + 1
                             };
                     }
                     12 => {
                         let idx = crate::ui::pipeline::FuKind::Sys.index();
-                        app.native_mut().pipeline_mut().fu_capacity[idx] =
-                            if app.native_mut().pipeline_mut().fu_capacity[idx] >= 8 {
+                        pipeline.fu_capacity[idx] =
+                            if pipeline.fu_capacity[idx] >= 8 {
                                 1
                             } else {
-                                app.native_mut().pipeline_mut().fu_capacity[idx] + 1
+                                pipeline.fu_capacity[idx] + 1
                             };
                     }
                     _ => {}

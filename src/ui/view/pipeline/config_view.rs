@@ -26,7 +26,10 @@ const CONFIG_LABEL_W: usize = 18;
 const LATENCY_LABEL_W: usize = 8;
 
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
-    let p = app.native().pipeline();
+    // The tab is offered only to a backend that has a datapath to retune.
+    let Some(p) = app.pipeline_config() else {
+        return;
+    };
     let view = app.run.pipeline_view();
 
     let inner = render_panel(

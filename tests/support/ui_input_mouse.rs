@@ -116,8 +116,7 @@ fn run_status_hit_exposes_stepback_only_when_undoable() {
     assert!(before.contains(&RunButton::Reset));
 
     // Journal a change â†’ step-back becomes clickable without disturbing reset.
-    app.run
-        .machine
+    app.rv32_mut().unwrap()
         .write_reg(RegTarget::X(RegId::new(5).unwrap()), 0xABCD)
         .unwrap();
     let after = hits(&app);
@@ -263,13 +262,13 @@ fn cache_view_mouse_wheel_updates_vertical_scroll() {
         "halt".into(),
     ];
     app.assemble_and_load();
-    app.native_mut().mem_mut_unjournaled().icache.config = crate::falcon::cache::CacheConfig {
+    app.rv32_mut().unwrap().mem_mut_unjournaled().icache.config = crate::falcon::cache::CacheConfig {
         size: 512,
         line_size: 16,
         associativity: 1,
         ..crate::falcon::cache::CacheConfig::default()
     };
-    app.native_mut().mem_mut_unjournaled().dcache.config = app.native().mem().icache.config.clone();
+    app.rv32_mut().unwrap().mem_mut_unjournaled().dcache.config = app.rv32().unwrap().mem().icache.config.clone();
     let area = Rect::new(0, 0, 160, 40);
 
     handle_mouse(
@@ -404,7 +403,7 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.run.pipeline_view().gantt_area_rect.set((0, 10, 80, 8));
-    app.native_mut().pipeline_mut().gantt = (0..10)
+    app.rv32_mut().unwrap().pipeline_mut().gantt = (0..10)
         .map(|i| GanttRow {
             gantt_id: i + 1,
             pc: (i * 4) as u32,
@@ -418,7 +417,7 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
         .collect();
     app.run.pipeline_view()
         .gantt_max_scroll_cache
-        .set(gantt_max_scroll(&app.native().pipeline(), 20));
+        .set(gantt_max_scroll(&app.rv32().unwrap().pipeline(), 20));
     app.run.pipeline_view_mut().gantt_scroll = app.run.pipeline_view_mut().gantt_max_scroll_cache.get();
 
     // Bottom-anchored: wheel-up digs into scrollback but clamps at the oldest row.
@@ -480,11 +479,11 @@ fn pipeline_history_mouse_wheel_ignores_scroll_outside_history_panel() {
 fn pipeline_state_click_restarts_when_halted() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.native_mut().pipeline_mut().enabled = true;
-    app.native_mut().pipeline_mut().halted = true;
+    app.rv32_mut().unwrap().pipeline_mut().enabled = true;
+    app.rv32_mut().unwrap().pipeline_mut().halted = true;
     app.run.pipeline_view().btn_state_rect.set((6, 20, 31));
-    app.native_mut().cpu_mut_unjournaled().pc = 32;
-    app.native_mut().pipeline_mut().fetch_pc = 32;
+    app.rv32_mut().unwrap().cpu_mut_unjournaled().pc = 32;
+    app.rv32_mut().unwrap().pipeline_mut().fetch_pc = 32;
 
     handle_mouse(
         &mut app,
@@ -497,8 +496,8 @@ fn pipeline_state_click_restarts_when_halted() {
         Rect::new(0, 0, 160, 40),
     );
 
-    assert!(!app.native().pipeline().halted);
-    assert_eq!(app.native().pipeline().fetch_pc, app.run.base_pc);
+    assert!(!app.rv32().unwrap().pipeline().halted);
+    assert_eq!(app.rv32().unwrap().pipeline().fetch_pc, app.run.base_pc);
 }
 
 #[test]
@@ -506,7 +505,7 @@ fn pipeline_main_subtab_ignores_stale_config_row_hitboxes() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.run.pipeline_view_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
-    let original = app.native().pipeline().bypass.ex_to_ex;
+    let original = app.rv32().unwrap().pipeline().bypass.ex_to_ex;
     let mut rects = [(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS];
     rects[0] = (12, 4, 40);
     app.run.pipeline_view().config_row_rects.set(rects);
@@ -522,7 +521,7 @@ fn pipeline_main_subtab_ignores_stale_config_row_hitboxes() {
         Rect::new(0, 0, 160, 40),
     );
 
-    assert_eq!(app.native().pipeline().bypass.ex_to_ex, original);
+    assert_eq!(app.rv32().unwrap().pipeline().bypass.ex_to_ex, original);
 }
 
 #[test]

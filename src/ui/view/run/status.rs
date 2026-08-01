@@ -261,14 +261,14 @@ pub(crate) fn state_text(app: &App) -> String {
         crate::ui::app::HartLifecycle::Free => "free".to_string(),
         crate::ui::app::HartLifecycle::Running => "run".to_string(),
         crate::ui::app::HartLifecycle::Paused => {
-            if app.native().cpu().ebreak_hit {
+            if app.rv32().is_some_and(|rv32| rv32.cpu().ebreak_hit) {
                 "ebrk".to_string()
             } else {
                 "pause".to_string()
             }
         }
         crate::ui::app::HartLifecycle::Exited => {
-            if app.native().cpu().local_exit {
+            if app.rv32().is_some_and(|rv32| rv32.cpu().local_exit) {
                 "halt".to_string()
             } else {
                 "exit".to_string()
@@ -284,7 +284,7 @@ fn state_color(app: &App) -> Color {
         crate::ui::app::HartLifecycle::Running => theme::RUNNING,
         crate::ui::app::HartLifecycle::Paused => theme::PAUSED,
         crate::ui::app::HartLifecycle::Exited => {
-            if app.native().cpu().local_exit {
+            if app.rv32().is_some_and(|rv32| rv32.cpu().local_exit) {
                 theme::DANGER
             } else {
                 theme::LABEL

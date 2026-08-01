@@ -1110,7 +1110,7 @@ mod tests {
         let mut app = crate::ui::app::App::new(None);
         app.editor.last_ok_text = Some(vec![0x0000_0013]);
         {
-            let p = app.native_mut().pipeline_mut();
+            let p = app.rv32_mut().unwrap().pipeline_mut();
             p.stages[0] = Some(PipeSlot::from_word(0, 0x0000_0013));
             p.stages[2] = Some(PipeSlot::from_word(8, 0x0000_0013));
             p.hazard_traces = (0..5)

@@ -11,7 +11,9 @@ fn setup_stats(app: &mut App) {
 }
 fn setup_config(app: &mut App) {
     app.tlb.vm_subtab = VmSubtab::Settings;
-    app.tlb.pending = app.native().mem().mmu().tlb.config.clone();
+    if let Some(rv32) = app.rv32() {
+        app.tlb.pending = rv32.mem().mmu().tlb.config.clone();
+    }
 }
 fn setup_entries(app: &mut App) {
     app.tlb.vm_subtab = VmSubtab::Tlb;

@@ -108,10 +108,15 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
     } else {
         "D-Cache Settings"
     };
+    // The live geometry to diff the pending edits against. Only a backend
+    // whose cache can be retuned shows this panel at all.
+    let Some(runtime) = app.rv32() else {
+        return;
+    };
     let current = if icache {
-        &app.native().mem().icache.config
+        &runtime.mem().icache.config
     } else {
-        &app.native().mem().dcache.config
+        &runtime.mem().dcache.config
     };
 
     // Determine which field (if any) is being edited in this panel
@@ -167,10 +172,10 @@ fn render_unified_config(f: &mut Frame, area: Rect, app: &App, extra_idx: usize)
     } else {
         return;
     };
-    let current = if extra_idx < app.native().mem().extra_levels.len() {
-        &app.native().mem().extra_levels[extra_idx].config
-    } else {
-        pending
+    let runtime = app.rv32();
+    let current = match runtime.filter(|rv32| extra_idx < rv32.mem().extra_levels.len()) {
+        Some(rv32) => &rv32.mem().extra_levels[extra_idx].config,
+        None => pending,
     };
 
     // For L2+, edit_field is_icache is ignored (always "false" column)

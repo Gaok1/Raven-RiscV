@@ -1,7 +1,6 @@
 use super::CpiConfig;
 use super::instr_edit::InstrFieldKind;
 use crate::falcon::jit::ExecutionBackend;
-use crate::falcon::machine::Machine;
 use crate::falcon::machine::types::{FRegId, MemWidth, RegTarget};
 use crate::falcon::{CacheController, registers::ExecRegion};
 use crate::ui::editor::Editor;
@@ -239,23 +238,9 @@ impl RunState {
         &mut self.pipeline_view
     }
 
-    pub(crate) fn reset_pipeline_stages(&mut self, pc: u32) {
-        self.machine.pipeline_mut().reset_stages(pc);
-        self.pipeline_view.reset_for_program();
-    }
-
-    pub(crate) fn redirect_pipeline_pc(&mut self, pc: u32) {
-        self.machine.pipeline_mut().redirect_pc(pc);
-        self.pipeline_view.status_msg = None;
-        self.pipeline_view.status_error = None;
-    }
 }
 
 pub(crate) struct RunState {
-    /// The simulator's CPU + memory hierarchy, owned behind the journaling
-    /// gateway. Reads go through [`RunState::cpu`] / [`RunState::mem`]; mutation
-    /// is only expressible via `Machine`'s methods (see its module docs).
-    pub(crate) machine: Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState>,
     pub(crate) pipeline_view: crate::ui::pipeline::PipelineViewState,
     pub(crate) prev_x: [u32; 32],
     pub(crate) prev_pc: u32,

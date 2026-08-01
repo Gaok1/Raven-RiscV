@@ -599,6 +599,10 @@ impl MemoryInspect for RiscV32Machine {
     }
 }
 
+/// Delegated whole, including the methods the trait gives a default: the
+/// hierarchy a host sees through this backend has to answer exactly as the
+/// runtime does, or a host that switched from driving the runtime directly to
+/// reading the capability would quietly get different numbers.
 impl CacheHierarchy for RiscV32Machine {
     fn level_count(&self) -> usize {
         self.mem().level_count()
@@ -610,6 +614,24 @@ impl CacheHierarchy for RiscV32Machine {
 
     fn set(&self, level: usize, role: CacheRole, set: usize) -> Option<CacheSetView<'_>> {
         self.mem().set(level, role, set)
+    }
+
+    fn is_configurable(&self) -> bool {
+        self.mem().is_configurable()
+    }
+
+    /// The runtime charges cycles no single level owns — write-backs and the
+    /// bypassed path — so this is its own total, not the sum of the levels.
+    fn total_cycles(&self) -> u64 {
+        CacheHierarchy::total_cycles(self.mem())
+    }
+
+    fn amat(&self, level: usize, role: CacheRole) -> f64 {
+        self.mem().amat(level, role)
+    }
+
+    fn level_name(&self, level: usize) -> String {
+        self.mem().level_name(level)
     }
 }
 

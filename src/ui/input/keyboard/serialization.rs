@@ -252,10 +252,14 @@ pub(super) fn parse_config_v3(text: &str) -> Result<ConfigV3, String> {
 /// Serialize the whole live simulator config (sim + cache + pipeline) as a
 /// unified `.rcfg` v3 document.
 pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
+    // A backend with no datapath model has no pipeline settings to record; the
+    // defaults round-trip to the same "off" state on load.
+    let no_pipeline = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
+    let pipeline_config = app.pipeline_config().unwrap_or(&no_pipeline);
     let mut sim = serialize_rcfg(
         &app.run.cpi_config,
         app.run.cache_enabled,
-        app.native().pipeline().enabled,
+        app.pipeline_status().is_some_and(|status| status.enabled),
         app.vm_mode(),
         &app.active_scheme(),
         app.run.trace_syscalls,
@@ -271,7 +275,7 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
         &app.cache.extra_pending,
         &app.tlb.pending,
     );
-    let pipeline = serialize_pcfg(app.native().pipeline(), app.run.pipeline_view().speed);
+    let pipeline = serialize_pcfg(pipeline_config, app.run.pipeline_view().speed);
     wrap_config_v3(&sim, &cache, &pipeline)
 }
 
@@ -282,25 +286,21 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
     app.cache.pending_dcache = cfg.dcfg;
     let n_extra = cfg.extra.len();
     app.cache.extra_pending = cfg.extra;
-    app.native_mut().mem_mut_unjournaled().extra_levels.clear();
-    for c in &app.cache.extra_pending {
-        app.run
-            .machine
-            .mem_mut_unjournaled()
-            .extra_levels
-            .push(crate::falcon::cache::Cache::new(c.clone()));
-    }
+    install_extra_cache_levels(app);
     if app.cache.selected_level > n_extra {
         app.cache.selected_level = n_extra;
     }
     app.tlb.pending = cfg.tlb.clone();
-    app.run
-        .machine
-        .mem_mut_unjournaled()
-        .mmu_mut()
-        .tlb
-        .reconfigure(cfg.tlb);
-    cfg.pipeline.apply_to_state(app.native_mut().pipeline_mut());
+    if let Some(runtime) = app.rv32_mut() {
+        runtime
+            .mem_mut_unjournaled()
+            .mmu_mut()
+            .tlb
+            .reconfigure(cfg.tlb);
+    }
+    if let Some(pipeline) = app.pipeline_config_mut() {
+        cfg.pipeline.apply_to_state(pipeline);
+    }
     app.run.pipeline_view_mut().speed = cfg.pipeline.speed;
     // Sim settings applied last: may trigger a simulation restart.
     apply_rcfg(app, cfg.sim);
@@ -652,8 +652,11 @@ pub(super) fn make_level_snapshot(
     }
 }
 
-pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
-    let mem = app.native().mem();
+/// Snapshot the cache window for the results pane. `None` when the loaded
+/// backend has no cache hierarchy of RV32's shape to sample — there is nothing
+/// to capture then, and the caller says so rather than filing an empty row.
+pub(super) fn capture_snapshot(app: &App) -> Option<CacheResultsSnapshot> {
+    let mem = app.rv32()?.mem();
     let pipeline = capture_pipeline_snapshot(app);
     let i_amat = mem.icache_amat();
     let d_amat = mem.dcache_amat();
@@ -759,7 +762,7 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         )
     };
 
-    CacheResultsSnapshot {
+    Some(CacheResultsSnapshot {
         label: format!("[{}\u{2013}{}]", instr_start, instr_end),
         instr_start,
         instr_end,
@@ -777,13 +780,15 @@ pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
         hit_rate_history_i: history_i,
         hit_rate_history_d: history_d,
         pipeline,
-    }
+    })
 }
 
 /// Capture the current stats window into the shared session history. Both the
 /// Cache and Virtual Memory Stats subtabs call this on `s`.
 pub(super) fn capture_session_snapshot(app: &mut App) {
-    let snap = capture_snapshot(app);
+    let Some(snap) = capture_snapshot(app) else {
+        return;
+    };
     let label = snap.label.clone();
     let instr_end = snap.instr_end;
     app.cache.session_history.push(snap);
@@ -808,9 +813,27 @@ pub(crate) fn apply_rcfg_text(app: &mut App, text: &str) -> Result<(), String> {
 /// Apply a raw .pcfg text to the app (parse + apply, no file I/O).
 pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
     let cfg = parse_pcfg(text)?;
-    cfg.apply_to_state(app.native_mut().pipeline_mut());
+    if let Some(pipeline) = app.pipeline_config_mut() {
+        cfg.apply_to_state(pipeline);
+    }
     app.run.pipeline_view_mut().speed = cfg.speed;
     Ok(())
+}
+
+/// Rebuild the live hierarchy's extra levels from `app.cache.extra_pending`.
+/// A backend whose cache the host cannot reshape keeps only the pending list,
+/// which is what the Cache tab shows.
+fn install_extra_cache_levels(app: &mut App) {
+    let levels: Vec<_> = app
+        .cache
+        .extra_pending
+        .iter()
+        .cloned()
+        .map(crate::falcon::cache::Cache::new)
+        .collect();
+    if let Some(runtime) = app.rv32_mut() {
+        runtime.mem_mut_unjournaled().extra_levels = levels;
+    }
 }
 
 /// Apply a raw .fcache text to the app (parse + apply, no file I/O).
@@ -820,24 +843,14 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
     app.cache.pending_dcache = dcfg;
     let n_extra = extra.len();
     app.cache.extra_pending = extra;
-    app.native_mut().mem_mut_unjournaled().extra_levels.clear();
-    for cfg in &app.cache.extra_pending {
-        app.run
-            .machine
-            .mem_mut_unjournaled()
-            .extra_levels
-            .push(crate::falcon::cache::Cache::new(cfg.clone()));
-    }
+    install_extra_cache_levels(app);
     if app.cache.selected_level > n_extra {
         app.cache.selected_level = n_extra;
     }
     app.tlb.pending = tlb.clone();
-    app.run
-        .machine
-        .mem_mut_unjournaled()
-        .mmu_mut()
-        .tlb
-        .reconfigure(tlb);
+    if let Some(runtime) = app.rv32_mut() {
+        runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
+    }
     Ok(())
 }
 
@@ -901,7 +914,9 @@ pub(crate) fn do_import_config(app: &mut App) {
 /// cache, pipeline and TLB stats. The captured snapshot already includes the
 /// pipeline payload when the pipeline is enabled.
 pub(crate) fn do_export_results(app: &mut App) {
-    let mut snap = capture_snapshot(app);
+    let Some(mut snap) = capture_snapshot(app) else {
+        return;
+    };
     if let Some(path) = OSFileDialog::new()
         .add_filter("Raven Stats", &["rstats"])
         .add_filter("CSV Spreadsheet", &["csv"])
@@ -1644,7 +1659,9 @@ pub(super) fn dispatch_path_input(
         }
         PathInputAction::SaveResults => {
             let path = ensure_extension(path, "rstats");
-            let mut snap = capture_snapshot(app);
+            let Some(mut snap) = capture_snapshot(app) else {
+                return;
+            };
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())

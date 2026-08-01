@@ -37,7 +37,9 @@ fn render_tree(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mmu = app.native().mem().mmu();
+    let Some(mmu) = app.rv32().map(|rv32| rv32.mem().mmu()) else {
+        return;
+    };
 
     // No active translation → nothing to walk.
     if !app.run.vm_enabled() || mmu.satp.mode() != SatpMode::Sv32 {
@@ -70,7 +72,9 @@ fn render_tree(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn build_tree_lines(app: &App, mmu: &Mmu) -> Vec<Line<'static>> {
-    let ram = app.native().mem().ram();
+    let Some(ram) = app.rv32().map(|rv32| rv32.mem().ram()) else {
+        return Vec::new();
+    };
     let scheme = &mmu.scheme;
     let root_pa = mmu.satp.ppn() << 12;
     let asid = mmu.satp.asid();

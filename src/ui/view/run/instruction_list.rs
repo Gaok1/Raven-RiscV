@@ -271,7 +271,7 @@ const HOVER_BG: Color = theme::BG_HOVER;
 const SELECTED_BG: Color = theme::BG_RAISED;
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
-    let word = app.native().mem().peek32(addr).unwrap_or(0);
+    let word = app.memory().map_or(0, |memory| memory.peek_word(u64::from(addr), 4)) as u32;
     let is_bp = app.run.breakpoints.contains(&addr);
     let is_pc = u64::from(addr) == app.program_counter();
     let is_selected = !is_pc && app.run.details_addr == Some(addr);
@@ -341,7 +341,9 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
 
     // Branch/jump indicator on current PC instruction
     if is_pc {
-        if let Some((taken, target)) = branch_outcome(word, addr, app.native().cpu()) {
+        if let Some((taken, target)) =
+            app.rv32().and_then(|rv32| branch_outcome(word, addr, rv32.cpu()))
+        {
             let label = app
                 .run
                 .labels

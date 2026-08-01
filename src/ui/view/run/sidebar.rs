@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell, List, ListItem, Paragraph, Row, Table};
 
 use super::formatting::{
-    format_memory_value, format_register_value, format_stale_value, format_u32_value,
+    format_memory_value, format_register_value, format_stale_value,
 };
 use super::{App, MemRegion};
 use crate::falcon::machine::types::{RegId, RegTarget};
@@ -487,8 +487,19 @@ fn memory_title_section<'a>(app: &'a App, addr: u32) -> &'a str {
     classify_memory_section(app, addr)
 }
 
+/// The stack pointer and program break as RV32 reports them. Both are RV32
+/// ideas — a backend with neither simply never paints those markers, which is
+/// what a zero here means.
+fn stack_pointer(app: &App) -> u32 {
+    app.rv32().map_or(0, |rv32| rv32.cpu().x[2])
+}
+
+fn heap_break(app: &App) -> u32 {
+    app.rv32().map_or(0, |rv32| rv32.cpu().heap_break)
+}
+
 fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
-    let sp_aligned = app.native().cpu().x[2] & !(app.run.mem_view_bytes.saturating_sub(1));
+    let sp_aligned = stack_pointer(app) & !(app.run.mem_view_bytes.saturating_sub(1));
     if addr >= sp_aligned && (addr as usize) < app.run.mem_size {
         return "stack";
     }
@@ -520,7 +531,7 @@ fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
     if addr >= data_end && addr < bss_end {
         return ".bss";
     }
-    if addr >= app.run.heap_start && addr < app.native().cpu().heap_break {
+    if addr >= app.run.heap_start && addr < heap_break(app) {
         return "heap";
     }
 
@@ -564,28 +575,31 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
         return ListItem::new(format!("  0x{addr:08x}: {overlay}")).style(edit_value_style());
     }
 
-    let sp = app.native().cpu().x[2];
+    let sp = stack_pointer(app);
     let sp_aligned = sp & !(app.run.mem_view_bytes - 1);
     let is_sp = addr == sp_aligned;
     let is_stack = app.run.mem_region == MemRegion::Stack;
 
-    let hb = app.native().cpu().heap_break;
+    let hb = heap_break(app);
     let hb_aligned = hb & !(app.run.mem_view_bytes - 1);
     let is_heap_mode = app.run.mem_region == MemRegion::Heap;
     let is_hb = addr == hb_aligned;
 
     let cache_presence = if app.run.cache_enabled {
-        cache_presence_label(app.native().mem(), addr)
+        app.rv32().and_then(|rv32| cache_presence_label(rv32.mem(), addr))
     } else {
         None
     };
     let data_cache_loc = if app.run.cache_enabled {
-        app.native().mem().data_cache_location(addr)
+        app.rv32().and_then(|rv32| rv32.mem().data_cache_location(addr))
     } else {
         None
     };
     let is_dirty =
-        app.run.cache_enabled && app.native().mem().is_dirty_cached(addr, app.run.mem_view_bytes);
+        app.run.cache_enabled
+            && app
+                .rv32()
+                .is_some_and(|rv32| rv32.mem().is_dirty_cached(addr, app.run.mem_view_bytes));
 
     // Check if any recent memory access overlaps this row's byte range
     let row_end = addr.wrapping_add(app.run.mem_view_bytes);
@@ -762,16 +776,6 @@ fn cache_presence_label(mem: &crate::falcon::cache::CacheController, addr: u32) 
     }
 }
 
-// Keep the old format_u32_value usage for format_memory_value compatibility
-#[allow(dead_code)]
-fn _unused_format(app: &App, addr: u32) -> String {
-    format_u32_value(
-        app.native().mem().peek32(addr).unwrap_or(0),
-        app.run.fmt_mode,
-        app.run.show_signed,
-    )
-}
-
 // ── ELF Sections viewer ───────────────────────────────────────────────────────
 
 const MAX_LINES_PER_SECTION: usize = 16;
@@ -912,8 +916,8 @@ mod tests {
         app.run.base_pc = 0x0000;
         app.run.data_base = 0x1000;
         app.run.heap_start = 0x1040;
-        app.native_mut().cpu_mut_unjournaled().heap_break = 0x1080;
-        app.native_mut().cpu_mut_unjournaled().write(2, 0x2000);
+        app.rv32_mut().unwrap().cpu_mut_unjournaled().heap_break = 0x1080;
+        app.rv32_mut().unwrap().cpu_mut_unjournaled().write(2, 0x2000);
         app.run.mem_size = 0x2000;
         app.run.mem_view_bytes = 4;
         app
@@ -932,7 +936,7 @@ mod tests {
     #[test]
     fn stack_classification_uses_current_sp_boundary() {
         let mut app = make_app();
-        app.native_mut().cpu_mut_unjournaled().write(2, 0x1ff0);
+        app.rv32_mut().unwrap().cpu_mut_unjournaled().write(2, 0x1ff0);
         assert_eq!(classify_memory_section(&app, 0x1ff0), "stack");
         assert_eq!(classify_memory_section(&app, 0x1fec), "free");
     }

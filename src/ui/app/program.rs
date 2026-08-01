@@ -8,24 +8,26 @@
 //! Here there is one path. [`App::assemble_workspace`] asks the *active*
 //! architecture's assembler for a [`ProgramImage`]; [`App::install_program`]
 //! puts that image in memory; [`App::adopt_program`] refreshes the views that
-//! are derived from it. Only [`App::install_program`] still distinguishes the
-//! two runtimes, and it says exactly why.
+//! are derived from it. Only [`App::install_program`] still forks, and it says
+//! exactly why.
 //!
-//! ## The two runtimes
+//! ## Why loading still forks
 //!
 //! Most backends are driven entirely through the engine's [`Machine`] trait:
-//! load, step, reset, snapshot. RV32 is not, because the Run tab drives state
-//! the trait deliberately does not model — pipeline stages, the cache
-//! hierarchy, the MMU, per-hart CPUs, the JIT, and the step-back journal. That
-//! runtime lives in [`RunState`](super::RunState) and is configured from the
-//! TUI's own cache/TLB settings, so the app builds it here rather than asking
-//! the backend for a machine it would then have to reach inside.
+//! load, step, reset, snapshot. RV32 is loaded by hand, because its memory
+//! hierarchy is built from settings that live in the TUI — the cache geometry
+//! the user is editing, the TLB, the VM mode — and `Machine::load` knows
+//! nothing about any of them. So the app rebuilds that hierarchy
+//! ([`App::reset_native_runtime`]) and fills it with the engine's own
+//! installer ([`App::fill_native_memory`]).
 //!
-//! What that split is *not* is a fork on the architecture's name: everything
-//! above the machine — assembling, statistics, diagnostics, the source map, the
-//! FALC container — is backend-neutral and shared.
+//! Both paths reach the *same* machine: [`App::rv32`] hands back the runtime
+//! inside the loaded backend. What the fork is *not* is a fork on the
+//! architecture's name: everything above the machine — assembling, statistics,
+//! diagnostics, the source map, the FALC container — is backend-neutral and
+//! shared.
 
-use super::{App, BuildStats, MemRegion};
+use super::{App, BuildStats, MemRegion, NOT_RV32, rv32_runtime_mut};
 use crate::falcon::{CacheController, Cpu};
 use raven_riscv_engine::{ProgramImage, SourceMap};
 use std::collections::{HashMap, HashSet};
@@ -133,23 +135,23 @@ impl App {
     ///
     /// This is the only place that still tells the two runtimes apart: a
     /// trait-driven backend owns its memory and is handed the image, while the
-    /// RV32 runtime's memory hierarchy is built from the TUI's cache and TLB
-    /// settings and then filled by the engine's shared installer. Both end up
-    /// running the same bytes at the same addresses.
+    /// RV32 runtime's memory hierarchy is rebuilt from the TUI's cache and TLB
+    /// settings — which `Machine::load` knows nothing about — and then filled by
+    /// the engine's shared installer. Both end up running the same bytes at the
+    /// same addresses.
     pub(super) fn install_program(&mut self, image: &ProgramImage) -> bool {
-        let loaded = match self.machine.as_mut() {
-            Some(machine) => machine.load(image).map_err(|error| error.to_string()),
-            None => {
-                self.reset_native_runtime();
-                self.fill_native_memory(image)
-            }
+        let loaded = if self.rv32().is_some() {
+            self.reset_native_runtime();
+            self.fill_native_memory(image)
+        } else {
+            self.machine.load(image).map_err(|error| error.to_string())
         };
         if let Err(error) = loaded {
             // The program assembled but cannot run, so the editor's badge has to
             // stop saying it is fine.
             self.editor.last_compile_ok = Some(false);
             self.console.push_error(error);
-            self.run.faulted = !self.uses_trait_runtime();
+            self.run.faulted = self.rv32().is_some();
             return false;
         }
         true
@@ -160,26 +162,26 @@ impl App {
     pub(super) fn reset_native_runtime(&mut self) {
         self.run.prev_x = self.native().cpu().x;
         self.run.mem_size = self.ram_override.unwrap_or(super::DEFAULT_MEM_SIZE);
-        *self.native_mut().cpu_mut_unjournaled() = Cpu::default();
-        self.native_mut().cpu_mut_unjournaled().pc = self.run.base_pc;
-        self.run.prev_pc = self.run.base_pc;
-        self.run
-            .machine
-            .cpu_mut_unjournaled()
-            .write(2, self.run.mem_size as u32);
-        *self.native_mut().mem_mut_unjournaled() = CacheController::new(
+        let (mem_size, base_pc, bypass) = (
+            self.run.mem_size,
+            self.run.base_pc,
+            !self.run.cache_enabled,
+        );
+        let memory = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
             self.cache.extra_pending.clone(),
-            self.run.mem_size,
+            mem_size,
         );
-        self.native_mut().mem_mut_unjournaled().bypass = !self.run.cache_enabled;
-        self.run
-            .machine
-            .mem_mut_unjournaled()
-            .mmu_mut()
-            .tlb
-            .reconfigure(self.tlb.pending.clone());
+        let tlb = self.tlb.pending.clone();
+        self.run.prev_pc = base_pc;
+        let runtime = self.native_mut();
+        *runtime.cpu_mut_unjournaled() = Cpu::default();
+        runtime.cpu_mut_unjournaled().pc = base_pc;
+        runtime.cpu_mut_unjournaled().write(2, mem_size as u32);
+        *runtime.mem_mut_unjournaled() = memory;
+        runtime.mem_mut_unjournaled().bypass = bypass;
+        runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
         self.push_vm_mode_to_mmu();
         self.run.faulted = false;
     }
@@ -213,7 +215,7 @@ impl App {
     /// none of those panes.
     pub(super) fn adopt_program(&mut self, image: &ProgramImage, offsets: Vec<usize>) {
         self.store_image_source_meta(image, offsets);
-        if self.uses_trait_runtime() {
+        if self.rv32().is_none() {
             return;
         }
         self.run.comments = narrow(image.source_map.comments.clone());
@@ -235,7 +237,7 @@ impl App {
         self.sync_pipeline_program_range();
         self.install_didactic_page_map();
         let pc = self.native().cpu().pc;
-        self.run.reset_pipeline_stages(pc);
+        self.reset_pipeline_stages(pc);
         self.rebuild_harts();
     }
 
@@ -253,7 +255,10 @@ impl App {
         let root_pa = scheme.root_pa(self.run.mem_size as u32);
         let window = (self.run.base_pc.min(self.run.data_base), self.run.heap_start);
         crate::falcon::mmu::Mmu::install_map_scheme(
-            &mut self.run.machine.mem_mut_unjournaled().ram,
+            &mut rv32_runtime_mut(&mut *self.machine)
+                .expect(NOT_RV32)
+                .mem_mut_unjournaled()
+                .ram,
             root_pa,
             &scheme,
             self.tlb.page_map,
@@ -275,7 +280,7 @@ impl App {
     /// reaches here — it carries a symbol table and a section list a
     /// [`ProgramImage`] cannot express, so it keeps its own path.
     pub(super) fn decode_binary(&self, bytes: &[u8]) -> Result<ProgramImage, String> {
-        if self.uses_trait_runtime() {
+        if self.rv32().is_none() {
             let image = ProgramImage::from_falc(bytes).map_err(|error| error.to_string())?;
             let id = self.architecture_id();
             return image

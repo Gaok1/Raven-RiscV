@@ -1173,7 +1173,10 @@ fn render_encoding_bar(f: &mut Frame, area: Rect, app: &App) {
     let cursor_row = app.editor.buf.cursor_row;
 
     let line = if let Some(&addr) = app.editor.line_to_addr.get(&cursor_row) {
-        if let Ok(word) = app.native().mem().peek32(addr) {
+        if let Some(word) = app
+            .memory()
+            .map(|memory| memory.peek_word(u64::from(addr), 4) as u32)
+        {
             // Format as: 0x00b50533  funct7   rs2   rs1 f3  rd     opcode
             //             (hex)      [31:25] [24:20][19:15][14:12][11:7] [6:0]
             let f7 = (word >> 25) & 0x7F;

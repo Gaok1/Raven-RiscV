@@ -201,26 +201,22 @@ fn pipeline_tab_single_step_skips_consecutive_icache_stalls() {
             "halt",
         ],
     );
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
         .hit_latency = 3;
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
         .miss_penalty = 0;
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
         .assoc_penalty = 0;
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
@@ -453,26 +449,22 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_if_cache_stalls() {
             "halt",
         ],
     );
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
         .hit_latency = 3;
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
         .miss_penalty = 0;
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
         .assoc_penalty = 0;
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .icache
         .config
@@ -549,8 +541,7 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_multilevel_if_stall
     let dcfg = slow_level(16, 16, 1);
     let l2 = slow_level(4, 4, 5);
     let l3 = slow_level(4, 8, 9);
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .apply_config(icfg, dcfg, vec![l2, l3]);
     app.native_mut().mem_mut_unjournaled().bypass = false;
@@ -605,8 +596,7 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_multilevel_mem_stal
     let dcfg = slow_level(4, 4, 1);
     let l2 = slow_level(4, 4, 5);
     let l3 = slow_level(4, 8, 9);
-    app.run
-        .machine
+    app.native_mut()
         .mem_mut_unjournaled()
         .apply_config(icfg, dcfg, vec![l2, l3]);
     app.native_mut().mem_mut_unjournaled().bypass = false;
@@ -2219,7 +2209,7 @@ fn toy16_is_a_runtime_app_backend_with_cache_and_capability_gated_tabs() {
     )
     .unwrap();
     assert_eq!(app.architecture_id(), "toy16");
-    assert!(app.uses_trait_runtime());
+    assert!(app.rv32().is_none(), "toy16 must not carry an RV32 runtime");
     assert!(app.tab_visible(Tab::Cache));
     assert!(!app.tab_visible(Tab::Tlb));
     assert!(!app.tab_visible(Tab::Pipeline));
@@ -2227,7 +2217,7 @@ fn toy16_is_a_runtime_app_backend_with_cache_and_capability_gated_tabs() {
     for _ in 0..5 {
         app.single_step();
     }
-    let snapshot = app.machine_snapshot().unwrap();
+    let snapshot = app.machine_snapshot();
     assert_eq!(snapshot.registers[2].value, 42);
     assert_eq!(snapshot.stdout, b"42\n");
     let caches = app.cache_hierarchy().unwrap();
@@ -2262,6 +2252,87 @@ fn execution_totals_come_from_the_active_backend() {
             totals.cycles as f64 / totals.instructions as f64,
             "{id} reported a CPI its own two numbers do not give"
         );
+    }
+}
+
+/// Every control the UI offers must survive a backend that has no RV32
+/// runtime behind it.
+///
+/// The host still drives RV32 by hand — step-back, harts, the JIT, the cache
+/// and MMU it configures — and reaches that runtime through `App::rv32`. This
+/// walks the controls that used to read it unconditionally: with the runtime
+/// gone, each has to do nothing rather than reach into a backend that is not
+/// there.
+#[test]
+fn every_control_is_safe_on_a_backend_without_the_rv32_runtime() {
+    for id in ["toy16", "sap"] {
+        let mut app =
+            App::new_with_architecture(Some(64 * 1024), crate::falcon::jit::BackendKind::None, id)
+                .unwrap();
+        assert!(app.rv32().is_none(), "{id} carries an RV32 runtime");
+
+        app.single_step();
+        app.toggle_run();
+        app.toggle_run();
+        app.restart_simulation();
+        assert!(!app.can_stepback_now(), "{id} claims a step-back journal");
+        app.stepback_one();
+
+        app.set_cache_enabled(true);
+        app.set_pipeline_enabled(true);
+        app.set_vm_enabled(true);
+        app.set_tlb_enabled(false);
+        app.set_jit_mode(crate::falcon::jit::BackendKind::Hot);
+        app.add_cache_level();
+        app.remove_last_cache_level();
+        app.flush_tlb();
+        app.apply_vm_settings();
+        app.apply_page_map();
+        app.pipeline_reset_to_current_pc();
+        app.reconfigure_pipeline_model();
+        app.rebuild_harts_for_debug();
+        app.cycle_selected_core(1);
+        app.resume_selected_hart();
+        app.ensure_pc_visible_in_imem();
+        app.commit_run_edit();
+        app.cycle_register_bank();
+        app.assemble_and_load();
+
+        // Every key the tabs bind, on every tab they are offered on.
+        for tab in app.visible_tabs() {
+            app.tab = tab;
+            for code in [
+                crossterm::event::KeyCode::Char('s'),
+                crossterm::event::KeyCode::Char('p'),
+                crossterm::event::KeyCode::Char('r'),
+                crossterm::event::KeyCode::Char('e'),
+                crossterm::event::KeyCode::Char('b'),
+                crossterm::event::KeyCode::Char('v'),
+                crossterm::event::KeyCode::Char('f'),
+                crossterm::event::KeyCode::Char('c'),
+                crossterm::event::KeyCode::Char(' '),
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyCode::Tab,
+                crossterm::event::KeyCode::Up,
+                crossterm::event::KeyCode::Down,
+                crossterm::event::KeyCode::F(9),
+            ] {
+                let _ = crate::ui::input::handle_key(
+                    &mut app,
+                    crossterm::event::KeyEvent::new(
+                        code,
+                        crossterm::event::KeyModifiers::NONE,
+                    ),
+                );
+            }
+
+            // Whatever those keys left behind still has to draw.
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
+            terminal
+                .draw(|f| crate::ui::view::ui(f, &app))
+                .unwrap_or_else(|e| panic!("{id} failed to draw {}: {e}", tab.label()));
+        }
     }
 }
 

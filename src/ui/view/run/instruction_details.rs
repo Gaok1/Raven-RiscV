@@ -46,7 +46,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         ctx.format,
         &ctx.disasm,
         ctx.comment.as_deref(),
-        Some(app.native().cpu()),
+        app.rv32().map(|rv32| rv32.cpu()),
         app,
         &ctx,
     );
@@ -120,7 +120,7 @@ struct DetailContext {
 fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Option<String>)> {
     use crate::falcon::decoder::decode;
     use crate::falcon::instruction::Instruction::*;
-    let cpu = app.native().cpu();
+    let cpu = app.rv32()?.cpu();
     let (taken, target) = match decode(word) {
         Ok(Beq { rs1, rs2, imm }) => (
             cpu.x[rs1 as usize] == cpu.x[rs2 as usize],
@@ -154,17 +154,24 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
     Some((taken, target, label))
 }
 
+/// The instruction word at `addr`, read through the backend's own memory.
+/// `None` when this backend exposes no memory to read.
+fn word_at(app: &App, addr: u32) -> Option<u32> {
+    app.memory()
+        .map(|memory| memory.peek_word(u64::from(addr), 4) as u32)
+}
+
 fn detail_context(app: &App) -> DetailContext {
     let pc = app.program_counter() as u32;
     // A click-selected row pins the panel; otherwise it follows the PC.
     let selected = app
         .run
         .details_addr
-        .and_then(|addr| app.native().mem().peek32(addr).ok().map(|word| (addr, word)));
+        .and_then(|addr| word_at(app, addr).map(|word| (addr, word)));
     let (addr, word, origin) = if let Some((addr, word)) = selected {
         (addr, word, "selected")
     } else if exec_address_in_range(app, pc) {
-        (pc, app.native().mem().peek32(pc).unwrap_or(0), "PC")
+        (pc, word_at(app, pc).unwrap_or(0), "PC")
     } else {
         return DetailContext {
             addr: pc,
@@ -316,13 +323,13 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
     // The cycle estimate comes from RV32's CPI model, which is tied to its
     // opcodes; other backends show the class their own decoder reported rather
     // than a number that would be made up.
-    if app.architecture_id() == raven_riscv_engine::architectures::riscv32::ID {
+    if let Some(runtime) = app.rv32() {
         let base_cycles = crate::ui::app::classify_cpi_for_display(
             ctx.word,
             ctx.addr,
-            app.native().cpu(),
+            runtime.cpu(),
             &app.run.cpi_config,
-            app.native().pipeline().enabled,
+            runtime.pipeline().enabled,
         );
         lines.push(Line::from(vec![
             Span::styled("  cycles  ", style::label()),

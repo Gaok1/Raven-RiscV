@@ -390,7 +390,10 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
     }
 
     if key.code == KeyCode::F(9) && matches!(app.tab, Tab::Run) {
-        let addr = app.run.hover_imem_addr.unwrap_or(app.native().cpu().pc);
+        let addr = app
+            .run
+            .hover_imem_addr
+            .unwrap_or(app.program_counter() as u32);
         if app.run.breakpoints.contains(&addr) {
             app.run.breakpoints.remove(&addr);
         } else {

@@ -47,7 +47,9 @@ impl App {
         if self.core_hart_id(self.selected_core).is_some()
             || !matches!(self.core_status(self.selected_core), HartLifecycle::Free)
         {
-            accumulate(&self.native().pipeline());
+            if let Some(model) = self.rv32() {
+                accumulate(model.pipeline());
+            }
         }
 
         for (idx, hart) in self.harts.iter().enumerate() {
@@ -168,17 +170,39 @@ impl App {
 
     pub(in crate::ui) fn set_cache_enabled(&mut self, enabled: bool) {
         self.run.cache_enabled = enabled;
-        if !self.uses_trait_runtime() {
+        if self.rv32().is_some() {
             self.native_mut().mem_mut_unjournaled().bypass = !enabled;
             self.native_mut().mem_mut_unjournaled().flush_all();
         }
         self.ensure_visible_tab();
     }
 
+    /// Empty the pipeline and refetch from `pc`, dropping the visual state that
+    /// described the old program. The physical stages live in the runtime and
+    /// the presentation beside it, which is why both move together here.
+    pub(in crate::ui) fn reset_pipeline_stages(&mut self, pc: u32) {
+        if let Some(rv32) = self.rv32_mut() {
+            rv32.pipeline_mut().reset_stages(pc);
+        }
+        self.run.pipeline_view.reset_for_program();
+    }
+
+    /// Point the fetch stage at `pc` without disturbing what has already been
+    /// clocked in, and clear the status line the last redirect left behind.
+    pub(in crate::ui) fn redirect_pipeline_pc(&mut self, pc: u32) {
+        if let Some(rv32) = self.rv32_mut() {
+            rv32.pipeline_mut().redirect_pc(pc);
+        }
+        self.run.pipeline_view.status_msg = None;
+        self.run.pipeline_view.status_error = None;
+    }
+
     pub(in crate::ui) fn set_pipeline_enabled(&mut self, enabled: bool) {
-        self.native_mut().pipeline_mut().enabled = enabled;
-        self.native_mut().pipeline_mut().sequential_mode = !enabled;
-        self.reconfigure_pipeline_model();
+        if let Some(pipeline) = self.pipeline_config_mut() {
+            pipeline.enabled = enabled;
+            pipeline.sequential_mode = !enabled;
+            self.reconfigure_pipeline_model();
+        }
         self.ensure_visible_tab();
     }
 
@@ -207,7 +231,10 @@ impl App {
         let (enabled, force_translate) = self.run.vm_mode.flags();
         let scheme = self.active_scheme();
         let tlb_enabled = self.run.tlb_enabled;
-        let mmu = self.native_mut().mem_mut_unjournaled().mmu_mut();
+        let Some(runtime) = self.rv32_mut() else {
+            return;
+        };
+        let mmu = runtime.mem_mut_unjournaled().mmu_mut();
         mmu.set_scheme(scheme);
         mmu.enabled = enabled;
         mmu.force_translate = force_translate;
@@ -230,7 +257,9 @@ impl App {
         if !enabled {
             // Drop all cached translations so re-enabling starts from a clean
             // slate (no stale PA mappings).
-            self.native_mut().mem_mut_unjournaled().mmu.flush();
+            if let Some(runtime) = self.rv32_mut() {
+                runtime.mem_mut_unjournaled().mmu.flush();
+            }
         } else if self.run.jit_kind != crate::falcon::jit::BackendKind::None {
             // The JIT does not yet invalidate translations on satp/sfence.vma,
             // so keeping it on with VM would silently run stale code. Demote to
@@ -244,10 +273,13 @@ impl App {
     /// page table (miss + penalty, no hits). Mirrors the flag into the engine.
     pub(in crate::ui) fn set_tlb_enabled(&mut self, enabled: bool) {
         self.run.tlb_enabled = enabled;
-        self.native_mut().mem_mut_unjournaled().mmu.tlb_enabled = enabled;
+        let Some(runtime) = self.rv32_mut() else {
+            return;
+        };
+        runtime.mem_mut_unjournaled().mmu.tlb_enabled = enabled;
         if !enabled {
             // Drop cached translations so re-enabling starts cold.
-            self.native_mut().mem_mut_unjournaled().mmu.flush();
+            runtime.mem_mut_unjournaled().mmu.flush();
         }
     }
 
@@ -279,7 +311,13 @@ impl App {
             BackendKind::Full => {
                 #[cfg(feature = "jit")]
                 {
-                    crate::falcon::jit::make_full_backend(self.native().cpu(), self.native().mem())
+                    match self.rv32() {
+                        Some(runtime) => crate::falcon::jit::make_full_backend(
+                            runtime.cpu(),
+                            runtime.mem(),
+                        ),
+                        None => make_backend(BackendKind::None).unwrap(),
+                    }
                 }
                 #[cfg(not(feature = "jit"))]
                 {
@@ -291,17 +329,19 @@ impl App {
 
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
         self.run.is_running = false;
-        let __rpc = self.native().cpu().pc;
-        self.run.reset_pipeline_stages(__rpc);
+        let __rpc = self.program_counter() as u32;
+        self.reset_pipeline_stages(__rpc);
 
         for (idx, hart) in self.harts.iter_mut().enumerate() {
             if idx == self.selected_core {
                 continue;
             }
-            if let Some(p) = hart.pipeline.as_mut() {
-                // By field, not through `native`: the runtime and `harts` are
-                // disjoint places, which a whole-`self` borrow would hide.
-                Self::copy_pipeline_config_to_hart(self.run.machine.pipeline(), p);
+            // By field, not through `native`: the runtime and `harts` are
+            // disjoint places, which a whole-`self` borrow would hide.
+            if let Some(p) = hart.pipeline.as_mut()
+                && let Some(model) = rv32_runtime(&*self.machine)
+            {
+                Self::copy_pipeline_config_to_hart(model.pipeline(), p);
                 p.reset_stages(hart.cpu.pc);
             }
         }
@@ -333,16 +373,21 @@ impl App {
     }
 
     pub(super) fn rebuild_harts(&mut self) {
+        // Harts mirror the runtime the host steps; a backend without one still
+        // gets the cores, so the toolbar has something to name.
+        let selected = self
+            .rv32()
+            .map_or_else(crate::falcon::Cpu::default, |rv32| rv32.cpu().clone());
         self.selected_core = 0;
         self.next_hart_id = 1;
         self.harts.clear();
         for core in 0..self.max_cores {
             let mut runtime = HartCoreRuntime::free(self.run.base_pc, self.run.mem_size);
-            runtime.cpu.heap_break = self.native().cpu().heap_break;
+            runtime.cpu.heap_break = selected.heap_break;
             if core == 0 {
                 runtime.hart_id = Some(0);
                 runtime.lifecycle = HartLifecycle::Running;
-                runtime.cpu = self.native().cpu().clone();
+                runtime.cpu = selected.clone();
                 runtime.cpu.hart_id = 0;
                 runtime.prev_x = self.run.prev_x;
                 runtime.prev_f = self.run.prev_f;
@@ -357,8 +402,10 @@ impl App {
                 runtime.dyn_mem_access = self.run.dyn_mem_access;
                 runtime.mem_access_log = self.run.mem_access_log.clone();
                 runtime.pipeline = None;
-            } else if let Some(p) = runtime.pipeline.as_mut() {
-                Self::copy_pipeline_config_to_hart(&self.native().pipeline(), p);
+            } else if let Some(p) = runtime.pipeline.as_mut()
+                && let Some(model) = self.rv32()
+            {
+                Self::copy_pipeline_config_to_hart(model.pipeline(), p);
                 p.reset_stages(runtime.cpu.pc);
             }
             self.harts.push(runtime);
@@ -373,7 +420,7 @@ impl App {
         let selected = self.selected_core;
         let replacement = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
         if let Some(runtime) = self.harts.get_mut(selected) {
-            runtime.cpu = self.run.machine.cpu().clone();
+            runtime.cpu = rv32_runtime(&*self.machine).expect(NOT_RV32).cpu().clone();
             runtime.prev_x = self.run.prev_x;
             runtime.prev_f = self.run.prev_f;
             runtime.prev_pc = self.run.prev_pc;
@@ -387,7 +434,9 @@ impl App {
             runtime.dyn_mem_access = self.run.dyn_mem_access;
             runtime.mem_access_log = self.run.mem_access_log.clone();
             runtime.pipeline = Some(std::mem::replace(
-                self.run.machine.pipeline_mut(),
+                rv32_runtime_mut(&mut *self.machine)
+                    .expect(NOT_RV32)
+                    .pipeline_mut(),
                 replacement,
             ));
         }
@@ -400,7 +449,9 @@ impl App {
     pub(super) fn sync_runtime_to_selected_core(&mut self) {
         let selected = self.selected_core;
         if let Some(runtime) = self.harts.get_mut(selected) {
-            *self.run.machine.cpu_mut_unjournaled() = runtime.cpu.clone();
+            *rv32_runtime_mut(&mut *self.machine)
+                .expect(NOT_RV32)
+                .cpu_mut_unjournaled() = runtime.cpu.clone();
             self.run.prev_x = runtime.prev_x;
             self.run.prev_f = runtime.prev_f;
             self.run.prev_pc = runtime.prev_pc;
@@ -417,16 +468,21 @@ impl App {
                 .pipeline
                 .take()
                 .unwrap_or_else(raven_riscv_engine::falcon::pipeline::PipelineSimState::new);
-            Self::copy_pipeline_config_to_hart(&self.native().pipeline(), &mut pipeline);
+            if let Some(model) = self.rv32() {
+                Self::copy_pipeline_config_to_hart(model.pipeline(), &mut pipeline);
+            }
             if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
-                pipeline.reset_stages(self.native().cpu().pc);
+                pipeline.reset_stages(self.program_counter() as u32);
             }
             *self.native_mut().pipeline_mut() = pipeline;
         }
     }
 
+    /// Park the live runtime in the current core's slot and load the new one.
+    /// Only a backend the host steps by hand has harts to swap between, so on
+    /// any other the selector stays put rather than pretending to move.
     pub(crate) fn switch_selected_core(&mut self, new_core: usize) {
-        if new_core >= self.max_cores || new_core == self.selected_core {
+        if new_core >= self.max_cores || new_core == self.selected_core || self.rv32().is_none() {
             return;
         }
         self.sync_selected_core_to_runtime();
@@ -474,8 +530,7 @@ impl App {
 
     pub(super) fn process_pending_hart_start_for_selected(&mut self) {
         let Some(request) = self
-            .run
-            .machine
+            .native_mut()
             .cpu_mut_unjournaled()
             .pending_hart_start
             .take()
@@ -491,8 +546,7 @@ impl App {
                 )
         });
         let Some(free_core) = free_core else {
-            self.run
-                .machine
+            self.native_mut()
                 .cpu_mut_unjournaled()
                 .write(10, (-1i32) as u32);
             self.console.push_colored(
@@ -507,8 +561,7 @@ impl App {
             return;
         };
         if !self.is_pc_in_program(request.entry_pc) {
-            self.run
-                .machine
+            self.native_mut()
                 .cpu_mut_unjournaled()
                 .write(10, (-2i32) as u32);
             self.console.push_colored(
@@ -527,8 +580,7 @@ impl App {
             || request.stack_ptr > self.run.mem_size as u32
             || request.stack_ptr & 0xF != 0
         {
-            self.run
-                .machine
+            self.native_mut()
                 .cpu_mut_unjournaled()
                 .write(10, (-3i32) as u32);
             self.console.push_colored(
@@ -554,7 +606,7 @@ impl App {
         child.cpu.pc = request.entry_pc;
         child.cpu.write(2, request.stack_ptr);
         child.cpu.write(10, request.arg);
-        child.cpu.heap_break = self.native().cpu().heap_break;
+        child.cpu.heap_break = self.rv32().map_or(0, |rv32| rv32.cpu().heap_break);
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
             Self::copy_pipeline_config_to_hart(&self.native().pipeline(), p);

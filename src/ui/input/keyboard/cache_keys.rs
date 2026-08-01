@@ -80,7 +80,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('k') if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-            if !app.uses_trait_runtime() {
+            if app.rv32().is_some() {
                 cycle_memory_region(app);
             }
             true

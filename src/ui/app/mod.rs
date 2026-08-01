@@ -60,7 +60,7 @@ pub(crate) const NO_REG_AGE: u8 = 255;
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::machine::parse::{CellFormat, parse_cell};
 use crate::falcon::machine::types::{MemWidth, RegTarget};
-use crate::falcon::{self, CacheController, Cpu};
+use crate::falcon;
 use crate::ui::platform::Clipboard;
 use crossterm::{
     event::{
@@ -137,6 +137,28 @@ impl Tab {
 pub(crate) type FalconRuntime =
     falcon::machine::Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState>;
 
+const NOT_RV32: &str = "the native execution paths run only while RV32 is loaded";
+
+/// The RV32 runtime inside `machine`, or `None` for any other backend.
+///
+/// Free functions rather than methods only: taking the field lets a caller
+/// borrow the runtime and another `App` field at once — the pipeline hands its
+/// tick the console, a background hart its cache — which a `&mut self` method
+/// would collapse into one borrow of everything.
+fn rv32_runtime(machine: &dyn raven_riscv_engine::Machine) -> Option<&FalconRuntime> {
+    (machine as &dyn std::any::Any)
+        .downcast_ref::<raven_riscv_engine::architectures::riscv32::RiscV32Machine>()
+        .map(|rv32| rv32.falcon())
+}
+
+fn rv32_runtime_mut(
+    machine: &mut dyn raven_riscv_engine::Machine,
+) -> Option<&mut FalconRuntime> {
+    (machine as &mut dyn std::any::Any)
+        .downcast_mut::<raven_riscv_engine::architectures::riscv32::RiscV32Machine>()
+        .map(|rv32| rv32.falcon_mut())
+}
+
 /// Cycles and retired instructions as the active backend counts them.
 ///
 /// Built by [`App::execution_totals`]; `cpi` is derived rather than stored so
@@ -179,13 +201,14 @@ impl ExecutionScope {
 
 pub struct App {
     pub(crate) architecture: Arc<dyn raven_riscv_engine::Architecture>,
-    /// The active backend's machine, for every architecture driven purely
-    /// through the engine's `Machine` trait.
+    /// The active backend, whichever architecture is loaded. There is exactly
+    /// one, and every pane reads it through the capability accessors below.
     ///
-    /// `None` means RV32, whose runtime — pipeline, cache hierarchy, MMU,
-    /// harts, JIT and the step-back journal — lives in [`RunState`] because the
-    /// trait deliberately models none of it. See [`program`] for the split.
-    pub(crate) machine: Option<Box<dyn raven_riscv_engine::Machine>>,
+    /// RV32 is here too. Its runtime — pipeline, cache hierarchy, MMU, harts,
+    /// JIT and the step-back journal — is reached with [`App::rv32`], because
+    /// stepping *that* is the one thing the trait does not describe; see
+    /// [`App::rv32`] for where the host still drives a backend by hand.
+    pub(crate) machine: Box<dyn raven_riscv_engine::Machine>,
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
 
@@ -276,16 +299,18 @@ impl App {
         ram_override: Option<usize>,
         initial_jit_kind: crate::falcon::jit::BackendKind,
     ) -> Self {
-        let mut cpu = Cpu::default();
         let base_pc = 0x0000_0000;
-        cpu.pc = base_pc;
-        let mem_size = ram_override.unwrap_or(16 * 1024 * 1024);
-        cpu.write(2, mem_size as u32);
+        let architecture = crate::riscv32::architecture();
+        let mem_size = architecture
+            .descriptor()
+            .clamp_memory_size(ram_override.unwrap_or(DEFAULT_MEM_SIZE));
         let data_base = base_pc + 0x1000;
-        cpu.heap_break = data_base;
+        let machine = architecture
+            .create_machine(mem_size)
+            .expect("RV32 accepts a size its own descriptor clamped");
         let mut app = Self {
-            architecture: crate::riscv32::architecture(),
-            machine: None,
+            architecture,
+            machine,
             tab: Tab::Editor,
             mode: EditorMode::Insert,
             editor: EditorState {
@@ -336,16 +361,6 @@ impl App {
                 show_encoding: false,
             },
             run: RunState {
-                machine: crate::falcon::machine::Machine::new(
-                    cpu,
-                    CacheController::new(
-                        CacheConfig::default(),
-                        CacheConfig::default(),
-                        vec![],
-                        mem_size,
-                    ),
-                    raven_riscv_engine::falcon::pipeline::PipelineSimState::new(),
-                ),
                 pipeline_view: crate::ui::pipeline::PipelineViewState::new(),
                 prev_x: [0; 32],
                 prev_pc: base_pc,
@@ -562,20 +577,37 @@ impl App {
         self.architecture.descriptor().id
     }
 
-    /// True when the active backend is *stepped* through the engine's `Machine`
-    /// trait rather than the native runtime in [`RunState`].
+    /// RV32's runtime, when RV32 is the backend that is loaded.
     ///
-    /// This says nothing about what the UI can draw: every pane reads backend
+    /// This says nothing about what the UI can *draw*: every pane reads backend
     /// state through the capability accessors above, so all architectures get
-    /// the same tabs. What remains behind this flag is execution control that
-    /// the trait does not cover — multi-hart scheduling, JIT backend selection,
-    /// breakpoints and step-back. RV32 owns those, so it still runs natively.
+    /// the same tabs. What is behind here is execution control the trait does
+    /// not cover — multi-hart scheduling, JIT backend selection, breakpoints
+    /// and step-back. RV32 is the only backend with any of it, so it is the
+    /// only one the host steps by hand; every other backend answers `None` and
+    /// is driven through [`raven_riscv_engine::Machine::step`].
     ///
-    /// Collapsing the two is the remaining step: `RiscV32Machine` already wraps
-    /// the very runtime `RunState` holds, so this fork is ownership, not
-    /// capability.
-    pub(crate) fn uses_trait_runtime(&self) -> bool {
-        self.machine.is_some()
+    /// Reading state through here rather than through a capability is a bug:
+    /// it is how an architecture's name gets back into the view layer.
+    pub(crate) fn rv32(&self) -> Option<&FalconRuntime> {
+        rv32_runtime(&*self.machine)
+    }
+
+    pub(crate) fn rv32_mut(&mut self) -> Option<&mut FalconRuntime> {
+        rv32_runtime_mut(&mut *self.machine)
+    }
+
+    /// The RV32 runtime inside code only RV32 reaches: the native step loop,
+    /// the hart scheduler, the JIT, the load path. Every caller sits under a
+    /// fork that already asked [`App::rv32`], which is why this may assert —
+    /// and why it is scoped to this module, where those forks live. The view
+    /// layer cannot call it, and must degrade through `rv32` instead.
+    pub(in crate::ui::app) fn native(&self) -> &FalconRuntime {
+        self.rv32().expect(NOT_RV32)
+    }
+
+    pub(in crate::ui::app) fn native_mut(&mut self) -> &mut FalconRuntime {
+        self.rv32_mut().expect(NOT_RV32)
     }
 
     /// Move to the next registered architecture, wrapping around.
@@ -594,24 +626,19 @@ impl App {
         replace_source: bool,
     ) -> Result<(), String> {
         let architecture = crate::arch::lookup(architecture_id)?;
-        // RV32 is the one backend this crate has a native runtime for; see
-        // `program` for what that runtime covers that the trait cannot.
-        let machine = (architecture_id != crate::riscv32::ID)
-            .then(|| {
-                let descriptor = architecture.descriptor();
-                let memory_size = self
-                    .ram_override
-                    .map_or(descriptor.default_memory_size, |requested| {
-                        descriptor.clamp_memory_size(requested)
-                    });
-                architecture.create_machine(memory_size)
-            })
-            .transpose()
+        let descriptor = architecture.descriptor();
+        let memory_size = self
+            .ram_override
+            .map_or(descriptor.default_memory_size, |requested| {
+                descriptor.clamp_memory_size(requested)
+            });
+        let machine = architecture
+            .create_machine(memory_size)
             .map_err(|e| e.to_string())?;
         self.run.is_running = false;
         self.architecture = architecture;
         self.machine = machine;
-        if self.uses_trait_runtime() && self.architecture.descriptor().capabilities.cache {
+        if self.rv32().is_none() && self.architecture.descriptor().capabilities.cache {
             self.run.cache_enabled = true;
         }
         self.editor.last_ok_image = None;
@@ -630,81 +657,68 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn machine_snapshot(&self) -> Option<raven_riscv_engine::MachineSnapshot> {
-        self.machine.as_ref().map(|machine| machine.snapshot())
-    }
-
-    /// The RV32 runtime the host drives itself.
-    ///
-    /// Everything the view layer *reads* goes through the capability accessors
-    /// below, which answer for whichever backend is loaded. This is the other
-    /// half — the execution control the `Machine` trait does not model:
-    /// breakpoints, step-back, a JIT backend, several harts on one image. RV32
-    /// is the only backend that has any of it, so it is the only one the host
-    /// steps by hand.
-    pub(crate) fn native(&self) -> &FalconRuntime {
-        &self.run.machine
-    }
-
-    pub(crate) fn native_mut(&mut self) -> &mut FalconRuntime {
-        &mut self.run.machine
+    pub(crate) fn machine_snapshot(&self) -> raven_riscv_engine::MachineSnapshot {
+        self.machine.snapshot()
     }
 
     // ── Capability accessors ─────────────────────────────────────────────
     //
     // The one way the view layer reaches backend state. Each answers for the
-    // active architecture whichever runtime it happens to live in, so a view
-    // never asks *which* backend it is drawing — it asks what the backend can
-    // do, and draws that. `None` means "this architecture does not offer it";
-    // the caller shows one pane fewer.
+    // active architecture, so a view never asks *which* backend it is drawing —
+    // it asks what the backend can do, and draws that. `None` means "this
+    // architecture does not offer it"; the caller shows one pane fewer.
 
     pub(crate) fn registers(&self) -> Option<&dyn RegisterFile> {
-        match self.machine.as_deref() {
-            Some(machine) => machine.registers(),
-            None => Some(self.native()),
-        }
+        self.machine.registers()
     }
 
     pub(crate) fn registers_mut(&mut self) -> Option<&mut dyn RegisterFile> {
-        match self.machine.as_deref_mut() {
-            Some(machine) => machine.registers_mut(),
-            None => Some(&mut self.run.machine),
-        }
+        self.machine.registers_mut()
     }
 
     pub(crate) fn memory(&self) -> Option<&dyn MemoryInspect> {
-        match self.machine.as_deref() {
-            Some(machine) => machine.memory(),
-            None => Some(self.native()),
-        }
+        self.machine.memory()
     }
 
     pub(crate) fn memory_mut(&mut self) -> Option<&mut dyn MemoryInspect> {
-        match self.machine.as_deref_mut() {
-            Some(machine) => machine.memory_mut(),
-            None => Some(&mut self.run.machine),
-        }
+        self.machine.memory_mut()
     }
 
     pub(crate) fn code(&self) -> Option<&dyn InstructionCodec> {
-        match self.machine.as_deref() {
-            Some(machine) => machine.code(),
-            None => Some(&raven_riscv_engine::architectures::riscv32::RiscV32Codec),
-        }
+        self.machine.code()
     }
 
     pub(crate) fn cache_hierarchy(&self) -> Option<&dyn CacheHierarchy> {
-        match self.machine.as_deref() {
-            Some(machine) => machine.caches(),
-            None => Some(self.native().mem()),
-        }
+        self.machine.caches()
     }
 
     pub(crate) fn pipeline(&self) -> Option<&dyn PipelineInspect> {
-        match self.machine.as_deref() {
-            Some(machine) => machine.pipeline(),
-            None => self.native().pipeline_inspect(),
-        }
+        self.machine.pipeline()
+    }
+
+    /// The pipeline *model* rather than a view of it, for the Pipeline tab's
+    /// configuration controls: bypass paths, branch resolution, how many
+    /// functional units of each kind. Retuning a datapath is not something the
+    /// `Machine` trait describes, and a backend that has no such model has no
+    /// Pipeline tab either — hence the `Option` and not a panic.
+    pub(crate) fn pipeline_config(
+        &self,
+    ) -> Option<&raven_riscv_engine::falcon::pipeline::PipelineSimState> {
+        self.rv32().map(FalconRuntime::pipeline)
+    }
+
+    pub(crate) fn pipeline_config_mut(
+        &mut self,
+    ) -> Option<&mut raven_riscv_engine::falcon::pipeline::PipelineSimState> {
+        self.rv32_mut().map(FalconRuntime::pipeline_mut)
+    }
+
+    /// What the pipeline is doing right now — enabled, sequential, halted,
+    /// faulted — for the keys and panes that only need to know that much.
+    pub(crate) fn pipeline_status(
+        &self,
+    ) -> Option<raven_riscv_engine::capability::PipelineStatus> {
+        self.pipeline().map(|pipeline| pipeline.status())
     }
 
     /// Cycles the active backend's cache hierarchy has charged the program.
@@ -737,10 +751,7 @@ impl App {
 
     /// Instructions the active backend has retired.
     pub(crate) fn instructions_retired(&self) -> u64 {
-        match self.machine.as_deref() {
-            Some(machine) => machine.snapshot().instructions,
-            None => self.native().cpu().instr_count,
-        }
+        self.machine.snapshot().instructions
     }
 
     /// Whether the active backend's cache can be retuned, which is what gates
@@ -751,10 +762,7 @@ impl App {
     }
 
     pub(crate) fn translation(&self) -> Option<&dyn AddressTranslation> {
-        match self.machine.as_deref() {
-            Some(machine) => machine.translation(),
-            None => Some(self.native().mem().mmu()),
-        }
+        self.machine.translation()
     }
 
     /// The register bank the sidebar is showing, clamped to what this backend
@@ -819,7 +827,7 @@ impl App {
     /// Only the RV32 runtime records this today, so other backends get a steady
     /// pane rather than a wrong one.
     pub(crate) fn register_age(&self, id: RegisterId) -> u8 {
-        if self.machine.is_some() {
+        if self.rv32().is_none() {
             return NO_REG_AGE;
         }
         let ages: &[u8; 32] = match id.bank {
@@ -833,7 +841,7 @@ impl App {
     /// The PC of the instruction that last wrote `id`, when the runtime tracks
     /// it.
     pub(crate) fn register_last_write(&self, id: RegisterId) -> Option<u64> {
-        if self.machine.is_some() || id.bank != 0 {
+        if self.rv32().is_none() || id.bank != 0 {
             return None;
         }
         self.run
@@ -861,7 +869,7 @@ impl App {
     /// Cache tab key, the toolbar button — goes through here, so the two paths
     /// cannot drift apart in what a spacebar means.
     pub(crate) fn toggle_run(&mut self) {
-        if self.machine.is_some() {
+        if self.rv32().is_none() {
             self.machine_toggle_run();
             return;
         }
@@ -886,24 +894,19 @@ impl App {
             self.run.is_running = false;
             return;
         }
-        if self.machine.as_ref().is_some_and(|machine| {
-            matches!(
-                machine.snapshot().state,
-                raven_riscv_engine::MachineState::Halted
-                    | raven_riscv_engine::MachineState::Exited(_)
-                    | raven_riscv_engine::MachineState::Faulted
-            )
-        }) && let Some(machine) = self.machine.as_mut()
-        {
-            machine.reset();
+        if matches!(
+            self.machine.snapshot().state,
+            raven_riscv_engine::MachineState::Halted
+                | raven_riscv_engine::MachineState::Exited(_)
+                | raven_riscv_engine::MachineState::Faulted
+        ) {
+            self.machine.reset();
         }
         self.run.is_running = true;
     }
 
     fn machine_step(&mut self) {
-        let Some(machine) = self.machine.as_mut() else {
-            return;
-        };
+        let machine = &mut self.machine;
         let pc = machine.snapshot().pc;
         match machine.step() {
             Ok(raven_riscv_engine::StepOutcome::Stepped) => {
@@ -939,8 +942,8 @@ impl App {
 
     /// Reset the pipeline to the current CPU PC (used after loading a preset).
     pub(crate) fn pipeline_reset_to_current_pc(&mut self) {
-        let __rpc = self.native().cpu().pc;
-        self.run.reset_pipeline_stages(__rpc);
+        let __rpc = self.program_counter() as u32;
+        self.reset_pipeline_stages(__rpc);
     }
 
     // ── Multi-file workspace ───────────────────────────────────────────────
@@ -1154,7 +1157,7 @@ impl App {
         let Some(image) = self.editor.last_ok_image.clone() else {
             return;
         };
-        if !self.uses_trait_runtime() {
+        if self.rv32().is_some() {
             self.reset_screen_device();
         }
         if !self.install_program(&image) {
@@ -1167,8 +1170,8 @@ impl App {
 
     pub(super) fn restart_simulation(&mut self) {
         self.run.is_running = false;
-        if let Some(machine) = self.machine.as_mut() {
-            machine.reset();
+        if self.rv32().is_none() {
+            self.machine.reset();
             self.run.exec_counts.clear();
             return;
         }
@@ -1210,11 +1213,11 @@ impl App {
             Ok(image) => image,
             Err(error) => {
                 self.console.push_error(error);
-                self.run.faulted = !self.uses_trait_runtime();
+                self.run.faulted = self.rv32().is_some();
                 return;
             }
         };
-        if !self.uses_trait_runtime() {
+        if self.rv32().is_some() {
             self.reset_screen_device();
             // The container names where it runs; the panes key off `base_pc`.
             self.run.base_pc = u32::try_from(image.entry).unwrap_or(self.run.base_pc);
@@ -1310,7 +1313,7 @@ impl App {
         self.reset_exec_regions_to_loaded_text();
         self.sync_pipeline_program_range();
         let pc = self.native().cpu().pc;
-        self.run.reset_pipeline_stages(pc);
+        self.reset_pipeline_stages(pc);
         self.rebuild_harts();
         self.lock_editor_on_binary();
     }
@@ -1522,7 +1525,9 @@ impl App {
         use crate::falcon::cache::extra_level_presets;
         let cfg = extra_level_presets()[0].clone(); // Small L2 default
         self.cache.extra_pending.push(cfg.clone());
-        self.native_mut().mem_mut_unjournaled().add_extra_level(cfg);
+        if let Some(runtime) = self.rv32_mut() {
+            runtime.mem_mut_unjournaled().add_extra_level(cfg);
+        }
         // Select the newly added level
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
     }
@@ -1530,7 +1535,9 @@ impl App {
     // ── TLB helpers ─────────────────────────────────────────────────────────
 
     pub(crate) fn flush_tlb(&mut self) {
-        self.native_mut().mem_mut_unjournaled().mmu_mut().tlb.flush();
+        if let Some(runtime) = self.rv32_mut() {
+            runtime.mem_mut_unjournaled().mmu_mut().tlb.flush();
+        }
         self.tlb.config_status = Some("TLB flushed".into());
         self.tlb.config_error = None;
     }
@@ -1684,12 +1691,10 @@ impl App {
             self.tlb.map_status = Some("TLB: entry count must be ≥ associativity ≥ 1".into());
             return;
         }
-        self.run
-            .machine
-            .mem_mut_unjournaled()
-            .mmu_mut()
-            .tlb
-            .reconfigure(cfg);
+        let Some(runtime) = self.rv32_mut() else {
+            return;
+        };
+        runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
         if self.run.vm_mode.is_auto() {
             self.apply_page_map();
         } else {
@@ -1724,16 +1729,19 @@ impl App {
             self.run.heap_start,
         );
         let spec = self.tlb.pending_map;
+        let Some(runtime) = self.rv32_mut() else {
+            return;
+        };
         Mmu::install_map_scheme(
-            &mut self.native_mut().mem_mut_unjournaled().ram,
+            &mut runtime.mem_mut_unjournaled().ram,
             root_pa,
             &scheme,
             spec,
             window,
         );
         let satp_val = Mmu::make_satp(root_pa, spec.asid);
-        self.native_mut().cpu_mut_unjournaled().satp = satp_val;
-        let mmu = self.native_mut().mem_mut_unjournaled().mmu_mut();
+        runtime.cpu_mut_unjournaled().satp = satp_val;
+        let mmu = runtime.mem_mut_unjournaled().mmu_mut();
         mmu.set_scheme(scheme);
         mmu.satp = Satp::new(satp_val);
         mmu.force_translate = true;
@@ -1787,7 +1795,9 @@ impl App {
     pub(super) fn remove_last_cache_level(&mut self) {
         if !self.cache.extra_pending.is_empty() {
             self.cache.extra_pending.pop();
-            self.native_mut().mem_mut_unjournaled().remove_extra_level();
+            if let Some(runtime) = self.rv32_mut() {
+                runtime.mem_mut_unjournaled().remove_extra_level();
+            }
             let max_level = self.cache.extra_pending.len();
             if self.cache.selected_level > max_level {
                 self.cache.selected_level = max_level;
@@ -1828,7 +1838,7 @@ impl App {
     }
 
     pub(crate) fn active_imem_exec_region(&self) -> Option<crate::falcon::registers::ExecRegion> {
-        let pc = self.native().cpu().pc;
+        let pc = self.program_counter() as u32;
         let region = self.executable_region_containing(pc)?;
         if self.imem_in_range(pc) {
             None
@@ -1868,8 +1878,7 @@ impl App {
 
     fn process_pending_exec_map_for_selected(&mut self) {
         if let Some(region) = self
-            .run
-            .machine
+            .native_mut()
             .cpu_mut_unjournaled()
             .pending_exec_map
             .take()
@@ -1941,7 +1950,7 @@ impl App {
 
     /// Visual row of the current PC within the full instruction list.
     pub(super) fn imem_visual_row_of_pc(&self) -> Option<usize> {
-        let pc = self.native().cpu().pc;
+        let pc = self.program_counter() as u32;
         if let Some(region) = self.active_imem_exec_region() {
             return Some(((pc.saturating_sub(region.start)) / 4) as usize);
         }
@@ -1975,7 +1984,8 @@ impl App {
             return;
         }
         if let Some(region) = self.active_imem_exec_region() {
-            let pc_row = ((self.native().cpu().pc.saturating_sub(region.start)) / 4) as usize;
+            let pc_row =
+                (((self.program_counter() as u32).saturating_sub(region.start)) / 4) as usize;
             let max_scroll = ((region.end.saturating_sub(region.start)) / 4) as usize;
             let max_scroll = max_scroll.saturating_sub(visible);
             let scroll = self.run.imem_scroll.min(max_scroll);
@@ -2049,7 +2059,7 @@ impl App {
         // A trait-driven backend has one gear: step while running. The rest of
         // this method is the native runtime's — speed limiting, GO checkpoints,
         // pipeline cycles, background harts — none of which the trait models.
-        if self.uses_trait_runtime() {
+        if self.rv32().is_none() {
             if self.run.is_running {
                 match self.run.speed {
                     RunSpeed::X1 | RunSpeed::X2 => {
@@ -2297,7 +2307,10 @@ impl App {
     /// reversible step, pipeline cycle, or GO burst — no separate mode check is
     /// needed here.
     pub(crate) fn can_stepback_now(&self) -> bool {
-        !self.run.is_running && self.native().can_stepback()
+        !self.run.is_running
+            && self
+                .rv32()
+                .is_some_and(FalconRuntime::can_stepback)
     }
 
     /// Undo the most recent journaled change — one instruction, one edit, or the
@@ -2417,8 +2430,7 @@ impl App {
                 parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
                     .map_err(|e| e.message())
                     .and_then(|value| {
-                        self.run
-                            .machine
+                        self.native_mut()
                             .write_reg(reg, value as u32)
                             .map_err(|e| e.message())
                     })
@@ -2434,8 +2446,7 @@ impl App {
                 parse_cell(&buf, width, self.cell_format(), self.run.show_signed)
                     .map_err(|e| e.message())
                     .and_then(|value| {
-                        self.run
-                            .machine
+                        self.native_mut()
                             .write_mem(addr, width, value)
                             .map_err(|e| e.to_string())
                     })
@@ -2480,7 +2491,7 @@ impl App {
                     && self.native().pipeline().enabled
                 {
                     let pc = self.native().cpu().pc;
-                    self.run.redirect_pipeline_pc(pc);
+                    self.redirect_pipeline_pc(pc);
                 }
                 self.cancel_run_edit();
                 self.refresh_after_edit(before_x, before_f, target);
@@ -2492,8 +2503,7 @@ impl App {
     /// Write a full instruction word through the journaled path shared by the
     /// word editor and the per-field editors, so step-back undoes the edit.
     fn write_instr_word(&mut self, addr: u32, word: u32) -> Result<(), String> {
-        self.run
-            .machine
+        self.native_mut()
             .write_mem(addr, MemWidth::B4, word as u64)
             .map_err(|e| e.to_string())?;
         // The JIT may hold a translation of the old word; drop it so the next
@@ -2503,7 +2513,7 @@ impl App {
         // refetch from the current PC so the stale instruction never executes.
         if self.native().pipeline().enabled {
             let pc = self.native().cpu().pc;
-            self.run.redirect_pipeline_pc(pc);
+            self.redirect_pipeline_pc(pc);
         }
         Ok(())
     }
@@ -2730,7 +2740,7 @@ impl App {
                 && !self.native().pipeline().faulted
             {
                 let __rpc = self.native().cpu().pc;
-                self.run.reset_pipeline_stages(__rpc);
+                self.reset_pipeline_stages(__rpc);
             }
         }
 
@@ -2753,7 +2763,9 @@ impl App {
         // reaches the runtime by field rather than through `native_mut`, which
         // would borrow the whole `App`.
         let console = &mut self.console;
-        let commit = self.run.machine.step_pipeline(
+        let commit = rv32_runtime_mut(&mut *self.machine)
+            .expect(NOT_RV32)
+            .step_pipeline(
             |pipe, cpu, mem| raven_riscv_engine::falcon::pipeline::sim::pipeline_tick(pipe, cpu, mem, &cpi, console),
             |commit| commit.is_some(),
         );
@@ -2844,11 +2856,14 @@ impl App {
                 if self.harts[core_idx].lifecycle != HartLifecycle::Running {
                     continue;
                 }
-                // Disjoint field borrows: self.harts vs self.run.machine vs
-                // self.run.backend vs self.console.
+                // Four disjoint places at once — the hart, the runtime's cache,
+                // the console and the JIT backend — which is why the runtime is
+                // borrowed from the field rather than through `native_mut`.
                 let faulted = {
                     let hart = &mut self.harts[core_idx];
-                    let mem = self.run.machine.mem_mut_unjournaled();
+                    let mem = rv32_runtime_mut(&mut *self.machine)
+                        .expect(NOT_RV32)
+                        .mem_mut_unjournaled();
                     let console = &mut self.console;
                     let backend = self.run.backend.as_mut();
                     step_hart_bg_inner(
@@ -2940,7 +2955,7 @@ impl App {
     pub(super) fn single_step(&mut self) {
         // One instruction is the whole of "step" for a trait-driven backend;
         // below, a step may be a pipeline cycle or a round of every hart.
-        if self.uses_trait_runtime() {
+        if self.rv32().is_none() {
             self.machine_step();
             return;
         }
@@ -3097,14 +3112,18 @@ impl App {
                     // Run mode: usa o backend JIT completo (blocos compilados).
                     // A rajada GO escreve direto na RAM, então passa pelo escape
                     // hatch não-journalizado.
-                    let (cpu, mem) = self.run.machine.cpu_mem_mut_unjournaled();
+                    let (cpu, mem) = rv32_runtime_mut(&mut *self.machine)
+                        .expect(NOT_RV32)
+                        .cpu_mem_mut_unjournaled();
                     let mut ctx = crate::falcon::jit::ExecCtx::new(cpu, mem, &mut self.console);
                     self.run.backend.run_until_yield(&mut ctx)
                 } else {
                     // Step mode: 1 instrução via interpretador, journalizada pelo
                     // `Machine` para que trace/highlights/exec_counts sejam
                     // por-instrução e o stepback possa revertê-la.
-                    self.run.machine.step_interpreted(&mut self.console)
+                    rv32_runtime_mut(&mut *self.machine)
+                        .expect(NOT_RV32)
+                        .step_interpreted(&mut self.console)
                 }
             }));
             let (alive, jit_instr_count) = match res {
@@ -3140,8 +3159,7 @@ impl App {
                 }
             };
             if go_mode {
-                self.run
-                    .machine
+                self.native_mut()
                     .mem_mut_unjournaled()
                     .add_instruction_cycles(cpi_cycles);
                 self.native_mut().mem_mut_unjournaled().snapshot_stats();

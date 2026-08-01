@@ -15,21 +15,33 @@ pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
     }
 }
 
+/// What is still in RAM behind a dirty cache line, shown beside the live value
+/// so a write-back is visible as a difference. Only a backend whose cache the
+/// host can see through has one; the rest never reach this, because nothing
+/// reports a dirty line for them.
+fn stale_word(app: &App, addr: u32, bytes: u32) -> u64 {
+    app.rv32().map_or(0, |rv32| match bytes {
+        4 => u64::from(rv32.mem().peek32(addr).unwrap_or(0)),
+        2 => u64::from(rv32.mem().peek16(addr).unwrap_or(0)),
+        _ => u64::from(rv32.mem().peek8(addr).unwrap_or(0)),
+    })
+}
+
 /// Read the raw RAM value (ignoring any dirty cache), for showing the stale value.
 pub(super) fn format_stale_value(app: &App, addr: u32) -> String {
     match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.native().mem().peek32(addr).unwrap_or(0),
+            stale_word(app, addr, 4) as u32,
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.native().mem().peek16(addr).unwrap_or(0),
+            stale_word(app, addr, 2) as u16,
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.native().mem().peek8(addr).unwrap_or(0),
+            stale_word(app, addr, 1) as u8,
             app.run.fmt_mode,
             app.run.show_signed,
         ),
