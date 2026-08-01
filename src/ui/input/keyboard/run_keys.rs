@@ -44,8 +44,8 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
 /// Run tab's display format (hex / decimal / binary / raw string). Shared by the
 /// editor's key handler and clipboard paste (both in `intercepts`).
 pub(super) fn edit_char_allowed(app: &App, c: char) -> bool {
-    use crate::ui::app::{FormatMode, RunEditTarget};
-    if matches!(app.run.run_edit, Some(RunEditTarget::FReg(_))) {
+    use crate::ui::app::FormatMode;
+    if app.editing_a_float_register() {
         return c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+');
     }
     match app.run.fmt_mode {

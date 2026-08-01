@@ -6,7 +6,6 @@ use super::formatting::{
     format_memory_value, format_register_value, format_stale_value,
 };
 use super::{App, MemRegion};
-use crate::falcon::machine::types::{RegId, RegTarget};
 use crate::ui::app::{NO_REG_AGE, RunEditTarget};
 use raven_riscv_engine::capability::{RegisterEntry, RegisterId};
 use crate::ui::theme;
@@ -16,24 +15,12 @@ use crate::ui::view::style;
 
 /// The cursor-suffixed edit buffer to paint in a cell, when it is the target of
 /// the open inline editor. `None` means render the cell's value normally.
-fn reg_edit_overlay(app: &App, target: RegTarget) -> Option<String> {
-    match app.run.run_edit {
-        Some(RunEditTarget::Reg(t)) if t == target => Some(format!("{}█", app.run.run_edit_buf)),
-        _ => None,
-    }
+fn edit_overlay(app: &App, target: Option<RunEditTarget>) -> Option<String> {
+    (target.is_some() && app.run.run_edit == target)
+        .then(|| format!("{}█", app.run.run_edit_buf))
 }
 
-/// Like [`reg_edit_overlay`] for the float register `index`.
-fn freg_edit_overlay(app: &App, index: u8) -> Option<String> {
-    match app.run.run_edit {
-        Some(RunEditTarget::FReg(f)) if f.index() == index => {
-            Some(format!("{}█", app.run.run_edit_buf))
-        }
-        _ => None,
-    }
-}
-
-/// Like [`reg_edit_overlay`] for the memory cell at `addr`.
+/// Like [`edit_overlay`] for the memory cell at `addr`.
 fn mem_edit_overlay(app: &App, addr: u32) -> Option<String> {
     match app.run.run_edit {
         Some(RunEditTarget::Mem { addr: a, .. }) if a == addr => {
@@ -133,8 +120,8 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         } else {
             base
         };
-        let target = RegId::new(reg_idx).map(RegTarget::X);
-        let (val, value_style) = match target.and_then(|t| reg_edit_overlay(app, t)) {
+        let target = app.register_edit_target(usize::from(reg_idx) + 1);
+        let (val, value_style) = match edit_overlay(app, target) {
             Some(overlay) => (overlay, edit_value_style()),
             None => (val, style),
         };
@@ -184,8 +171,8 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         } else {
             base_style
         };
-        let target = reg_target_for_row(index);
-        let (val, value_style) = match target.and_then(|t| reg_edit_overlay(app, t)) {
+        let target = app.register_edit_target(index);
+        let (val, value_style) = match edit_overlay(app, target) {
             Some(overlay) => (overlay, edit_value_style()),
             None => (val, row_style),
         };
@@ -196,16 +183,6 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
     }
 
     rows
-}
-
-/// Row index `0 = PC`, `1..=32 = x0..x31` to its edit target (mirrors the click
-/// hit-test in `mouse.rs`).
-fn reg_target_for_row(reg_idx: usize) -> Option<RegTarget> {
-    match reg_idx {
-        0 => Some(RegTarget::Pc),
-        1..=32 => RegId::new((reg_idx - 1) as u8).map(RegTarget::X),
-        _ => None,
-    }
 }
 
 /// Accent style for a cell currently being inline-edited.
@@ -324,7 +301,8 @@ fn render_secondary_bank_table(f: &mut Frame, area: Rect, app: &App) {
             let age = app.register_age(entry.id);
             let style = age_style(age);
             let label = format!("{} ", entry_label(entry));
-            let (value, value_style) = match freg_edit_overlay(app, entry.id.index as u8) {
+            let (value, value_style) =
+                match edit_overlay(app, Some(RunEditTarget::Register(entry.id))) {
                 Some(overlay) => (overlay, edit_value_style()),
                 None => (entry_value(app, entry), style),
             };

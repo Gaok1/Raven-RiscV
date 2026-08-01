@@ -2014,7 +2014,8 @@ fn rust_to_raven_debug_elf_pipeline_matches_sequential_until_exit() {
 mod run_edit {
     use super::super::{App, FormatMode, RunEditTarget};
     use super::load_program;
-    use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
+    use crate::falcon::machine::types::MemWidth;
+    use raven_riscv_engine::capability::RegisterId;
 
     /// A minimal loaded program so the machine has a CPU + memory to edit.
     fn loaded_app() -> App {
@@ -2027,8 +2028,10 @@ mod run_edit {
         app
     }
 
+    /// The integer register `index` as the sidebar names it — bank 0 of the
+    /// backend's own register file, not an RV32 register id.
     fn x(index: u8) -> RunEditTarget {
-        RunEditTarget::Reg(RegTarget::X(RegId::new(index).unwrap()))
+        RunEditTarget::Register(RegisterId::new(0, usize::from(index)))
     }
 
     #[test]
@@ -2042,11 +2045,84 @@ mod run_edit {
         assert_eq!(app.native().cpu().x[5], 0xdead_beef);
     }
 
+    /// Editing a live cell is a capability, not an RV32 feature: a register, a
+    /// memory word and a whole instruction are all editable on a backend the
+    /// host does not step by hand. The instruction goes back in through that
+    /// backend's *own* assembler, so what lands is its encoding.
+    #[test]
+    fn every_backend_edits_its_registers_memory_and_instructions() {
+        for id in ["riscv32", "toy16"] {
+            let mut app = App::new_with_architecture(
+                Some(64 * 1024),
+                crate::falcon::jit::BackendKind::None,
+                id,
+            )
+            .unwrap();
+            app.run.fmt_mode = FormatMode::Hex;
+
+            // A register the backend declares, named by its own file.
+            let entry = app.visible_register_entries()[1].clone();
+            app.begin_run_edit(RunEditTarget::Register(entry.id));
+            app.run.run_edit_buf = "2a".to_string();
+            app.commit_run_edit();
+            assert!(app.run.run_edit.is_none(), "{id}: editor stayed open");
+            assert_eq!(
+                app.registers().unwrap().read(entry.id),
+                Some(42),
+                "{id} did not take the register edit"
+            );
+
+            // A memory cell, through the backend's own memory.
+            let addr = app.program_counter() as u32;
+            app.begin_run_edit(RunEditTarget::Mem {
+                addr,
+                width: MemWidth::B1,
+            });
+            app.run.run_edit_buf = "7".to_string();
+            app.commit_run_edit();
+            assert_eq!(
+                app.memory().unwrap().peek_word(u64::from(addr), 1),
+                7,
+                "{id} did not take the memory edit"
+            );
+
+            // And the instruction line, retyped as this ISA's own assembly.
+            let source = app.architecture.default_source();
+            let line = source
+                .lines()
+                .map(str::trim)
+                .find(|line| {
+                    !line.is_empty() && !line.starts_with('.') && !line.ends_with(':')
+                })
+                .expect("every backend ships a default program with an instruction");
+            app.begin_run_edit(RunEditTarget::InstrField {
+                addr,
+                field: crate::ui::app::InstrFieldKind::Asm,
+            });
+            app.run.run_edit_buf = line.to_string();
+            app.commit_run_edit();
+            assert_eq!(
+                app.run.run_edit_error, None,
+                "{id} rejected its own instruction {line:?}"
+            );
+            assert_eq!(
+                app.disassemble_at(u64::from(addr)).as_deref(),
+                app.code()
+                    .unwrap()
+                    .assemble(u64::from(addr), line)
+                    .ok()
+                    .and_then(|bytes| app.code().unwrap().disassemble(u64::from(addr), &bytes))
+                    .as_deref(),
+                "{id} stored something other than what it assembled"
+            );
+        }
+    }
+
     #[test]
     fn commit_writes_pc() {
         let mut app = loaded_app();
         app.run.fmt_mode = FormatMode::Hex;
-        app.begin_run_edit(RunEditTarget::Reg(RegTarget::Pc));
+        app.begin_run_edit(RunEditTarget::ProgramCounter);
         app.run.run_edit_buf = "100".to_string();
         app.commit_run_edit();
         assert_eq!(app.native().cpu().pc, 0x100);
@@ -2059,7 +2135,7 @@ mod run_edit {
         let mut app = loaded_app();
         app.run.fmt_mode = FormatMode::Hex;
         let entry = app.run.base_pc;
-        app.begin_run_edit(RunEditTarget::Reg(RegTarget::Pc));
+        app.begin_run_edit(RunEditTarget::ProgramCounter);
         app.run.run_edit_buf = format!("{entry:x}");
         app.commit_run_edit();
         if app.native().pipeline().enabled {
@@ -2130,7 +2206,7 @@ mod run_edit {
     fn commit_writes_float_register() {
         let mut app = loaded_app();
         app.run.reg_bank = 1;
-        app.begin_run_edit(RunEditTarget::FReg(FRegId::new(3).unwrap()));
+        app.begin_run_edit(RunEditTarget::Register(RegisterId::new(1, 3)));
         app.run.run_edit_buf = "1.5".to_string();
         app.commit_run_edit();
         assert_eq!(f32::from_bits(app.native().cpu().f[3]), 1.5);

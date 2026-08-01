@@ -1,33 +1,42 @@
 use super::CpiConfig;
 use super::instr_edit::InstrFieldKind;
 use crate::falcon::jit::ExecutionBackend;
-use crate::falcon::machine::types::{FRegId, MemWidth, RegTarget};
+use crate::falcon::machine::types::MemWidth;
 use crate::falcon::{CacheController, registers::ExecRegion};
+use raven_riscv_engine::capability::RegisterId;
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
 
 /// What the Run tab is editing inline, when [`RunState::run_edit`] is `Some`.
 ///
-/// Every variant commits through a journaling `Machine` mutator
-/// ([`Machine::write_reg`] / [`Machine::write_freg`] / [`Machine::write_mem`]),
-/// so a manual edit is undoable by step-back exactly like an executed
-/// instruction.
-#[derive(Clone, Copy)]
+/// Every variant commits through a capability the active backend declares —
+/// [`RegisterFile::write`], [`MemoryInspect::poke`], [`InstructionCodec`] — so
+/// the same cells are editable whichever architecture is loaded. On a backend
+/// whose writes are journaled (RV32's are) that also makes a manual edit
+/// undoable by step-back, exactly like an executed instruction.
+///
+/// [`RegisterFile::write`]: raven_riscv_engine::capability::RegisterFile::write
+/// [`MemoryInspect::poke`]: raven_riscv_engine::capability::MemoryInspect::poke
+/// [`InstructionCodec`]: raven_riscv_engine::capability::InstructionCodec
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunEditTarget {
-    /// An integer register `x1..=x31` or the PC. `x0` is rejected on commit.
-    Reg(RegTarget),
-    /// A float register `f0..=f31`, typed as a decimal value.
-    FReg(FRegId),
+    /// A register in the backend's own file — any bank, any width. A file that
+    /// hardwires one (RV32's `x0`) rejects the write itself.
+    Register(RegisterId),
+    /// The program counter, which every backend has and no bank contains.
+    ProgramCounter,
     /// A `width`-byte memory cell at the (virtual) address `addr`.
     Mem { addr: u32, width: MemWidth },
-    /// The 32-bit instruction word at the (virtual) address `addr`, opened
-    /// from the details panel's word field. Committing also invalidates the
-    /// JIT range so stale translations never run.
+    /// The instruction word at the (virtual) address `addr`, opened from the
+    /// details panel's word field, at whatever width the backend's codec says
+    /// it occupies. Committing also invalidates the JIT range so stale
+    /// translations never run.
     Instr { addr: u32 },
-    /// One field of the instruction word at `addr` (a register slot, the
-    /// immediate, funct bits, the binary view, or the whole mnemonic line as
-    /// assembly), opened by double-clicking it in the details panel. Commits
-    /// rewrite the full word through the same path as [`Self::Instr`].
+    /// One field of the instruction at `addr` — the whole mnemonic line as
+    /// assembly, or a slot in the encoding — opened by double-clicking it in
+    /// the details panel. Commits rewrite the full word through the same path
+    /// as [`Self::Instr`]; see [`InstrFieldKind`] for which of them any backend
+    /// can serve and which are RV32's own bit layout.
     InstrField { addr: u32, field: InstrFieldKind },
 }
 

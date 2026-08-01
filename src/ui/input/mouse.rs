@@ -1,4 +1,4 @@
-use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
+use crate::falcon::machine::types::MemWidth;
 use crate::ui::input::keyboard::{do_export_config, do_export_results, do_import_config};
 use crate::ui::platform::OSFileDialog;
 use crate::ui::view::components::SbGeom;
@@ -1687,15 +1687,6 @@ fn update_sidebar_hover(app: &mut App, me: MouseEvent, area: Rect) {
 const INT_LABEL_W: u16 = 16;
 const FLOAT_LABEL_W: u16 = 13;
 
-/// The edit target for a register list row, where `0 = PC` and `1..=32 = x0..x31`.
-fn reg_target_for_row(reg_idx: usize) -> Option<RegTarget> {
-    match reg_idx {
-        0 => Some(RegTarget::Pc),
-        1..=32 => RegId::new((reg_idx - 1) as u8).map(RegTarget::X),
-        _ => None,
-    }
-}
-
 /// The sidebar's inner content rect (inside the panel border), or `None` when
 /// the click misses it or the sidebar is collapsed.
 fn sidebar_inner_hit(app: &App, me: MouseEvent, area: Rect) -> Option<Rect> {
@@ -1741,8 +1732,8 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     if visual_row < pinned.len() {
         let reg = pinned[visual_row];
         if is_value {
-            if let Some(target) = reg_target_for_row(reg as usize + 1) {
-                app.begin_run_edit(RunEditTarget::Reg(target));
+            if let Some(target) = app.register_edit_target(reg as usize + 1) {
+                app.begin_run_edit(target);
             }
         } else {
             app.run.pinned_regs.retain(|&r| r != reg);
@@ -1772,8 +1763,8 @@ fn handle_register_click(app: &mut App, me: MouseEvent, area: Rect) {
 
     // Value column → open the editor (PC included).
     if is_value {
-        if let Some(target) = reg_target_for_row(reg_idx) {
-            app.begin_run_edit(RunEditTarget::Reg(target));
+        if let Some(target) = app.register_edit_target(reg_idx) {
+            app.begin_run_edit(target);
         }
         return;
     }
@@ -1807,9 +1798,10 @@ fn handle_float_register_click(app: &mut App, me: MouseEvent, area: Rect) {
     if visual_row >= visible {
         return;
     }
-    let f_index = scroll + visual_row;
-    if let Some(freg) = FRegId::new(f_index as u8) {
-        app.begin_run_edit(RunEditTarget::FReg(freg));
+    // The secondary bank draws its own entries in order, so row `n` is entry
+    // `n` — one past the PC row the primary table starts with.
+    if let Some(target) = app.register_edit_target(scroll + visual_row + 1) {
+        app.begin_run_edit(target);
     }
 }
 

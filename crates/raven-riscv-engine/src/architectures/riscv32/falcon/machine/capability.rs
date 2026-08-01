@@ -137,15 +137,33 @@ impl<P: JournaledPipeline> MemoryInspect for Machine<P> {
             .collect()
     }
 
+    /// Written in the widest aligned units the range allows, so a host's
+    /// four-byte edit is *one* journal entry and one step-back undoes the whole
+    /// cell rather than its last byte.
     fn poke(&mut self, address: u64, bytes: &[u8]) -> Result<(), MachineError> {
         let start =
             u32::try_from(address).map_err(|_| MachineError::new("address exceeds RV32"))?;
-        for (offset, value) in bytes.iter().copied().enumerate() {
+        let mut offset = 0usize;
+        while offset < bytes.len() {
             let at = start
                 .checked_add(u32::try_from(offset).map_err(|_| overflow())?)
                 .ok_or_else(overflow)?;
-            self.write_mem(at, MemWidth::B1, u64::from(value))
+            let remaining = bytes.len() - offset;
+            let width = if remaining >= 4 && at % 4 == 0 {
+                MemWidth::B4
+            } else if remaining >= 2 && at % 2 == 0 {
+                MemWidth::B2
+            } else {
+                MemWidth::B1
+            };
+            let span = width.bytes() as usize;
+            let mut value = 0u64;
+            for (i, byte) in bytes[offset..offset + span].iter().enumerate() {
+                value |= u64::from(*byte) << (i * 8);
+            }
+            self.write_mem(at, width, value)
                 .map_err(|e| MachineError::new(e.to_string()))?;
+            offset += span;
         }
         Ok(())
     }

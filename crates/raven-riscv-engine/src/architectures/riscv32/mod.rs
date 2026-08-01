@@ -577,8 +577,12 @@ impl MemoryInspect for RiscV32Machine {
         self.machine.peek(address, bytes)
     }
 
+    /// Delegated to the runtime rather than looped here, so an edit is
+    /// journaled in the widest units the range allows — one step-back undoes a
+    /// whole cell, not its last byte. Bounds are the runtime's own.
     fn poke(&mut self, address: u64, bytes: &[u8]) -> Result<(), MachineError> {
-        self.write_memory(address, bytes)
+        self.checked_range(address, bytes.len())?;
+        self.machine.poke(address, bytes)
     }
 
     /// Same heap and stack the runtime reports, but `.data` comes from the

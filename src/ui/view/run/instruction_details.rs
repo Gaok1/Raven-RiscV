@@ -75,7 +75,18 @@ fn editing_field(app: &App, addr: u32) -> Option<InstrFieldKind> {
 
 /// Record a clickable field span, clipped to the section's inner rect so a
 /// partially hidden value never produces a hitbox past the border.
+///
+/// The named encoding slots are RV32's own bit layout, so on any other backend
+/// only the word, its binary view and the assembly line are offered — another
+/// ISA labelling a segment `rd` must not open RV32's splicer.
 fn push_hitbox(app: &App, inner: Rect, field: InstrFieldKind, y: u16, x0: u16, len: usize) {
+    let generic = matches!(
+        field,
+        InstrFieldKind::Asm | InstrFieldKind::Word | InstrFieldKind::Bin
+    );
+    if !generic && app.rv32().is_none() {
+        return;
+    }
     if y >= inner.y + inner.height || y < inner.y {
         return;
     }

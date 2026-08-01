@@ -59,7 +59,7 @@ pub(crate) const NO_REG_AGE: u8 = 255;
 
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::machine::parse::{CellFormat, parse_cell};
-use crate::falcon::machine::types::{MemWidth, RegTarget};
+use crate::falcon::machine::types::MemWidth;
 use crate::falcon;
 use crate::ui::platform::Clipboard;
 use crossterm::{
@@ -808,6 +808,34 @@ impl App {
     /// The banks this backend declares, empty when it has no register file.
     pub(crate) fn register_banks(&self) -> Vec<RegisterBank> {
         self.registers().map_or_else(Vec::new, |file| file.banks().to_vec())
+    }
+
+    /// Whether the open editor is on a register its bank declares as a float,
+    /// which is what decides the characters the editor accepts: a decimal
+    /// point and a sign belong there and nowhere else.
+    pub(crate) fn editing_a_float_register(&self) -> bool {
+        let Some(RunEditTarget::Register(id)) = self.run.run_edit else {
+            return false;
+        };
+        self.registers()
+            .and_then(|file| file.banks().get(id.bank))
+            .is_some_and(|bank| {
+                bank.format == raven_riscv_engine::capability::RegisterFormat::Float
+            })
+    }
+
+    /// What a click on register row `row` edits: row 0 is the PC, the rest are
+    /// the visible bank's registers in the order the sidebar draws them. Both
+    /// the renderer and the hit-test ask here, so a row cannot edit one cell
+    /// and display another.
+    pub(crate) fn register_edit_target(&self, row: usize) -> Option<RunEditTarget> {
+        match row {
+            0 => Some(RunEditTarget::ProgramCounter),
+            _ => self
+                .visible_register_entries()
+                .get(row - 1)
+                .map(|entry| RunEditTarget::Register(entry.id)),
+        }
     }
 
     /// Every register in the visible bank, in display order.
@@ -2422,61 +2450,36 @@ impl App {
             return;
         };
         let buf = self.run.run_edit_buf.clone();
-        let before_x = self.native().cpu().x;
-        let before_f = self.native().cpu().f;
+        // The highlight bookkeeping below diffs RV32's two banks; a backend
+        // without them gets no highlight rather than a wrong one.
+        let before = self.rv32().map(|rv32| (rv32.cpu().x, rv32.cpu().f));
 
         let result: Result<(), String> = match target {
-            RunEditTarget::Reg(reg) => {
+            RunEditTarget::Register(id) => self
+                .parse_register_value(id, &buf)
+                .and_then(|value| self.write_register_value(id, value)),
+            RunEditTarget::ProgramCounter => {
                 parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
                     .map_err(|e| e.message())
                     .and_then(|value| {
-                        self.native_mut()
-                            .write_reg(reg, value as u32)
-                            .map_err(|e| e.message())
-                    })
-            }
-            RunEditTarget::FReg(freg) => match buf.trim().parse::<f32>() {
-                Ok(value) => {
-                    self.native_mut().write_freg(freg, value.to_bits());
-                    Ok(())
-                }
-                Err(_) => Err(format!("cannot parse \"{}\" as a float", buf.trim())),
-            },
-            RunEditTarget::Mem { addr, width } => {
-                parse_cell(&buf, width, self.cell_format(), self.run.show_signed)
-                    .map_err(|e| e.message())
-                    .and_then(|value| {
-                        self.native_mut()
-                            .write_mem(addr, width, value)
+                        self.registers_mut()
+                            .ok_or_else(|| "this backend has no program counter".to_string())?
+                            .set_program_counter(value)
                             .map_err(|e| e.to_string())
                     })
             }
+            RunEditTarget::Mem { addr, width } => {
+                parse_cell(&buf, width, self.cell_format(), self.run.show_signed)
+                    .map_err(|e| e.message())
+                    .and_then(|value| self.poke_cell(addr, width.bytes() as usize, value))
+            }
             RunEditTarget::Instr { addr } => {
+                let width = self.instruction_width_at(u64::from(addr));
                 parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
                     .map_err(|e| e.message())
-                    .and_then(|value| self.write_instr_word(addr, value as u32))
+                    .and_then(|value| self.write_instr_word(addr, value, width))
             }
-            RunEditTarget::InstrField { addr, field } => {
-                let current = self.native().mem().peek32(addr).unwrap_or(0);
-                let new_word = match field {
-                    InstrFieldKind::Asm => match falcon::asm::assemble(&buf, addr) {
-                        Ok(prog) if prog.text.len() == 1 => Ok(prog.text[0]),
-                        Ok(prog) => Err(format!(
-                            "expands to {} instructions — only a single instruction fits here",
-                            prog.text.len()
-                        )),
-                        Err(e) => Err(e.msg),
-                    },
-                    _ if !instr_edit::field_available(current, field) => Err(format!(
-                        "{:?} is not a field of this instruction format",
-                        field
-                    )),
-                    _ => instr_edit::parse_field_value(field, &buf).and_then(|v| {
-                        instr_edit::splice_field(current, detect_format(current), field, v)
-                    }),
-                };
-                new_word.and_then(|word| self.write_instr_word(addr, word))
-            }
+            RunEditTarget::InstrField { addr, field } => self.commit_instruction_field(addr, field, &buf),
         };
 
         match result {
@@ -2487,32 +2490,116 @@ impl App {
                 // address. Mirrors the imem PC-redirect click. The redirect is
                 // reversible state captured by the change-set's pipeline
                 // snapshot, so step-back undoes it together with the PC write.
-                if matches!(target, RunEditTarget::Reg(RegTarget::Pc))
-                    && self.native().pipeline().enabled
+                if target == RunEditTarget::ProgramCounter
+                    && self.pipeline_status().is_some_and(|status| status.enabled)
                 {
-                    let pc = self.native().cpu().pc;
+                    let pc = self.program_counter() as u32;
                     self.redirect_pipeline_pc(pc);
                 }
                 self.cancel_run_edit();
-                self.refresh_after_edit(before_x, before_f, target);
+                self.refresh_after_edit(before, target);
             }
             Err(message) => self.run.run_edit_error = Some(message),
         }
     }
 
-    /// Write a full instruction word through the journaled path shared by the
-    /// word editor and the per-field editors, so step-back undoes the edit.
-    fn write_instr_word(&mut self, addr: u32, word: u32) -> Result<(), String> {
-        self.native_mut()
-            .write_mem(addr, MemWidth::B4, word as u64)
+    /// Read the text of a register edit as the value that register holds: a
+    /// float bank takes a decimal, every other bank the Run tab's own format.
+    fn parse_register_value(&self, id: RegisterId, text: &str) -> Result<u64, String> {
+        let is_float = self.registers().and_then(|file| file.banks().get(id.bank)).is_some_and(
+            |bank| bank.format == raven_riscv_engine::capability::RegisterFormat::Float,
+        );
+        if is_float {
+            return text
+                .trim()
+                .parse::<f32>()
+                .map(|value| u64::from(value.to_bits()))
+                .map_err(|_| format!("cannot parse \"{}\" as a float", text.trim()));
+        }
+        parse_cell(text, MemWidth::B4, self.cell_format(), self.run.show_signed)
+            .map_err(|e| e.message())
+    }
+
+    fn write_register_value(&mut self, id: RegisterId, value: u64) -> Result<(), String> {
+        self.registers_mut()
+            .ok_or_else(|| "this backend has no editable registers".to_string())?
+            .write(id, value)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Write `value` into the `bytes`-wide cell at `addr` through the backend's
+    /// own memory, little-endian like every other cell the pane shows.
+    fn poke_cell(&mut self, addr: u32, bytes: usize, value: u64) -> Result<(), String> {
+        let payload = value.to_le_bytes();
+        self.memory_mut()
+            .ok_or_else(|| "this backend exposes no writable memory".to_string())?
+            .poke(u64::from(addr), &payload[..bytes.min(8)])
+            .map_err(|e| e.to_string())
+    }
+
+    /// Commit one field of the instruction at `addr`.
+    ///
+    /// The mnemonic line goes through the backend's own assembler, so any
+    /// architecture can be edited by retyping the instruction. The named
+    /// encoding slots — `rd`, `funct7`, the scattered immediate — are RV32's
+    /// own bit layout, and say so rather than splicing another ISA's word.
+    fn commit_instruction_field(
+        &mut self,
+        addr: u32,
+        field: InstrFieldKind,
+        buf: &str,
+    ) -> Result<(), String> {
+        let width = self.instruction_width_at(u64::from(addr));
+        if field == InstrFieldKind::Asm {
+            let codec = self
+                .code()
+                .ok_or_else(|| "this backend cannot assemble a single instruction".to_string())?;
+            let bytes = codec
+                .assemble(u64::from(addr), buf)
+                .map_err(|diagnostic| diagnostic.message)?;
+            return self.write_instr_bytes(addr, &bytes);
+        }
+
+        // The binary view is the same word in another base — no encoding
+        // knowledge, so every backend can be retyped bit by bit.
+        if field == InstrFieldKind::Bin {
+            let value = instr_edit::parse_field_value(field, buf)?;
+            return self.write_instr_word(addr, value as u64, width);
+        }
+
+        let current = self
+            .memory()
+            .map_or(0, |memory| memory.peek_word(u64::from(addr), 4)) as u32;
+        if self.rv32().is_none() {
+            return Err(format!(
+                "{field:?} is a field of RV32's encoding; edit the instruction line instead"
+            ));
+        }
+        if !instr_edit::field_available(current, field) {
+            return Err(format!("{field:?} is not a field of this instruction format"));
+        }
+        let value = instr_edit::parse_field_value(field, buf)?;
+        let word = instr_edit::splice_field(current, detect_format(current), field, value)?;
+        self.write_instr_word(addr, u64::from(word), width)
+    }
+
+    /// Write an instruction word of `width` bytes, then drop everything that
+    /// may still hold the old one: the JIT's translation and the pipeline's
+    /// latches. Shared by the word editor and the per-field editors.
+    fn write_instr_word(&mut self, addr: u32, word: u64, width: usize) -> Result<(), String> {
+        let bytes = word.to_le_bytes();
+        self.write_instr_bytes(addr, &bytes[..width.clamp(1, 8)])
+    }
+
+    fn write_instr_bytes(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String> {
+        self.memory_mut()
+            .ok_or_else(|| "this backend exposes no writable memory".to_string())?
+            .poke(u64::from(addr), bytes)
             .map_err(|e| e.to_string())?;
-        // The JIT may hold a translation of the old word; drop it so the next
-        // run re-translates from the edited memory.
-        self.run.backend.invalidate(addr, addr.wrapping_add(4));
-        // The pipeline may have already fetched the old word into its latches;
-        // refetch from the current PC so the stale instruction never executes.
-        if self.native().pipeline().enabled {
-            let pc = self.native().cpu().pc;
+        let end = addr.wrapping_add(bytes.len() as u32);
+        self.run.backend.invalidate(addr, end);
+        if self.pipeline_status().is_some_and(|status| status.enabled) {
+            let pc = self.program_counter() as u32;
             self.redirect_pipeline_pc(pc);
         }
         Ok(())
@@ -2539,28 +2626,41 @@ impl App {
             FormatMode::Bin => format!("{value:b}"),
             FormatMode::Str => String::new(),
         };
+        let peek = |addr: u32, bytes: usize| {
+            self.memory()
+                .map_or(0, |memory| memory.peek_word(u64::from(addr), bytes))
+        };
         match target {
-            RunEditTarget::Reg(RegTarget::Pc) => plain_word(self.native().cpu().pc),
-            RunEditTarget::Reg(RegTarget::X(reg)) => {
-                plain_word(self.native().cpu().x[reg.index() as usize])
+            RunEditTarget::ProgramCounter => plain_word(self.program_counter() as u32),
+            RunEditTarget::Register(id) => {
+                let value = self.registers().and_then(|file| file.read(id)).unwrap_or(0);
+                let is_float = self
+                    .registers()
+                    .and_then(|file| file.banks().get(id.bank))
+                    .is_some_and(|bank| {
+                        bank.format == raven_riscv_engine::capability::RegisterFormat::Float
+                    });
+                if is_float {
+                    format!("{}", f32::from_bits(value as u32))
+                } else {
+                    plain_word(value as u32)
+                }
             }
-            RunEditTarget::FReg(freg) => {
-                let value = f32::from_bits(self.native().cpu().f[freg.index() as usize]);
-                format!("{value}")
+            RunEditTarget::Mem { addr, width } => plain_word(peek(addr, width.bytes() as usize) as u32),
+            // Seeded from the same read the details panel renders, at whatever
+            // width this backend's instructions occupy.
+            RunEditTarget::Instr { addr } => {
+                plain_word(peek(addr, self.instruction_width_at(u64::from(addr))) as u32)
             }
-            RunEditTarget::Mem { addr, width } => {
-                let raw = match width {
-                    MemWidth::B1 => self.native().mem().effective_read8(addr).unwrap_or(0) as u32,
-                    MemWidth::B2 => self.native().mem().effective_read16(addr).unwrap_or(0) as u32,
-                    MemWidth::B4 => self.native().mem().effective_read32(addr).unwrap_or(0),
-                };
-                plain_word(raw)
-            }
-            // Seed from `peek32`, the same read the details panel renders.
-            RunEditTarget::Instr { addr } => plain_word(self.native().mem().peek32(addr).unwrap_or(0)),
-            RunEditTarget::InstrField { addr, field } => {
-                instr_edit::seed_field(self.native().mem().peek32(addr).unwrap_or(0), field)
-            }
+            RunEditTarget::InstrField { addr, field } => match field {
+                InstrFieldKind::Asm => self.disassemble_at(u64::from(addr)).unwrap_or_default(),
+                InstrFieldKind::Bin => {
+                    let width = self.instruction_width_at(u64::from(addr));
+                    let bits = width * 8;
+                    format!("{:0bits$b}", peek(addr, width))
+                }
+                _ => instr_edit::seed_field(peek(addr, 4) as u32, field),
+            },
         }
     }
 
@@ -2568,21 +2668,21 @@ impl App {
     /// light up the register/float it changed and flag the touched memory cell.
     fn refresh_after_edit(
         &mut self,
-        before_x: [u32; 32],
-        before_f: [u32; 32],
+        before: Option<([u32; 32], [u32; 32])>,
         target: RunEditTarget,
     ) {
-        let pc = self.native().cpu().pc;
-        let now_x = self.native().cpu().x;
-        let now_f = self.native().cpu().f;
-        for i in 0..32 {
-            if now_x[i] != before_x[i] {
-                self.run.reg_age[i] = 0;
-                self.run.reg_last_write_pc[i] = Some(pc);
-            }
-            if now_f[i] != before_f[i] {
-                self.run.f_age[i] = 0;
-                self.run.f_last_write_pc[i] = Some(pc);
+        let pc = self.program_counter() as u32;
+        if let Some(((before_x, before_f), runtime)) = before.zip(self.rv32()) {
+            let (now_x, now_f) = (runtime.cpu().x, runtime.cpu().f);
+            for i in 0..32 {
+                if now_x[i] != before_x[i] {
+                    self.run.reg_age[i] = 0;
+                    self.run.reg_last_write_pc[i] = Some(pc);
+                }
+                if now_f[i] != before_f[i] {
+                    self.run.f_age[i] = 0;
+                    self.run.f_last_write_pc[i] = Some(pc);
+                }
             }
         }
         match target {
