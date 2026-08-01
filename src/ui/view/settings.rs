@@ -85,7 +85,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
             theme::LABEL,
         ),
         Span::raw("  "),
-        bool_value(app.run.cache_enabled, app.settings.hover_cache_enabled),
+        bool_value(app.session.cache_enabled, app.settings.hover_cache_enabled),
     ]));
     items.push(cache_item);
 
@@ -117,7 +117,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         is_sel_mem,
         app.settings.hover_row == Some(SETTINGS_ROW_MEM_SIZE),
     );
-    let mem_kb = app.run.mem_size / 1024;
+    let mem_kb = app.session.mem_size / 1024;
     let mem_display = if mem_kb % 1024 == 0 {
         format!("{} MB", mem_kb / 1024)
     } else {
@@ -195,7 +195,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     items.push(vm_item);
 
     // Row 6: TLB Enabled toggle (cache the page-table walks, or always walk).
-    let vm_off = !app.run.vm_enabled();
+    let vm_off = !app.session.vm_enabled();
     let tlb_state = ControlState::from(
         sel == SETTINGS_ROW_TLB_ENABLED,
         app.settings.hover_row == Some(SETTINGS_ROW_TLB_ENABLED),
@@ -204,7 +204,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let mut tlb_spans = vec![
         label_span(format!("{:<20}", "  TLB Enabled"), tlb_state, theme::LABEL),
         Span::raw("  "),
-        bool_value(app.run.tlb_enabled, app.settings.hover_tlb_enabled),
+        bool_value(app.session.tlb_enabled, app.settings.hover_tlb_enabled),
     ];
     if vm_off {
         tlb_spans.push(Span::raw("  "));
@@ -220,11 +220,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         sel == SETTINGS_ROW_JIT_MODE,
         app.settings.hover_row == Some(SETTINGS_ROW_JIT_MODE),
     );
-    let jit_label = app.run.jit_kind.as_str().to_uppercase();
+    let jit_label = app.session.jit_kind.as_str().to_uppercase();
     #[cfg(feature = "jit")]
     let jit_unavailable = false;
     #[cfg(not(feature = "jit"))]
-    let jit_unavailable = app.run.jit_kind != crate::falcon::jit::BackendKind::None;
+    let jit_unavailable = app.session.jit_kind != crate::falcon::jit::BackendKind::None;
     let mut jit_spans = vec![
         label_span(format!("{:<20}", "  JIT Mode"), jit_state, theme::LABEL),
         Span::raw("  "),
@@ -255,7 +255,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
             theme::LABEL,
         ),
         Span::raw("  "),
-        bool_value(app.run.trace_syscalls, app.settings.hover_trace_syscalls),
+        bool_value(app.session.trace_syscalls, app.settings.hover_trace_syscalls),
         Span::raw("  "),
         Span::styled(
             "[?]",
@@ -303,7 +303,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         let val_str = if is_editing {
             format!("{}█", app.settings.cpi_edit_buf)
         } else {
-            format!("{}", app.run.cpi_config.get(i))
+            format!("{}", app.session.cpi_config.get(i))
         };
 
         let val_style = if is_sel && is_editing {
@@ -655,7 +655,7 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
             Line::from(Span::styled(desc.to_string(), style::value())),
             Line::raw(""),
             Line::from(Span::styled(
-                format!("Current: {}", app.run.cpi_config.get(i)),
+                format!("Current: {}", app.session.cpi_config.get(i)),
                 Style::default().fg(theme::LABEL_Y),
             )),
             Line::raw(""),

@@ -36,7 +36,7 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
 /// Session snapshots, TLB lens: same shared list as the Cache tab, but the
 /// columns show the translation-side numbers.
 fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
-    let is_running = app.run.is_running;
+    let is_running = app.session.is_running;
     let title = if is_running {
         " Snapshots (\u{23f8} to view) "
     } else {
@@ -210,7 +210,7 @@ fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
     if pts.is_empty() {
         let inner = block.inner(area);
         f.render_widget(block, area);
-        let msg = if !app.run.vm_enabled() {
+        let msg = if !app.session.vm_enabled() {
             "  (enable Virtual Memory in Settings to populate the TLB)"
         } else if !super::translation_active(app) {
             "  (vm=on but translation inactive — see Status subview for why)"

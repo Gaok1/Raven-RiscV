@@ -27,20 +27,20 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('p') | KeyCode::Char(' ') if !in_settings(app) => {
-            if app.run.is_running {
-                app.run.is_running = false;
+            if app.session.is_running {
+                app.session.is_running = false;
             } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
-                || !app.run.faulted
+                || !app.session.faulted
             {
                 app.resume_selected_hart();
                 if app.can_start_run() {
-                    app.run.is_running = true;
+                    app.session.is_running = true;
                 }
             }
             true
         }
         KeyCode::Char('f') if !in_settings(app) => {
-            app.run.speed = app.run.speed.cycle();
+            app.session.speed = app.session.speed.cycle();
             true
         }
         // ── Stats: session-snapshot capture + history (shared with Cache) ──
@@ -55,7 +55,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Enter
-            if in_stats(app) && !app.cache.session_history.is_empty() && !app.run.is_running =>
+            if in_stats(app) && !app.cache.session_history.is_empty() && !app.session.is_running =>
         {
             let idx = app
                 .cache

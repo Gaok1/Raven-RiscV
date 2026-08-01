@@ -21,7 +21,7 @@
 //! decidir quais PCs compilar (threshold 500 entradas).
 //!
 //! Nota: o `HotProfile` aqui é **diferente** do `exec_counts` exibido na TUI
-//! (`app.run.exec_counts: HashMap<u32, u64>`). O `exec_counts` da TUI conta
+//! (`app.session.exec_counts: HashMap<u32, u64>`). O `exec_counts` da TUI conta
 //! toda instrução executada em qualquer PC; o `HotProfile` conta apenas alvos
 //! de desvios tomados (loop heads), que é o que o JIT precisa.
 

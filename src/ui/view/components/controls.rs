@@ -255,13 +255,13 @@ pub(crate) fn render_exec_controls(
     reset_btn: &Cell<(u16, u16, u16)>,
     hint: &str,
 ) {
-    let speed_text = app.run.speed.label();
+    let speed_text = app.session.speed.label();
 
     let hover_reset = app.hover_run_button == Some(RunButton::Reset);
     let hover_speed = app.hover_run_button == Some(RunButton::Speed);
     let hover_state = app.hover_run_button == Some(RunButton::State);
 
-    let (state_text, state_color) = if app.run.is_running {
+    let (state_text, state_color) = if app.session.is_running {
         ("run", theme::RUNNING)
     } else {
         ("pause", theme::PAUSED)

@@ -18,7 +18,7 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
     // Ctrl+C / Ctrl+V work); nothing to do here while one is open.
     match code {
         KeyCode::Char('s') => {
-            if !app.run.faulted {
+            if !app.session.faulted {
                 app.single_step();
             }
             true
@@ -106,7 +106,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             true
         }
         KeyCode::Char('f') => {
-            app.run.speed = app.run.speed.cycle();
+            app.session.speed = app.session.speed.cycle();
             true
         }
         KeyCode::Up if ctrl => {
@@ -170,7 +170,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
         }
         KeyCode::Down if app.run_sidebar_shows_memory() => {
             let max = app
-                .run
+                .session
                 .mem_size
                 .saturating_sub(app.run.mem_view_bytes as usize) as u32;
             if app.run.mem_view_addr < max {
@@ -192,7 +192,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
         KeyCode::PageDown if app.run_sidebar_shows_memory() => {
             let delta = app.run.mem_view_bytes * 16;
             let max = app
-                .run
+                .session
                 .mem_size
                 .saturating_sub(app.run.mem_view_bytes as usize) as u32;
             let new = app.run.mem_view_addr.saturating_add(delta);
@@ -221,7 +221,7 @@ pub(super) fn cycle_memory_region(app: &mut App) {
         }
         MemRegion::Heap => {
             app.run.mem_region = MemRegion::Data;
-            app.run.mem_view_addr = app.run.data_base;
+            app.run.mem_view_addr = app.session.data_base;
         }
     }
     app.run.show_registers = false;

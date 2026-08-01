@@ -85,7 +85,7 @@ fn run_status_hit_shows_region_and_bytes_when_dyn_is_displaying_memory() {
     let mut app = App::new(None);
     app.run.show_dyn = true;
     app.run.show_registers = false;
-    app.run.dyn_mem_access = Some((0x100, 4, true));
+    app.session.dyn_mem_access = Some((0x100, 4, true));
 
     let status = run_status_area(&app, Rect::new(0, 0, 160, 40));
     let hits: Vec<RunButton> = (status.x..status.x + status.width)
@@ -147,7 +147,7 @@ fn run_sidebar_wheel_scrolls_registers_in_dyn_register_view() {
     app.tab = Tab::Run;
     app.run.show_dyn = true;
     app.run.show_registers = false;
-    app.run.dyn_mem_access = Some((0x120, 4, false));
+    app.session.dyn_mem_access = Some((0x120, 4, false));
     app.run.regs_scroll = 1;
     app.run.mem_view_addr = 0x80;
     let area = Rect::new(0, 0, 160, 40);
@@ -497,7 +497,7 @@ fn pipeline_state_click_restarts_when_halted() {
     );
 
     assert!(!app.rv32().unwrap().pipeline().halted);
-    assert_eq!(app.rv32().unwrap().pipeline().fetch_pc, app.run.base_pc);
+    assert_eq!(app.rv32().unwrap().pipeline().fetch_pc, app.session.base_pc);
 }
 
 #[test]

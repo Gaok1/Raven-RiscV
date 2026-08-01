@@ -145,7 +145,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         r.styled("TLB cache    ", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbEnabled),
-            bool_value(app.run.tlb_enabled, hov(VmSettingsField::TlbEnabled)),
+            bool_value(app.session.tlb_enabled, hov(VmSettingsField::TlbEnabled)),
         );
         rows.push(r);
     }
@@ -312,9 +312,9 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
 
     // ── Root PT + window (read-only) ─────────────────────────────────────────
     {
-        let root_pa = scheme.root_pa(app.run.mem_size as u32);
-        let win_lo = app.run.base_pc.min(app.run.data_base);
-        let win_hi = app.run.heap_start;
+        let root_pa = scheme.root_pa(app.session.mem_size as u32);
+        let win_lo = app.session.base_pc.min(app.session.data_base);
+        let win_hi = app.session.heap_start;
         let mut r = RowBuilder::new(x0);
         r.styled("Root PT @ ", label);
         r.styled(&format!("0x{root_pa:08x}"), style::value());

@@ -100,13 +100,13 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('s') if matches!(app.cache.subtab, CacheSubtab::View) => {
-            if !app.run.faulted {
+            if !app.session.faulted {
                 app.single_step();
             }
             true
         }
         KeyCode::Char('f') if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-            app.run.speed = app.run.speed.cycle();
+            app.session.speed = app.session.speed.cycle();
             true
         }
         // Capital D: lowercase 'd' is taken by the d-cache scope shortcut above.
@@ -120,7 +120,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Enter
             if matches!(app.cache.subtab, CacheSubtab::Stats)
                 && !app.cache.session_history.is_empty()
-                && !app.run.is_running =>
+                && !app.session.is_running =>
         {
             let idx = app
                 .cache

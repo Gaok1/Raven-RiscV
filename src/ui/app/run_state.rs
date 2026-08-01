@@ -7,7 +7,7 @@ use raven_riscv_engine::capability::RegisterId;
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
 
-/// What the Run tab is editing inline, when [`RunState::run_edit`] is `Some`.
+/// What the Run tab is editing inline, when [`RunView::run_edit`] is `Some`.
 ///
 /// Every variant commits through a capability the active backend declares —
 /// [`RegisterFile::write`], [`MemoryInspect::poke`], [`InstructionCodec`] — so
@@ -212,33 +212,7 @@ pub(crate) struct BuildStats {
     pub(crate) data_bytes: usize,
 }
 
-impl RunState {
-    /// Whether the MMU is engaged at all (any mode other than `Off`).
-    pub(crate) fn vm_enabled(&self) -> bool {
-        self.vm_mode != crate::falcon::mmu::VmMode::Off
-    }
-
-    /// First address shown at the top of the memory view, given the panel's
-    /// inner height in rows. Auto-following regions (Stack/Access/Heap) center
-    /// `mem_view_addr`; others anchor it at the top. Shared by the renderer and
-    /// the click-to-edit hit test so both agree on each row's address.
-    pub(crate) fn visible_memory_base_addr(&self, lines_override: Option<u32>) -> u32 {
-        let bytes = self.mem_view_bytes.max(1);
-        let lines = lines_override.unwrap_or(0);
-        let center = self.mem_region == MemRegion::Stack
-            || self.mem_region == MemRegion::Access
-            || self.mem_region == MemRegion::Heap
-            || (self.show_dyn && matches!(self.dyn_mem_access, Some((_, _, true))));
-        let base = if center {
-            let half = lines / 2;
-            self.mem_view_addr.saturating_sub(half * bytes)
-        } else {
-            self.mem_view_addr
-        };
-        let align_mask = !(bytes - 1);
-        base & align_mask
-    }
-
+impl RunView {
     pub(crate) fn pipeline_view(&self) -> &crate::ui::pipeline::PipelineViewState {
         &self.pipeline_view
     }
@@ -246,19 +220,25 @@ impl RunState {
     pub(crate) fn pipeline_view_mut(&mut self) -> &mut crate::ui::pipeline::PipelineViewState {
         &mut self.pipeline_view
     }
-
 }
 
-pub(crate) struct RunState {
+impl RunSession {
+    /// Whether the MMU is engaged at all (any mode other than `Off`).
+    pub(crate) fn vm_enabled(&self) -> bool {
+        self.vm_mode != crate::falcon::mmu::VmMode::Off
+    }
+}
+
+/// What the Run tab is *showing*: scroll offsets, panel widths, hover targets,
+/// the display format, which sub-view is up, and the inline editor that is
+/// open. Nothing here survives being recomputed from the machine — it is the
+/// state of a pane, not of a program.
+///
+/// Separate from [`RunSession`] on purpose. The two used to be one struct, so
+/// a renderer reaching for a scroll offset had the breakpoint set and the JIT
+/// backend in the same reach, and nothing said which was which.
+pub(crate) struct RunView {
     pub(crate) pipeline_view: crate::ui::pipeline::PipelineViewState,
-    pub(crate) prev_x: [u32; 32],
-    pub(crate) prev_pc: u32,
-    pub(crate) breakpoints: std::collections::HashSet<u32>,
-    pub(crate) mem_size: usize,
-    pub(crate) base_pc: u32,
-    pub(crate) data_base: u32,
-    pub(crate) heap_start: u32,
-    pub(crate) exec_regions: Vec<ExecRegion>,
 
     // Memory view
     pub(crate) mem_view_addr: u32,
@@ -333,7 +313,7 @@ pub(crate) struct RunState {
     pub(crate) console_drag_start_y: u16,
     pub(crate) console_height_start: u16,
 
-    // Execution
+    // Register list
     pub(crate) regs_scroll: usize,
     /// Vertical scrollbar of the sidebar register list — geometry set by
     /// render, hit-tested by mouse for click + thumb drag.
@@ -341,16 +321,20 @@ pub(crate) struct RunState {
     /// `Some(grab)` while the bar's thumb is being dragged; `grab` is the
     /// thumb cell the cursor holds (see `SbGeom::begin_drag`).
     pub(crate) regs_sb_drag: Option<u16>,
-    pub(crate) is_running: bool,
-    pub(crate) last_step_time: Instant,
-    pub(crate) step_interval: Duration,
-    pub(crate) faulted: bool,
-    pub(crate) speed: RunSpeed,
-    /// One-shot guard: a full step-back checkpoint has been taken for the
-    /// current GO/Instant burst. Reset when the run stops. See `App::tick`.
-    pub(crate) go_checkpointed: bool,
+    /// Mouse hover row in the register sidebar (visual row, 0-based within the
+    /// inner area).
+    pub(crate) hover_reg_row: Option<usize>,
+    pub(crate) pinned_regs: Vec<u8>,
+    pub(crate) reg_cursor: usize, // 0 = PC, 1-32 = x0-x31
+    /// Which register bank the sidebar shows, as an index into the backend's
+    /// [`RegisterFile::banks`]. RV32 cycles integer → float; a single-bank ISA
+    /// stays on 0. Read it through `App::visible_register_bank`, which clamps it
+    /// to the active backend.
+    ///
+    /// [`RegisterFile::banks`]: raven_riscv_engine::capability::RegisterFile::banks
+    pub(crate) reg_bank: usize,
 
-    // ── Inline editing of live state (registers / PC / floats / RAM) ──
+    // ── Inline editing of live state (registers / PC / RAM / instructions) ──
     /// The cell currently open for inline editing, or `None`. While `Some`,
     /// keystrokes feed `run_edit_buf` instead of the normal Run shortcuts.
     pub(crate) run_edit: Option<RunEditTarget>,
@@ -360,68 +344,76 @@ pub(crate) struct RunState {
     /// keystroke. While set, the editor stays open so the user can fix the value.
     pub(crate) run_edit_error: Option<String>,
 
-    // Visible comments from source (#! text), keyed by instruction address
-    pub(crate) comments: std::collections::HashMap<u32, String>,
-
-    // Source label metadata
-    pub(crate) labels: std::collections::HashMap<u32, Vec<String>>,
-    pub(crate) halt_pcs: std::collections::HashSet<u32>,
-
-    // ELF sections for the sections viewer (empty when loaded from ASM)
-    pub(crate) elf_sections: Vec<crate::falcon::program::ElfSection>,
-
-    // Execution statistics
-    pub(crate) exec_counts: std::collections::HashMap<u32, u64>,
-    pub(crate) exec_trace: std::collections::VecDeque<(u32, String)>,
-
-    // Register highlight age: 0 = just changed, 255 = unchanged for long
-    pub(crate) reg_age: [u8; 32],
-
-    // UI flags
+    // Sub-view toggles
     pub(crate) show_trace: bool,
-    pub(crate) pinned_regs: Vec<u8>,
-    pub(crate) reg_cursor: usize, // 0 = PC, 1-32 = x0-x31
-
-    // Feature: block comments from source (Feature 4)
-    pub(crate) block_comments: std::collections::HashMap<u32, String>,
-
-    // Feature: register write trace (Feature 8)
-    pub(crate) reg_last_write_pc: [Option<u32>; 32],
-
-    // Feature: dynamic sidebar view (Dyn)
+    /// Dyn view: the sidebar follows what the last instruction touched.
     pub(crate) show_dyn: bool,
-    pub(crate) dyn_mem_access: Option<(u32, u32, bool)>, // last step's mem access (addr, size, is_store); None = non-mem instr
-
-    // Mouse hover row in register sidebar (visual row index, 0-based within inner area)
-    pub(crate) hover_reg_row: Option<usize>,
-
-    // CPI configuration
-    pub(crate) cpi_config: CpiConfig,
-
-    // Instruction list display toggles
     pub(crate) show_exec_count: bool,
     pub(crate) show_instr_type: bool,
-
-    // Screen sub-view (graphics syscalls 2000+): replaces the Run tab's main
-    // columns with the program's framebuffer while true.
+    /// Screen sub-view (graphics syscalls 2000+): replaces the Run tab's main
+    /// columns with the program's framebuffer while true.
     pub(crate) show_screen: bool,
     /// One-shot: the current program's screen_init already auto-opened the
     /// Screen sub-view (so Esc doesn't get overridden on the next frame).
     pub(crate) screen_seen: bool,
+}
 
-    /// Which register bank the sidebar shows, as an index into the backend's
-    /// [`RegisterFile::banks`]. RV32 cycles integer → float; a single-bank ISA
-    /// stays on 0. Read it through `App::visible_register_bank`, which clamps it
-    /// to the active backend.
-    ///
-    /// [`RegisterFile::banks`]: raven_riscv_engine::capability::RegisterFile::banks
-    pub(crate) reg_bank: usize,
-    pub(crate) prev_f: [u32; 32], // previous float register values (for highlighting)
-    pub(crate) f_age: [u8; 32],       // highlight age for float registers (0=just changed)
-    pub(crate) f_last_write_pc: [Option<u32>; 32], // last instruction that wrote each f-reg
+/// The program the host is running: where it was loaded, what it has executed,
+/// and the settings execution runs under.
+///
+/// This is the host's own bookkeeping *beside* the machine — the parts of a
+/// session the [`Machine`](raven_riscv_engine::Machine) trait does not carry:
+/// breakpoints, per-address execution counts, which registers changed
+/// recently, the JIT backend, and the cache/VM switches the Run and Settings
+/// tabs offer. Reset it and the program starts over; redraw and none of it
+/// changes.
+pub(crate) struct RunSession {
+    // Where the loaded program sits
+    pub(crate) mem_size: usize,
+    pub(crate) base_pc: u32,
+    pub(crate) data_base: u32,
+    pub(crate) heap_start: u32,
+    pub(crate) exec_regions: Vec<ExecRegion>,
+    /// Visible comments from source (`#!` text), keyed by instruction address.
+    pub(crate) comments: std::collections::HashMap<u32, String>,
+    pub(crate) block_comments: std::collections::HashMap<u32, String>,
+    pub(crate) labels: std::collections::HashMap<u32, Vec<String>>,
+    pub(crate) halt_pcs: std::collections::HashSet<u32>,
+    /// ELF sections for the sections viewer (empty when loaded from ASM).
+    pub(crate) elf_sections: Vec<crate::falcon::program::ElfSection>,
 
-    // Memory access highlight: (base_addr, size_bytes, age); age 0=just accessed, disappears at 3
+    // Execution control
+    pub(crate) is_running: bool,
+    pub(crate) last_step_time: Instant,
+    pub(crate) step_interval: Duration,
+    pub(crate) faulted: bool,
+    pub(crate) speed: RunSpeed,
+    /// One-shot guard: a full step-back checkpoint has been taken for the
+    /// current GO/Instant burst. Reset when the run stops. See `App::tick`.
+    pub(crate) go_checkpointed: bool,
+    pub(crate) breakpoints: std::collections::HashSet<u32>,
+
+    // What execution has done so far
+    pub(crate) exec_counts: std::collections::HashMap<u32, u64>,
+    pub(crate) exec_trace: std::collections::VecDeque<(u32, String)>,
+    pub(crate) prev_x: [u32; 32],
+    pub(crate) prev_f: [u32; 32],
+    pub(crate) prev_pc: u32,
+    /// Register highlight age: 0 = just changed, 255 = unchanged for long.
+    pub(crate) reg_age: [u8; 32],
+    pub(crate) f_age: [u8; 32],
+    /// The instruction that last wrote each register.
+    pub(crate) reg_last_write_pc: [Option<u32>; 32],
+    pub(crate) f_last_write_pc: [Option<u32>; 32],
+    /// The last step's memory access (addr, size, is_store); `None` for a
+    /// non-memory instruction.
+    pub(crate) dyn_mem_access: Option<(u32, u32, bool)>,
+    /// Recent accesses as `(base_addr, size_bytes, age)`; age 0 = just now,
+    /// gone at 3.
     pub(crate) mem_access_log: Vec<(u32, u32, u8)>,
+
+    // Settings execution runs under
+    pub(crate) cpi_config: CpiConfig,
     /// When false, cache simulation is fully bypassed (direct RAM access, no latency).
     pub(crate) cache_enabled: bool,
     /// How virtual memory behaves (Off / Sv32 / Custom / Manual). Drives the MMU

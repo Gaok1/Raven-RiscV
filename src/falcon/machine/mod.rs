@@ -32,7 +32,7 @@
 //! bursts and background harts write RAM directly and are only reversible to
 //! their last [`Machine::checkpoint`]. These are documented on the methods.
 
-#![allow(dead_code)] // Phase 1: standalone module; wired into RunState in Phase 2.
+#![allow(dead_code)] // Phase 1: standalone module; superseded by crates/raven-riscv-engine.
 
 pub mod journal;
 pub mod parse;

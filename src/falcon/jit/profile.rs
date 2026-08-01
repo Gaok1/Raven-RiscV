@@ -20,7 +20,7 @@
 //! | Campo                   | Onde vive       | O que conta                      |
 //! |-------------------------|-----------------|----------------------------------|
 //! | `HotProfile`            | JIT backend     | Alvos de desvios tomados         |
-//! | `app.run.exec_counts`   | TUI (`hart.rs`) | Toda instrução executada, por PC |
+//! | `app.session.exec_counts`   | TUI (`hart.rs`) | Toda instrução executada, por PC |
 //!
 //! São estruturas independentes com propósitos distintos.
 //!

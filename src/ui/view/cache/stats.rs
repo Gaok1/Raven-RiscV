@@ -341,7 +341,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 }
 
 fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
-    let is_running = app.run.is_running;
+    let is_running = app.session.is_running;
     let title = if is_running {
         " Snapshots (\u{23f8} to view) "
     } else {

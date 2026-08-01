@@ -246,7 +246,7 @@ fn bytes_text(app: &App) -> &'static str {
 }
 
 fn speed_text(app: &App) -> &'static str {
-    match app.run.speed.label() {
+    match app.session.speed.label() {
         "1x" => "1x",
         "2x" => "2x",
         "4x" => "4x",

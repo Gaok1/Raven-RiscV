@@ -123,7 +123,7 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
                 app.console.push_input(line);
                 app.console.reading = false;
                 if app.can_start_run() {
-                    app.run.is_running = true;
+                    app.session.is_running = true;
                 }
             }
             _ => {}
@@ -394,10 +394,10 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
             .run
             .hover_imem_addr
             .unwrap_or(app.program_counter() as u32);
-        if app.run.breakpoints.contains(&addr) {
-            app.run.breakpoints.remove(&addr);
+        if app.session.breakpoints.contains(&addr) {
+            app.session.breakpoints.remove(&addr);
         } else {
-            app.run.breakpoints.insert(addr);
+            app.session.breakpoints.insert(addr);
         }
         return true;
     }

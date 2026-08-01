@@ -59,7 +59,7 @@ impl App {
         match self
             .architecture
             .assembler()
-            .assemble(&source, u64::from(self.run.base_pc))
+            .assemble(&source, u64::from(self.session.base_pc))
         {
             Ok(image) => Some((image, offsets)),
             Err(error) => {
@@ -120,7 +120,7 @@ impl App {
                 .map(|segment| segment.bytes.clone())
                 .unwrap_or_default(),
         );
-        self.editor.last_ok_data_base = Some(data_base(image, self.run.base_pc));
+        self.editor.last_ok_data_base = Some(data_base(image, self.session.base_pc));
         self.editor.last_ok_bss_size = Some(image.zero_filled_bytes() as u32);
         self.editor.last_ok_comments = narrow(image.source_map.comments.clone());
         self.editor.last_ok_block_comments = narrow(image.source_map.block_comments.clone());
@@ -151,7 +151,7 @@ impl App {
             // stop saying it is fine.
             self.editor.last_compile_ok = Some(false);
             self.console.push_error(error);
-            self.run.faulted = self.rv32().is_some();
+            self.session.faulted = self.rv32().is_some();
             return false;
         }
         true
@@ -160,12 +160,12 @@ impl App {
     /// Rebuild the RV32 runtime's CPU and memory hierarchy from the current
     /// cache, TLB and VM settings, ready to receive a program.
     pub(super) fn reset_native_runtime(&mut self) {
-        self.run.prev_x = self.native().cpu().x;
-        self.run.mem_size = self.ram_override.unwrap_or(super::DEFAULT_MEM_SIZE);
+        self.session.prev_x = self.native().cpu().x;
+        self.session.mem_size = self.ram_override.unwrap_or(super::DEFAULT_MEM_SIZE);
         let (mem_size, base_pc, bypass) = (
-            self.run.mem_size,
-            self.run.base_pc,
-            !self.run.cache_enabled,
+            self.session.mem_size,
+            self.session.base_pc,
+            !self.session.cache_enabled,
         );
         let memory = CacheController::new(
             self.cache.pending_icache.clone(),
@@ -174,7 +174,7 @@ impl App {
             mem_size,
         );
         let tlb = self.tlb.pending.clone();
-        self.run.prev_pc = base_pc;
+        self.session.prev_pc = base_pc;
         let runtime = self.native_mut();
         *runtime.cpu_mut_unjournaled() = Cpu::default();
         runtime.cpu_mut_unjournaled().pc = base_pc;
@@ -183,7 +183,7 @@ impl App {
         runtime.mem_mut_unjournaled().bypass = bypass;
         runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
         self.push_vm_mode_to_mmu();
-        self.run.faulted = false;
+        self.session.faulted = false;
     }
 
     /// Write `image` into the RV32 runtime and place the entry point, the stack
@@ -198,11 +198,11 @@ impl App {
         self.native_mut().mem_mut_unjournaled().reset_stats();
 
         self.native_mut().cpu_mut_unjournaled().pc = entry;
-        self.run.prev_pc = entry;
-        self.run.heap_start = crate::riscv32::heap_break_after(image);
-        self.native_mut().cpu_mut_unjournaled().heap_break = self.run.heap_start;
-        self.run.data_base = data_base(image, self.run.base_pc);
-        self.run.mem_view_addr = self.run.data_base;
+        self.session.prev_pc = entry;
+        self.session.heap_start = crate::riscv32::heap_break_after(image);
+        self.native_mut().cpu_mut_unjournaled().heap_break = self.session.heap_start;
+        self.session.data_base = data_base(image, self.session.base_pc);
+        self.run.mem_view_addr = self.session.data_base;
         self.run.mem_region = MemRegion::Data;
         Ok(())
     }
@@ -218,17 +218,17 @@ impl App {
         if self.rv32().is_none() {
             return;
         }
-        self.run.comments = narrow(image.source_map.comments.clone());
-        self.run.block_comments = narrow(image.source_map.block_comments.clone());
-        self.run.labels = narrow(image.source_map.labels.clone());
-        self.run.halt_pcs = halt_pcs(&image.source_map);
-        self.run.exec_counts.clear();
-        self.run.exec_trace.clear();
-        self.run.mem_access_log.clear();
-        self.run.reg_age = [255u8; 32];
-        self.run.f_age = [255u8; 32];
-        self.run.reg_last_write_pc = [None; 32];
-        self.run.f_last_write_pc = [None; 32];
+        self.session.comments = narrow(image.source_map.comments.clone());
+        self.session.block_comments = narrow(image.source_map.block_comments.clone());
+        self.session.labels = narrow(image.source_map.labels.clone());
+        self.session.halt_pcs = halt_pcs(&image.source_map);
+        self.session.exec_counts.clear();
+        self.session.exec_trace.clear();
+        self.session.mem_access_log.clear();
+        self.session.reg_age = [255u8; 32];
+        self.session.f_age = [255u8; 32];
+        self.session.reg_last_write_pc = [None; 32];
+        self.session.f_last_write_pc = [None; 32];
         self.run.imem_scroll = 0;
         self.run.hover_imem_addr = None;
         self.rebuild_imem_vrow_cache();
@@ -248,12 +248,12 @@ impl App {
     /// Runs on every load, not just the first: rebuilding the memory hierarchy
     /// wipes the tables out of RAM along with the program.
     fn install_didactic_page_map(&mut self) {
-        if !self.run.vm_mode.is_auto() {
+        if !self.session.vm_mode.is_auto() {
             return;
         }
         let scheme = self.active_scheme();
-        let root_pa = scheme.root_pa(self.run.mem_size as u32);
-        let window = (self.run.base_pc.min(self.run.data_base), self.run.heap_start);
+        let root_pa = scheme.root_pa(self.session.mem_size as u32);
+        let window = (self.session.base_pc.min(self.session.data_base), self.session.heap_start);
         crate::falcon::mmu::Mmu::install_map_scheme(
             &mut rv32_runtime_mut(&mut *self.machine)
                 .expect(NOT_RV32)
@@ -288,7 +288,7 @@ impl App {
                 .map(|()| image)
                 .map_err(|error| error.to_string());
         }
-        crate::riscv32::image_from_binary(bytes, u64::from(self.run.base_pc))
+        crate::riscv32::image_from_binary(bytes, u64::from(self.session.base_pc))
             .map_err(|error| error.to_string())
     }
 }

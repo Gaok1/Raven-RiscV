@@ -25,8 +25,8 @@ fn console_tail(app: &App) -> String {
 
 fn trace_tail(app: &App) -> String {
     let mut lines = Vec::new();
-    let start = app.run.exec_trace.len().saturating_sub(12);
-    for (pc, disasm) in app.run.exec_trace.iter().skip(start) {
+    let start = app.session.exec_trace.len().saturating_sub(12);
+    for (pc, disasm) in app.session.exec_trace.iter().skip(start) {
         lines.push(format!("0x{pc:08X}: {disasm}"));
     }
     lines.join("\n")
@@ -123,8 +123,8 @@ fn screen_sleep_then_exit_parks_on_the_ecall() {
             "ecall",
         ],
     );
-    app.run.speed = super::RunSpeed::X8;
-    app.run.is_running = true;
+    app.session.speed = super::RunSpeed::X8;
+    app.session.is_running = true;
     for _ in 0..500 {
         app.tick();
         if app.native().cpu().exit_code.is_some() {
@@ -313,19 +313,19 @@ fn stepback_reverts_sequential_step_state_and_trace() {
     app.single_step();
     assert_eq!(app.native().cpu().x[11], 9);
     let pc_after_two = app.native().cpu().pc;
-    assert_eq!(app.run.exec_trace.len(), 2);
+    assert_eq!(app.session.exec_trace.len(), 2);
     assert!(app.can_stepback_now());
 
     // Undo the second instruction: x11 reverts, PC backs up, trace shrinks.
     app.stepback_one();
     assert_eq!(app.native().cpu().x[11], 0, "x11 reverted");
-    assert_eq!(app.run.exec_trace.len(), 1);
+    assert_eq!(app.session.exec_trace.len(), 1);
     assert!(app.native().cpu().pc < pc_after_two);
 
     // Undo the first: x10 reverts and the journal empties.
     app.stepback_one();
     assert_eq!(app.native().cpu().x[10], 0, "x10 reverted");
-    assert_eq!(app.run.exec_trace.len(), 0);
+    assert_eq!(app.session.exec_trace.len(), 0);
     assert!(!app.can_stepback_now(), "journal drained");
 }
 
@@ -407,7 +407,7 @@ fn stepback_reverts_pipeline_cycle_state() {
         stages_empty0,
         "pipeline stages round-tripped"
     );
-    assert_eq!(app.run.exec_trace.len(), 0, "exec trace drained");
+    assert_eq!(app.session.exec_trace.len(), 0, "exec trace drained");
 }
 
 #[test]
@@ -637,7 +637,7 @@ fn pipeline_tab_single_step_keeps_single_cycle_alu_latency_visible_in_ex() {
     let mut app = App::new(None);
     app.native_mut().pipeline_mut().enabled = true;
     app.tab = Tab::Pipeline;
-    app.run.cpi_config.alu = 3;
+    app.session.cpi_config.alu = 3;
     load_program(
         &mut app,
         &[
@@ -737,7 +737,7 @@ fn run_status_shows_exit_for_global_exit() {
 #[test]
 fn run_status_shows_fault_for_invalid_instruction() {
     let mut app = App::new(None);
-    app.run.faulted = true;
+    app.session.faulted = true;
     app.finalize_selected_core_after_step();
 
     let text = run_controls_plain_text(&app);
@@ -867,7 +867,7 @@ fn sequential_linux_exit_is_terminal_not_resumable() {
     assert_eq!(app.native().cpu().pc, exit_pc);
     assert_eq!(app.native().cpu().x[10], 7);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
 }
 
 #[test]
@@ -941,7 +941,7 @@ fn pipeline_linux_exit_in_run_tab_is_terminal_not_resumable() {
     assert_eq!(app.native().cpu().x[10], 7);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
 }
 
 #[test]
@@ -967,7 +967,7 @@ fn pipeline_all_harts_scope_keeps_halted_hart_exited() {
     app.run_scope = RunScope::AllHarts;
 
     let worker_pc = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr))
@@ -998,7 +998,7 @@ fn pipeline_all_harts_scope_keeps_halted_hart_exited() {
     }
 
     assert_eq!(app.core_status(0), HartLifecycle::Exited);
-    assert_eq!(app.harts[0].cpu.pc, app.run.base_pc.wrapping_add(4));
+    assert_eq!(app.harts[0].cpu.pc, app.session.base_pc.wrapping_add(4));
     assert!(matches!(
         app.core_status(1),
         HartLifecycle::Running | HartLifecycle::Exited
@@ -1026,7 +1026,7 @@ fn all_harts_step_does_not_auto_resume_non_selected_ebreak_hart() {
     app.rebuild_harts_for_debug();
 
     let worker_pc = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr))
@@ -1043,7 +1043,7 @@ fn all_harts_step_does_not_auto_resume_non_selected_ebreak_hart() {
     app.single_step();
 
     assert_eq!(app.core_status(0), HartLifecycle::Paused);
-    assert_eq!(app.harts[0].cpu.pc, app.run.base_pc.wrapping_add(4));
+    assert_eq!(app.harts[0].cpu.pc, app.session.base_pc.wrapping_add(4));
 }
 
 #[test]
@@ -1067,7 +1067,7 @@ fn all_harts_step_advances_selected_and_non_selected_harts() {
     app.rebuild_harts_for_debug();
 
     let worker_pc = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr))
@@ -1137,9 +1137,9 @@ fn focused_secondary_hart_falls_through_unsupported_word_until_halt() {
     );
     app.rebuild_harts_for_debug();
 
-    let worker_pc = app.run.base_pc + 4;
-    let trap_pc = app.run.base_pc + 32;
-    let halt_pc = app.run.base_pc + 36;
+    let worker_pc = app.session.base_pc + 4;
+    let trap_pc = app.session.base_pc + 32;
+    let halt_pc = app.session.base_pc + 36;
 
     app.harts[1].hart_id = Some(1);
     app.harts[1].lifecycle = HartLifecycle::Running;
@@ -1194,7 +1194,7 @@ fn focused_secondary_pipeline_ebreak_can_resume_with_step() {
     );
     app.rebuild_harts_for_debug();
 
-    let worker_pc = app.run.base_pc + 4;
+    let worker_pc = app.session.base_pc + 4;
     app.harts[1].hart_id = Some(1);
     app.harts[1].lifecycle = HartLifecycle::Running;
     app.harts[1].cpu.pc = worker_pc;
@@ -1251,7 +1251,7 @@ fn focused_secondary_pipeline_unimp_then_ebreak_can_resume_with_step() {
     );
     app.rebuild_harts_for_debug();
 
-    let worker_pc = app.run.base_pc + 4;
+    let worker_pc = app.session.base_pc + 4;
     app.harts[1].hart_id = Some(1);
     app.harts[1].lifecycle = HartLifecycle::Running;
     app.harts[1].cpu.pc = worker_pc;
@@ -1271,7 +1271,7 @@ fn focused_secondary_pipeline_unimp_then_ebreak_can_resume_with_step() {
     }
 
     assert_eq!(
-        app.native().mem().peek32(app.run.base_pc + 28).unwrap_or(0),
+        app.native().mem().peek32(app.session.base_pc + 28).unwrap_or(0),
         0xC000_1073
     );
     assert_eq!(
@@ -1311,7 +1311,7 @@ fn hart_start_can_reuse_exited_core() {
     let stack_ptr = stack_hi & !0xF;
     assert!(stack_ptr >= stack_lo);
     let worker_pc = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr))
@@ -1469,7 +1469,7 @@ fn rust_to_raven_debug_elf_runs_multihart_in_pipeline_without_fault() {
     app.load_binary(&rust_to_raven_elf_bytes());
 
     for _ in 0..100_000 {
-        if app.run.faulted || app.native().pipeline().faulted {
+        if app.session.faulted || app.native().pipeline().faulted {
             break;
         }
         if app.native().cpu().exit_code.is_some() {
@@ -1479,7 +1479,7 @@ fn rust_to_raven_debug_elf_runs_multihart_in_pipeline_without_fault() {
     }
 
     assert!(
-        !app.run.faulted,
+        !app.session.faulted,
         "sequential run state faulted\n{}\n{}",
         console_tail(&app),
         trace_tail(&app)
@@ -1507,14 +1507,14 @@ fn rust_to_raven_debug_elf_single_core_pipeline_does_not_panic() {
     app.load_binary(&rust_to_raven_elf_bytes());
 
     for _ in 0..10_000 {
-        if app.run.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
+        if app.session.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
     }
 
     assert!(
-        !app.run.faulted,
+        !app.session.faulted,
         "{}\n{}",
         console_tail(&app),
         trace_tail(&app)
@@ -1560,7 +1560,7 @@ fn hart_start_child_inherits_parallel_fu_config() {
     app.native_mut().pipeline_mut().fu_capacity[crate::ui::pipeline::FuKind::Lsu.index()] = 2;
     app.native_mut().cpu_mut_unjournaled().pending_hart_start =
         Some(crate::falcon::registers::HartStartRequest {
-            entry_pc: app.run.base_pc,
+            entry_pc: app.session.base_pc,
             stack_ptr: 0x0010_0000,
             arg: 0x1234_5678,
         });
@@ -1584,7 +1584,7 @@ fn rust_to_raven_debug_elf_runs_multihart_sequential_without_fault() {
     app.load_binary(&rust_to_raven_elf_bytes());
 
     for _ in 0..50_000 {
-        if app.run.faulted {
+        if app.session.faulted {
             break;
         }
         if app.native().cpu().exit_code.is_some() {
@@ -1593,7 +1593,7 @@ fn rust_to_raven_debug_elf_runs_multihart_sequential_without_fault() {
         app.single_step();
     }
 
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
     assert_eq!(app.native().cpu().exit_code, Some(0), "{}", console_tail(&app));
 }
 
@@ -1626,13 +1626,13 @@ fn pipeline_ecall_return_updates_a0_before_next_consumer() {
     );
 
     for _ in 0..200 {
-        if app.run.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
+        if app.session.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
     }
 
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
     assert_eq!(app.native().cpu().exit_code, Some(0), "{}", trace_tail(&app));
 }
@@ -1666,7 +1666,7 @@ fn pipeline_hart_start_delivers_a0_to_spawned_hart() {
     );
 
     for _ in 0..200 {
-        if app.run.faulted || app.native().pipeline().faulted {
+        if app.session.faulted || app.native().pipeline().faulted {
             break;
         }
         if matches!(app.core_status(1), HartLifecycle::Exited) {
@@ -1676,13 +1676,13 @@ fn pipeline_hart_start_delivers_a0_to_spawned_hart() {
     }
 
     let result_addr = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "result").then_some(*addr))
         .expect("result label present");
 
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
     assert_eq!(
         app.core_status(1),
@@ -1728,7 +1728,7 @@ fn pipeline_ecall_reads_fresh_a0_through_a7_values() {
     );
 
     for _ in 0..240 {
-        if app.run.faulted || app.native().pipeline().faulted {
+        if app.session.faulted || app.native().pipeline().faulted {
             break;
         }
         if matches!(app.core_status(1), HartLifecycle::Exited) {
@@ -1738,13 +1738,13 @@ fn pipeline_ecall_reads_fresh_a0_through_a7_values() {
     }
 
     let result_addr = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "result").then_some(*addr))
         .expect("result label present");
 
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
     assert_eq!(
         app.core_status(1),
@@ -1784,14 +1784,14 @@ fn pipeline_hart_exit_keeps_worker_pc_on_ecall() {
     );
 
     let hart_exit_pc = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr + 4))
         .expect("worker ecall present");
 
     for _ in 0..200 {
-        if app.run.faulted || app.native().pipeline().faulted {
+        if app.session.faulted || app.native().pipeline().faulted {
             break;
         }
         if matches!(app.core_status(1), HartLifecycle::Exited) {
@@ -1802,7 +1802,7 @@ fn pipeline_hart_exit_keeps_worker_pc_on_ecall() {
 
     app.switch_selected_core(1);
 
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
     assert_eq!(
         app.core_status(1),
@@ -1850,7 +1850,7 @@ fn pipeline_spawned_hart_branch_sees_fresh_andi_result() {
     );
 
     for _ in 0..200 {
-        if app.run.faulted || app.native().pipeline().faulted {
+        if app.session.faulted || app.native().pipeline().faulted {
             break;
         }
         if matches!(app.core_status(1), HartLifecycle::Exited) {
@@ -1860,13 +1860,13 @@ fn pipeline_spawned_hart_branch_sees_fresh_andi_result() {
     }
 
     let result_addr = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "result").then_some(*addr))
         .expect("result label present");
 
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
     assert_eq!(
         app.native().mem().load32(result_addr).expect("result word"),
@@ -1903,13 +1903,13 @@ fn pipeline_ret_sees_loaded_ra_with_stack_adjust_between() {
     );
 
     for _ in 0..160 {
-        if app.run.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
+        if app.session.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
             break;
         }
         app.single_step();
     }
 
-    assert!(!app.run.faulted, "{}", console_tail(&app));
+    assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
     assert_eq!(app.native().cpu().exit_code, Some(7), "{}", trace_tail(&app));
 }
@@ -1925,7 +1925,7 @@ fn loading_elf_resets_pipeline_to_entry_pc() {
 
     assert_eq!(app.native().pipeline().fetch_pc, app.native().cpu().pc);
     assert_eq!(app.native().cpu().pc, info.entry);
-    assert_ne!(app.native().cpu().pc, app.run.base_pc);
+    assert_ne!(app.native().cpu().pc, app.session.base_pc);
 }
 
 #[test]
@@ -1944,7 +1944,7 @@ fn rust_to_raven_debug_elf_pipeline_matches_sequential_until_exit() {
     pipe.load_binary(&rust_to_raven_elf_bytes());
 
     for step in 0..10_000 {
-        if seq.run.faulted || pipe.run.faulted || pipe.native().pipeline().faulted {
+        if seq.session.faulted || pipe.session.faulted || pipe.native().pipeline().faulted {
             panic!(
                 "fault before divergence check at step {step}\nSEQ:\n{}\n{}\nPIPE:\n{}\n{}",
                 console_tail(&seq),
@@ -2134,7 +2134,7 @@ mod run_edit {
     fn commit_pc_redirects_pipeline_fetch() {
         let mut app = loaded_app();
         app.run.fmt_mode = FormatMode::Hex;
-        let entry = app.run.base_pc;
+        let entry = app.session.base_pc;
         app.begin_run_edit(RunEditTarget::ProgramCounter);
         app.run.run_edit_buf = format!("{entry:x}");
         app.commit_run_edit();
@@ -2160,7 +2160,7 @@ mod run_edit {
         let mut app = loaded_app();
         app.run.fmt_mode = FormatMode::Hex;
         app.run.mem_view_bytes = 1;
-        let addr = app.run.data_base;
+        let addr = app.session.data_base;
         app.begin_run_edit(RunEditTarget::Mem {
             addr,
             width: MemWidth::B1,
@@ -2176,7 +2176,7 @@ mod run_edit {
         let mut app = loaded_app();
         app.run.fmt_mode = FormatMode::Hex;
         app.run.mem_view_bytes = 4;
-        let addr = app.run.data_base & !3;
+        let addr = app.session.data_base & !3;
         let before = app.native().mem().effective_read32(addr).unwrap_or(0);
 
         app.begin_run_edit(RunEditTarget::Mem {
@@ -2228,7 +2228,7 @@ mod run_edit {
     #[test]
     fn begin_run_edit_is_noop_while_running() {
         let mut app = loaded_app();
-        app.run.is_running = true;
+        app.session.is_running = true;
         app.begin_run_edit(x(5));
         assert!(app.run.run_edit.is_none());
     }
@@ -2483,12 +2483,12 @@ fn a_container_opens_where_it_was_built() {
     built.editor.buf.lines = source.iter().map(|l| l.to_string()).collect();
     built.assemble_and_load();
     let container = built.export_program_image().unwrap().to_falc_v2().unwrap();
-    let data_base = built.run.data_base;
+    let data_base = built.session.data_base;
 
     let mut opened = App::new(None);
     opened.load_binary(&container);
     assert_eq!(opened.editor.last_compile_ok, Some(true));
-    assert_eq!(opened.run.data_base, data_base, "the data pane moved");
+    assert_eq!(opened.session.data_base, data_base, "the data pane moved");
     assert_eq!(
         opened.native_mut().mem().ram.as_bytes()[data_base as usize],
         7,

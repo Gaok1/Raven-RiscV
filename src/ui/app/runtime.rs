@@ -146,7 +146,7 @@ impl App {
     pub(in crate::ui) fn tab_visible(&self, tab: Tab) -> bool {
         let capabilities = self.architecture.descriptor().capabilities;
         match tab {
-            Tab::Cache => capabilities.cache && self.run.cache_enabled,
+            Tab::Cache => capabilities.cache && self.session.cache_enabled,
             Tab::Tlb => capabilities.virtual_memory,
             Tab::Pipeline => capabilities.pipeline,
             Tab::Activity => capabilities.guided_learning,
@@ -169,7 +169,7 @@ impl App {
     }
 
     pub(in crate::ui) fn set_cache_enabled(&mut self, enabled: bool) {
-        self.run.cache_enabled = enabled;
+        self.session.cache_enabled = enabled;
         if self.rv32().is_some() {
             self.native_mut().mem_mut_unjournaled().bypass = !enabled;
             self.native_mut().mem_mut_unjournaled().flush_all();
@@ -208,7 +208,7 @@ impl App {
 
     /// The user-facing VM mode.
     pub(in crate::ui) fn vm_mode(&self) -> crate::falcon::mmu::VmMode {
-        self.run.vm_mode
+        self.session.vm_mode
     }
 
     /// The paging scheme implied by the current VM mode: the user-configured
@@ -216,7 +216,7 @@ impl App {
     /// mid-edit invalid Custom scheme falls back to Sv32 so the live MMU is
     /// never driven with a malformed geometry (apply re-validates explicitly).
     pub(in crate::ui) fn active_scheme(&self) -> crate::falcon::mmu::PagingScheme {
-        if matches!(self.run.vm_mode, crate::falcon::mmu::VmMode::Custom)
+        if matches!(self.session.vm_mode, crate::falcon::mmu::VmMode::Custom)
             && self.tlb.pending_scheme.is_valid()
         {
             self.tlb.pending_scheme.clone()
@@ -228,9 +228,9 @@ impl App {
     /// Push the current `vm_mode` (flags + active scheme) into the live MMU.
     /// Used after rebuilding the memory subsystem (assemble / load).
     pub(in crate::ui) fn push_vm_mode_to_mmu(&mut self) {
-        let (enabled, force_translate) = self.run.vm_mode.flags();
+        let (enabled, force_translate) = self.session.vm_mode.flags();
         let scheme = self.active_scheme();
-        let tlb_enabled = self.run.tlb_enabled;
+        let tlb_enabled = self.session.tlb_enabled;
         let Some(runtime) = self.rv32_mut() else {
             return;
         };
@@ -252,7 +252,7 @@ impl App {
     /// engine flags + active paging scheme into the MMU.
     pub(in crate::ui) fn set_vm_mode(&mut self, mode: crate::falcon::mmu::VmMode) {
         let (enabled, _) = mode.flags();
-        self.run.vm_mode = mode;
+        self.session.vm_mode = mode;
         self.push_vm_mode_to_mmu();
         if !enabled {
             // Drop all cached translations so re-enabling starts from a clean
@@ -260,11 +260,11 @@ impl App {
             if let Some(runtime) = self.rv32_mut() {
                 runtime.mem_mut_unjournaled().mmu.flush();
             }
-        } else if self.run.jit_kind != crate::falcon::jit::BackendKind::None {
+        } else if self.session.jit_kind != crate::falcon::jit::BackendKind::None {
             // The JIT does not yet invalidate translations on satp/sfence.vma,
             // so keeping it on with VM would silently run stale code. Demote to
             // the interpreter and rebuild the backend.
-            self.run.jit_kind = crate::falcon::jit::BackendKind::None;
+            self.session.jit_kind = crate::falcon::jit::BackendKind::None;
             self.rebuild_backend();
         }
     }
@@ -272,7 +272,7 @@ impl App {
     /// Enable/disable the TLB cache. When off, every translation walks the
     /// page table (miss + penalty, no hits). Mirrors the flag into the engine.
     pub(in crate::ui) fn set_tlb_enabled(&mut self, enabled: bool) {
-        self.run.tlb_enabled = enabled;
+        self.session.tlb_enabled = enabled;
         let Some(runtime) = self.rv32_mut() else {
             return;
         };
@@ -284,7 +284,7 @@ impl App {
     }
 
     pub(in crate::ui) fn set_trace_syscalls(&mut self, enabled: bool) {
-        self.run.trace_syscalls = enabled;
+        self.session.trace_syscalls = enabled;
         self.console.trace_syscalls = enabled;
     }
 
@@ -292,10 +292,10 @@ impl App {
         // Refuse to enable JIT while VM is on — the JIT does not invalidate
         // its translation cache on satp/sfence.vma. The user can disable VM
         // first to flip the JIT on.
-        if self.run.vm_enabled() && kind != crate::falcon::jit::BackendKind::None {
-            self.run.jit_kind = crate::falcon::jit::BackendKind::None;
+        if self.session.vm_enabled() && kind != crate::falcon::jit::BackendKind::None {
+            self.session.jit_kind = crate::falcon::jit::BackendKind::None;
         } else {
-            self.run.jit_kind = kind;
+            self.session.jit_kind = kind;
         }
         self.rebuild_backend();
     }
@@ -305,8 +305,8 @@ impl App {
     /// um programa (para que FullBackend faça o scan eager no estado correto).
     pub(in crate::ui) fn rebuild_backend(&mut self) {
         use crate::falcon::jit::{BackendKind, make_backend};
-        self.run.backend = match self.run.jit_kind {
-            BackendKind::None | BackendKind::Hot => make_backend(self.run.jit_kind)
+        self.session.backend = match self.session.jit_kind {
+            BackendKind::None | BackendKind::Hot => make_backend(self.session.jit_kind)
                 .unwrap_or_else(|_| make_backend(BackendKind::None).unwrap()),
             BackendKind::Full => {
                 #[cfg(feature = "jit")]
@@ -328,7 +328,7 @@ impl App {
     }
 
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
-        self.run.is_running = false;
+        self.session.is_running = false;
         let __rpc = self.program_counter() as u32;
         self.reset_pipeline_stages(__rpc);
 
@@ -382,25 +382,25 @@ impl App {
         self.next_hart_id = 1;
         self.harts.clear();
         for core in 0..self.max_cores {
-            let mut runtime = HartCoreRuntime::free(self.run.base_pc, self.run.mem_size);
+            let mut runtime = HartCoreRuntime::free(self.session.base_pc, self.session.mem_size);
             runtime.cpu.heap_break = selected.heap_break;
             if core == 0 {
                 runtime.hart_id = Some(0);
                 runtime.lifecycle = HartLifecycle::Running;
                 runtime.cpu = selected.clone();
                 runtime.cpu.hart_id = 0;
-                runtime.prev_x = self.run.prev_x;
-                runtime.prev_f = self.run.prev_f;
-                runtime.prev_pc = self.run.prev_pc;
-                runtime.faulted = self.run.faulted;
-                runtime.reg_age = self.run.reg_age;
-                runtime.f_age = self.run.f_age;
-                runtime.reg_last_write_pc = self.run.reg_last_write_pc;
-                runtime.f_last_write_pc = self.run.f_last_write_pc;
-                runtime.exec_counts = self.run.exec_counts.clone();
-                runtime.exec_trace = self.run.exec_trace.clone();
-                runtime.dyn_mem_access = self.run.dyn_mem_access;
-                runtime.mem_access_log = self.run.mem_access_log.clone();
+                runtime.prev_x = self.session.prev_x;
+                runtime.prev_f = self.session.prev_f;
+                runtime.prev_pc = self.session.prev_pc;
+                runtime.faulted = self.session.faulted;
+                runtime.reg_age = self.session.reg_age;
+                runtime.f_age = self.session.f_age;
+                runtime.reg_last_write_pc = self.session.reg_last_write_pc;
+                runtime.f_last_write_pc = self.session.f_last_write_pc;
+                runtime.exec_counts = self.session.exec_counts.clone();
+                runtime.exec_trace = self.session.exec_trace.clone();
+                runtime.dyn_mem_access = self.session.dyn_mem_access;
+                runtime.mem_access_log = self.session.mem_access_log.clone();
                 runtime.pipeline = None;
             } else if let Some(p) = runtime.pipeline.as_mut()
                 && let Some(model) = self.rv32()
@@ -421,18 +421,18 @@ impl App {
         let replacement = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
         if let Some(runtime) = self.harts.get_mut(selected) {
             runtime.cpu = rv32_runtime(&*self.machine).expect(NOT_RV32).cpu().clone();
-            runtime.prev_x = self.run.prev_x;
-            runtime.prev_f = self.run.prev_f;
-            runtime.prev_pc = self.run.prev_pc;
-            runtime.faulted = self.run.faulted;
-            runtime.reg_age = self.run.reg_age;
-            runtime.f_age = self.run.f_age;
-            runtime.reg_last_write_pc = self.run.reg_last_write_pc;
-            runtime.f_last_write_pc = self.run.f_last_write_pc;
-            runtime.exec_counts = self.run.exec_counts.clone();
-            runtime.exec_trace = self.run.exec_trace.clone();
-            runtime.dyn_mem_access = self.run.dyn_mem_access;
-            runtime.mem_access_log = self.run.mem_access_log.clone();
+            runtime.prev_x = self.session.prev_x;
+            runtime.prev_f = self.session.prev_f;
+            runtime.prev_pc = self.session.prev_pc;
+            runtime.faulted = self.session.faulted;
+            runtime.reg_age = self.session.reg_age;
+            runtime.f_age = self.session.f_age;
+            runtime.reg_last_write_pc = self.session.reg_last_write_pc;
+            runtime.f_last_write_pc = self.session.f_last_write_pc;
+            runtime.exec_counts = self.session.exec_counts.clone();
+            runtime.exec_trace = self.session.exec_trace.clone();
+            runtime.dyn_mem_access = self.session.dyn_mem_access;
+            runtime.mem_access_log = self.session.mem_access_log.clone();
             runtime.pipeline = Some(std::mem::replace(
                 rv32_runtime_mut(&mut *self.machine)
                     .expect(NOT_RV32)
@@ -452,18 +452,18 @@ impl App {
             *rv32_runtime_mut(&mut *self.machine)
                 .expect(NOT_RV32)
                 .cpu_mut_unjournaled() = runtime.cpu.clone();
-            self.run.prev_x = runtime.prev_x;
-            self.run.prev_f = runtime.prev_f;
-            self.run.prev_pc = runtime.prev_pc;
-            self.run.faulted = runtime.faulted;
-            self.run.reg_age = runtime.reg_age;
-            self.run.f_age = runtime.f_age;
-            self.run.reg_last_write_pc = runtime.reg_last_write_pc;
-            self.run.f_last_write_pc = runtime.f_last_write_pc;
-            self.run.exec_counts = runtime.exec_counts.clone();
-            self.run.exec_trace = runtime.exec_trace.clone();
-            self.run.dyn_mem_access = runtime.dyn_mem_access;
-            self.run.mem_access_log = runtime.mem_access_log.clone();
+            self.session.prev_x = runtime.prev_x;
+            self.session.prev_f = runtime.prev_f;
+            self.session.prev_pc = runtime.prev_pc;
+            self.session.faulted = runtime.faulted;
+            self.session.reg_age = runtime.reg_age;
+            self.session.f_age = runtime.f_age;
+            self.session.reg_last_write_pc = runtime.reg_last_write_pc;
+            self.session.f_last_write_pc = runtime.f_last_write_pc;
+            self.session.exec_counts = runtime.exec_counts.clone();
+            self.session.exec_trace = runtime.exec_trace.clone();
+            self.session.dyn_mem_access = runtime.dyn_mem_access;
+            self.session.mem_access_log = runtime.mem_access_log.clone();
             let mut pipeline = runtime
                 .pipeline
                 .take()
@@ -513,13 +513,13 @@ impl App {
 
     pub(super) fn stack_slot_size(&self) -> u32 {
         let denom = (self.max_cores as u32).saturating_add(1).max(2);
-        let mem = self.run.mem_size as u32;
+        let mem = self.session.mem_size as u32;
         (mem / denom).clamp(4096, 64 * 1024)
     }
 
     pub(super) fn stack_slot_bounds(&self, core: usize) -> (u32, u32) {
         let size = self.stack_slot_size();
-        let top = (self.run.mem_size as u32).saturating_sub(size.saturating_mul(core as u32));
+        let top = (self.session.mem_size as u32).saturating_sub(size.saturating_mul(core as u32));
         let bottom = top.saturating_sub(size);
         (bottom, top)
     }
@@ -577,7 +577,7 @@ impl App {
         }
 
         if request.stack_ptr == 0
-            || request.stack_ptr > self.run.mem_size as u32
+            || request.stack_ptr > self.session.mem_size as u32
             || request.stack_ptr & 0xF != 0
         {
             self.native_mut()
@@ -589,7 +589,7 @@ impl App {
                     self.selected_core,
                     self.core_hart_id(self.selected_core).unwrap_or(0),
                     request.stack_ptr,
-                    self.run.mem_size,
+                    self.session.mem_size,
                 ),
                 crate::ui::console::ConsoleColor::Warning,
             );
@@ -599,7 +599,7 @@ impl App {
         let hart_id = self.next_hart_id;
         self.next_hart_id = self.next_hart_id.saturating_add(1);
 
-        let mut child = HartCoreRuntime::free(self.run.base_pc, self.run.mem_size);
+        let mut child = HartCoreRuntime::free(self.session.base_pc, self.session.mem_size);
         child.hart_id = Some(hart_id);
         child.cpu.hart_id = hart_id;
         child.lifecycle = HartLifecycle::Running;
@@ -669,7 +669,7 @@ impl App {
             return;
         }
         if request.stack_ptr == 0
-            || request.stack_ptr > self.run.mem_size as u32
+            || request.stack_ptr > self.session.mem_size as u32
             || request.stack_ptr & 0xF != 0
         {
             self.harts[core_idx].cpu.write(10, (-3i32) as u32);
@@ -680,7 +680,7 @@ impl App {
                     core_idx,
                     self.harts[core_idx].hart_id.unwrap_or(0),
                     request.stack_ptr,
-                    self.run.mem_size,
+                    self.session.mem_size,
                 ),
                 crate::ui::console::ConsoleColor::Warning,
             );
@@ -690,7 +690,7 @@ impl App {
         let hart_id = self.next_hart_id;
         self.next_hart_id = self.next_hart_id.saturating_add(1);
 
-        let mut child = HartCoreRuntime::free(self.run.base_pc, self.run.mem_size);
+        let mut child = HartCoreRuntime::free(self.session.base_pc, self.session.mem_size);
         child.hart_id = Some(hart_id);
         child.cpu.hart_id = hart_id;
         child.lifecycle = HartLifecycle::Running;

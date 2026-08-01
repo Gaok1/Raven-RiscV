@@ -257,16 +257,16 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
     let no_pipeline = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
     let pipeline_config = app.pipeline_config().unwrap_or(&no_pipeline);
     let mut sim = serialize_rcfg(
-        &app.run.cpi_config,
-        app.run.cache_enabled,
+        &app.session.cpi_config,
+        app.session.cache_enabled,
         app.pipeline_status().is_some_and(|status| status.enabled),
         app.vm_mode(),
         &app.active_scheme(),
-        app.run.trace_syscalls,
+        app.session.trace_syscalls,
         app.run_scope,
-        app.run.mem_size / 1024,
+        app.session.mem_size / 1024,
         app.max_cores,
-        app.run.jit_kind,
+        app.session.jit_kind,
     );
     sim.push_str(&format!("architecture={}\n", app.architecture_id()));
     let cache = serialize_cache_configs(
@@ -478,7 +478,7 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
 }
 
 fn apply_rcfg(app: &mut App, cfg: RcfgSettings) {
-    app.run.cpi_config = cfg.cpi;
+    app.session.cpi_config = cfg.cpi;
     app.set_cache_enabled(cfg.cache_enabled);
     if let Some(enabled) = cfg.pipeline_enabled {
         app.set_pipeline_enabled(enabled);
@@ -499,7 +499,7 @@ fn apply_rcfg(app: &mut App, cfg: RcfgSettings) {
         }
     }
     if let Some(bytes) = cfg.mem_bytes {
-        if bytes != app.run.mem_size {
+        if bytes != app.session.mem_size {
             app.ram_override = Some(bytes);
             needs_restart = true;
         }
@@ -715,7 +715,7 @@ pub(super) fn capture_snapshot(app: &App) -> Option<CacheResultsSnapshot> {
         .collect();
 
     // TLB / VM state travels with the snapshot when VM is on.
-    let tlb = if app.run.vm_enabled() {
+    let tlb = if app.session.vm_enabled() {
         let mmu = mem.mmu();
         let t = &mmu.tlb;
         Some(crate::ui::app::TlbSnapshot {
@@ -775,7 +775,7 @@ pub(super) fn capture_snapshot(app: &App) -> Option<CacheResultsSnapshot> {
         dcache: dcache_snap,
         extra_levels: extra_snaps,
         tlb,
-        cpi_config: app.run.cpi_config.clone(),
+        cpi_config: app.session.cpi_config.clone(),
         miss_hotspots: hotspots,
         hit_rate_history_i: history_i,
         hit_rate_history_d: history_d,
@@ -1359,7 +1359,7 @@ pub(super) fn apply_mem_search(app: &mut App) {
     if let Ok(addr) = u32::from_str_radix(q, 16) {
         let aligned = addr & !(app.run.mem_view_bytes - 1);
         let max = app
-            .run
+            .session
             .mem_size
             .saturating_sub(app.run.mem_view_bytes as usize) as u32;
         app.run.mem_view_addr = aligned.min(max);

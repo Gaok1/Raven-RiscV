@@ -43,7 +43,7 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
 
     // ── Quick controls (row 0) ───────────────────────────────────────────────
     let mode_label = format!("< {} >", app.vm_mode().as_str());
-    let tlb_label = if app.run.tlb_enabled { "[on]" } else { "[off]" };
+    let tlb_label = if app.session.tlb_enabled { "[on]" } else { "[off]" };
     let row_y = inner.y;
     let mut x = inner.x + 1;
     x += "Mode ".len() as u16;
@@ -70,7 +70,7 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
         dense_value(
             tlb_label,
             matches!(app.tlb.hover, Some(TlbHoverTarget::QuickTlb)),
-            app.run.tlb_enabled,
+            app.session.tlb_enabled,
             theme::RUNNING,
         ),
         Span::styled(
@@ -133,7 +133,7 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
         val(if active { "YES" } else { "no" }.to_string(), active_color),
     )]));
 
-    if !app.run.vm_enabled() {
+    if !app.session.vm_enabled() {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " VM is off — every access is identity-mapped.",

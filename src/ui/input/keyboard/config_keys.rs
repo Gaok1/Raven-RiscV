@@ -42,12 +42,12 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Left | KeyCode::Right => true,
         KeyCode::Enter | KeyCode::Char(' ') => {
             if app.settings.selected == SETTINGS_ROW_CACHE_ENABLED {
-                app.set_cache_enabled(!app.run.cache_enabled);
+                app.set_cache_enabled(!app.session.cache_enabled);
             } else if app.settings.selected == SETTINGS_ROW_MAX_CORES {
                 app.settings.cpi_edit_buf = app.max_cores.to_string();
                 app.settings.cpi_editing = true;
             } else if app.settings.selected == SETTINGS_ROW_MEM_SIZE {
-                app.settings.cpi_edit_buf = (app.run.mem_size / 1024).to_string();
+                app.settings.cpi_edit_buf = (app.session.mem_size / 1024).to_string();
                 app.settings.cpi_editing = true;
             } else if app.settings.selected == SETTINGS_ROW_RUN_SCOPE {
                 app.run_scope = app.run_scope.cycle();
@@ -56,21 +56,21 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             } else if app.settings.selected == SETTINGS_ROW_VM_ENABLED {
                 app.set_vm_mode(app.vm_mode().cycle());
             } else if app.settings.selected == SETTINGS_ROW_TLB_ENABLED {
-                app.set_tlb_enabled(!app.run.tlb_enabled);
+                app.set_tlb_enabled(!app.session.tlb_enabled);
             } else if app.settings.selected == SETTINGS_ROW_JIT_MODE {
-                let next = match app.run.jit_kind {
+                let next = match app.session.jit_kind {
                     BackendKind::None => BackendKind::Hot,
                     BackendKind::Hot => BackendKind::Full,
                     BackendKind::Full => BackendKind::None,
                 };
                 app.set_jit_mode(next);
             } else if app.settings.selected == SETTINGS_ROW_TRACE_SYSCALLS {
-                app.set_trace_syscalls(!app.run.trace_syscalls);
+                app.set_trace_syscalls(!app.session.trace_syscalls);
             } else if app.settings.selected == SETTINGS_ROW_SCREEN_TARGET {
                 app.console.screen_target = app.console.screen_target.cycle();
             } else if app.settings.selected >= SETTINGS_ROW_CPI_START {
                 let i = app.settings.selected - SETTINGS_ROW_CPI_START;
-                app.settings.cpi_edit_buf = app.run.cpi_config.get(i).to_string();
+                app.settings.cpi_edit_buf = app.session.cpi_config.get(i).to_string();
                 app.settings.cpi_editing = true;
             }
             true
@@ -158,7 +158,7 @@ fn commit_numeric_edit(app: &mut App) {
         if let Some(v) = kb {
             let snapped = crate::ui::app::nearest_pow2_clamp(v.max(4), 4, 4 * 1024 * 1024);
             let new_bytes = snapped * 1024;
-            if new_bytes != app.run.mem_size {
+            if new_bytes != app.session.mem_size {
                 app.ram_override = Some(new_bytes);
                 app.restart_simulation();
             }
@@ -166,7 +166,7 @@ fn commit_numeric_edit(app: &mut App) {
     } else {
         let cpi_idx = app.settings.selected.saturating_sub(SETTINGS_ROW_CPI_START);
         if let Ok(v) = app.settings.cpi_edit_buf.trim().parse::<u64>() {
-            app.run.cpi_config.set(cpi_idx, v);
+            app.session.cpi_config.set(cpi_idx, v);
         }
     }
 }

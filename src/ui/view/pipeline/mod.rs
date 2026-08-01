@@ -81,7 +81,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineIns
         ("fault", theme::DANGER)
     } else if status.halted {
         ("halt", theme::PAUSED)
-    } else if app.run.is_running {
+    } else if app.session.is_running {
         ("run", theme::RUNNING)
     } else {
         ("pause", theme::PAUSED)

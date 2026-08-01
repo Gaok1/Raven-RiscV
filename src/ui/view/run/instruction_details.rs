@@ -161,7 +161,7 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
         Ok(Jalr { rs1, imm, .. }) => (true, cpu.x[rs1 as usize].wrapping_add(imm as u32) & !1),
         _ => return None,
     };
-    let label = app.run.labels.get(&target).and_then(|v| v.first()).cloned();
+    let label = app.session.labels.get(&target).and_then(|v| v.first()).cloned();
     Some((taken, target, label))
 }
 
@@ -195,7 +195,7 @@ fn detail_context(app: &App) -> DetailContext {
         };
     };
 
-    let comment = app.run.comments.get(&addr).cloned();
+    let comment = app.session.comments.get(&addr).cloned();
     let jump_target = compute_jump_target(word, addr, app);
 
     DetailContext {
@@ -339,7 +339,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             ctx.word,
             ctx.addr,
             runtime.cpu(),
-            &app.run.cpi_config,
+            &app.session.cpi_config,
             runtime.pipeline().enabled,
         );
         lines.push(Line::from(vec![
@@ -386,7 +386,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
         let exec_count = ctx
             .addr
             .checked_add(0)
-            .and_then(|a| app.run.exec_counts.get(&a))
+            .and_then(|a| app.session.exec_counts.get(&a))
             .copied()
             .unwrap_or(0);
         lines.push(Line::from(vec![
@@ -402,7 +402,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
                 ),
             ]));
         }
-    } else if let Some(&count) = app.run.exec_counts.get(&ctx.addr) {
+    } else if let Some(&count) = app.session.exec_counts.get(&ctx.addr) {
         if count > 0 {
             lines.push(Line::from(vec![
                 Span::styled("  executions ", style::label()),

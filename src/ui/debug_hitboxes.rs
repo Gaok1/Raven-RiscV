@@ -56,7 +56,7 @@ pub fn debug_run_controls_dump(opts: DebugRunControlsOptions) -> String {
     app.rebuild_harts_for_debug();
     app.selected_core = opts.selected_core.min(app.max_cores.saturating_sub(1));
     app.sync_runtime_for_debug();
-    app.run.is_running = opts.running;
+    app.session.is_running = opts.running;
     match opts.view {
         DebugRunView::Ram => {
             app.run.show_registers = false;
@@ -106,7 +106,7 @@ pub fn debug_run_controls_dump(opts: DebugRunControlsOptions) -> String {
         opts.height,
         app.selected_core,
         app.max_cores,
-        app.run.is_running,
+        app.session.is_running,
         match opts.view {
             DebugRunView::Ram => "ram",
             DebugRunView::Regs => "regs",

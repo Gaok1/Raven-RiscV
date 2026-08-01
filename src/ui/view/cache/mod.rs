@@ -20,7 +20,7 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     app.cache.history_sb.set(None);
 
     // When cache is disabled, show a notice and skip all cache-specific content.
-    if !app.run.cache_enabled {
+    if !app.session.cache_enabled {
         let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
         let lines = vec![
             Line::raw(""),
@@ -95,7 +95,7 @@ pub(crate) enum CacheScopeBtn {
 /// keyed by the shared [`RunButton`] ids (mouse goes through `cache_exec_hit`).
 pub(crate) fn build_cache_exec_bar(app: &App) -> Toolbar<RunButton> {
     let hov = |b: RunButton| app.hover_run_button == Some(b);
-    let (state_text, state_color) = if app.run.is_running {
+    let (state_text, state_color) = if app.session.is_running {
         ("run", theme::RUNNING)
     } else {
         ("pause", theme::PAUSED)
@@ -104,7 +104,7 @@ pub(crate) fn build_cache_exec_bar(app: &App) -> Toolbar<RunButton> {
     bar.toggle(
         RunButton::Speed,
         "speed",
-        app.run.speed.label(),
+        app.session.speed.label(),
         ControlState::chip(true, hov(RunButton::Speed)),
         theme::TEXT,
     )
@@ -370,7 +370,7 @@ mod tests {
     fn app(id: &str) -> App {
         let mut app =
             App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap();
-        app.run.cache_enabled = true;
+        app.session.cache_enabled = true;
         app
     }
 

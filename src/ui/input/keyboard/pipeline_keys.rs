@@ -61,14 +61,14 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 if app.pipeline_status().is_some_and(|status| status.halted) {
                     app.restart_simulation();
                     if app.can_start_run() {
-                        app.run.is_running = true;
+                        app.session.is_running = true;
                     }
                 } else {
                     app.resume_selected_hart();
-                    if app.run.is_running {
-                        app.run.is_running = false;
+                    if app.session.is_running {
+                        app.session.is_running = false;
                     } else if app.can_start_run() {
-                        app.run.is_running = true;
+                        app.session.is_running = true;
                     }
                 }
             }

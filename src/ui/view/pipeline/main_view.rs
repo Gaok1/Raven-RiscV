@@ -548,7 +548,7 @@ fn render_fu_strip(
     app: &App,
     pipeline: &dyn PipelineInspect,
 ) {
-    let cpi = &app.run.cpi_config;
+    let cpi = &app.session.cpi_config;
     let wide = !fu_strip_is_compact(area.width);
 
     let mut spans: Vec<Span<'static>> = vec![Span::styled(

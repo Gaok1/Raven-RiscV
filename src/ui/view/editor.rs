@@ -298,7 +298,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
                 app.editor
                     .line_to_addr
                     .get(&i)
-                    .and_then(|addr| app.run.exec_counts.get(addr))
+                    .and_then(|addr| app.session.exec_counts.get(addr))
                     .copied()
             })
             .max()
@@ -371,7 +371,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
             .editor
             .line_to_addr
             .get(&i)
-            .map_or(false, |addr| app.run.breakpoints.contains(addr));
+            .map_or(false, |addr| app.session.breakpoints.contains(addr));
 
         // Line number — dim for normal, bright red for breakpoint lines
         spans.push(Span::styled(
@@ -410,7 +410,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
             row_line = row_line.style(Style::default().bg(Color::Rgb(40, 40, 55)));
         } else if exec_max > 0 {
             if let Some(&addr) = app.editor.line_to_addr.get(&i) {
-                if let Some(&count) = app.run.exec_counts.get(&addr) {
+                if let Some(&count) = app.session.exec_counts.get(&addr) {
                     if count > 0 {
                         // ratio 0.0..=1.0 scaled with sqrt for better distribution
                         let ratio = (count as f64 / exec_max as f64).sqrt() as f32;

@@ -42,7 +42,7 @@ fn render_tree(f: &mut Frame, area: Rect, app: &App) {
     };
 
     // No active translation → nothing to walk.
-    if !app.run.vm_enabled() || mmu.satp.mode() != SatpMode::Sv32 {
+    if !app.session.vm_enabled() || mmu.satp.mode() != SatpMode::Sv32 {
         let msg = vec![
             Line::raw(""),
             Line::from(Span::styled(" No Sv32 page table to show.", style::label())),

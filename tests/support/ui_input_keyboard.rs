@@ -28,13 +28,13 @@ fn imem_search_ignores_non_text_labels() {
     app.assemble_and_load();
 
     let entry_addr = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "entry").then_some(*addr))
         .expect("entry label present");
     let msg_addr = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "msg").then_some(*addr))
@@ -72,7 +72,7 @@ fn run_pause_key_resumes_paused_core_even_if_fault_flag_is_set() {
     app.single_step();
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Paused);
 
-    app.run.faulted = true;
+    app.session.faulted = true;
     let outcome = handle_key(
         &mut app,
         KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
@@ -80,7 +80,7 @@ fn run_pause_key_resumes_paused_core_even_if_fault_flag_is_set() {
     .expect("key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
 
-    assert!(app.run.is_running);
+    assert!(app.session.is_running);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Running);
 }
 
@@ -104,7 +104,7 @@ fn run_pause_and_space_toggle_continuous_execution_on_run_tab() {
     )
     .expect("run key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(app.run.is_running, "p should start continuous execution");
+    assert!(app.session.is_running, "p should start continuous execution");
 
     let outcome = handle_key(
         &mut app,
@@ -113,7 +113,7 @@ fn run_pause_and_space_toggle_continuous_execution_on_run_tab() {
     .expect("run key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
     assert!(
-        !app.run.is_running,
+        !app.session.is_running,
         "space should stop continuous execution when already running"
     );
 }
@@ -168,7 +168,7 @@ fn run_view_dyn_focuses_last_store_after_mode_switch() {
     app.tab = Tab::Run;
     app.mode = EditorMode::Command;
     let store_addr = 0x100;
-    app.run.dyn_mem_access = Some((store_addr, 4, true));
+    app.session.dyn_mem_access = Some((store_addr, 4, true));
     app.run.mem_view_addr = 0;
     app.run.show_registers = true;
 
@@ -188,7 +188,7 @@ fn run_region_rw_focuses_last_memory_access_immediately() {
     app.tab = Tab::Run;
     app.mode = EditorMode::Command;
     let load_addr = 0x100;
-    app.run.dyn_mem_access = Some((load_addr, 4, false));
+    app.session.dyn_mem_access = Some((load_addr, 4, false));
     app.run.mem_view_addr = 0;
     app.run.mem_region = crate::ui::app::MemRegion::Stack;
 
@@ -214,7 +214,7 @@ fn run_dyn_register_view_uses_register_scroll_keys() {
     app.mode = EditorMode::Command;
     app.run.show_dyn = true;
     app.run.show_registers = false;
-    app.run.dyn_mem_access = Some((0x120, 4, false));
+    app.session.dyn_mem_access = Some((0x120, 4, false));
     app.run.mem_view_addr = 0x80;
     app.run.regs_scroll = 2;
     app.run.reg_cursor = 2;
@@ -234,7 +234,7 @@ fn terminal_paste_ignores_hidden_mem_search_in_dyn_register_view() {
     app.tab = Tab::Run;
     app.run.show_dyn = true;
     app.run.show_registers = false;
-    app.run.dyn_mem_access = Some((0x120, 4, false));
+    app.session.dyn_mem_access = Some((0x120, 4, false));
     app.run.mem_search_open = true;
     app.run.mem_search_query = "aa".into();
 
@@ -281,7 +281,7 @@ fn cache_pause_key_resumes_paused_core_even_if_fault_flag_is_set() {
     app.single_step();
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Paused);
 
-    app.run.faulted = true;
+    app.session.faulted = true;
     let outcome = handle_key(
         &mut app,
         KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE),
@@ -289,7 +289,7 @@ fn cache_pause_key_resumes_paused_core_even_if_fault_flag_is_set() {
     .expect("cache pause key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
 
-    assert!(app.run.is_running);
+    assert!(app.session.is_running);
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Running);
 }
 
@@ -369,9 +369,9 @@ fn run_r_key_restarts_after_exit() {
     .expect("r handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(!app.run.is_running);
+    assert!(!app.session.is_running);
     assert_eq!(app.rv32().unwrap().cpu().exit_code, None);
-    assert_eq!(app.rv32().unwrap().cpu().pc, app.run.base_pc);
+    assert_eq!(app.rv32().unwrap().cpu().pc, app.session.base_pc);
 }
 
 #[test]
@@ -577,7 +577,7 @@ fn imem_search_paste_appends_query_and_scrolls_to_match() {
     app.run.imem_search_query = "entry".into();
 
     let entry_loop_addr = app
-        .run
+        .session
         .labels
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "entry_loop").then_some(*addr))

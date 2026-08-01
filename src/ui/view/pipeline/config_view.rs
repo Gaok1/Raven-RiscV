@@ -143,7 +143,7 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
 
     // Latency info (read-only, derived from global CPI config)
     if rows.len() > 26 {
-        let cpi = &app.run.cpi_config;
+        let cpi = &app.session.cpi_config;
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "--- EX latencies (from global CPI Config, Settings tab) ---",

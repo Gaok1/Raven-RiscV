@@ -33,7 +33,7 @@ fn mem_edit_overlay(app: &App, addr: u32) -> Option<String> {
 pub(super) fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     // STORE → show where data was written; LOAD/ALU/branch → show registers.
     let dyn_shows_memory =
-        app.run.show_dyn && matches!(app.run.dyn_mem_access, Some((_, _, true)));
+        app.run.show_dyn && matches!(app.session.dyn_mem_access, Some((_, _, true)));
     if dyn_shows_memory || !(app.run.show_dyn || app.run.show_registers) {
         render_memory_view(f, area, app);
     } else if app.visible_register_bank() == 0 {
@@ -244,7 +244,7 @@ fn register_entry(index: usize, app: &App) -> (String, String, u8) {
         .and_then(|i| app.visible_register_entries().into_iter().nth(i))
     else {
         let pc = app.registers().map_or(0, |file| file.program_counter());
-        let age = if pc != u64::from(app.run.prev_pc) {
+        let age = if pc != u64::from(app.session.prev_pc) {
             0
         } else {
             NO_REG_AGE
@@ -433,7 +433,7 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn memory_block(app: &App) -> Block<'static> {
-    let base_addr = app.run.visible_memory_base_addr(None);
+    let base_addr = app.visible_memory_base_addr(None);
     let section = memory_title_section(app, base_addr);
     let accent = memory_accent_color(app, section);
     let title = Line::from(vec![
@@ -448,10 +448,10 @@ fn memory_block(app: &App) -> Block<'static> {
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
-    let base = app.run.visible_memory_base_addr(Some(inner.height as u32));
+    let base = app.visible_memory_base_addr(Some(inner.height as u32));
     let bytes = app.run.mem_view_bytes;
     let lines = inner.height as u32;
-    let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
+    let max = app.session.mem_size.saturating_sub(bytes as usize) as u32;
 
     (0..lines)
         .map(|i| i * bytes)
@@ -478,18 +478,18 @@ fn heap_break(app: &App) -> u32 {
 
 fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
     let sp_aligned = stack_pointer(app) & !(app.run.mem_view_bytes.saturating_sub(1));
-    if addr >= sp_aligned && (addr as usize) < app.run.mem_size {
+    if addr >= sp_aligned && (addr as usize) < app.session.mem_size {
         return "stack";
     }
 
-    for section in &app.run.elf_sections {
+    for section in &app.session.elf_sections {
         let end = section.addr.saturating_add(section.size);
         if addr >= section.addr && addr < end {
             return section.name.as_str();
         }
     }
 
-    let data_base = app.editor.last_ok_data_base.unwrap_or(app.run.data_base);
+    let data_base = app.editor.last_ok_data_base.unwrap_or(app.session.data_base);
     let data_len = app
         .editor
         .last_ok_data
@@ -500,7 +500,7 @@ fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
     let data_end = data_base.saturating_add(data_len);
     let bss_end = data_end.saturating_add(bss_size);
 
-    if addr >= app.run.base_pc && super::memory::imem_address_in_range(app, addr) {
+    if addr >= app.session.base_pc && super::memory::imem_address_in_range(app, addr) {
         return ".text";
     }
     if addr >= data_base && addr < data_end {
@@ -509,7 +509,7 @@ fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
     if addr >= data_end && addr < bss_end {
         return ".bss";
     }
-    if addr >= app.run.heap_start && addr < heap_break(app) {
+    if addr >= app.session.heap_start && addr < heap_break(app) {
         return "heap";
     }
 
@@ -563,18 +563,18 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let is_heap_mode = app.run.mem_region == MemRegion::Heap;
     let is_hb = addr == hb_aligned;
 
-    let cache_presence = if app.run.cache_enabled {
+    let cache_presence = if app.session.cache_enabled {
         app.rv32().and_then(|rv32| cache_presence_label(rv32.mem(), addr))
     } else {
         None
     };
-    let data_cache_loc = if app.run.cache_enabled {
+    let data_cache_loc = if app.session.cache_enabled {
         app.rv32().and_then(|rv32| rv32.mem().data_cache_location(addr))
     } else {
         None
     };
     let is_dirty =
-        app.run.cache_enabled
+        app.session.cache_enabled
             && app
                 .rv32()
                 .is_some_and(|rv32| rv32.mem().is_dirty_cached(addr, app.run.mem_view_bytes));
@@ -582,7 +582,7 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     // Check if any recent memory access overlaps this row's byte range
     let row_end = addr.wrapping_add(app.run.mem_view_bytes);
     let access_highlight = app
-        .run
+        .session
         .mem_access_log
         .iter()
         .filter(|(a, s, _)| {
@@ -762,11 +762,11 @@ const MAX_LINES_PER_SECTION: usize = 16;
 fn elf_sections_height(app: &App) -> u16 {
     // border (2) + header line per section + label lines + data lines per section
     let mut lines = 2usize; // block border
-    for sec in &app.run.elf_sections {
+    for sec in &app.session.elf_sections {
         lines += 1; // section header line
         if sec.bytes.is_empty() {
             // Count any symbol label at the section base address
-            lines += app.run.labels.get(&sec.addr).map(|v| v.len()).unwrap_or(0);
+            lines += app.session.labels.get(&sec.addr).map(|v| v.len()).unwrap_or(0);
             lines += 1; // bss placeholder line
         } else {
             let word_count = (sec.bytes.len() / 4).min(MAX_LINES_PER_SECTION);
@@ -774,7 +774,7 @@ fn elf_sections_height(app: &App) -> u16 {
             let label_lines: usize = (0..word_count)
                 .map(|i| {
                     let addr = sec.addr + (i * 4) as u32;
-                    app.run.labels.get(&addr).map(|v| v.len()).unwrap_or(0)
+                    app.session.labels.get(&addr).map(|v| v.len()).unwrap_or(0)
                 })
                 .sum();
             lines += word_count + label_lines;
@@ -791,7 +791,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
     );
 
     let mut items: Vec<ListItem<'static>> = Vec::new();
-    for sec in &app.run.elf_sections {
+    for sec in &app.session.elf_sections {
         // Section header line
         let header = format!("{:<10} 0x{:08x}  {} B", sec.name, sec.addr, sec.size);
         items.push(
@@ -804,7 +804,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
 
         if sec.bytes.is_empty() {
             // .bss or no-data section: show symbol labels if any fall inside this range
-            if let Some(names) = app.run.labels.get(&sec.addr) {
+            if let Some(names) = app.session.labels.get(&sec.addr) {
                 for name in names {
                     items.push(
                         ListItem::new(format!("  {name}:"))
@@ -821,7 +821,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
             for (i, chunk) in chunks.enumerate() {
                 let addr = sec.addr + (i * 4) as u32;
                 // Symbol label at this address
-                if let Some(names) = app.run.labels.get(&addr) {
+                if let Some(names) = app.session.labels.get(&addr) {
                     for name in names {
                         items.push(
                             ListItem::new(format!("  {name}:"))
@@ -891,12 +891,12 @@ mod tests {
         app.editor.last_ok_data = Some(vec![0; 0x20]);
         app.editor.last_ok_data_base = Some(0x1000);
         app.editor.last_ok_bss_size = Some(0x20);
-        app.run.base_pc = 0x0000;
-        app.run.data_base = 0x1000;
-        app.run.heap_start = 0x1040;
+        app.session.base_pc = 0x0000;
+        app.session.data_base = 0x1000;
+        app.session.heap_start = 0x1040;
         app.rv32_mut().unwrap().cpu_mut_unjournaled().heap_break = 0x1080;
         app.rv32_mut().unwrap().cpu_mut_unjournaled().write(2, 0x2000);
-        app.run.mem_size = 0x2000;
+        app.session.mem_size = 0x2000;
         app.run.mem_view_bytes = 4;
         app
     }
@@ -922,7 +922,7 @@ mod tests {
     #[test]
     fn elf_sections_override_generic_data_buckets() {
         let mut app = make_app();
-        app.run.elf_sections = vec![ElfSection {
+        app.session.elf_sections = vec![ElfSection {
             name: ".rodata".to_string(),
             addr: 0x1000,
             size: 0x20,

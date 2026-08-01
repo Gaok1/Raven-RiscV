@@ -40,7 +40,7 @@ pub(crate) const HELP_BTN_W: u16 = 5;
 
 pub fn ui(f: &mut Frame, app: &App) {
     if let Some(started) = app.splash_start {
-        render_splash(f, started, app.run.mem_size);
+        render_splash(f, started, app.session.mem_size);
         return;
     }
 

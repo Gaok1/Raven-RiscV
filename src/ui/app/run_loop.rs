@@ -38,7 +38,7 @@ fn run_inner(
             break;
         }
 
-        let poll_timeout = if app.run.is_running && matches!(app.run.speed, RunSpeed::Instant) {
+        let poll_timeout = if app.session.is_running && matches!(app.session.speed, RunSpeed::Instant) {
             Duration::ZERO
         } else {
             Duration::from_millis(10)

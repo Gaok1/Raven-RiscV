@@ -62,7 +62,7 @@ pub(super) fn render_tlb_tab(f: &mut Frame, area: Rect, app: &App) {
         VmSubtab::Overview => overview::render_overview(f, layout[2], app),
         VmSubtab::Map => page_tree::render_page_tree(f, layout[2], app),
         VmSubtab::Tlb => {
-            if !app.run.tlb_enabled {
+            if !app.session.tlb_enabled {
                 render_tlb_disabled_notice(f, layout[2]);
             } else {
                 entries::render_entries(f, layout[2], app);
@@ -103,7 +103,7 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
             spans.push(Span::raw("   "));
             x += 3;
         }
-        let label = if *sub == VmSubtab::Tlb && !app.run.tlb_enabled {
+        let label = if *sub == VmSubtab::Tlb && !app.session.tlb_enabled {
             "tlb(off)"
         } else {
             sub.label()
@@ -131,7 +131,7 @@ fn render_vm_header(f: &mut Frame, area: Rect, app: &App) {
     };
     let chip_color = if active {
         theme::RUNNING
-    } else if app.run.vm_enabled() {
+    } else if app.session.vm_enabled() {
         theme::ACCENT
     } else {
         theme::PAUSED

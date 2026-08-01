@@ -606,7 +606,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
                     app.run.mem_region = MemRegion::Heap;
                 }
                 MemRegion::Heap => {
-                    app.run.mem_view_addr = app.run.data_base;
+                    app.run.mem_view_addr = app.session.data_base;
                     app.run.mem_region = MemRegion::Data;
                 }
             }
@@ -618,7 +618,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             app.run.show_screen = !app.run.show_screen;
         }
         RunButton::Speed => {
-            app.run.speed = app.run.speed.cycle();
+            app.session.speed = app.session.speed.cycle();
         }
         RunButton::ExecCount => {
             app.run.show_exec_count = !app.run.show_exec_count;
@@ -788,20 +788,20 @@ fn addr_at_visual_row(base: u32, skip: usize, target_row: usize, app: &App) -> O
     }
 
     let mem_end = if let Some(text) = &app.editor.last_ok_text {
-        app.run
+        app.session
             .base_pc
             .saturating_add((text.len() as u32).saturating_mul(4))
     } else {
-        app.run.mem_size as u32
+        app.session.mem_size as u32
     };
     let mut vrow = 0usize;
     let mut addr = base;
     let mut skip_rem = skip;
     loop {
-        if addr >= mem_end || (addr as usize) + 4 > app.run.mem_size {
+        if addr >= mem_end || (addr as usize) + 4 > app.session.mem_size {
             return None;
         }
-        if app.run.block_comments.contains_key(&addr) {
+        if app.session.block_comments.contains_key(&addr) {
             if skip_rem > 0 {
                 skip_rem -= 1;
             } else {
@@ -811,7 +811,7 @@ fn addr_at_visual_row(base: u32, skip: usize, target_row: usize, app: &App) -> O
                 vrow += 1;
             }
         }
-        if let Some(names) = app.run.labels.get(&addr) {
+        if let Some(names) = app.session.labels.get(&addr) {
             for _ in names {
                 if skip_rem > 0 {
                     skip_rem -= 1;
@@ -1482,7 +1482,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
                     app.run.mem_view_addr.saturating_sub(app.run.mem_view_bytes);
             } else {
                 let max =
-                    app.run
+                    app.session
                         .mem_size
                         .saturating_sub(app.run.mem_view_bytes as usize) as u32;
                 if app.run.mem_view_addr < max {
@@ -1502,7 +1502,7 @@ fn handle_run_scroll(app: &mut App, me: MouseEvent, area: Rect, up: bool) {
         && me.row >= imem.y
         && me.row < imem.y + imem.height
     {
-        if app.run.is_running {
+        if app.session.is_running {
             return;
         }
         let visible = app.run.imem_inner_height.get().max(1);
@@ -1550,7 +1550,7 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
                     if let Some(runtime) = app.rv32_mut() {
                         let previous = runtime.cpu().pc;
                         runtime.cpu_mut_unjournaled().pc = addr;
-                        app.run.prev_pc = previous;
+                        app.session.prev_pc = previous;
                     }
                     if app.pipeline_status().is_some_and(|status| status.enabled) {
                         app.redirect_pipeline_pc(addr);
@@ -1592,7 +1592,7 @@ fn handle_imem_right_click(app: &mut App, me: MouseEvent, area: Rect) {
 /// the inline editor on it. Hitboxes are recorded by the details renderer
 /// each frame; the address comes from what that frame actually showed.
 fn handle_details_click(app: &mut App, me: MouseEvent, area: Rect) {
-    if app.run.details_collapsed || app.run.is_running {
+    if app.run.details_collapsed || app.session.is_running {
         return;
     }
     let cols = run_cols(app, area);
@@ -1646,10 +1646,10 @@ fn handle_imem_bp_click(app: &mut App, me: MouseEvent, area: Rect) {
     // Only toggle breakpoint when clicking exactly on the marker column (inner.x)
     if me.column == inner.x && me.row >= inner.y && me.row < inner.y + inner.height {
         if let Some(addr) = app.run.hover_imem_addr {
-            if app.run.breakpoints.contains(&addr) {
-                app.run.breakpoints.remove(&addr);
+            if app.session.breakpoints.contains(&addr) {
+                app.session.breakpoints.remove(&addr);
             } else {
-                app.run.breakpoints.insert(addr);
+                app.session.breakpoints.insert(addr);
             }
         }
     }
@@ -1828,9 +1828,9 @@ fn handle_memory_click(app: &mut App, me: MouseEvent, area: Rect) {
     let list_height = inner.height.saturating_sub(search_offset) as u32;
     let row = (me.row - inner.y - search_offset) as u32;
     let bytes = app.run.mem_view_bytes;
-    let base = app.run.visible_memory_base_addr(Some(list_height));
+    let base = app.visible_memory_base_addr(Some(list_height));
     let addr = base.wrapping_add(row * bytes);
-    let max = app.run.mem_size.saturating_sub(bytes as usize) as u32;
+    let max = app.session.mem_size.saturating_sub(bytes as usize) as u32;
     if addr > max {
         return;
     }
@@ -2440,7 +2440,7 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
     } else {
         "Settings applied (stats reset).".to_string()
     });
-    let bypass = !app.run.cache_enabled;
+    let bypass = !app.session.cache_enabled;
     // Only a backend whose hierarchy the host built can have it rebuilt; the
     // pending geometry above is kept either way, which is what the tab shows.
     let Some(memory) = app.rv32_mut().map(|rv32| rv32.mem_mut_unjournaled()) else {
@@ -2668,7 +2668,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 
     let (btn_y, _, _) = app.settings.bool_btn_rect.get();
     if me.row == btn_y {
-        app.set_cache_enabled(!app.run.cache_enabled);
+        app.set_cache_enabled(!app.session.cache_enabled);
         app.settings.selected = SETTINGS_ROW_CACHE_ENABLED;
         return;
     }
@@ -2696,14 +2696,14 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 
     let (tlb_y, _, _) = app.settings.bool_btn_tlb_rect.get();
     if me.row == tlb_y {
-        app.set_tlb_enabled(!app.run.tlb_enabled);
+        app.set_tlb_enabled(!app.session.tlb_enabled);
         app.settings.selected = SETTINGS_ROW_TLB_ENABLED;
         return;
     }
 
     let (trace_y, _, _) = app.settings.bool_btn_trace_syscalls_rect.get();
     if me.row == trace_y {
-        app.set_trace_syscalls(!app.run.trace_syscalls);
+        app.set_trace_syscalls(!app.session.trace_syscalls);
         app.settings.selected = SETTINGS_ROW_TRACE_SYSCALLS;
         return;
     }
@@ -2724,7 +2724,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     if me.row == btn_y.saturating_add(2) {
         app.settings.selected = SETTINGS_ROW_MEM_SIZE;
         app.settings.cpi_editing = true;
-        app.settings.cpi_edit_buf = (app.run.mem_size / 1024).to_string();
+        app.settings.cpi_edit_buf = (app.session.mem_size / 1024).to_string();
         return;
     }
 
@@ -2733,7 +2733,7 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
         if y > 0 && me.row == y {
             let row = SETTINGS_ROW_CPI_START + i;
             app.settings.selected = row;
-            app.settings.cpi_edit_buf = app.run.cpi_config.get(i).to_string();
+            app.settings.cpi_edit_buf = app.session.cpi_config.get(i).to_string();
             app.settings.cpi_editing = true;
             return;
         }
@@ -2852,14 +2852,14 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
             if app.pipeline_status().is_some_and(|status| status.halted) {
                 app.restart_simulation();
                 if app.can_start_run() {
-                    app.run.is_running = true;
+                    app.session.is_running = true;
                 }
-            } else if app.run.is_running {
-                app.run.is_running = false;
+            } else if app.session.is_running {
+                app.session.is_running = false;
             } else {
                 app.resume_selected_hart();
                 if app.can_start_run() {
-                    app.run.is_running = true;
+                    app.session.is_running = true;
                 }
             }
         }
@@ -3115,7 +3115,7 @@ fn handle_tlb_click(app: &mut App, me: MouseEvent) {
             return;
         }
         if point_in_btn(me, app.tlb.quick_tlb_btn.get()) {
-            app.set_tlb_enabled(!app.run.tlb_enabled);
+            app.set_tlb_enabled(!app.session.tlb_enabled);
             return;
         }
     }

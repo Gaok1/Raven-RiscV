@@ -101,7 +101,7 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
 
     while remaining > 0 && imem_address_in_range(app, addr) {
         // Block comment separator
-        if let Some(bc) = app.run.block_comments.get(&addr) {
+        if let Some(bc) = app.session.block_comments.get(&addr) {
             if skip > 0 {
                 skip -= 1;
             } else {
@@ -123,7 +123,7 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
         }
 
         // Label headers
-        if let Some(label_names) = app.run.labels.get(&addr) {
+        if let Some(label_names) = app.session.labels.get(&addr) {
             for name in label_names {
                 if skip > 0 {
                     skip -= 1;
@@ -272,7 +272,7 @@ const SELECTED_BG: Color = theme::BG_RAISED;
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let word = app.memory().map_or(0, |memory| memory.peek_word(u64::from(addr), 4)) as u32;
-    let is_bp = app.run.breakpoints.contains(&addr);
+    let is_bp = app.session.breakpoints.contains(&addr);
     let is_pc = u64::from(addr) == app.program_counter();
     let is_selected = !is_pc && app.run.details_addr == Some(addr);
     let is_hover = !is_pc && app.run.hover_imem_addr == Some(addr);
@@ -296,7 +296,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         .disassemble_at(u64::from(addr))
         .unwrap_or_else(|| format!("0x{word:08x}"));
 
-    let exec_count = app.run.exec_counts.get(&addr).copied().unwrap_or(0);
+    let exec_count = app.session.exec_counts.get(&addr).copied().unwrap_or(0);
 
     let (line_bg, line_fg) = if is_pc {
         (Some(Color::Yellow), Some(Color::Black))
@@ -319,7 +319,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     }
 
     // Main instruction text
-    if let Some(comment) = app.run.comments.get(&addr) {
+    if let Some(comment) = app.session.comments.get(&addr) {
         let comment_style = if is_pc {
             Style::default().fg(Color::Rgb(80, 60, 0))
         } else {
@@ -345,7 +345,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
             app.rv32().and_then(|rv32| branch_outcome(word, addr, rv32.cpu()))
         {
             let label = app
-                .run
+                .session
                 .labels
                 .get(&target)
                 .and_then(|v| v.first())
@@ -415,11 +415,11 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
     let inner = render_panel(f, area, block);
 
     let visible = inner.height as usize;
-    let total = app.run.exec_trace.len();
+    let total = app.session.exec_trace.len();
     let skip = total.saturating_sub(visible);
 
     let items: Vec<ListItem<'static>> = app
-        .run
+        .session
         .exec_trace
         .iter()
         .skip(skip)
@@ -432,7 +432,7 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
                 style::label()
             };
             let lbl = app
-                .run
+                .session
                 .labels
                 .get(addr)
                 .and_then(|v| v.first())
