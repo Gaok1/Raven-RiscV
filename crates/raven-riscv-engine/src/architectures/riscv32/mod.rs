@@ -324,6 +324,26 @@ impl RiscV32Machine {
         )
     }
 
+    /// The runtime this backend is built on, for a host that needs the
+    /// execution controls [`Machine`] does not model: breakpoints, step-back,
+    /// a JIT backend, several harts on one image.
+    ///
+    /// Reached by downcasting `dyn Machine`, and only ever for that — every
+    /// *observation* (registers, memory, caches, pipeline, translation) is
+    /// already a capability, and reading state through here instead would put
+    /// RV32's name back into code that had stopped needing it.
+    ///
+    /// A host that steps the runtime directly owns the lifecycle it reports:
+    /// the `state` and `stdout` in [`Machine::snapshot`] follow
+    /// [`Machine::step`], which such a host never calls.
+    pub fn falcon(&self) -> &FalconMachine<PipelineSimState> {
+        &self.machine
+    }
+
+    pub fn falcon_mut(&mut self) -> &mut FalconMachine<PipelineSimState> {
+        &mut self.machine
+    }
+
     fn cpu(&self) -> &Cpu {
         self.machine.cpu()
     }

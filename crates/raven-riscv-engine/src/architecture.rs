@@ -282,7 +282,21 @@ impl fmt::Display for MachineError {
 
 impl std::error::Error for MachineError {}
 
-pub trait Machine: Send {
+/// A backend a host can load, step and inspect.
+///
+/// `Any` is a supertrait so a host holding `dyn Machine` can ask for the
+/// concrete backend back:
+///
+/// ```ignore
+/// let rv32 = (machine as &dyn std::any::Any).downcast_ref::<RiscV32Machine>();
+/// ```
+///
+/// That is for *driving* a backend whose execution controls this trait does
+/// not model — breakpoints, step-back, a JIT, several harts. Everything a host
+/// merely *observes* is a capability below, and asking for a concrete type to
+/// read state is a bug: it is the one thing that would put an architecture's
+/// name back into the view layer.
+pub trait Machine: Send + std::any::Any {
     fn architecture_id(&self) -> &'static str;
     fn reset(&mut self);
     fn load(&mut self, image: &ProgramImage) -> Result<(), MachineError>;

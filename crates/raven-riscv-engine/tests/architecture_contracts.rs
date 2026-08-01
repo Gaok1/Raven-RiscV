@@ -797,6 +797,30 @@ fn riscv32_trait_edits_are_visible_to_execution() {
     assert_eq!(machine.read_memory(0x400, 2).unwrap(), vec![0xEF, 0xBE]);
 }
 
+/// A host holding `dyn Machine` can ask for the concrete backend back, and the
+/// runtime it gets is the one the trait has been reading all along — not a
+/// second copy. That is what lets a host keep RV32-only execution controls
+/// (breakpoints, step-back, harts) without owning a parallel runtime.
+#[test]
+fn riscv32_hands_its_runtime_back_through_the_trait_object() {
+    let mut machine = trait_machine(riscv32::ID, ".text\n    li a0, 42\n    halt\n");
+    machine.step().unwrap();
+
+    let rv32 = (machine.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<riscv32::RiscV32Machine>()
+        .expect("an RV32 machine downcasts to RV32");
+    assert_eq!(rv32.falcon().cpu().read(10), 42);
+    assert_eq!(u64::from(rv32.falcon().cpu().pc), machine.snapshot().pc);
+
+    // Every other backend answers `None` rather than something plausible.
+    let toy16 = trait_machine("toy16", "li r0, 1\nhalt");
+    assert!(
+        (toy16.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<riscv32::RiscV32Machine>()
+            .is_none()
+    );
+}
+
 /// `x0` is hardwired; the runtime's own rule must reach trait callers rather
 /// than being re-implemented (and allowed to drift) at the trait boundary.
 #[test]
