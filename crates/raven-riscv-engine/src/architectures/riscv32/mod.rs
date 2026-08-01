@@ -10,11 +10,14 @@ pub use crate::falcon::{CacheController, Cpu, jit::BackendKind};
 
 use crate::capability::{
     CacheHierarchy, CacheLevelView, CacheRole, CacheSetView, InstructionCodec, MemoryInspect,
-    MemoryRegion, RegisterBank, RegisterFile, RegisterId,
+    MemoryRegion, PipelineInspect, RegisterBank, RegisterFile, RegisterId,
 };
 use crate::falcon::cache::CacheConfig;
-use crate::falcon::jit::{ExecCtx, ExecOutcome, InterpreterBackend};
+use crate::falcon::jit::ExecOutcome;
+use crate::falcon::machine::Machine as FalconMachine;
+use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
 use crate::falcon::memory::Bus;
+use crate::falcon::pipeline::PipelineSimState;
 use crate::host::Console;
 use crate::{
     Architecture, ArchitectureCapabilities, ArchitectureDescriptor, Assembler, Diagnostic,
@@ -269,11 +272,16 @@ pub fn image_from_binary(bytes: &[u8], base: u64) -> Result<ProgramImage, Machin
     })
 }
 
+/// RV32 as the rest of Raven sees it.
+///
+/// This owns the same [`FalconMachine`] the TUI drives directly, rather than a
+/// reduced CPU of its own: everything the full runtime models — the pipeline,
+/// the cache hierarchy, the MMU, the step-back journal — is reachable through
+/// the [`Machine`] trait, so a host never has to special-case this backend to
+/// get RV32's real behaviour.
 pub struct RiscV32Machine {
-    cpu: Cpu,
-    mem: CacheController,
+    machine: FalconMachine<PipelineSimState>,
     console: Console,
-    interpreter: InterpreterBackend,
     memory_size: usize,
     image: Option<ProgramImage>,
     state: MachineState,
@@ -283,24 +291,43 @@ pub struct RiscV32Machine {
 
 impl RiscV32Machine {
     fn new(memory_size: usize) -> Self {
-        let mut cpu = Cpu::default();
-        cpu.write(2, memory_size as u32);
         Self {
-            cpu,
-            mem: CacheController::new(
-                CacheConfig::default(),
-                CacheConfig::default(),
-                vec![],
-                memory_size,
+            machine: FalconMachine::new(
+                Self::initial_cpu(memory_size),
+                Self::initial_memory(memory_size),
+                PipelineSimState::default(),
             ),
             console: Console::default(),
-            interpreter: InterpreterBackend::new(),
             memory_size,
             image: None,
             state: MachineState::Ready,
             stdout: Vec::new(),
             fault: None,
         }
+    }
+
+    /// `sp` starts one past the top of RAM, which is RV32's "empty stack".
+    fn initial_cpu(memory_size: usize) -> Cpu {
+        let mut cpu = Cpu::default();
+        cpu.write(2, memory_size as u32);
+        cpu
+    }
+
+    fn initial_memory(memory_size: usize) -> CacheController {
+        CacheController::new(
+            CacheConfig::default(),
+            CacheConfig::default(),
+            vec![],
+            memory_size,
+        )
+    }
+
+    fn cpu(&self) -> &Cpu {
+        self.machine.cpu()
+    }
+
+    fn mem(&self) -> &CacheController {
+        self.machine.mem()
     }
 
     fn checked_range(&self, address: u64, bytes: usize) -> Result<u32, MachineError> {
@@ -338,21 +365,19 @@ impl Machine for RiscV32Machine {
         image.expect_architecture(ID)?;
         let entry =
             u32::try_from(image.entry).map_err(|_| MachineError::new("entry exceeds RV32"))?;
-        let mut mem = CacheController::new(
-            CacheConfig::default(),
-            CacheConfig::default(),
-            vec![],
-            self.memory_size,
-        );
+        let mut mem = Self::initial_memory(self.memory_size);
         install_image(&mut mem.ram, image)?;
         mem.invalidate_all();
         mem.reset_stats();
 
-        self.cpu = Cpu::default();
-        self.cpu.pc = entry;
-        self.cpu.write(2, self.memory_size as u32);
-        self.cpu.heap_break = heap_break_after(image);
-        self.mem = mem;
+        let mut cpu = Self::initial_cpu(self.memory_size);
+        cpu.pc = entry;
+        cpu.heap_break = heap_break_after(image);
+
+        // A fresh runtime rather than an in-place edit: loading a program must
+        // not leave the previous one's pipeline latches or step-back history
+        // reachable behind the new image.
+        self.machine = FalconMachine::new(cpu, mem, PipelineSimState::default());
         self.image = Some(image.clone());
         self.state = MachineState::Ready;
         self.stdout.clear();
@@ -368,11 +393,12 @@ impl Machine for RiscV32Machine {
             return Err(MachineError::new("machine is not runnable; reset it first"));
         }
         self.state = MachineState::Running;
-        let outcome = {
-            let mut ctx = ExecCtx::new(&mut self.cpu, &mut self.mem, &mut self.console);
-            crate::falcon::jit::ExecutionBackend::run_until_yield(&mut self.interpreter, &mut ctx)
-        };
-        self.stdout.append(&mut self.cpu.stdout);
+        // Journaled, so a host that offers step-back gets it for free; the
+        // MMU is re-pointed at this hart's `satp` first.
+        self.machine.sync_mmu();
+        let outcome = self.machine.step_interpreted(&mut self.console);
+        let emitted = std::mem::take(&mut self.machine.cpu_mut_unjournaled().stdout);
+        self.stdout.extend(emitted);
         match outcome {
             Ok(ExecOutcome::Stepped { .. }) => Ok(StepOutcome::Stepped),
             Ok(ExecOutcome::AwaitingInput) => {
@@ -380,9 +406,11 @@ impl Machine for RiscV32Machine {
                 Ok(StepOutcome::AwaitingInput)
             }
             Ok(ExecOutcome::Halted)
-                if self.cpu.exit_code.is_some() || self.cpu.ebreak_hit || self.cpu.local_exit =>
+                if self.cpu().exit_code.is_some()
+                    || self.cpu().ebreak_hit
+                    || self.cpu().local_exit =>
             {
-                let code = self.cpu.exit_code.unwrap_or(0) as i32;
+                let code = self.cpu().exit_code.unwrap_or(0) as i32;
                 self.state = MachineState::Exited(code);
                 Ok(StepOutcome::Exited(code))
             }
@@ -402,7 +430,7 @@ impl Machine for RiscV32Machine {
     fn snapshot(&self) -> MachineSnapshot {
         MachineSnapshot {
             architecture: ID,
-            pc: u64::from(self.cpu.pc),
+            pc: u64::from(self.cpu().pc),
             registers: RegisterFile::entries(self)
                 .into_iter()
                 .map(|entry| RegisterValue {
@@ -412,7 +440,7 @@ impl Machine for RiscV32Machine {
                 })
                 .collect(),
             state: self.state,
-            instructions: self.cpu.instr_count,
+            instructions: self.cpu().instr_count,
             stdout: self.stdout.clone(),
             fault: self.fault.clone(),
         }
@@ -422,7 +450,7 @@ impl Machine for RiscV32Machine {
         let start = self.checked_range(address, bytes)?;
         (0..bytes)
             .map(|offset| {
-                crate::falcon::memory::Bus::load8(&self.mem, start + offset as u32)
+                crate::falcon::memory::Bus::load8(self.mem(), start + offset as u32)
                     .map_err(|e| MachineError::new(e.to_string()))
             })
             .collect()
@@ -431,7 +459,8 @@ impl Machine for RiscV32Machine {
     fn write_memory(&mut self, address: u64, bytes: &[u8]) -> Result<(), MachineError> {
         let start = self.checked_range(address, bytes.len())?;
         for (offset, value) in bytes.iter().copied().enumerate() {
-            crate::falcon::memory::Bus::store8(&mut self.mem, start + offset as u32, value)
+            self.machine
+                .write_mem(start + offset as u32, MemWidth::B1, u64::from(value))
                 .map_err(|e| MachineError::new(e.to_string()))?;
         }
         Ok(())
@@ -467,6 +496,11 @@ impl Machine for RiscV32Machine {
     }
     fn caches(&self) -> Option<&dyn CacheHierarchy> {
         Some(self)
+    }
+    /// `None` while the pipeline model is disabled, which is how a host knows
+    /// to hide the tab rather than draw five empty stages.
+    fn pipeline(&self) -> Option<&dyn PipelineInspect> {
+        self.machine.pipeline_inspect()
     }
 }
 
@@ -514,8 +548,8 @@ impl RegisterFile for RiscV32Machine {
     fn read(&self, id: RegisterId) -> Option<u64> {
         let index = u8::try_from(id.index).ok()?;
         match id.bank {
-            INTEGER_BANK if id.index < 32 => Some(u64::from(self.cpu.read(index))),
-            FLOAT_BANK if id.index < 32 => Some(u64::from(self.cpu.fread_bits(index))),
+            INTEGER_BANK if id.index < 32 => Some(u64::from(self.cpu().read(index))),
+            FLOAT_BANK if id.index < 32 => Some(u64::from(self.cpu().fread_bits(index))),
             _ => None,
         }
     }
@@ -525,16 +559,22 @@ impl RegisterFile for RiscV32Machine {
             .map_err(|_| MachineError::new("register value exceeds 32 bits"))?;
         let index =
             u8::try_from(id.index).map_err(|_| MachineError::new("no such RV32 register"))?;
+        // Journaled, so a host's step-back undoes an edit the same way it
+        // undoes an instruction. `write_reg` is also where x0's immutability
+        // is enforced, so this cannot drift from the runtime's own rule.
         match id.bank {
-            // x0 is hardwired to zero: accepting the write would show a value
-            // the next read contradicts.
-            INTEGER_BANK if id.index == 0 => Err(MachineError::new("x0 is immutable")),
             INTEGER_BANK if id.index < 32 => {
-                self.cpu.write(index, value);
-                Ok(())
+                let target = RegId::new(index)
+                    .map(RegTarget::X)
+                    .ok_or_else(|| MachineError::new("no such RV32 register"))?;
+                self.machine
+                    .write_reg(target, value)
+                    .map_err(|e| MachineError::new(e.to_string()))
             }
             FLOAT_BANK if id.index < 32 => {
-                self.cpu.fwrite_bits(index, value);
+                let freg = FRegId::new(index)
+                    .ok_or_else(|| MachineError::new("no such RV32 register"))?;
+                self.machine.write_freg(freg, value);
                 Ok(())
             }
             _ => Err(MachineError::new("no such RV32 register")),
@@ -542,12 +582,14 @@ impl RegisterFile for RiscV32Machine {
     }
 
     fn program_counter(&self) -> u64 {
-        u64::from(self.cpu.pc)
+        u64::from(self.cpu().pc)
     }
 
     fn set_program_counter(&mut self, value: u64) -> Result<(), MachineError> {
-        self.cpu.pc = u32::try_from(value).map_err(|_| MachineError::new("PC exceeds RV32"))?;
-        Ok(())
+        let pc = u32::try_from(value).map_err(|_| MachineError::new("PC exceeds RV32"))?;
+        self.machine
+            .write_reg(RegTarget::Pc, pc)
+            .map_err(|e| MachineError::new(e.to_string()))
     }
 
     fn alias(&self, id: RegisterId) -> Option<&'static str> {
@@ -584,7 +626,7 @@ impl MemoryInspect for RiscV32Machine {
         (0..bytes)
             .map_while(|offset| {
                 let at = start.checked_add(u32::try_from(offset).ok()?)?;
-                self.mem.effective_read8(at).ok()
+                self.mem().effective_read8(at).ok()
             })
             .collect()
     }
@@ -602,26 +644,26 @@ impl MemoryInspect for RiscV32Machine {
             .image
             .as_ref()
             .and_then(|image| image.data_segment())
-            .map_or_else(|| u64::from(self.cpu.pc), |segment| segment.address);
+            .map_or_else(|| u64::from(self.cpu().pc), |segment| segment.address);
         vec![
             MemoryRegion::new("Data", data.min(top)),
-            MemoryRegion::new("Heap", u64::from(self.cpu.heap_break).min(top)),
-            MemoryRegion::new("Stack", u64::from(self.cpu.read(2)).min(top)),
+            MemoryRegion::new("Heap", u64::from(self.cpu().heap_break).min(top)),
+            MemoryRegion::new("Stack", u64::from(self.cpu().read(2)).min(top)),
         ]
     }
 }
 
 impl CacheHierarchy for RiscV32Machine {
     fn level_count(&self) -> usize {
-        self.mem.level_count()
+        self.mem().level_count()
     }
 
     fn cache(&self, level: usize, role: CacheRole) -> Option<CacheLevelView<'_>> {
-        self.mem.cache(level, role)
+        self.mem().cache(level, role)
     }
 
     fn set(&self, level: usize, role: CacheRole, set: usize) -> Option<CacheSetView<'_>> {
-        self.mem.set(level, role, set)
+        self.mem().set(level, role, set)
     }
 }
 

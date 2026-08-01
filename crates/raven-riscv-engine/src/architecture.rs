@@ -1,4 +1,6 @@
-use crate::capability::{CacheHierarchy, InstructionCodec, MemoryInspect, RegisterFile};
+use crate::capability::{
+    CacheHierarchy, InstructionCodec, MemoryInspect, PipelineInspect, RegisterFile,
+};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
@@ -325,6 +327,15 @@ pub trait Machine: Send {
     /// Cache levels and counters, borrowed without warming a line or changing
     /// replacement state while a host draws them.
     fn caches(&self) -> Option<&dyn CacheHierarchy> {
+        None
+    }
+
+    /// Cycle-level pipeline state: stage occupancy, hazards, and the timing
+    /// history behind a Gantt view.
+    ///
+    /// Answering `None` covers both a backend with no pipeline model and one
+    /// whose pipeline is currently switched off.
+    fn pipeline(&self) -> Option<&dyn PipelineInspect> {
         None
     }
 

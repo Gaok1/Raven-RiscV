@@ -6,21 +6,18 @@
 //! the TUI grew a second, RV32-only runtime for everything richer.
 //!
 //! A capability is how a backend says "I can also do this". Each one is an
-//! independent trait exposed by the object that owns the state. Architecture
-//! capabilities use accessors on `Machine` that default to `None`, so adding
-//! one never breaks an existing backend. Cycle-level state such as
-//! [`PipelineInspect`] is instead exposed by the Falcon runtime that owns and
-//! journals it.
+//! independent trait exposed by the object that owns the state, reached through
+//! an accessor on `Machine` that defaults to `None` — so adding a capability
+//! never breaks an existing backend, and a host never has to know which ISA it
+//! is talking to in order to ask.
 //!
 //! ```text
 //! Machine                    every backend
 //!  ├── registers()           named register banks       → RegisterFile
 //!  ├── memory()              inspectable guest memory   → MemoryInspect
 //!  ├── code()                disassemble / assemble one → InstructionCodec
-//!  └── caches()              inspectable cache levels   → CacheHierarchy
-//!
-//! Falcon runtime
-//!  └── pipeline_inspect()    stages / hazards / history → PipelineInspect
+//!  ├── caches()              inspectable cache levels   → CacheHierarchy
+//!  └── pipeline()            stages / hazards / history → PipelineInspect
 //! ```
 //!
 //! ## For a host

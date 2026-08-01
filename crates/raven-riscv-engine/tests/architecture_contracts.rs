@@ -733,6 +733,76 @@ fn cache_capability_checks_every_index() {
     }
 }
 
+/// A machine running `source`, reached only through the public trait — no
+/// backend type in sight, which is the point of every test below.
+fn trait_machine(id: &str, source: &str) -> Box<dyn raven_riscv_engine::Machine> {
+    let architecture = ArchitectureRegistry::builtin().get(id).unwrap();
+    let engine = Engine::new(architecture.clone());
+    let image = engine.assemble(source, 0).unwrap();
+    let mut machine = engine
+        .create_machine(architecture.descriptor().default_memory_size)
+        .unwrap();
+    machine.load(&image).unwrap();
+    machine
+}
+
+/// RV32 through the trait must be the *real* RV32, not a reduced interpreter.
+/// A host that sees only `dyn Machine` gets the pipeline model, so it never
+/// needs to reach past the trait to draw RV32's microarchitecture.
+#[test]
+fn riscv32_exposes_its_pipeline_through_the_trait() {
+    let machine = trait_machine(riscv32::ID, ".text\n    li a0, 1\n    halt\n");
+    let pipeline = machine
+        .pipeline()
+        .expect("RV32 declares a pipeline capability");
+    // A real model behind the accessor, not a stub: named stages a host can
+    // draw, each reachable by index.
+    assert!(pipeline.stage_count() > 0);
+    for index in 0..pipeline.stage_count() {
+        let stage = pipeline.stage(index).expect("every stage is addressable");
+        assert!(!stage.name.is_empty());
+    }
+}
+
+/// The backends with no pipeline model must say so rather than fake one.
+#[test]
+fn backends_without_a_pipeline_answer_none() {
+    for id in ["sap", "toy16"] {
+        let architecture = ArchitectureRegistry::builtin().get(id).unwrap();
+        let machine = Engine::new(architecture.clone())
+            .create_machine(architecture.descriptor().default_memory_size)
+            .unwrap();
+        assert!(machine.pipeline().is_none(), "{id} claims a pipeline");
+    }
+}
+
+/// Register and memory edits made through the trait must land in the same
+/// runtime execution reads from — the bug a second, parallel RV32 would cause.
+#[test]
+fn riscv32_trait_edits_are_visible_to_execution() {
+    let mut machine = trait_machine(riscv32::ID, ".text\n    add a0, a0, a1\n    halt\n");
+    machine.write_register("a0", 40).unwrap();
+    machine.write_register("a1", 2).unwrap();
+    machine.step().unwrap();
+
+    let registers = machine.registers().unwrap();
+    let a0 = registers.resolve("a0").unwrap();
+    assert_eq!(registers.read(a0), Some(42));
+
+    machine.write_memory(0x400, &[0xEF, 0xBE]).unwrap();
+    assert_eq!(machine.read_memory(0x400, 2).unwrap(), vec![0xEF, 0xBE]);
+}
+
+/// `x0` is hardwired; the runtime's own rule must reach trait callers rather
+/// than being re-implemented (and allowed to drift) at the trait boundary.
+#[test]
+fn riscv32_refuses_to_write_x0_through_the_trait() {
+    let mut machine = trait_machine(riscv32::ID, ".text\n    halt\n");
+    assert!(machine.write_register("zero", 7).is_err());
+    let registers = machine.registers().unwrap();
+    assert_eq!(registers.read(RegisterId::new(0, 0)), Some(0));
+}
+
 #[test]
 fn falc_v2_rejects_unrepresentable_metadata_and_truncation() {
     let mut image = ProgramImage {
