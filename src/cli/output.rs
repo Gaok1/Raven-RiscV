@@ -187,7 +187,13 @@ pub fn parse_expect_reg_spec(spec: &str) -> Result<(u8, u32), String> {
     let (reg, value) = spec
         .split_once('=')
         .ok_or_else(|| format!("invalid --expect-reg '{spec}' (use reg=value)"))?;
-    let reg = parse_reg(reg.trim()).ok_or_else(|| format!("invalid register '{}'", reg.trim()))?;
+    let name = reg.trim();
+    let reg = name
+        .strip_prefix('r')
+        .or_else(|| name.strip_prefix('R'))
+        .and_then(|number| number.parse::<u8>().ok())
+        .or_else(|| parse_reg(name))
+        .ok_or_else(|| format!("invalid register '{}'", name))?;
     let value = parse_u32_value(value, "register value")?;
     Ok((reg, value))
 }

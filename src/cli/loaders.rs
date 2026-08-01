@@ -59,6 +59,32 @@ pub(super) fn load_falc(
     mem: &mut CacheController,
     mem_size: usize,
 ) -> Result<(), String> {
+    if u32::from_le_bytes(bytes[4..8].try_into().unwrap()) == u32::MAX {
+        let image =
+            raven_riscv_engine::ProgramImage::from_falc(bytes).map_err(|e| e.to_string())?;
+        if image.architecture != "riscv32" {
+            return Err(format!(
+                "FALC image targets '{}'; use --arch {}",
+                image.architecture, image.architecture
+            ));
+        }
+        for segment in &image.segments {
+            let address = u32::try_from(segment.address)
+                .map_err(|_| "FALC segment exceeds RV32".to_string())?;
+            load_bytes(&mut mem.ram, address, &segment.bytes)
+                .map_err(|e| format!("Load error: {e}"))?;
+        }
+        for fill in &image.zero_fill {
+            let address = u32::try_from(fill.address)
+                .map_err(|_| "FALC zero-fill exceeds RV32".to_string())?;
+            let size =
+                u32::try_from(fill.size).map_err(|_| "FALC zero-fill is too large".to_string())?;
+            zero_bytes(&mut mem.ram, address, size).map_err(|e| format!("BSS error: {e}"))?;
+        }
+        cpu.pc = u32::try_from(image.entry).map_err(|_| "FALC entry exceeds RV32".to_string())?;
+        cpu.write(2, mem_size as u32);
+        return Ok(());
+    }
     let text_sz = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
     let data_sz = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
     let bss_sz = u32::from_le_bytes(bytes[12..16].try_into().unwrap());

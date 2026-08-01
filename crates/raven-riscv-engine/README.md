@@ -1,136 +1,45 @@
 # raven-riscv-engine
 
-Headless RISC-V simulation engine extracted from Raven-RiscV.
-
-Use it when you want to embed Raven's RISC-V assembler/simulator in tests,
-graders, tools, or other Rust applications without launching the Raven TUI.
-
-## Install
-
-```toml
-[dependencies]
-raven-riscv-engine = "0.1"
-```
+Trait-driven assembly and simulation engine used by Raven. The crate ships
+with `riscv32` (RV32IMAF) and `toy16`; applications may register more
+architectures without changing the engine or selecting an ISA at compile time.
 
 ## Quick start
 
 ```rust
-use raven_riscv_engine::Falcon;
+use raven_riscv_engine::{ArchitectureRegistry, Engine};
 
-fn main() -> Result<(), String> {
-    let result = Falcon::new()
-        .asm(".text\n li a0, 42\n li a7, 93\n ecall\n")
-        .max_cycles(10_000)
-        .run()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = ArchitectureRegistry::with_builtins();
+    let engine = Engine::from_registry(&registry, "riscv32")?;
+    let image = engine.assemble("li a0, 42\nhalt", 0)?;
+    let mut machine = engine.create_machine(64 * 1024)?;
+    machine.load(&image)?;
+    machine.run(100)?;
 
-    assert_eq!(result.exit_code, Some(42));
-    assert_eq!(result.reg("a0"), 42);
-
+    assert_eq!(machine.snapshot().registers[10].value, 42);
     Ok(())
 }
 ```
 
-## Running a program
+## Public contracts
 
-The main entry point is [`Falcon`], a small builder-style API:
+- `Assembler` converts source into an ISA-neutral `ProgramImage` made from byte
+  segments, zero-fill regions, an entry point, and source metadata.
+- `Architecture` describes capabilities and creates an object-safe `Machine`.
+- `Machine` loads, steps, runs, inspects, and edits a CPU without exposing its
+  concrete register file or instruction width.
+- `ArchitectureRegistry` selects implementations by stable runtime ID.
 
-```rust
-use raven_riscv_engine::Falcon;
+`ProgramImage::to_falc_v2` writes the architecture-tagged FALC v2 container;
+`ProgramImage::from_falc` reads both v2 and legacy RV32 FALC v1 files.
 
-let run = Falcon::new()
-    .asm(".text\n li t0, 123\n li a7, 93\n ecall\n")
-    .mem_mb(16)
-    .no_cache()
-    .max_cycles(100_000)
-    .run();
-```
+## Adding an architecture
 
-`run()` returns:
+Implement `Assembler`, `Architecture`, and `Machine`, then register an
+`Arc<dyn Architecture>` with `ArchitectureRegistry::register`. Keep CPU-specific
+features behind `ArchitectureDescriptor::capabilities`; callers must not assume
+32 registers, 32-bit addresses, fixed-width 32-bit instructions, MMU, cache,
+pipeline, floating point, JIT, ELF, or multicore support.
 
-```rust
-Result<RunResult, String>
-```
-
-So handle it like any other fallible Rust API:
-
-```rust
-match Falcon::new().asm(".text\n ecall\n").run() {
-    Ok(result) => println!("exit code: {:?}", result.exit_code),
-    Err(err) => eprintln!("Raven failed: {err}"),
-}
-```
-
-Common `Err(String)` cases include assembly errors, load errors, invalid memory
-accesses, unsupported multi-hart usage through this API, and execution faults.
-
-## Inspecting `RunResult`
-
-After a successful run, inspect the final machine state through [`RunResult`]:
-
-```rust
-use raven_riscv_engine::Falcon;
-
-let result = Falcon::new()
-    .asm(".text\n li t0, 42\n li t1, 0x100\n sw t0, 0(t1)\n li a7, 93\n ecall\n")
-    .run()
-    .unwrap();
-
-assert_eq!(result.exit_code, Some(0));
-assert_eq!(result.reg("t0"), 42);      // ABI name
-assert_eq!(result.reg_x(5), 42);       // x5 / t0
-assert_eq!(result.read_word(0x100), 42);
-```
-
-Useful fields and methods:
-
-- `result.exit_code: Option<u32>` — value passed to Linux `exit`/`exit_group`.
-- `result.timed_out: bool` — true when `max_cycles` stopped execution.
-- `result.cycles: u64` — scheduler iterations executed.
-- `result.stdout()` — stdout as lossy UTF-8.
-- `result.stdout_bytes()` — raw stdout bytes.
-- `result.reg("a0")` — register by ABI name or `xN` string.
-- `result.reg_x(10)` — register by numeric index.
-- `result.pc()` — final program counter.
-- `result.read_byte(addr)` / `result.read_word(addr)` — final memory reads.
-- `result.cpu()` / `result.mem()` — lower-level escape hatches.
-
-## Stdin/stdout example
-
-`stdin_line()` pre-seeds one line of input for read-style syscalls. Program output
-can be read from `RunResult`:
-
-```rust
-use raven_riscv_engine::Falcon;
-
-let result = Falcon::new()
-    .asm(".text\n li a0, 7\n li a7, 1000\n ecall\n li a7, 93\n ecall\n")
-    .stdin_line("hello")
-    .run()
-    .unwrap();
-
-assert_eq!(result.stdout(), "7");
-```
-
-## Builder options
-
-```rust
-Falcon::new()
-    .asm("...")           // assembly source string
-    .asm_file("main.s") // load source from file, returns io::Result<Falcon>
-    .mem_bytes(1024 * 1024)
-    .mem_mb(16)
-    .max_cycles(1_000_000)
-    .no_cache()
-    .vm(false)
-    .stdin_line("input line");
-```
-
-Notes:
-
-- The simple `Falcon` API currently supports one hart.
-- Defaults are 16 MiB RAM, cache enabled, VM off, and `max_cycles = 10_000_000`.
-- This crate exposes a small `host` module for engine-side console and screen
-  devices; it does **not** include Raven's TUI application.
-
-[`Falcon`]: https://docs.rs/raven-riscv-engine/latest/raven_riscv_engine/struct.Falcon.html
-[`RunResult`]: https://docs.rs/raven-riscv-engine/latest/raven_riscv_engine/struct.RunResult.html
+The public Toy16 backend is the smallest complete reference implementation.

@@ -379,3 +379,7 @@ list.
 |---|---|
 | `0` | Success |
 | `1` | Assembly error, simulation fault, or bad argument |
+`--arch <riscv32|toy16>` selects the assembler backend; `riscv32` is the default.
+
+`--arch <riscv32|toy16>` selects the runtime backend. Toy16 intentionally does
+not accept RV32-only pipeline, cache config, JIT, multicore, ELF, or screen options.

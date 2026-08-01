@@ -175,6 +175,7 @@ Raven can also be used headlessly from the command line — assemble, simulate, 
 ```bash
 raven build program.s                             # assemble
 raven run   program.s --nout                      # run, suppress stats
+raven run   program.toy --arch toy16 --nout       # select another backend at runtime
 raven run   program.s --out results.json          # run, save stats
 raven run   program.s --config my.rcfg \
                         --format csv --out stats.csv

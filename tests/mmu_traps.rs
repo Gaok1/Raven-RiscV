@@ -1,13 +1,13 @@
 // MMU integration tests — end-to-end CPU stepping through Sv32 translation,
 // page faults, traps, mret, and sfence.vma.
 
-use raven::falcon::cache::{CacheConfig, CacheController};
-use raven::falcon::encoder::encode;
-use raven::falcon::exec::step;
-use raven::falcon::instruction::Instruction;
-use raven::falcon::memory::Bus;
-use raven::falcon::mmu::PrivMode;
-use raven::falcon::registers::Cpu;
+use raven::riscv32::cache::{CacheConfig, CacheController};
+use raven::riscv32::encoder::encode;
+use raven::riscv32::exec::step;
+use raven::riscv32::instruction::Instruction;
+use raven::riscv32::memory::Bus;
+use raven::riscv32::mmu::PrivMode;
+use raven::riscv32::registers::Cpu;
 use raven::ui::Console;
 
 const RAM_SIZE: usize = 1 << 20; // 1 MiB
@@ -288,8 +288,10 @@ fn demand_paging_end_to_end() {
     // not coherent with the write-back dcache, so the handler's page-table store
     // must reach RAM immediately for the retried walk to see the new mapping.
     let icfg = CacheConfig::default();
-    let mut dcfg = CacheConfig::default();
-    dcfg.write_policy = raven::falcon::cache::WritePolicy::WriteThrough;
+    let dcfg = CacheConfig {
+        write_policy: raven::riscv32::cache::WritePolicy::WriteThrough,
+        ..CacheConfig::default()
+    };
     let mut mem = CacheController::new(icfg, dcfg, vec![], RAM_SIZE);
     let mut cpu = Cpu::default();
     let mut console = Console::default();
@@ -369,7 +371,7 @@ fn sfence_vma_flushes_tlb() {
 
     // Populate the TLB by routing a load through the Bus trait, which uses
     // the controller's internal MMU + RAM and avoids the dual-borrow issue.
-    let _ = mem.translate(0x1_0000, raven::falcon::mmu::AccessType::Load);
+    let _ = mem.translate(0x1_0000, raven::riscv32::mmu::AccessType::Load);
     assert!(mem.mmu().tlb.entries.iter().any(|e| e.valid));
 
     // Execute sfence.vma from M-mode.

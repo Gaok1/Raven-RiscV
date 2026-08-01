@@ -119,7 +119,13 @@ pub fn ui(f: &mut Frame, app: &App) {
             editor::render_file_tabs(f, editor_chunks[1], app);
             render_editor(f, editor_chunks[2], app);
         }
-        Tab::Run => render_run(f, chunks[1], app),
+        Tab::Run => {
+            if app.is_portable_architecture() {
+                render_portable_run(f, chunks[1], app)
+            } else {
+                render_run(f, chunks[1], app)
+            }
+        }
         Tab::Cache => render_cache(f, chunks[1], app),
         Tab::Tlb => render_tlb_tab(f, chunks[1], app),
         Tab::Pipeline => render_pipeline(f, chunks[1], app),
@@ -254,6 +260,59 @@ pub fn ui(f: &mut Frame, app: &App) {
     if app.tutorial.active {
         crate::ui::tutorial::render::render_tutorial_overlay(f, size, app);
     }
+}
+
+fn render_portable_run(f: &mut Frame, area: Rect, app: &App) {
+    let Some(snapshot) = app.portable_snapshot() else {
+        return;
+    };
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+    let mut state = vec![
+        Line::from(vec![
+            Span::styled("Architecture  ", style::label()),
+            Span::raw(app.architecture.descriptor().display_name),
+        ]),
+        Line::from(vec![
+            Span::styled("State         ", style::label()),
+            Span::raw(format!("{:?}", snapshot.state)),
+        ]),
+        Line::from(vec![
+            Span::styled("PC            ", style::label()),
+            Span::raw(format!("0x{:X}", snapshot.pc)),
+        ]),
+        Line::from(vec![
+            Span::styled("Instructions  ", style::label()),
+            Span::raw(snapshot.instructions.to_string()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("Registers", style::label())),
+    ];
+    state.extend(snapshot.registers.iter().map(|register| {
+        Line::from(format!(
+            "  {:<5}  0x{:0width$X}  ({})",
+            register.name,
+            register.value,
+            register.value,
+            width = usize::from(register.bits / 4),
+        ))
+    }));
+    f.render_widget(
+        Paragraph::new(state).block(Block::default().borders(Borders::ALL).title(" Machine ")),
+        columns[0],
+    );
+    let output = String::from_utf8_lossy(&snapshot.stdout).into_owned();
+    f.render_widget(
+        Paragraph::new(if output.is_empty() {
+            "(no output)".to_string()
+        } else {
+            output
+        })
+        .block(Block::default().borders(Borders::ALL).title(" Console ")),
+        columns[1],
+    );
 }
 
 /// The top navigation tab bar as a [`Toolbar`] keyed by [`Tab`] (gap 2, each
@@ -554,7 +613,10 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
         Tab::Editor => vec![vec![
             ("[Esc]", "switch to Command mode (click editor to return)"),
             ("[Ctrl+Enter]", "assemble and switch to Run"),
-            ("[Ctrl+n]", "new file tab (files assemble together, in tab order)"),
+            (
+                "[Ctrl+n]",
+                "new file tab (files assemble together, in tab order)",
+            ),
             ("[click tab]", "switch file — 2×click renames, [✕] deletes"),
             ("[Ctrl+e]", "toggle inline encoding display"),
             ("[Ctrl+z]", "undo"),
@@ -686,17 +748,38 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+l]", "import full Settings tab state (.rcfg)"),
         ]],
         Tab::Tlb => vec![vec![
-            ("[Tab]", "cycle subtabs: overview → map → tlb → stats → settings"),
-            ("overview", "quick Mode/TLB controls + live satp / privilege / VM-active banner"),
+            (
+                "[Tab]",
+                "cycle subtabs: overview → map → tlb → stats → settings",
+            ),
+            (
+                "overview",
+                "quick Mode/TLB controls + live satp / privilege / VM-active banner",
+            ),
             ("map", "live N-level page-table tree (read-only)"),
             ("tlb", "installed translations (VPN→PPN, perms, A/D, asid)"),
-            ("stats", "hits, misses, evictions, page faults, hit-rate chart + snapshots"),
-            ("settings", "VM mode, paging scheme, page map, TLB geometry + presets — then apply"),
-            ("scheme", "Custom mode: edit levels + index/offset bits (Σ must = 32)"),
+            (
+                "stats",
+                "hits, misses, evictions, page faults, hit-rate chart + snapshots",
+            ),
+            (
+                "settings",
+                "VM mode, paging scheme, page map, TLB geometry + presets — then apply",
+            ),
+            (
+                "scheme",
+                "Custom mode: edit levels + index/offset bits (Σ must = 32)",
+            ),
             ("[r/p/f]", "reset / run-pause / speed (like the Cache tab)"),
-            ("[s]", "capture session snapshot (stats subtab; ↑↓=select, Enter=view, D=delete)"),
+            (
+                "[s]",
+                "capture session snapshot (stats subtab; ↑↓=select, Enter=view, D=delete)",
+            ),
             ("[Ctrl+e/l]", "export / import cache+TLB config (.fcache)"),
-            ("[Ctrl+r]", "export results (.fstats/.csv, includes tlb.* section)"),
+            (
+                "[Ctrl+r]",
+                "export results (.fstats/.csv, includes tlb.* section)",
+            ),
             ("[Esc]", "cancel field edit / close popup"),
             (
                 "TLB toggle",

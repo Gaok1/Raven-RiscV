@@ -13,7 +13,9 @@ use crate::ui::app::{
 };
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{ControlState, bool_value, dense_action, dense_value, label_span};
+use crate::ui::view::components::{
+    ControlState, bool_value, dense_action, dense_value, label_span,
+};
 use crate::ui::view::style;
 
 pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
@@ -29,17 +31,31 @@ pub(super) fn render_settings(f: &mut Frame, area: Rect, app: &App) {
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(3)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(0),
+            Constraint::Length(3),
+        ])
         .split(col_area);
+
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Architecture: ", style::label()),
+            Span::styled(app.architecture.descriptor().display_name, style::key()),
+            Span::raw("   "),
+            Span::styled("[a] switch", style::label()),
+        ])),
+        layout[0],
+    );
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(35), Constraint::Min(10)])
-        .split(layout[0]);
+        .split(layout[1]);
 
     render_settings_list(f, cols[0], app);
     render_hint_panel(f, cols[1], app);
-    render_controls_bar(f, layout[1], app);
+    render_controls_bar(f, layout[2], app);
 }
 
 fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
@@ -63,7 +79,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         app.settings.hover_row == Some(SETTINGS_ROW_CACHE_ENABLED),
     );
     let cache_item = ListItem::new(Line::from(vec![
-        label_span(format!("{:<20}", "  Cache Enabled"), cache_state, theme::LABEL),
+        label_span(
+            format!("{:<20}", "  Cache Enabled"),
+            cache_state,
+            theme::LABEL,
+        ),
         Span::raw("  "),
         bool_value(app.run.cache_enabled, app.settings.hover_cache_enabled),
     ]));
@@ -140,9 +160,16 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         app.settings.hover_row == Some(SETTINGS_ROW_PIPELINE_ENABLED),
     );
     let pipe_item = ListItem::new(Line::from(vec![
-        label_span(format!("{:<20}", "  Pipeline Enabled"), pipe_state, theme::LABEL),
+        label_span(
+            format!("{:<20}", "  Pipeline Enabled"),
+            pipe_state,
+            theme::LABEL,
+        ),
         Span::raw("  "),
-        bool_value(app.run.pipeline().enabled, app.settings.hover_pipeline_enabled),
+        bool_value(
+            app.run.pipeline().enabled,
+            app.settings.hover_pipeline_enabled,
+        ),
     ]));
     items.push(pipe_item);
 
@@ -152,7 +179,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         app.settings.hover_row == Some(SETTINGS_ROW_VM_ENABLED),
     );
     let vm_item = ListItem::new(Line::from(vec![
-        label_span(format!("{:<20}", "  Virtual Memory"), vm_state, theme::LABEL),
+        label_span(
+            format!("{:<20}", "  Virtual Memory"),
+            vm_state,
+            theme::LABEL,
+        ),
         Span::raw("  "),
         dense_value(
             app.vm_mode().as_str(),
@@ -197,7 +228,12 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let mut jit_spans = vec![
         label_span(format!("{:<20}", "  JIT Mode"), jit_state, theme::LABEL),
         Span::raw("  "),
-        dense_value(&jit_label, app.settings.hover_jit_mode, true, theme::LABEL_Y),
+        dense_value(
+            &jit_label,
+            app.settings.hover_jit_mode,
+            true,
+            theme::LABEL_Y,
+        ),
     ];
     if jit_unavailable {
         jit_spans.push(Span::raw("  "));
@@ -213,7 +249,11 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     let is_hov_trace = app.settings.hover_row == Some(SETTINGS_ROW_TRACE_SYSCALLS);
     let trace_state = ControlState::from(sel == SETTINGS_ROW_TRACE_SYSCALLS, is_hov_trace);
     let trace_item = ListItem::new(Line::from(vec![
-        label_span(format!("{:<20}", "  Syscall Debug Log"), trace_state, theme::LABEL),
+        label_span(
+            format!("{:<20}", "  Syscall Debug Log"),
+            trace_state,
+            theme::LABEL,
+        ),
         Span::raw("  "),
         bool_value(app.run.trace_syscalls, app.settings.hover_trace_syscalls),
         Span::raw("  "),

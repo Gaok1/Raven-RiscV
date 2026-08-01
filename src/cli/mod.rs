@@ -23,6 +23,7 @@ const DEFAULT_MAX_CORES: usize = 1;
 // ── Public types ──────────────────────────────────────────────────────────────
 
 pub struct RunArgs {
+    pub architecture: String,
     pub file: String,
     /// Path to a unified `.rcfg` config file (`[sim]` + `[cache]` + `[pipeline]`).
     pub config: Option<String>,
@@ -108,17 +109,38 @@ struct HeadlessHart {
 /// Assemble `file` and optionally write a FALC binary.
 /// `nout = true` → check-only (no output file written).
 pub fn build_program(file: &str, output: Option<&str>, nout: bool) -> Result<(), String> {
+    build_program_for_arch(file, output, nout, "riscv32")
+}
+
+pub fn build_program_for_arch(
+    file: &str,
+    output: Option<&str>,
+    nout: bool,
+    architecture: &str,
+) -> Result<(), String> {
     let src = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
-
-    let prog = crate::falcon::asm::assemble(&src, 0x0)
-        .map_err(|e| {
-            eprintln!("error: {}:{}: {}", file, e.line + 1, e.msg);
-            String::new() // sentinel; we already printed
-        })
-        .map_err(|_| String::new())?; // propagate empty sentinel
-
-    let instr = prog.text.len();
-    let data = prog.data.len();
+    let registry = raven_riscv_engine::ArchitectureRegistry::with_builtins();
+    let architecture = registry
+        .get(architecture)
+        .ok_or_else(|| format!("unknown architecture '{architecture}'"))?;
+    let image = architecture
+        .assembler()
+        .assemble(&src, 0)
+        .map_err(|error| {
+            error.line.map_or_else(
+                || error.message.clone(),
+                |line| format!("{}:{}: {}", file, line + 1, error.message),
+            )
+        })?;
+    let instr = image.executable_bytes().map_or(0, |bytes| {
+        bytes.len() / usize::from(architecture.descriptor().instruction_alignment)
+    });
+    let data: usize = image
+        .segments
+        .iter()
+        .filter(|segment| !segment.executable)
+        .map(|segment| segment.bytes.len())
+        .sum();
     eprintln!(
         "{}: {} instruction{}, {} data byte{}",
         file,
@@ -135,7 +157,9 @@ pub fn build_program(file: &str, output: Option<&str>, nout: bool) -> Result<(),
     let out_path = output
         .map(str::to_string)
         .unwrap_or_else(|| replace_ext(file, "bin"));
-    write_falc(&prog, &out_path)?;
+    let binary = image.to_falc_v2().map_err(|e| e.to_string())?;
+    std::fs::write(&out_path, binary)
+        .map_err(|e| format!("cannot write '{}': {e}", out_path))?;
     eprintln!("  → {out_path}");
     Ok(())
 }
@@ -157,6 +181,9 @@ fn print_config_row(label: &str, cfg: &CacheConfig) {
 // ── raven run ────────────────────────────────────────────────────────────────
 
 pub fn run_headless(args: RunArgs) -> Result<(), String> {
+    if args.architecture != "riscv32" {
+        return run_portable(args);
+    }
     // ── 0. Load unified config (.rcfg v3), split into sections ────────────────
     let (sim_text, cache_text, pipe_text) = if let Some(path) = &args.config {
         let text = std::fs::read_to_string(path)
@@ -288,9 +315,16 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     let mut backend: Box<dyn jit::ExecutionBackend<_>> =
         if effective_jit_mode == jit::BackendKind::Full {
             #[cfg(feature = "jit")]
-            { jit::make_full_backend(&cpu, &mem) }
+            {
+                jit::make_full_backend(&cpu, &mem)
+            }
             #[cfg(not(feature = "jit"))]
-            { return Err("--jit=full requires the 'jit' cargo feature. Rebuild with --features jit.".to_string()); }
+            {
+                return Err(
+                    "--jit=full requires the 'jit' cargo feature. Rebuild with --features jit."
+                        .to_string(),
+                );
+            }
         } else {
             jit::make_backend(effective_jit_mode)
                 .map_err(|e| format!("--jit={}: {e}", effective_jit_mode.as_str()))?
@@ -391,6 +425,102 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     Ok(())
 }
 
+fn run_portable(args: RunArgs) -> Result<(), String> {
+    let registry = raven_riscv_engine::ArchitectureRegistry::with_builtins();
+    let architecture = registry
+        .get(&args.architecture)
+        .ok_or_else(|| format!("unknown architecture '{}'", args.architecture))?;
+    if args.pipeline
+        || args.pipeline_trace_out.is_some()
+        || args.config.is_some()
+        || args.max_cores > 1
+        || args.jit_mode != BackendKind::None
+        || args.screen_window
+    {
+        return Err(format!(
+            "architecture '{}' does not support pipeline, RV32 config, multicore, JIT, or screen options",
+            args.architecture
+        ));
+    }
+    let bytes =
+        std::fs::read(&args.file).map_err(|e| format!("cannot read '{}': {e}", args.file))?;
+    let image = if bytes.starts_with(b"FALC") {
+        raven_riscv_engine::ProgramImage::from_falc(&bytes).map_err(|e| e.to_string())?
+    } else {
+        let source = std::str::from_utf8(&bytes)
+            .map_err(|_| format!("'{}' is neither UTF-8 source nor FALC", args.file))?;
+        architecture
+            .assembler()
+            .assemble(source, 0)
+            .map_err(|e| e.to_string())?
+    };
+    let mut machine = architecture
+        .create_machine(args.mem_size.unwrap_or(64 * 1024))
+        .map_err(|e| e.to_string())?;
+    machine.load(&image).map_err(|e| e.to_string())?;
+    let outcome = machine.run(args.max_cycles).map_err(|e| e.to_string())?;
+    let snapshot = machine.snapshot();
+    print!("{}", String::from_utf8_lossy(&snapshot.stdout));
+    if let Some(expected) = args.expect_stdout.as_deref() {
+        let actual = String::from_utf8_lossy(&snapshot.stdout);
+        if actual != expected {
+            return Err(format!(
+                "stdout mismatch: expected {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+    for (index, expected) in &args.expect_regs {
+        let actual = snapshot
+            .registers
+            .get(*index as usize)
+            .ok_or_else(|| {
+                format!(
+                    "register index {index} is unavailable on {}",
+                    args.architecture
+                )
+            })?
+            .value;
+        if actual != u64::from(*expected) {
+            return Err(format!(
+                "register r{index}: expected {expected}, got {actual}"
+            ));
+        }
+    }
+    for (address, expected) in &args.expect_mems {
+        let bytes = machine
+            .read_memory(u64::from(*address), 4)
+            .map_err(|e| e.to_string())?;
+        let actual = u32::from_le_bytes(bytes.try_into().unwrap());
+        if actual != *expected {
+            return Err(format!(
+                "memory 0x{address:X}: expected {expected}, got {actual}"
+            ));
+        }
+    }
+    if let Some(expected) = args.expect_exit {
+        let actual = match outcome {
+            raven_riscv_engine::StepOutcome::Exited(code) => code as u32,
+            raven_riscv_engine::StepOutcome::Halted => 0,
+            _ => u32::MAX,
+        };
+        if actual != expected {
+            return Err(format!("exit mismatch: expected {expected}, got {actual}"));
+        }
+    }
+    if !args.nout {
+        let report = format!(
+            "{{\n  \"architecture\": \"{}\",\n  \"instructions\": {},\n  \"state\": \"{:?}\"\n}}\n",
+            args.architecture, snapshot.instructions, snapshot.state
+        );
+        if let Some(path) = args.output {
+            std::fs::write(&path, report).map_err(|e| format!("cannot write '{path}': {e}"))?;
+        } else {
+            eprint!("{report}");
+        }
+    }
+    Ok(())
+}
+
 /// Serialize the default unified config to a `.rcfg` v3 file (sim + cache +
 /// pipeline sections). Used by `raven export-config`.
 pub fn export_config(output: Option<&str>) -> Result<(), String> {
@@ -421,14 +551,25 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
     }
 
     // [sim]
-    let (cpi, cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, run_scope, max_cores, mem_size) =
-        parse_rcfg_cli_full(&sim_t)?;
+    let (
+        cpi,
+        cache_enabled,
+        pipeline_enabled,
+        vm_enabled,
+        trace_syscalls,
+        run_scope,
+        max_cores,
+        mem_size,
+    ) = parse_rcfg_cli_full(&sim_t)?;
     // [cache]
     let (icfg, dcfg, extra) = parse_cache_configs(&cache_t)?;
-    icfg.validate().map_err(|e| format!("I-cache config error: {e}"))?;
-    dcfg.validate().map_err(|e| format!("D-cache config error: {e}"))?;
+    icfg.validate()
+        .map_err(|e| format!("I-cache config error: {e}"))?;
+    dcfg.validate()
+        .map_err(|e| format!("D-cache config error: {e}"))?;
     for (i, cfg) in extra.iter().enumerate() {
-        cfg.validate().map_err(|e| format!("L{} config error: {e}", i + 2))?;
+        cfg.validate()
+            .map_err(|e| format!("L{} config error: {e}", i + 2))?;
     }
     // [pipeline]
     let pcfg = parse_pipeline_config(&pipe_t)?;
@@ -442,7 +583,11 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
     eprintln!("  run_scope        = {run_scope}");
     eprintln!("  mem_kb           = {}", mem_size / 1024);
     eprintln!("  max_cores        = {max_cores}");
-    eprintln!("[cache] — {} level{}", 1 + extra.len(), if extra.is_empty() { "" } else { "s" });
+    eprintln!(
+        "[cache] — {} level{}",
+        1 + extra.len(),
+        if extra.is_empty() { "" } else { "s" }
+    );
     print_config_row("I-Cache L1", &icfg);
     print_config_row("D-Cache L1", &dcfg);
     for (i, cfg) in extra.iter().enumerate() {
@@ -456,8 +601,14 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
 
     if let Some(out) = output {
         let sim = rebuild_rcfg_text(
-            &cpi, cache_enabled, pipeline_enabled, vm_enabled, trace_syscalls, mem_size / 1024,
-            max_cores, &run_scope,
+            &cpi,
+            cache_enabled,
+            pipeline_enabled,
+            vm_enabled,
+            trace_syscalls,
+            mem_size / 1024,
+            max_cores,
+            &run_scope,
         );
         let cache = serialize_cache_configs(&icfg, &dcfg, &extra);
         let pipeline = serialize_pipeline_config(&pcfg);
@@ -937,24 +1088,6 @@ fn run_headless_pipeline(
 }
 
 // ── Build helpers ─────────────────────────────────────────────────────────────
-
-/// Write a `Program` as a FALC binary (native Raven format).
-fn write_falc(prog: &crate::falcon::asm::Program, path: &str) -> Result<(), String> {
-    let text_bytes: Vec<u8> = prog.text.iter().flat_map(|w| w.to_le_bytes()).collect();
-    let text_size = text_bytes.len() as u32;
-    let data_size = prog.data.len() as u32;
-    let bss_size = prog.bss_size;
-
-    let mut bytes: Vec<u8> = Vec::with_capacity(16 + text_bytes.len() + prog.data.len());
-    bytes.extend_from_slice(b"FALC");
-    bytes.extend_from_slice(&text_size.to_le_bytes());
-    bytes.extend_from_slice(&data_size.to_le_bytes());
-    bytes.extend_from_slice(&bss_size.to_le_bytes());
-    bytes.extend_from_slice(&text_bytes);
-    bytes.extend_from_slice(&prog.data);
-
-    std::fs::write(path, bytes).map_err(|e| format!("cannot write '{}': {e}", path))
-}
 
 fn replace_ext(path: &str, new_ext: &str) -> String {
     std::path::Path::new(path)

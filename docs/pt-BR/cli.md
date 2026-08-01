@@ -377,3 +377,8 @@ lista completa de campos.
 |---|---|
 | `0` | Sucesso |
 | `1` | Erro de montagem, falha na simulação ou argumento inválido |
+`--arch <riscv32|toy16>` seleciona o assembler; `riscv32` é o padrão.
+
+`--arch <riscv32|toy16>` seleciona o backend em runtime. O Toy16 não aceita
+opções exclusivas do RV32, como pipeline, configuração de cache, JIT, multicore,
+ELF ou tela gráfica.

@@ -1,4 +1,6 @@
-﻿pub mod arch;
+#![allow(rustdoc::broken_intra_doc_links, rustdoc::private_intra_doc_links)]
+
+pub mod arch;
 pub mod cache;
 pub mod errors;
 pub mod exec;
@@ -30,4 +32,3 @@ pub use memory::Bus;
 #[allow(unused_imports)]
 pub use memory::Ram;
 pub use registers::Cpu;
-

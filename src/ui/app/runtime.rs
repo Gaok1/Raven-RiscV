@@ -139,9 +139,12 @@ impl App {
     }
 
     pub(in crate::ui) fn tab_visible(&self, tab: Tab) -> bool {
+        let capabilities = self.architecture.descriptor().capabilities;
         match tab {
-            Tab::Cache => self.run.cache_enabled,
-            Tab::Pipeline | Tab::Activity => true,
+            Tab::Cache => capabilities.cache && self.run.cache_enabled,
+            Tab::Tlb => capabilities.virtual_memory,
+            Tab::Pipeline => capabilities.pipeline,
+            Tab::Activity => capabilities.guided_learning,
             _ => true,
         }
     }
@@ -265,22 +268,25 @@ impl App {
     pub(in crate::ui) fn rebuild_backend(&mut self) {
         use crate::falcon::jit::{BackendKind, make_backend};
         self.run.backend = match self.run.jit_kind {
-            BackendKind::None | BackendKind::Hot => {
-                make_backend(self.run.jit_kind)
-                    .unwrap_or_else(|_| make_backend(BackendKind::None).unwrap())
-            }
+            BackendKind::None | BackendKind::Hot => make_backend(self.run.jit_kind)
+                .unwrap_or_else(|_| make_backend(BackendKind::None).unwrap()),
             BackendKind::Full => {
                 #[cfg(feature = "jit")]
-                { crate::falcon::jit::make_full_backend(self.run.cpu(), self.run.mem()) }
+                {
+                    crate::falcon::jit::make_full_backend(self.run.cpu(), self.run.mem())
+                }
                 #[cfg(not(feature = "jit"))]
-                { make_backend(BackendKind::None).unwrap() }
+                {
+                    make_backend(BackendKind::None).unwrap()
+                }
             }
         };
     }
 
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
         self.run.is_running = false;
-        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+        let __rpc = self.run.cpu().pc;
+        self.run.pipeline_mut().reset_stages(__rpc);
 
         for (idx, hart) in self.harts.iter_mut().enumerate() {
             if idx == self.selected_core {
@@ -456,7 +462,13 @@ impl App {
     }
 
     pub(super) fn process_pending_hart_start_for_selected(&mut self) {
-        let Some(request) = self.run.machine.cpu_mut_unjournaled().pending_hart_start.take() else {
+        let Some(request) = self
+            .run
+            .machine
+            .cpu_mut_unjournaled()
+            .pending_hart_start
+            .take()
+        else {
             return;
         };
 
@@ -468,7 +480,10 @@ impl App {
                 )
         });
         let Some(free_core) = free_core else {
-            self.run.machine.cpu_mut_unjournaled().write(10, (-1i32) as u32);
+            self.run
+                .machine
+                .cpu_mut_unjournaled()
+                .write(10, (-1i32) as u32);
             self.console.push_colored(
                 format!(
                     "[C{}:H{}] hart start failed: no free core available (max_cores={})",
@@ -481,7 +496,10 @@ impl App {
             return;
         };
         if !self.is_pc_in_program(request.entry_pc) {
-            self.run.machine.cpu_mut_unjournaled().write(10, (-2i32) as u32);
+            self.run
+                .machine
+                .cpu_mut_unjournaled()
+                .write(10, (-2i32) as u32);
             self.console.push_colored(
                 format!(
                     "[C{}:H{}] hart start failed: entry PC 0x{:08X} is outside any executable region",
@@ -498,7 +516,10 @@ impl App {
             || request.stack_ptr > self.run.mem_size as u32
             || request.stack_ptr & 0xF != 0
         {
-            self.run.machine.cpu_mut_unjournaled().write(10, (-3i32) as u32);
+            self.run
+                .machine
+                .cpu_mut_unjournaled()
+                .write(10, (-3i32) as u32);
             self.console.push_colored(
                 format!(
                     "[C{}:H{}] hart start failed: stack 0x{:08X} invalid (must be non-zero, 16-byte aligned, within memory [0..0x{:08X}])",

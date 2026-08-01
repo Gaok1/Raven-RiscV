@@ -132,14 +132,15 @@ fn main() -> io::Result<()> {
     let is_cli = matches!(
         sub,
         Some("build")
-        | Some("run")
-        | Some("export-config")
-        | Some("check-config")
-        | Some("debug-run-controls")
-        | Some("debug-help-layout")
-        | Some("debug-pipeline-stage")
-        | Some("help")
-        | Some("--help") | Some("-h")
+            | Some("run")
+            | Some("export-config")
+            | Some("check-config")
+            | Some("debug-run-controls")
+            | Some("debug-help-layout")
+            | Some("debug-pipeline-stage")
+            | Some("help")
+            | Some("--help")
+            | Some("-h")
     );
 
     if is_cli {
@@ -156,7 +157,8 @@ fn main() -> io::Result<()> {
     let quit_flag = setup_sigint();
 
     let mut ram_override: Option<usize> = None;
-    let mut jit_override: raven::falcon::BackendKind = raven::falcon::BackendKind::None;
+    let mut jit_override: raven::riscv32::BackendKind = raven::riscv32::BackendKind::None;
+    let mut architecture = "riscv32".to_string();
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--mem" {
@@ -176,11 +178,21 @@ fn main() -> io::Result<()> {
                     return Ok(());
                 }
             }
+        } else if let Some(val) = args[i].strip_prefix("--arch=") {
+            architecture = val.to_string();
+            i += 1;
+        } else if args[i] == "--arch" {
+            architecture = args.get(i + 1).cloned().unwrap_or_default();
+            if architecture.is_empty() {
+                eprintln!("error: --arch requires a value (riscv32 or toy16)");
+                return Ok(());
+            }
+            i += 2;
         } else if let Some(val) = args[i].strip_prefix("--jit=") {
             jit_override = match val {
-                "none" => raven::falcon::BackendKind::None,
-                "hot" => raven::falcon::BackendKind::Hot,
-                "full" => raven::falcon::BackendKind::Full,
+                "none" => raven::riscv32::BackendKind::None,
+                "hot" => raven::riscv32::BackendKind::Hot,
+                "full" => raven::riscv32::BackendKind::Full,
                 other => {
                     eprintln!("error: unknown --jit '{other}' (use none, hot, or full)");
                     return Ok(());
@@ -191,9 +203,9 @@ fn main() -> io::Result<()> {
             match args.get(i + 1) {
                 Some(val) => {
                     jit_override = match val.as_str() {
-                        "none" => raven::falcon::BackendKind::None,
-                        "hot" => raven::falcon::BackendKind::Hot,
-                        "full" => raven::falcon::BackendKind::Full,
+                        "none" => raven::riscv32::BackendKind::None,
+                        "hot" => raven::riscv32::BackendKind::Hot,
+                        "full" => raven::riscv32::BackendKind::Full,
                         other => {
                             eprintln!("error: unknown --jit '{other}' (use none, hot, or full)");
                             return Ok(());
@@ -216,17 +228,19 @@ fn main() -> io::Result<()> {
 
     let mut terminal: DefaultTerminal = ratatui::init();
 
+    let app = match ui::App::new_with_architecture(ram_override, jit_override, &architecture) {
+        Ok(app) => app,
+        Err(error) => {
+            ratatui::restore();
+            eprintln!("error: {error}");
+            return Ok(());
+        }
+    };
+
     #[cfg(unix)]
-    let res = ui::run(
-        &mut terminal,
-        ui::App::new_with_jit(ram_override, jit_override),
-        quit_flag,
-    );
+    let res = ui::run(&mut terminal, app, quit_flag);
     #[cfg(not(unix))]
-    let res = ui::run(
-        &mut terminal,
-        ui::App::new_with_jit(ram_override, jit_override),
-    );
+    let res = ui::run(&mut terminal, app);
 
     ratatui::restore();
 
@@ -267,13 +281,14 @@ fn dispatch_subcommand(args: &[String]) -> Result<(), String> {
 // ── raven build <file> [--out <path>] [--nout] ───────────────────────────────
 
 fn cmd_build(args: &[String]) -> Result<(), String> {
-    validate_value_flags(args, &["--out"])?;
+    validate_value_flags(args, &["--out", "--arch"])?;
     let file = positional(args)
         .ok_or("build requires a file argument\n\nUsage: raven build <input> [output] [--nout]")?;
     let nout = has_flag(args, "--nout");
     // output: --out flag takes priority, then second positional arg
     let out = flag_value(args, "--out").or_else(|| positional_nth(args, 1));
-    cli::build_program(&file, out.as_deref(), nout)
+    let architecture = flag_value(args, "--arch").unwrap_or_else(|| "riscv32".to_string());
+    cli::build_program_for_arch(&file, out.as_deref(), nout, &architecture)
 }
 
 // ── raven run <file> [options] ───────────────────────────────────────────────
@@ -292,6 +307,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
             "--expect-exit",
             "--expect-stdout",
             "--jit",
+            "--arch",
         ],
     )?;
     let file = positional(args)
@@ -335,17 +351,16 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         None => 0,
     };
     let jit_mode = match flag_value(args, "--jit").as_deref() {
-        None | Some("none") => raven::falcon::BackendKind::None,
-        Some("hot") => raven::falcon::BackendKind::Hot,
-        Some("full") => raven::falcon::BackendKind::Full,
+        None | Some("none") => raven::riscv32::BackendKind::None,
+        Some("hot") => raven::riscv32::BackendKind::Hot,
+        Some("full") => raven::riscv32::BackendKind::Full,
         Some(other) => {
-            return Err(format!(
-                "unknown --jit '{other}' (use none, hot, or full)"
-            ));
+            return Err(format!("unknown --jit '{other}' (use none, hot, or full)"));
         }
     };
 
     cli::run_headless(cli::RunArgs {
+        architecture: flag_value(args, "--arch").unwrap_or_else(|| "riscv32".to_string()),
         file,
         config: flag_value(args, "--config"),
         pipeline: has_flag(args, "--pipeline"),
@@ -524,8 +539,10 @@ OPTIONS  build:
     [output]                    Output .bin file as second positional arg
     --out <path>                Same as above (takes priority over positional)
     --nout                      Check-only: assemble but don't write any file
+    --arch riscv32|toy16        Select assembler backend             (default: riscv32)
 
 OPTIONS  run:
+    --arch riscv32|toy16        Select simulator backend             (default: riscv32)
     --config <file>             Load unified config (sim + cache + pipeline) from .rcfg
     --pipeline                  Run using the pipeline simulator instead of sequential exec
     --pipeline-trace-out <file> Write per-cycle pipeline trace JSON (requires --pipeline)

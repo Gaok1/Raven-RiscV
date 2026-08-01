@@ -167,7 +167,8 @@ fn pipeline_tab_single_step_without_cache_stall_advances_one_cycle() {
         ],
     );
     app.run.machine.mem_mut_unjournaled().bypass = true;
-    let __pc = app.run.cpu().pc; app.run.pipeline_mut().reset_stages(__pc);
+    let __pc = app.run.cpu().pc;
+    app.run.pipeline_mut().reset_stages(__pc);
 
     let cycle_before = app.run.pipeline().cycle_count;
     app.single_step();
@@ -200,12 +201,33 @@ fn pipeline_tab_single_step_skips_consecutive_icache_stalls() {
             "halt",
         ],
     );
-    app.run.machine.mem_mut_unjournaled().icache.config.hit_latency = 3;
-    app.run.machine.mem_mut_unjournaled().icache.config.miss_penalty = 0;
-    app.run.machine.mem_mut_unjournaled().icache.config.assoc_penalty = 0;
-    app.run.machine.mem_mut_unjournaled().icache.config.transfer_width = 4;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .hit_latency = 3;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .miss_penalty = 0;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .assoc_penalty = 0;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .transfer_width = 4;
     app.run.machine.mem_mut_unjournaled().bypass = false;
-    let __pc = app.run.cpu().pc; app.run.pipeline_mut().reset_stages(__pc);
+    let __pc = app.run.cpu().pc;
+    app.run.pipeline_mut().reset_stages(__pc);
 
     app.single_step();
     let if_slot = app.run.pipeline().stages[crate::ui::pipeline::Stage::IF as usize]
@@ -359,10 +381,7 @@ fn stepback_reverts_pipeline_cycle_state() {
         app.can_stepback_now(),
         "pipeline mode must be reversible now"
     );
-    assert!(
-        app.run.pipeline().cycle_count > cyc0,
-        "the clock advanced"
-    );
+    assert!(app.run.pipeline().cycle_count > cyc0, "the clock advanced");
     assert!(app.run.cpu().x[10] >= 1, "first instruction took effect");
 
     // Drain the journal one cycle at a time; the clock must move strictly
@@ -382,7 +401,11 @@ fn stepback_reverts_pipeline_cycle_state() {
     assert_eq!(app.run.cpu().x, x0, "registers round-tripped");
     assert_eq!(app.run.cpu().pc, pc0, "PC round-tripped");
     assert_eq!(app.run.pipeline().cycle_count, cyc0, "clock round-tripped");
-    assert_eq!(app.run.pipeline().fetch_pc, fetch0, "fetch PC round-tripped");
+    assert_eq!(
+        app.run.pipeline().fetch_pc,
+        fetch0,
+        "fetch PC round-tripped"
+    );
     assert_eq!(
         app.run.pipeline().stages.iter().all(|s| s.is_none()),
         stages_empty0,
@@ -430,12 +453,33 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_if_cache_stalls() {
             "halt",
         ],
     );
-    app.run.machine.mem_mut_unjournaled().icache.config.hit_latency = 3;
-    app.run.machine.mem_mut_unjournaled().icache.config.miss_penalty = 0;
-    app.run.machine.mem_mut_unjournaled().icache.config.assoc_penalty = 0;
-    app.run.machine.mem_mut_unjournaled().icache.config.transfer_width = 4;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .hit_latency = 3;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .miss_penalty = 0;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .assoc_penalty = 0;
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .icache
+        .config
+        .transfer_width = 4;
     app.run.machine.mem_mut_unjournaled().bypass = false;
-    let __pc = app.run.cpu().pc; app.run.pipeline_mut().reset_stages(__pc);
+    let __pc = app.run.cpu().pc;
+    app.run.pipeline_mut().reset_stages(__pc);
 
     app.single_step();
     app.single_step();
@@ -505,9 +549,13 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_multilevel_if_stall
     let dcfg = slow_level(16, 16, 1);
     let l2 = slow_level(4, 4, 5);
     let l3 = slow_level(4, 8, 9);
-    app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, vec![l2, l3]);
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .apply_config(icfg, dcfg, vec![l2, l3]);
     app.run.machine.mem_mut_unjournaled().bypass = false;
-    let __pc = app.run.cpu().pc; app.run.pipeline_mut().reset_stages(__pc);
+    let __pc = app.run.cpu().pc;
+    app.run.pipeline_mut().reset_stages(__pc);
 
     app.single_step();
     app.single_step();
@@ -557,9 +605,13 @@ fn pipeline_tab_single_step_does_not_skip_useful_cycle_while_multilevel_mem_stal
     let dcfg = slow_level(4, 4, 1);
     let l2 = slow_level(4, 4, 5);
     let l3 = slow_level(4, 8, 9);
-    app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, vec![l2, l3]);
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .apply_config(icfg, dcfg, vec![l2, l3]);
     app.run.machine.mem_mut_unjournaled().bypass = false;
-    let __pc = app.run.cpu().pc; app.run.pipeline_mut().reset_stages(__pc);
+    let __pc = app.run.cpu().pc;
+    app.run.pipeline_mut().reset_stages(__pc);
 
     for _ in 0..16 {
         if app.run.pipeline().stages[crate::ui::pipeline::Stage::EX as usize]
@@ -607,7 +659,8 @@ fn pipeline_tab_single_step_keeps_single_cycle_alu_latency_visible_in_ex() {
         ],
     );
     app.run.machine.mem_mut_unjournaled().bypass = true;
-    let __pc = app.run.cpu().pc; app.run.pipeline_mut().reset_stages(__pc);
+    let __pc = app.run.cpu().pc;
+    app.run.pipeline_mut().reset_stages(__pc);
 
     for _ in 0..8 {
         app.single_step();
@@ -1273,11 +1326,12 @@ fn hart_start_can_reuse_exited_core() {
         .iter()
         .find_map(|(addr, names)| names.iter().any(|n| n == "worker").then_some(*addr))
         .expect("worker label present");
-    app.run.machine.cpu_mut_unjournaled().pending_hart_start = Some(crate::falcon::registers::HartStartRequest {
-        entry_pc: worker_pc,
-        stack_ptr,
-        arg: 123,
-    });
+    app.run.machine.cpu_mut_unjournaled().pending_hart_start =
+        Some(crate::falcon::registers::HartStartRequest {
+            entry_pc: worker_pc,
+            stack_ptr,
+            arg: 123,
+        });
 
     app.process_pending_hart_start_for_selected();
 
@@ -1333,7 +1387,8 @@ fn toggling_pipeline_reconfigures_all_hart_pipeline_states() {
     app.set_pipeline_enabled(true);
     app.run.pipeline_mut().cycle_count = 9;
     app.run.pipeline_mut().bypass.store_to_load = true;
-    app.run.pipeline_mut()
+    app.run
+        .pipeline_mut()
         .set_predict(crate::ui::pipeline::BranchPredict::TwoBit);
     app.reconfigure_pipeline_model();
 
@@ -1513,11 +1568,12 @@ fn hart_start_child_inherits_parallel_fu_config() {
     app.run.pipeline_mut().mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
     app.run.pipeline_mut().fu_capacity[crate::ui::pipeline::FuKind::Div.index()] = 4;
     app.run.pipeline_mut().fu_capacity[crate::ui::pipeline::FuKind::Lsu.index()] = 2;
-    app.run.machine.cpu_mut_unjournaled().pending_hart_start = Some(crate::falcon::registers::HartStartRequest {
-        entry_pc: app.run.base_pc,
-        stack_ptr: 0x0010_0000,
-        arg: 0x1234_5678,
-    });
+    app.run.machine.cpu_mut_unjournaled().pending_hart_start =
+        Some(crate::falcon::registers::HartStartRequest {
+            entry_pc: app.run.base_pc,
+            stack_ptr: 0x0010_0000,
+            arg: 0x1234_5678,
+        });
 
     app.process_pending_hart_start_for_selected();
 
@@ -2039,7 +2095,10 @@ mod run_edit {
         app.run.fmt_mode = FormatMode::Hex;
         app.run.mem_view_bytes = 1;
         let addr = app.run.data_base;
-        app.begin_run_edit(RunEditTarget::Mem { addr, width: MemWidth::B1 });
+        app.begin_run_edit(RunEditTarget::Mem {
+            addr,
+            width: MemWidth::B1,
+        });
         app.run.run_edit_buf = "1ff".to_string(); // 0x1FF > 1 byte
         app.commit_run_edit();
         assert!(app.run.run_edit.is_some());
@@ -2054,7 +2113,10 @@ mod run_edit {
         let addr = app.run.data_base & !3;
         let before = app.run.mem().effective_read32(addr).unwrap_or(0);
 
-        app.begin_run_edit(RunEditTarget::Mem { addr, width: MemWidth::B4 });
+        app.begin_run_edit(RunEditTarget::Mem {
+            addr,
+            width: MemWidth::B4,
+        });
         app.run.run_edit_buf = "cafebabe".to_string();
         app.commit_run_edit();
         assert_eq!(app.run.mem().effective_read32(addr).unwrap(), 0xcafe_babe);
@@ -2146,4 +2208,38 @@ fn multi_file_workspace_assembles_across_tabs_and_maps_lines() {
     assert_eq!(app.editor.buf.lines[0], "helper:");
     app.delete_active_file();
     assert_eq!(app.editor.files.len(), 1);
+}
+
+#[test]
+fn toy16_is_a_runtime_app_backend_with_capability_gated_tabs() {
+    let mut app = App::new_with_architecture(
+        Some(64 * 1024),
+        crate::falcon::jit::BackendKind::None,
+        "toy16",
+    )
+    .unwrap();
+    assert_eq!(app.architecture_id(), "toy16");
+    assert!(app.is_portable_architecture());
+    assert!(!app.tab_visible(Tab::Cache));
+    assert!(!app.tab_visible(Tab::Tlb));
+    assert!(!app.tab_visible(Tab::Pipeline));
+
+    for _ in 0..5 {
+        app.single_step();
+    }
+    let snapshot = app.portable_snapshot().unwrap();
+    assert_eq!(snapshot.registers[2].value, 42);
+    assert_eq!(snapshot.stdout, b"42\n");
+}
+
+#[test]
+fn switching_architecture_preserves_an_edited_workspace() {
+    let mut app = App::new(None);
+    app.editor.buf.lines = vec!["custom source".to_string()];
+    app.activate_architecture("toy16", false).unwrap();
+    assert_eq!(app.editor.buf.lines, ["custom source"]);
+    assert_eq!(app.architecture_id(), "toy16");
+    app.activate_architecture("riscv32", false).unwrap();
+    assert_eq!(app.editor.buf.lines, ["custom source"]);
+    assert_eq!(app.architecture_id(), "riscv32");
 }

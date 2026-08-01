@@ -12,6 +12,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 const SETTINGS_BLANK_ROW: usize = SETTINGS_ROW_CPI_START - 1;
 
 pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
+    if matches!(key.code, KeyCode::Char('a') | KeyCode::Char('A')) {
+        app.cycle_architecture();
+        return true;
+    }
     if app.settings.cpi_editing {
         return handle_numeric_edit(app, key.code);
     }
@@ -56,7 +60,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             } else if app.settings.selected == SETTINGS_ROW_JIT_MODE {
                 let next = match app.run.jit_kind {
                     BackendKind::None => BackendKind::Hot,
-                    BackendKind::Hot  => BackendKind::Full,
+                    BackendKind::Hot => BackendKind::Full,
                     BackendKind::Full => BackendKind::None,
                 };
                 app.set_jit_mode(next);

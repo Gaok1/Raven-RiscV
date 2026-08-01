@@ -21,7 +21,6 @@ pub(crate) use self::cache_state::{
     CacheScope, CacheState, CacheSubtab, CacheViewFocus, ConfigField, LevelSnapshot,
     PipelineResultsSnapshot, TlbSnapshot,
 };
-pub(crate) use self::tlb_state::{TlbHoverTarget, TlbState, VmSettingsField, VmSubtab};
 pub(crate) use self::docs_state::{
     DocsLang, DocsPage, DocsState, PathInput, PathInputAction, SbDrag, TutorialState,
 };
@@ -30,7 +29,7 @@ pub(crate) use self::hart::{
 };
 pub(crate) use self::instr_edit::{EncFormat, InstrFieldKind, Seg, detect_format};
 pub(crate) use self::run_state::{
-    BuildStats, EditorMode, EditorState, EditorFile, FileTabId, FormatMode, MemRegion, RunButton,
+    BuildStats, EditorFile, EditorMode, EditorState, FileTabId, FormatMode, MemRegion, RunButton,
     RunEditTarget, RunSpeed, RunState,
 };
 pub(crate) use self::settings_state::{
@@ -40,6 +39,7 @@ pub(crate) use self::settings_state::{
     SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState,
     nearest_pow2_clamp,
 };
+pub(crate) use self::tlb_state::{TlbHoverTarget, TlbState, VmSettingsField, VmSubtab};
 
 use super::{
     console::Console,
@@ -60,9 +60,9 @@ use crossterm::{
     execute,
 };
 use ratatui::{DefaultTerminal, layout::Rect};
-use std::sync::atomic::AtomicBool;
 #[cfg(unix)]
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, atomic::AtomicBool};
 use std::{
     io,
     time::{Duration, Instant},
@@ -224,6 +224,9 @@ impl Tab {
 // ── Top-level app ──────────────────────────────────────────────────────────────
 
 pub struct App {
+    pub(crate) architecture: Arc<dyn raven_riscv_engine::Architecture>,
+    pub(crate) portable_machine: Option<Box<dyn raven_riscv_engine::Machine>>,
+    portable_image: Option<raven_riscv_engine::ProgramImage>,
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
 
@@ -322,6 +325,9 @@ impl App {
         let data_base = base_pc + 0x1000;
         cpu.heap_break = data_base;
         let mut app = Self {
+            architecture: raven_riscv_engine::architectures::riscv32::architecture(),
+            portable_machine: None,
+            portable_image: None,
             tab: Tab::Editor,
             mode: EditorMode::Insert,
             editor: EditorState {
@@ -582,6 +588,159 @@ impl App {
         app
     }
 
+    pub fn new_with_architecture(
+        ram_override: Option<usize>,
+        initial_jit_kind: crate::falcon::jit::BackendKind,
+        architecture_id: &str,
+    ) -> Result<Self, String> {
+        let mut app = Self::new_with_jit(ram_override, initial_jit_kind);
+        app.activate_architecture(architecture_id, true)?;
+        Ok(app)
+    }
+
+    pub(crate) fn architecture_id(&self) -> &'static str {
+        self.architecture.descriptor().id
+    }
+
+    pub(crate) fn is_portable_architecture(&self) -> bool {
+        self.portable_machine.is_some()
+    }
+
+    pub(crate) fn cycle_architecture(&mut self) {
+        let next = if self.architecture_id() == "riscv32" {
+            "toy16"
+        } else {
+            "riscv32"
+        };
+        if let Err(error) = self.activate_architecture(next, false) {
+            self.console.push_error(error);
+        }
+    }
+
+    pub(crate) fn activate_architecture(
+        &mut self,
+        architecture_id: &str,
+        replace_source: bool,
+    ) -> Result<(), String> {
+        let registry = raven_riscv_engine::ArchitectureRegistry::with_builtins();
+        let architecture = registry.get(architecture_id).ok_or_else(|| {
+            format!("unknown architecture '{architecture_id}' (use riscv32 or toy16)")
+        })?;
+        let portable = architecture_id != "riscv32";
+        let machine = portable
+            .then(|| architecture.create_machine(self.ram_override.unwrap_or(64 * 1024)))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        self.run.is_running = false;
+        self.architecture = architecture;
+        self.portable_machine = machine;
+        self.portable_image = None;
+        if replace_source {
+            self.editor.buf.lines = self
+                .architecture
+                .default_source()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            self.editor.buf.cursor_row = 0;
+            self.editor.buf.cursor_col = 0;
+        }
+        self.ensure_visible_tab();
+        self.assemble_and_load();
+        Ok(())
+    }
+
+    fn portable_assemble_and_load(&mut self) {
+        let (source, offsets) = self.combined_source();
+        match self.architecture.assembler().assemble(&source, 0) {
+            Ok(image) => {
+                if let Some(machine) = self.portable_machine.as_mut()
+                    && let Err(error) = machine.load(&image)
+                {
+                    self.editor.last_compile_ok = Some(false);
+                    self.console.push_error(error.to_string());
+                    return;
+                }
+                let instruction_count = image.executable_bytes().map_or(0, |b| {
+                    b.len() / usize::from(self.architecture.descriptor().instruction_alignment)
+                });
+                self.editor.last_build_stats = Some(BuildStats {
+                    instruction_count,
+                    data_bytes: image
+                        .segments
+                        .iter()
+                        .filter(|s| !s.executable)
+                        .map(|s| s.bytes.len())
+                        .sum(),
+                });
+                self.editor.last_assemble_msg = Some(format!(
+                    "{}: assembled {instruction_count} instructions",
+                    self.architecture.descriptor().display_name
+                ));
+                self.editor.last_compile_ok = Some(true);
+                self.editor.diag_line = None;
+                self.editor.diag_msg = None;
+                self.editor.diag_line_text = None;
+                self.portable_image = Some(image);
+            }
+            Err(error) => {
+                let line = error.line.unwrap_or(0);
+                self.set_diag(line, &error.message, &offsets);
+            }
+        }
+        self.editor.dirty = false;
+    }
+
+    pub(crate) fn portable_snapshot(&self) -> Option<raven_riscv_engine::MachineSnapshot> {
+        self.portable_machine
+            .as_ref()
+            .map(|machine| machine.snapshot())
+    }
+
+    pub(crate) fn export_program_image(&self) -> Result<raven_riscv_engine::ProgramImage, String> {
+        self.architecture
+            .assembler()
+            .assemble(&self.combined_source().0, 0)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn portable_toggle_run(&mut self) {
+        if self.run.is_running {
+            self.run.is_running = false;
+            return;
+        }
+        if self
+            .portable_machine
+            .as_ref()
+            .is_some_and(|machine| {
+                matches!(
+                    machine.snapshot().state,
+                    raven_riscv_engine::MachineState::Halted
+                        | raven_riscv_engine::MachineState::Exited(_)
+                        | raven_riscv_engine::MachineState::Faulted
+                )
+            })
+            && let Some(machine) = self.portable_machine.as_mut()
+        {
+            machine.reset();
+        }
+        self.run.is_running = true;
+    }
+
+    fn portable_step(&mut self) {
+        let Some(machine) = self.portable_machine.as_mut() else {
+            return;
+        };
+        match machine.step() {
+            Ok(raven_riscv_engine::StepOutcome::Stepped) => {}
+            Ok(_) => self.run.is_running = false,
+            Err(error) => {
+                self.run.is_running = false;
+                self.console.push_error(error.to_string());
+            }
+        }
+    }
+
     /// Load `text` into the editor and assemble + load the program.
     /// Used by guided-learning presets (outside `ui/`).
     pub(crate) fn load_editor_text(&mut self, text: &str) {
@@ -601,7 +760,8 @@ impl App {
 
     /// Reset the pipeline to the current CPU PC (used after loading a preset).
     pub(crate) fn pipeline_reset_to_current_pc(&mut self) {
-        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+        let __rpc = self.run.cpu().pc;
+        self.run.pipeline_mut().reset_stages(__rpc);
     }
 
     // ── Multi-file workspace ───────────────────────────────────────────────
@@ -641,10 +801,7 @@ impl App {
         line_addrs: std::collections::HashMap<usize, u32>,
         offsets: Vec<usize>,
     ) {
-        let lo = offsets
-            .get(self.editor.active_file)
-            .copied()
-            .unwrap_or(0);
+        let lo = offsets.get(self.editor.active_file).copied().unwrap_or(0);
         let hi = lo + self.editor.buf.lines.len();
         self.editor.line_to_addr = line_addrs
             .into_iter()
@@ -675,8 +832,12 @@ impl App {
                 .unwrap_or("?");
             self.editor.diag_line = None;
             self.editor.diag_line_text = None;
-            self.editor.last_assemble_msg =
-                Some(format!("Assemble error in {} line {}: {}", name, local + 1, msg));
+            self.editor.last_assemble_msg = Some(format!(
+                "Assemble error in {} line {}: {}",
+                name,
+                local + 1,
+                msg
+            ));
         }
         self.editor.diag_msg = Some(msg.to_string());
         self.editor.last_build_stats = None;
@@ -764,6 +925,10 @@ impl App {
     }
 
     pub(crate) fn assemble_and_load(&mut self) {
+        if self.is_portable_architecture() {
+            self.portable_assemble_and_load();
+            return;
+        }
         use falcon::asm::assemble;
         use falcon::program::{load_bytes, load_words, zero_bytes};
 
@@ -772,7 +937,10 @@ impl App {
         *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
         self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
         self.run.prev_pc = self.run.cpu().pc;
-        self.run.machine.cpu_mut_unjournaled().write(2, self.run.mem_size as u32);
+        self.run
+            .machine
+            .cpu_mut_unjournaled()
+            .write(2, self.run.mem_size as u32);
         *self.run.machine.mem_mut_unjournaled() = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
@@ -793,19 +961,31 @@ impl App {
         match assemble(&src, self.run.base_pc) {
             Ok(prog) => {
                 // Write directly to RAM (bypass cache) so invalidate() won't discard data
-                if let Err(e) = load_words(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.base_pc, &prog.text) {
+                if let Err(e) = load_words(
+                    &mut self.run.machine.mem_mut_unjournaled().ram,
+                    self.run.base_pc,
+                    &prog.text,
+                ) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
-                if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, prog.data_base, &prog.data) {
+                if let Err(e) = load_bytes(
+                    &mut self.run.machine.mem_mut_unjournaled().ram,
+                    prog.data_base,
+                    &prog.data,
+                ) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
                 }
                 let bss_base = prog.data_base.saturating_add(prog.data.len() as u32);
                 if prog.bss_size > 0 {
-                    if let Err(e) = zero_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, bss_base, prog.bss_size) {
+                    if let Err(e) = zero_bytes(
+                        &mut self.run.machine.mem_mut_unjournaled().ram,
+                        bss_base,
+                        prog.bss_size,
+                    ) {
                         self.console.push_error(e.to_string());
                         self.run.faulted = true;
                         return;
@@ -854,10 +1034,7 @@ impl App {
                 if self.run.vm_mode.is_auto() {
                     let scheme = self.active_scheme();
                     let root_pa = scheme.root_pa(self.run.mem_size as u32);
-                    let window = (
-                        self.run.base_pc.min(prog.data_base),
-                        self.run.heap_start,
-                    );
+                    let window = (self.run.base_pc.min(prog.data_base), self.run.heap_start);
                     crate::falcon::mmu::Mmu::install_map_scheme(
                         &mut self.run.machine.mem_mut_unjournaled().ram,
                         root_pa,
@@ -874,7 +1051,8 @@ impl App {
                 }
 
                 // Reset pipeline stages (shares cpu/mem with RunState)
-                let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+                let __rpc = self.run.cpu().pc;
+                self.run.pipeline_mut().reset_stages(__rpc);
 
                 self.editor.last_assemble_msg = Some(format!(
                     "Assembled {} instructions, {} data bytes, {} bss bytes.",
@@ -903,6 +1081,10 @@ impl App {
     }
 
     fn check_assemble(&mut self) {
+        if self.is_portable_architecture() {
+            self.portable_assemble_and_load();
+            return;
+        }
         use falcon::asm::assemble;
         let (src, offsets) = self.combined_source();
         match assemble(&src, self.run.base_pc) {
@@ -951,6 +1133,16 @@ impl App {
     }
 
     fn load_last_ok_program(&mut self) {
+        if self.is_portable_architecture() {
+            if let (Some(machine), Some(image)) =
+                (self.portable_machine.as_mut(), self.portable_image.as_ref())
+            {
+                if let Err(error) = machine.load(image) {
+                    self.console.push_error(error.to_string());
+                }
+            }
+            return;
+        }
         self.reset_screen_device();
         // ELF path: re-parse the original bytes so all segments are restored correctly.
         if let Some(elf_bytes) = self.editor.last_ok_elf_bytes.clone() {
@@ -969,7 +1161,10 @@ impl App {
             *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
             self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
             self.run.prev_pc = self.run.cpu().pc;
-            self.run.machine.cpu_mut_unjournaled().write(2, self.run.mem_size as u32);
+            self.run
+                .machine
+                .cpu_mut_unjournaled()
+                .write(2, self.run.mem_size as u32);
             *self.run.machine.mem_mut_unjournaled() = CacheController::new(
                 self.cache.pending_icache.clone(),
                 self.cache.pending_dcache.clone(),
@@ -998,12 +1193,20 @@ impl App {
             self.run.faulted = false;
 
             // Write directly to RAM (bypass cache) so invalidate() won't discard data
-            if let Err(e) = load_words(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.base_pc, text) {
+            if let Err(e) = load_words(
+                &mut self.run.machine.mem_mut_unjournaled().ram,
+                self.run.base_pc,
+                text,
+            ) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
             }
-            if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, data_base, data) {
+            if let Err(e) = load_bytes(
+                &mut self.run.machine.mem_mut_unjournaled().ram,
+                data_base,
+                data,
+            ) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
@@ -1011,7 +1214,11 @@ impl App {
             if let Some(bss) = self.editor.last_ok_bss_size {
                 if bss > 0 {
                     let bss_base = data_base.saturating_add(data.len() as u32);
-                    if let Err(e) = zero_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, bss_base, bss) {
+                    if let Err(e) = zero_bytes(
+                        &mut self.run.machine.mem_mut_unjournaled().ram,
+                        bss_base,
+                        bss,
+                    ) {
                         self.console.push_error(e.to_string());
                         self.run.faulted = true;
                         return;
@@ -1055,12 +1262,18 @@ impl App {
             self.reset_exec_regions_to_loaded_text();
             self.sync_pipeline_program_range();
             // Reset pipeline stages so it picks up the reloaded program
-            let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+            let __rpc = self.run.cpu().pc;
+            self.run.pipeline_mut().reset_stages(__rpc);
             self.rebuild_harts();
         }
     }
 
     pub(super) fn restart_simulation(&mut self) {
+        if let Some(machine) = self.portable_machine.as_mut() {
+            self.run.is_running = false;
+            machine.reset();
+            return;
+        }
         self.run.is_running = false;
         self.run.faulted = false;
         // Drop step-back history: the timeline (and any GO checkpoint) belongs to
@@ -1078,7 +1291,8 @@ impl App {
         self.cache.window_start_instr = 0;
         self.load_last_ok_program();
         // Reset pipeline AFTER loading program (cpu.pc is now set correctly)
-        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+        let __rpc = self.run.cpu().pc;
+        self.run.pipeline_mut().reset_stages(__rpc);
         self.rebuild_harts();
         // Rebuild JIT backend AFTER load so FullBackend can scan the loaded program.
         self.rebuild_backend();
@@ -1094,6 +1308,23 @@ impl App {
     }
 
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
+        if self.is_portable_architecture() {
+            let result = raven_riscv_engine::ProgramImage::from_falc(bytes)
+                .map_err(|error| error.to_string())
+                .and_then(|image| {
+                    self.portable_machine
+                        .as_mut()
+                        .unwrap()
+                        .load(&image)
+                        .map_err(|e| e.to_string())?;
+                    self.portable_image = Some(image);
+                    Ok(())
+                });
+            if let Err(error) = result {
+                self.console.push_error(error);
+            }
+            return;
+        }
         self.reset_screen_device();
         self.run.prev_x = self.run.cpu().x;
         self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024); // default 16 MB for ELF (heap support)
@@ -1105,7 +1336,10 @@ impl App {
         self.run.exec_counts.clear();
         self.run.exec_trace.clear();
         self.run.mem_access_log.clear();
-        self.run.machine.cpu_mut_unjournaled().write(2, self.run.mem_size as u32);
+        self.run
+            .machine
+            .cpu_mut_unjournaled()
+            .write(2, self.run.mem_size as u32);
         *self.run.machine.mem_mut_unjournaled() = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
@@ -1125,7 +1359,10 @@ impl App {
         // ── Detect format and load ───────────────────────────────────────
         if bytes.len() >= 4 && &bytes[0..4] == b"\x7fELF" {
             // ── ELF32 LE RISC-V ─────────────────────────────────────────
-            let info = match falcon::program::load_elf(bytes, &mut self.run.machine.mem_mut_unjournaled().ram) {
+            let info = match falcon::program::load_elf(
+                bytes,
+                &mut self.run.machine.mem_mut_unjournaled().ram,
+            ) {
                 Ok(i) => i,
                 Err(e) => {
                     self.console.push_error(e.to_string());
@@ -1193,8 +1430,47 @@ impl App {
             // ── FALC or flat binary ──────────────────────────────────────
             self.run.elf_sections = Vec::new();
             use falcon::program::{load_bytes, zero_bytes};
-            let (text_bytes, data_bytes, bss_size): (Vec<u8>, Vec<u8>, u32) =
-                if bytes.len() >= 16 && &bytes[0..4] == b"FALC" {
+            let (text_bytes, data_bytes, bss_size): (Vec<u8>, Vec<u8>, u32) = if bytes.len() >= 16
+                && &bytes[0..4] == b"FALC"
+            {
+                if u32::from_le_bytes(bytes[4..8].try_into().unwrap()) == u32::MAX {
+                    let image = match raven_riscv_engine::ProgramImage::from_falc(bytes) {
+                        Ok(image) if image.architecture == "riscv32" => image,
+                        Ok(image) => {
+                            self.console.push_error(format!(
+                                "Binary targets {}; switch architecture before opening it",
+                                image.architecture
+                            ));
+                            self.run.faulted = true;
+                            return;
+                        }
+                        Err(error) => {
+                            self.console.push_error(error.to_string());
+                            self.run.faulted = true;
+                            return;
+                        }
+                    };
+                    self.run.base_pc = image.entry as u32;
+                    let text = image
+                        .segments
+                        .iter()
+                        .find(|segment| segment.executable)
+                        .map(|segment| segment.bytes.clone())
+                        .unwrap_or_default();
+                    let data_segment = image.segments.iter().find(|segment| !segment.executable);
+                    if let Some(segment) = data_segment {
+                        self.run.data_base = segment.address as u32;
+                    }
+                    let data = data_segment
+                        .map(|segment| segment.bytes.clone())
+                        .unwrap_or_default();
+                    let bss = image
+                        .zero_fill
+                        .first()
+                        .map(|fill| fill.size as u32)
+                        .unwrap_or(0);
+                    (text, data, bss)
+                } else {
                     let text_sz = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
                     let data_sz = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
                     let bss_sz = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
@@ -1209,17 +1485,26 @@ impl App {
                         body[text_sz..text_sz + data_sz].to_vec(),
                         bss_sz,
                     )
-                } else {
-                    (bytes.to_vec(), Vec::new(), 0)
-                };
+                }
+            } else {
+                (bytes.to_vec(), Vec::new(), 0)
+            };
 
-            if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.base_pc, &text_bytes) {
+            if let Err(e) = load_bytes(
+                &mut self.run.machine.mem_mut_unjournaled().ram,
+                self.run.base_pc,
+                &text_bytes,
+            ) {
                 self.console.push_error(e.to_string());
                 self.run.faulted = true;
                 return;
             }
             if !data_bytes.is_empty() {
-                if let Err(e) = load_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, self.run.data_base, &data_bytes) {
+                if let Err(e) = load_bytes(
+                    &mut self.run.machine.mem_mut_unjournaled().ram,
+                    self.run.data_base,
+                    &data_bytes,
+                ) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
@@ -1227,7 +1512,11 @@ impl App {
             }
             if bss_size > 0 {
                 let bss_base = self.run.data_base + data_bytes.len() as u32;
-                if let Err(e) = zero_bytes(&mut self.run.machine.mem_mut_unjournaled().ram, bss_base, bss_size) {
+                if let Err(e) = zero_bytes(
+                    &mut self.run.machine.mem_mut_unjournaled().ram,
+                    bss_base,
+                    bss_size,
+                ) {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
                     return;
@@ -1300,9 +1589,11 @@ impl App {
         self.mode = EditorMode::Command;
         self.editor.elf_prompt_open = false;
         // Reset pipeline stages (shares cpu/mem with RunState)
-        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+        let __rpc = self.run.cpu().pc;
+        self.run.pipeline_mut().reset_stages(__rpc);
         self.rebuild_harts();
-        let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+        let __rpc = self.run.cpu().pc;
+        self.run.pipeline_mut().reset_stages(__rpc);
     }
 
     /// Convert the currently-loaded ELF into an editable assembly source and load
@@ -1667,7 +1958,12 @@ impl App {
             self.tlb.map_status = Some("TLB: entry count must be ≥ associativity ≥ 1".into());
             return;
         }
-        self.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
+        self.run
+            .machine
+            .mem_mut_unjournaled()
+            .mmu_mut()
+            .tlb
+            .reconfigure(cfg);
         if self.run.vm_mode.is_auto() {
             self.apply_page_map();
         } else {
@@ -1682,8 +1978,7 @@ impl App {
     pub(crate) fn apply_page_map(&mut self) {
         use crate::falcon::mmu::{Mmu, Satp, VmMode};
         if !self.run.vm_mode.is_auto() {
-            self.tlb.map_status =
-                Some("set VM mode to Sv32 or Custom first".into());
+            self.tlb.map_status = Some("set VM mode to Sv32 or Custom first".into());
             return;
         }
         // In Custom mode validate the user scheme before touching RAM.
@@ -1698,9 +1993,18 @@ impl App {
             crate::falcon::mmu::PagingScheme::sv32()
         };
         let root_pa = scheme.root_pa(self.run.mem_size as u32);
-        let window = (self.run.base_pc.min(self.run.data_base), self.run.heap_start);
+        let window = (
+            self.run.base_pc.min(self.run.data_base),
+            self.run.heap_start,
+        );
         let spec = self.tlb.pending_map;
-        Mmu::install_map_scheme(&mut self.run.machine.mem_mut_unjournaled().ram, root_pa, &scheme, spec, window);
+        Mmu::install_map_scheme(
+            &mut self.run.machine.mem_mut_unjournaled().ram,
+            root_pa,
+            &scheme,
+            spec,
+            window,
+        );
         let satp_val = Mmu::make_satp(root_pa, spec.asid);
         self.run.machine.cpu_mut_unjournaled().satp = satp_val;
         let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
@@ -1837,7 +2141,13 @@ impl App {
     }
 
     fn process_pending_exec_map_for_selected(&mut self) {
-        if let Some(region) = self.run.machine.cpu_mut_unjournaled().pending_exec_map.take() {
+        if let Some(region) = self
+            .run
+            .machine
+            .cpu_mut_unjournaled()
+            .pending_exec_map
+            .take()
+        {
             self.register_exec_region(region);
         }
     }
@@ -2010,6 +2320,21 @@ impl App {
     }
 
     fn tick(&mut self) {
+        if self.is_portable_architecture() {
+            if self.run.is_running {
+                self.portable_step();
+            }
+            if matches!(self.tab, Tab::Editor)
+                && self.editor.dirty
+                && self
+                    .editor
+                    .last_edit_at
+                    .is_some_and(|at| at.elapsed() >= self.editor.auto_check_delay)
+            {
+                self.check_assemble();
+            }
+            return;
+        }
         if self.run.cpu().exit_code.is_some() || self.run.cpu().local_exit {
             self.run.is_running = false;
         }
@@ -2033,7 +2358,8 @@ impl App {
             // use pipeline speed for rate-limiting (educational slow stepping).
             // Otherwise use run speed.
             use crate::ui::pipeline::PipelineSpeed;
-            let use_pipeline_speed = (self.run.pipeline().enabled || self.run.pipeline().sequential_mode)
+            let use_pipeline_speed = (self.run.pipeline().enabled
+                || self.run.pipeline().sequential_mode)
                 && matches!(self.tab, Tab::Pipeline);
 
             if use_pipeline_speed {
@@ -2335,11 +2661,16 @@ impl App {
         let before_f = self.run.cpu().f;
 
         let result: Result<(), String> = match target {
-            RunEditTarget::Reg(reg) => parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
-                .map_err(|e| e.message())
-                .and_then(|value| {
-                    self.run.machine.write_reg(reg, value as u32).map_err(|e| e.message())
-                }),
+            RunEditTarget::Reg(reg) => {
+                parse_cell(&buf, MemWidth::B4, self.cell_format(), self.run.show_signed)
+                    .map_err(|e| e.message())
+                    .and_then(|value| {
+                        self.run
+                            .machine
+                            .write_reg(reg, value as u32)
+                            .map_err(|e| e.message())
+                    })
+            }
             RunEditTarget::FReg(freg) => match buf.trim().parse::<f32>() {
                 Ok(value) => {
                     self.run.machine.write_freg(freg, value.to_bits());
@@ -2351,7 +2682,10 @@ impl App {
                 parse_cell(&buf, width, self.cell_format(), self.run.show_signed)
                     .map_err(|e| e.message())
                     .and_then(|value| {
-                        self.run.machine.write_mem(addr, width, value).map_err(|e| e.to_string())
+                        self.run
+                            .machine
+                            .write_mem(addr, width, value)
+                            .map_err(|e| e.to_string())
                     })
             }
             RunEditTarget::Instr { addr } => {
@@ -2374,8 +2708,9 @@ impl App {
                         "{:?} is not a field of this instruction format",
                         field
                     )),
-                    _ => instr_edit::parse_field_value(field, &buf)
-                        .and_then(|v| instr_edit::splice_field(current, detect_format(current), field, v)),
+                    _ => instr_edit::parse_field_value(field, &buf).and_then(|v| {
+                        instr_edit::splice_field(current, detect_format(current), field, v)
+                    }),
                 };
                 new_word.and_then(|word| self.write_instr_word(addr, word))
             }
@@ -2389,7 +2724,8 @@ impl App {
                 // address. Mirrors the imem PC-redirect click. The redirect is
                 // reversible state captured by the change-set's pipeline
                 // snapshot, so step-back undoes it together with the PC write.
-                if matches!(target, RunEditTarget::Reg(RegTarget::Pc)) && self.run.pipeline().enabled
+                if matches!(target, RunEditTarget::Reg(RegTarget::Pc))
+                    && self.run.pipeline().enabled
                 {
                     let pc = self.run.cpu().pc;
                     self.run.pipeline_mut().redirect_pc(pc);
@@ -2468,7 +2804,12 @@ impl App {
 
     /// Refresh the Run tab's highlight bookkeeping after a committed edit:
     /// light up the register/float it changed and flag the touched memory cell.
-    fn refresh_after_edit(&mut self, before_x: [u32; 32], before_f: [u32; 32], target: RunEditTarget) {
+    fn refresh_after_edit(
+        &mut self,
+        before_x: [u32; 32],
+        before_f: [u32; 32],
+        target: RunEditTarget,
+    ) {
         let pc = self.run.cpu().pc;
         let now_x = self.run.cpu().x;
         let now_f = self.run.cpu().f;
@@ -2487,7 +2828,9 @@ impl App {
                 self.run.mem_access_log.push((addr, width.bytes(), 0));
             }
             RunEditTarget::Instr { addr } | RunEditTarget::InstrField { addr, .. } => {
-                self.run.mem_access_log.push((addr, MemWidth::B4.bytes(), 0));
+                self.run
+                    .mem_access_log
+                    .push((addr, MemWidth::B4.bytes(), 0));
             }
             _ => {}
         }
@@ -2634,7 +2977,8 @@ impl App {
                 && !self.run.pipeline().halted
                 && !self.run.pipeline().faulted
             {
-                let __rpc = self.run.cpu().pc; self.run.pipeline_mut().reset_stages(__rpc);
+                let __rpc = self.run.cpu().pc;
+                self.run.pipeline_mut().reset_stages(__rpc);
             }
         }
 
@@ -2656,9 +3000,7 @@ impl App {
         // the console, which is disjoint from `self.run.machine`.
         let console = &mut self.console;
         let commit = self.run.machine.step_pipeline(
-            |pipe, cpu, mem| {
-                crate::ui::pipeline::sim::pipeline_tick(pipe, cpu, mem, &cpi, console)
-            },
+            |pipe, cpu, mem| crate::ui::pipeline::sim::pipeline_tick(pipe, cpu, mem, &cpi, console),
             |commit| commit.is_some(),
         );
 
@@ -2841,6 +3183,10 @@ impl App {
     }
 
     pub(super) fn single_step(&mut self) {
+        if self.is_portable_architecture() {
+            self.portable_step();
+            return;
+        }
         if self.core_status(self.selected_core) == HartLifecycle::Paused {
             self.resume_selected_hart();
         }
@@ -3037,7 +3383,10 @@ impl App {
                 }
             };
             if go_mode {
-                self.run.machine.mem_mut_unjournaled().add_instruction_cycles(cpi_cycles);
+                self.run
+                    .machine
+                    .mem_mut_unjournaled()
+                    .add_instruction_cycles(cpi_cycles);
                 self.run.machine.mem_mut_unjournaled().snapshot_stats();
             } else {
                 // Dobra o accounting de ciclos/stats dentro do passo journalizado,

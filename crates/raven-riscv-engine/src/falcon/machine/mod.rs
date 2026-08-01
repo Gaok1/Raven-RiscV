@@ -1,4 +1,4 @@
-﻿//! `Machine` â€” the single sanctioned owner of mutable simulator state.
+//! `Machine` â€” the single sanctioned owner of mutable simulator state.
 //!
 //! The Run tab needs to *undo* execution (step-back) and *edit* live state
 //! (registers, floats, RAM, the PC) without ever leaving the step journal in a
@@ -45,8 +45,8 @@ use crate::falcon::memory::Bus;
 use crate::falcon::registers::Cpu;
 use crate::ui::Console;
 
-use journal::{ChangeSet, Rewind, StepJournal};
 pub use journal::StepbackKind;
+use journal::{ChangeSet, Rewind, StepJournal};
 use types::{EditError, FRegId, MemWidth, RegTarget};
 
 /// A pipeline whose per-cycle microarchitectural state the [`Machine`] owns and
@@ -155,10 +155,7 @@ impl<P: JournaledPipeline> Machine<P> {
     ///
     /// The change-set is recorded even when the step returns an error, so a
     /// partially-applied faulting instruction is still reversible.
-    pub fn step_interpreted(
-        &mut self,
-        console: &mut Console,
-    ) -> Result<ExecOutcome, FalconError> {
+    pub fn step_interpreted(&mut self, console: &mut Console) -> Result<ExecOutcome, FalconError> {
         let cpu_before = self.cpu.clone();
         let cache_before = self.mem.snapshot_state();
         self.mem.ram_mut().begin_recording();
@@ -169,7 +166,14 @@ impl<P: JournaledPipeline> Machine<P> {
         };
 
         let ram_log = self.mem.ram_mut().take_recording();
-        self.record(cpu_before, StepbackKind::Step, Rewind::Delta { cache_before, ram_log });
+        self.record(
+            cpu_before,
+            StepbackKind::Step,
+            Rewind::Delta {
+                cache_before,
+                ram_log,
+            },
+        );
         outcome
     }
 
@@ -256,7 +260,10 @@ impl<P: JournaledPipeline> Machine<P> {
             cpu_before,
             pipe_before,
             kind,
-            Rewind::Delta { cache_before, ram_log },
+            Rewind::Delta {
+                cache_before,
+                ram_log,
+            },
         );
         result
     }
@@ -290,12 +297,7 @@ impl<P: JournaledPipeline> Machine<P> {
     /// Write a `width`-byte cell at `addr` through the normal cache-aware store
     /// path, so subsequent loads see the edit. `value` is the little-endian
     /// payload (already range-checked by [`parse::parse_cell`]).
-    pub fn write_mem(
-        &mut self,
-        addr: u32,
-        width: MemWidth,
-        value: u64,
-    ) -> Result<(), FalconError> {
+    pub fn write_mem(&mut self, addr: u32, width: MemWidth, value: u64) -> Result<(), FalconError> {
         let cpu_before = self.cpu.clone();
         let cache_before = self.mem.snapshot_state();
         self.mem.ram_mut().begin_recording();
@@ -307,7 +309,14 @@ impl<P: JournaledPipeline> Machine<P> {
         };
 
         let ram_log = self.mem.ram_mut().take_recording();
-        self.record(cpu_before, StepbackKind::Edit, Rewind::Delta { cache_before, ram_log });
+        self.record(
+            cpu_before,
+            StepbackKind::Edit,
+            Rewind::Delta {
+                cache_before,
+                ram_log,
+            },
+        );
         result
     }
 
@@ -328,7 +337,10 @@ impl<P: JournaledPipeline> Machine<P> {
         self.pipeline.restore_exec(change.pipe_before);
         match change.rewind {
             Rewind::CpuOnly => {}
-            Rewind::Delta { cache_before, ram_log } => {
+            Rewind::Delta {
+                cache_before,
+                ram_log,
+            } => {
                 self.mem.restore_state(cache_before);
                 // Replay pre-images back-to-front so overlapping writes land on
                 // their oldest value.
@@ -337,9 +349,14 @@ impl<P: JournaledPipeline> Machine<P> {
                     ram.poke8(addr, old);
                 }
             }
-            Rewind::Full { cache_before, ram_before } => {
+            Rewind::Full {
+                cache_before,
+                ram_before,
+            } => {
                 self.mem.restore_state(cache_before);
-                self.mem.ram_mut().copy_from_slice(&ram_before, ram_before.len());
+                self.mem
+                    .ram_mut()
+                    .copy_from_slice(&ram_before, ram_before.len());
             }
         }
         self.clock = self.journal.top_clock().unwrap_or(0);
@@ -353,7 +370,14 @@ impl<P: JournaledPipeline> Machine<P> {
         let cpu_before = self.cpu.clone();
         let cache_before = self.mem.snapshot_state();
         let ram_before = self.mem.ram().as_bytes().to_vec();
-        self.record(cpu_before, StepbackKind::Checkpoint, Rewind::Full { cache_before, ram_before });
+        self.record(
+            cpu_before,
+            StepbackKind::Checkpoint,
+            Rewind::Full {
+                cache_before,
+                ram_before,
+            },
+        );
     }
 
     /// Drop all history (reset / program reload / mode switch).
@@ -442,4 +466,3 @@ impl<P: JournaledPipeline> Machine<P> {
 #[cfg(test)]
 #[path = "../../../tests/support/falcon_machine.rs"]
 mod tests;
-

@@ -1,5 +1,9 @@
 use crate::falcon::machine::types::{FRegId, MemWidth, RegId, RegTarget};
 use crate::ui::input::keyboard::{do_export_config, do_export_results, do_import_config};
+use crate::ui::platform::OSFileDialog;
+use crate::ui::view::components::SbGeom;
+use crate::ui::view::components::layout;
+use crate::ui::view::components::panel::{self, PanelKind};
 use crate::ui::view::run::{
     RUN_COLLAPSED_RAIL_W, RUN_DETAILS_MIN_W, RUN_IMEM_MIN_W, RUN_SIDEBAR_MIN_W,
     run_panel_constraints,
@@ -7,19 +11,14 @@ use crate::ui::view::run::{
 use crate::ui::view::{
     ELF_BTN_CANCEL, ELF_BTN_DISCARD, ELF_BTN_EDIT, ELF_BTN_ROW, ELF_POPUP_H, ELF_POPUP_W,
 };
-use crate::ui::view::components::layout;
-use crate::ui::view::components::panel::{self, PanelKind};
-use crate::ui::view::components::SbGeom;
-use crate::ui::platform::OSFileDialog;
 use crate::ui::{
     app::{
         App, CacheHoverTarget, CacheScope, CacheSubtab, CacheViewFocus, ConfigField, DocsPage,
         EditorMode, FormatMode, InstrFieldKind, MemRegion, PathInputAction, RunButton,
-        RunEditTarget, SbDrag,
-        SETTINGS_ROW_CACHE_ENABLED,
-        SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE,
-        SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET,
-        SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, Tab,
+        RunEditTarget, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
+        SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
+        SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
+        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SbDrag, Tab,
     },
     editor::Editor,
 };
@@ -87,9 +86,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             }
         } else if me.row == area.y {
             // Same bar the renderer draws; origin is one column in from the edge.
-            if let Some(tab) =
-                crate::ui::view::build_main_tab_bar(app).hit(me.column, area.x + 1)
-            {
+            if let Some(tab) = crate::ui::view::build_main_tab_bar(app).hit(me.column, area.x + 1) {
                 app.hover_tab = Some(tab);
                 if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
                     if tab != app.tab && matches!(app.tab, Tab::Editor) && app.editor.dirty {
@@ -127,7 +124,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 // Bottom-anchored scroll: wheel-up moves into scrollback.
                 if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
                     let max = app.run.pipeline().gantt_max_scroll_cache.get();
-                    app.run.pipeline_mut().gantt_scroll = (app.run.pipeline_mut().gantt_scroll + 1).min(max);
+                    app.run.pipeline_mut().gantt_scroll =
+                        (app.run.pipeline_mut().gantt_scroll + 1).min(max);
                 }
             }
             Tab::Docs => {
@@ -189,7 +187,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             Tab::Pipeline => {
                 // Bottom-anchored scroll: wheel-down moves back toward follow (0).
                 if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
-                    app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
+                    app.run.pipeline_mut().gantt_scroll =
+                        app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
                 }
             }
             Tab::Docs => {
@@ -402,7 +401,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         }
         if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) {
             if let (Some(grab), Some(bar)) = (app.editor.sb_drag, app.editor.sb.get()) {
-                app.editor.buf.scroll_to(bar.drag(me.row, grab), bar.viewport);
+                app.editor
+                    .buf
+                    .scroll_to(bar.drag(me.row, grab), bar.viewport);
                 return;
             }
         }
@@ -1207,39 +1208,17 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
             .set_file_name("program.bin")
             .save_file()
         {
-            // Use cached result when available; otherwise re-assemble.
-            let (words, data, bss_size) = match (
-                app.editor.last_ok_text.as_ref(),
-                app.editor.last_ok_data.as_ref(),
-                app.editor.last_ok_bss_size,
-            ) {
-                (Some(t), Some(d), bss) => (t.clone(), d.clone(), bss.unwrap_or(0)),
-                _ => match crate::falcon::asm::assemble(&app.combined_source().0, app.run.base_pc) {
-                    Ok(p) => (p.text, p.data, p.bss_size),
-                    Err(e) => {
-                        app.console.push_error(format!(
-                            "Cannot export: assemble error at line {}: {}",
-                            e.line + 1,
-                            e.msg
-                        ));
-                        return;
+            match app
+                .export_program_image()
+                .and_then(|image| image.to_falc_v2().map_err(|error| error.to_string()))
+            {
+                Ok(bytes) => {
+                    if let Err(error) = std::fs::write(path, bytes) {
+                        app.console.push_error(format!("Cannot export: {error}"));
                     }
-                },
-            };
-            // FALC format: "FALC" + text_size(u32LE) + data_size(u32LE) + bss_size(u32LE)
-            //              + text_bytes + data_bytes
-            // BSS is NOT stored — loader zero-initialises it at runtime.
-            let text_bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-            let text_size = text_bytes.len() as u32;
-            let data_size = data.len() as u32;
-            let mut bytes: Vec<u8> = Vec::with_capacity(16 + text_bytes.len() + data.len());
-            bytes.extend_from_slice(b"FALC");
-            bytes.extend_from_slice(&text_size.to_le_bytes());
-            bytes.extend_from_slice(&data_size.to_le_bytes());
-            bytes.extend_from_slice(&bss_size.to_le_bytes());
-            bytes.extend_from_slice(&text_bytes);
-            bytes.extend_from_slice(&data);
-            let _ = std::fs::write(path, bytes);
+                }
+                Err(error) => app.console.push_error(format!("Cannot export: {error}")),
+            }
         } else {
             super::keyboard::open_path_input(app, PathInputAction::SaveBin);
         }
@@ -2213,10 +2192,9 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
                     app.cache.config_preset_origin_d.get()
                 };
                 if me.row == py {
-                    if let Some(i) = crate::ui::view::cache::config::build_cache_preset_bar(
-                        app, is_icache,
-                    )
-                    .hit(me.column, px)
+                    if let Some(i) =
+                        crate::ui::view::cache::config::build_cache_preset_bar(app, is_icache)
+                            .hit(me.column, px)
                     {
                         app.cache.hover = Some(if is_icache {
                             CacheHoverTarget::PresetI(i)
@@ -2243,9 +2221,8 @@ fn update_cache_hover(app: &mut App, me: MouseEvent, area: Rect) {
 
             let (py, px) = app.cache.config_preset_origin_u.get();
             if me.row == py {
-                if let Some(i) =
-                    crate::ui::view::cache::config::build_cache_unified_preset_bar(app)
-                        .hit(me.column, px)
+                if let Some(i) = crate::ui::view::cache::config::build_cache_unified_preset_bar(app)
+                    .hit(me.column, px)
                 {
                     app.cache.hover = Some(CacheHoverTarget::PresetD(i));
                 }
@@ -2482,12 +2459,18 @@ fn apply_l1_config(app: &mut App, keep_history: bool) {
         app.cache.config_status = Some("Settings applied (history kept).".to_string());
         let old_istats = std::mem::take(&mut app.run.machine.mem_mut_unjournaled().icache.stats);
         let old_dstats = std::mem::take(&mut app.run.machine.mem_mut_unjournaled().dcache.stats);
-        app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, extra);
+        app.run
+            .machine
+            .mem_mut_unjournaled()
+            .apply_config(icfg, dcfg, extra);
         app.run.machine.mem_mut_unjournaled().icache.stats.history = old_istats.history;
         app.run.machine.mem_mut_unjournaled().dcache.stats.history = old_dstats.history;
     } else {
         app.cache.config_status = Some("Settings applied (stats reset).".to_string());
-        app.run.machine.mem_mut_unjournaled().apply_config(icfg, dcfg, extra);
+        app.run
+            .machine
+            .mem_mut_unjournaled()
+            .apply_config(icfg, dcfg, extra);
     }
     app.run.machine.mem_mut_unjournaled().bypass = !app.run.cache_enabled;
     app.cache.view_scroll = 0;
@@ -2567,8 +2550,9 @@ fn apply_extra_config(app: &mut App, extra_idx: usize, keep_history: bool) {
             app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx] =
                 crate::falcon::cache::Cache::new(cfg);
             if let Some(s) = old_stats {
-                app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx].stats.history =
-                    s.history;
+                app.run.machine.mem_mut_unjournaled().extra_levels[extra_idx]
+                    .stats
+                    .history = s.history;
             }
         }
     } else {
@@ -2930,10 +2914,22 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
             let (ry, rx0, rx1) = rects[i];
             if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
                 match i {
-                    0 => app.run.pipeline_mut().bypass.ex_to_ex = !app.run.pipeline_mut().bypass.ex_to_ex,
-                    1 => app.run.pipeline_mut().bypass.mem_to_ex = !app.run.pipeline_mut().bypass.mem_to_ex,
-                    2 => app.run.pipeline_mut().bypass.wb_to_id = !app.run.pipeline_mut().bypass.wb_to_id,
-                    3 => app.run.pipeline_mut().bypass.store_to_load = !app.run.pipeline_mut().bypass.store_to_load,
+                    0 => {
+                        app.run.pipeline_mut().bypass.ex_to_ex =
+                            !app.run.pipeline_mut().bypass.ex_to_ex
+                    }
+                    1 => {
+                        app.run.pipeline_mut().bypass.mem_to_ex =
+                            !app.run.pipeline_mut().bypass.mem_to_ex
+                    }
+                    2 => {
+                        app.run.pipeline_mut().bypass.wb_to_id =
+                            !app.run.pipeline_mut().bypass.wb_to_id
+                    }
+                    3 => {
+                        app.run.pipeline_mut().bypass.store_to_load =
+                            !app.run.pipeline_mut().bypass.store_to_load
+                    }
                     4 => {
                         app.run.pipeline_mut().mode = match app.run.pipeline_mut().mode {
                             PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
@@ -2941,11 +2937,12 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                         }
                     }
                     5 => {
-                        app.run.pipeline_mut().branch_resolve = match app.run.pipeline_mut().branch_resolve {
-                            BranchResolve::Id => BranchResolve::Ex,
-                            BranchResolve::Ex => BranchResolve::Mem,
-                            BranchResolve::Mem => BranchResolve::Id,
-                        }
+                        app.run.pipeline_mut().branch_resolve =
+                            match app.run.pipeline_mut().branch_resolve {
+                                BranchResolve::Id => BranchResolve::Ex,
+                                BranchResolve::Ex => BranchResolve::Mem,
+                                BranchResolve::Mem => BranchResolve::Id,
+                            }
                     }
                     6 => {
                         let next = match app.run.pipeline().predict {
@@ -2958,51 +2955,57 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                     }
                     7 => {
                         let idx = crate::ui::pipeline::FuKind::Alu.index();
-                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
-                            1
-                        } else {
-                            app.run.pipeline_mut().fu_capacity[idx] + 1
-                        };
+                        app.run.pipeline_mut().fu_capacity[idx] =
+                            if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
+                                1
+                            } else {
+                                app.run.pipeline_mut().fu_capacity[idx] + 1
+                            };
                     }
                     8 => {
                         let idx = crate::ui::pipeline::FuKind::Mul.index();
-                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
-                            1
-                        } else {
-                            app.run.pipeline_mut().fu_capacity[idx] + 1
-                        };
+                        app.run.pipeline_mut().fu_capacity[idx] =
+                            if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
+                                1
+                            } else {
+                                app.run.pipeline_mut().fu_capacity[idx] + 1
+                            };
                     }
                     9 => {
                         let idx = crate::ui::pipeline::FuKind::Div.index();
-                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
-                            1
-                        } else {
-                            app.run.pipeline_mut().fu_capacity[idx] + 1
-                        };
+                        app.run.pipeline_mut().fu_capacity[idx] =
+                            if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
+                                1
+                            } else {
+                                app.run.pipeline_mut().fu_capacity[idx] + 1
+                            };
                     }
                     10 => {
                         let idx = crate::ui::pipeline::FuKind::Fpu.index();
-                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
-                            1
-                        } else {
-                            app.run.pipeline_mut().fu_capacity[idx] + 1
-                        };
+                        app.run.pipeline_mut().fu_capacity[idx] =
+                            if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
+                                1
+                            } else {
+                                app.run.pipeline_mut().fu_capacity[idx] + 1
+                            };
                     }
                     11 => {
                         let idx = crate::ui::pipeline::FuKind::Lsu.index();
-                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
-                            1
-                        } else {
-                            app.run.pipeline_mut().fu_capacity[idx] + 1
-                        };
+                        app.run.pipeline_mut().fu_capacity[idx] =
+                            if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
+                                1
+                            } else {
+                                app.run.pipeline_mut().fu_capacity[idx] + 1
+                            };
                     }
                     12 => {
                         let idx = crate::ui::pipeline::FuKind::Sys.index();
-                        app.run.pipeline_mut().fu_capacity[idx] = if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
-                            1
-                        } else {
-                            app.run.pipeline_mut().fu_capacity[idx] + 1
-                        };
+                        app.run.pipeline_mut().fu_capacity[idx] =
+                            if app.run.pipeline_mut().fu_capacity[idx] >= 8 {
+                                1
+                            } else {
+                                app.run.pipeline_mut().fu_capacity[idx] + 1
+                            };
                     }
                     _ => {}
                 }

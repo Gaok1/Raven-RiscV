@@ -100,7 +100,10 @@ pub(super) fn serialize_rcfg(
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!("cache_enabled={}\n", cache_enabled));
     s.push_str(&format!("pipeline_enabled={}\n", pipeline_enabled));
-    s.push_str(&format!("vm_mode={}\n", vm_mode.as_str().to_ascii_lowercase()));
+    s.push_str(&format!(
+        "vm_mode={}\n",
+        vm_mode.as_str().to_ascii_lowercase()
+    ));
     // Custom paging geometry (ignored unless vm_mode=custom on load).
     s.push_str(&format!("vm_offset_bits={}\n", vm_scheme.offset_bits));
     let level_bits: Vec<String> = vm_scheme.level_bits.iter().map(|b| b.to_string()).collect();
@@ -152,10 +155,11 @@ pub(super) fn parse_pcfg(text: &str) -> Result<crate::ui::pipeline::PipelineConf
 /// sit under a single top-level header.
 pub(crate) fn strip_leading_banner(text: &str) -> &str {
     match text.split_once('\n') {
-        Some((first, rest)) if {
-            let t = first.trim_start();
-            t.starts_with("# Raven") || t.starts_with("# FALCON")
-        } =>
+        Some((first, rest))
+            if {
+                let t = first.trim_start();
+                t.starts_with("# Raven") || t.starts_with("# FALCON")
+            } =>
         {
             rest
         }
@@ -202,6 +206,7 @@ pub(crate) fn split_config_v3(text: &str) -> (String, String, String) {
 }
 
 pub(super) struct ConfigV3 {
+    pub(super) architecture: String,
     pub(super) sim: RcfgSettings,
     pub(super) icfg: CacheConfig,
     pub(super) dcfg: CacheConfig,
@@ -217,16 +222,36 @@ pub(super) fn parse_config_v3(text: &str) -> Result<ConfigV3, String> {
     if sim_t.trim().is_empty() && cache_t.trim().is_empty() && pipe_t.trim().is_empty() {
         return Err("not a Raven config: no [sim], [cache] or [pipeline] section".to_string());
     }
+    let architecture = sim_t
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            key.trim()
+                .eq_ignore_ascii_case("architecture")
+                .then(|| value.trim().to_ascii_lowercase())
+        })
+        .unwrap_or_else(|| "riscv32".to_string());
+    if !matches!(architecture.as_str(), "riscv32" | "toy16") {
+        return Err(format!("unknown architecture '{architecture}'"));
+    }
     let sim = parse_rcfg(&sim_t)?;
     let (icfg, dcfg, extra, tlb) = parse_cache_configs(&cache_t)?;
     let pipeline = parse_pcfg(&pipe_t)?;
-    Ok(ConfigV3 { sim, icfg, dcfg, extra, tlb, pipeline })
+    Ok(ConfigV3 {
+        architecture,
+        sim,
+        icfg,
+        dcfg,
+        extra,
+        tlb,
+        pipeline,
+    })
 }
 
 /// Serialize the whole live simulator config (sim + cache + pipeline) as a
 /// unified `.rcfg` v3 document.
 pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
-    let sim = serialize_rcfg(
+    let mut sim = serialize_rcfg(
         &app.run.cpi_config,
         app.run.cache_enabled,
         app.run.pipeline().enabled,
@@ -238,6 +263,7 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
         app.max_cores,
         app.run.jit_kind,
     );
+    sim.push_str(&format!("architecture={}\n", app.architecture_id()));
     let cache = serialize_cache_configs(
         &app.cache.pending_icache,
         &app.cache.pending_dcache,
@@ -250,6 +276,7 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
 
 /// Apply a parsed unified config to the app (cache + pipeline + sim).
 fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
+    let architecture = cfg.architecture.clone();
     app.cache.pending_icache = cfg.icfg;
     app.cache.pending_dcache = cfg.dcfg;
     let n_extra = cfg.extra.len();
@@ -266,10 +293,18 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
         app.cache.selected_level = n_extra;
     }
     app.tlb.pending = cfg.tlb.clone();
-    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg.tlb);
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .mmu_mut()
+        .tlb
+        .reconfigure(cfg.tlb);
     cfg.pipeline.apply_to_state(&mut app.run.pipeline_mut());
     // Sim settings applied last: may trigger a simulation restart.
     apply_rcfg(app, cfg.sim);
+    if let Err(error) = app.activate_architecture(&architecture, false) {
+        app.console.push_error(error);
+    }
 }
 
 pub(super) struct RcfgSettings {
@@ -344,7 +379,9 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         Some("custom") => crate::falcon::mmu::VmMode::Custom,
         Some("manual") => crate::falcon::mmu::VmMode::Manual,
         Some(other) => {
-            return Err(format!("invalid vm_mode: {other} (use off, sv32, custom, manual)"));
+            return Err(format!(
+                "invalid vm_mode: {other} (use off, sv32, custom, manual)"
+            ));
         }
         None => {
             // Legacy fallback: reconstruct from the old vm_enabled/vm_manual pair.
@@ -360,9 +397,7 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         }
     };
     let vm_scheme = {
-        let offset_bits = map
-            .get("vm_offset_bits")
-            .and_then(|v| v.parse::<u8>().ok());
+        let offset_bits = map.get("vm_offset_bits").and_then(|v| v.parse::<u8>().ok());
         let level_bits: Option<Vec<u8>> = map.get("vm_level_bits").map(|v| {
             v.split(',')
                 .filter_map(|p| p.trim().parse::<u8>().ok())
@@ -370,7 +405,10 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         });
         match (offset_bits, level_bits) {
             (Some(offset_bits), Some(level_bits)) if !level_bits.is_empty() => {
-                let s = crate::falcon::mmu::PagingScheme { offset_bits, level_bits };
+                let s = crate::falcon::mmu::PagingScheme {
+                    offset_bits,
+                    level_bits,
+                };
                 if s.is_valid() {
                     s
                 } else {
@@ -416,7 +454,11 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         Some("none") => Some(BackendKind::None),
         Some("hot") => Some(BackendKind::Hot),
         Some("full") => Some(BackendKind::Full),
-        Some(other) => return Err(format!("invalid jit_mode: {other} (use none, hot, or full)")),
+        Some(other) => {
+            return Err(format!(
+                "invalid jit_mode: {other} (use none, hot, or full)"
+            ));
+        }
         None => None,
     };
     Ok(RcfgSettings {
@@ -787,7 +829,12 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
         app.cache.selected_level = n_extra;
     }
     app.tlb.pending = tlb.clone();
-    app.run.machine.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
+    app.run
+        .machine
+        .mem_mut_unjournaled()
+        .mmu_mut()
+        .tlb
+        .reconfigure(tlb);
     Ok(())
 }
 
@@ -1544,37 +1591,17 @@ pub(super) fn dispatch_path_input(
                 app.editor.buf.cursor_col = 0;
             }
         }
-        PathInputAction::SaveBin => {
-            let (words, data, bss_size) = match (
-                app.editor.last_ok_text.as_ref(),
-                app.editor.last_ok_data.as_ref(),
-                app.editor.last_ok_bss_size,
-            ) {
-                (Some(t), Some(d), bss) => (t.clone(), d.clone(), bss.unwrap_or(0)),
-                _ => match crate::falcon::asm::assemble(&app.combined_source().0, app.run.base_pc) {
-                    Ok(p) => (p.text, p.data, p.bss_size),
-                    Err(e) => {
-                        app.console.push_error(format!(
-                            "Cannot export: assemble error at line {}: {}",
-                            e.line + 1,
-                            e.msg
-                        ));
-                        return;
-                    }
-                },
-            };
-            let text_bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-            let text_size = text_bytes.len() as u32;
-            let data_size = data.len() as u32;
-            let mut bytes: Vec<u8> = Vec::with_capacity(16 + text_bytes.len() + data.len());
-            bytes.extend_from_slice(b"FALC");
-            bytes.extend_from_slice(&text_size.to_le_bytes());
-            bytes.extend_from_slice(&data_size.to_le_bytes());
-            bytes.extend_from_slice(&bss_size.to_le_bytes());
-            bytes.extend_from_slice(&text_bytes);
-            bytes.extend_from_slice(&data);
-            let _ = std::fs::write(&path, bytes);
-        }
+        PathInputAction::SaveBin => match app
+            .export_program_image()
+            .and_then(|image| image.to_falc_v2().map_err(|error| error.to_string()))
+        {
+            Ok(bytes) => {
+                if let Err(error) = std::fs::write(&path, bytes) {
+                    app.console.push_error(format!("Cannot export: {error}"));
+                }
+            }
+            Err(error) => app.console.push_error(format!("Cannot export: {error}")),
+        },
         PathInputAction::OpenConfig => match std::fs::read_to_string(&path) {
             Ok(text) => match parse_config_v3(&text) {
                 Ok(cfg) => {
@@ -1699,7 +1726,11 @@ mod tests {
                 kind,
             );
             let cfg = parse_rcfg(&text).expect("parse rcfg");
-            assert_eq!(cfg.jit_kind, Some(kind), "jit_kind round-trip failed for {kind:?}");
+            assert_eq!(
+                cfg.jit_kind,
+                Some(kind),
+                "jit_kind round-trip failed for {kind:?}"
+            );
         }
     }
 

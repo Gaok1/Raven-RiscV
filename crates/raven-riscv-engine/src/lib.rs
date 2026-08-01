@@ -1,11 +1,21 @@
-//! Headless Raven RISC-V engine.
+//! Trait-driven Raven simulation engine.
 //!
-//! Start with [`Falcon`] to assemble and run a program, then inspect the
-//! returned [`RunResult`].
+//! Architectures are discovered through [`ArchitectureRegistry`]. The built-in
+//! registry contains the production RISC-V 32 backend and a deliberately small
+//! Toy16 backend used to prove that the public contracts are ISA-neutral.
 
-pub mod falcon;
+mod architecture;
+pub mod architectures;
+mod falcon;
+
+pub use architecture::{
+    Architecture, ArchitectureCapabilities, ArchitectureDescriptor, ArchitectureRegistry,
+    Assembler, Diagnostic, Endianness, Machine, MachineError, MachineSnapshot, MachineState,
+    ProgramImage, ProgramSegment, RegisterValue, SourceMap, StepOutcome, ZeroFill,
+};
 
 /// Minimal host-side console and screen device used by the Falcon engine.
+#[allow(clippy::collapsible_if)]
 pub mod host {
     pub mod console;
     pub mod fs_sim;
@@ -20,4 +30,32 @@ mod ui {
     pub use crate::host::{Console, console, screen};
 }
 
-pub use falcon::{Falcon, RunResult};
+/// Compatibility-free high-level runner. Selects an architecture explicitly.
+pub struct Engine {
+    architecture: std::sync::Arc<dyn Architecture>,
+}
+
+impl Engine {
+    pub fn new(architecture: std::sync::Arc<dyn Architecture>) -> Self {
+        Self { architecture }
+    }
+
+    pub fn from_registry(registry: &ArchitectureRegistry, id: &str) -> Result<Self, MachineError> {
+        registry
+            .get(id)
+            .map(Self::new)
+            .ok_or_else(|| MachineError::new(format!("unknown architecture '{id}'")))
+    }
+
+    pub fn architecture(&self) -> &dyn Architecture {
+        self.architecture.as_ref()
+    }
+
+    pub fn assemble(&self, source: &str, base_address: u64) -> Result<ProgramImage, Diagnostic> {
+        self.architecture.assembler().assemble(source, base_address)
+    }
+
+    pub fn create_machine(&self, memory_size: usize) -> Result<Box<dyn Machine>, MachineError> {
+        self.architecture.create_machine(memory_size)
+    }
+}

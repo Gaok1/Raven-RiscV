@@ -2,10 +2,10 @@
 // TLB miss penalty in its returned latency so the pipeline simulator can stall
 // `if_stall_cycles` / `mem_stall_cycles` for the right number of cycles.
 
-use raven::falcon::cache::{CacheConfig, CacheController};
-use raven::falcon::memory::Bus;
-use raven::falcon::mmu::{PrivMode, TlbConfig};
-use raven::falcon::cache::ReplacementPolicy;
+use raven::riscv32::cache::{CacheConfig, CacheController};
+use raven::riscv32::memory::Bus;
+use raven::riscv32::mmu::{PrivMode, TlbConfig};
+use raven::riscv32::cache::ReplacementPolicy;
 
 const RAM_SIZE: usize = 1 << 20;
 
