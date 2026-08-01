@@ -1,7 +1,6 @@
 use crate::falcon;
-use crate::ui::app::{
-    EncFormat, InstrFieldKind, RunEditTarget, Seg, cpi_class_label, detect_format,
-};
+use crate::ui::app::{EncFormat, InstrFieldKind, RunEditTarget, cpi_class_label, detect_format};
+use raven_riscv_engine::capability::{BitRole, InstructionInfo};
 use crate::ui::theme;
 use crate::ui::view::style;
 use ratatui::Frame;
@@ -37,7 +36,9 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     render_header(f, chunks[0], &ctx, app);
-    render_field_map(f, chunks[1], ctx.word, ctx.format, app);
+    // The bit map comes from the backend's own decoder, so this pane shows a
+    // real field map for whichever architecture is loaded.
+    render_field_map(f, chunks[1], inspect_at(app, ctx.addr).as_ref(), app);
     render_decoded(
         f,
         chunks[2],
@@ -49,6 +50,17 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         app,
         &ctx,
     );
+}
+
+/// Decode the instruction at `addr` through the active backend's codec.
+///
+/// Reads enough bytes for the widest instruction any backend declares and lets
+/// the codec decide how many it actually needs, so a variable-width ISA works
+/// here without this pane knowing it is variable-width.
+fn inspect_at(app: &App, addr: u32) -> Option<InstructionInfo> {
+    let (code, memory) = (app.code()?, app.memory()?);
+    let bytes = memory.peek(u64::from(addr), 8);
+    code.inspect(u64::from(addr), &bytes)
 }
 
 /// The field of `addr` the inline editor is currently open on, if any.
@@ -143,6 +155,7 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
 }
 
 fn detail_context(app: &App) -> DetailContext {
+    let pc = app.program_counter() as u32;
     // A click-selected row pins the panel; otherwise it follows the PC.
     let selected = app
         .run
@@ -150,12 +163,11 @@ fn detail_context(app: &App) -> DetailContext {
         .and_then(|addr| app.run.mem().peek32(addr).ok().map(|word| (addr, word)));
     let (addr, word, origin) = if let Some((addr, word)) = selected {
         (addr, word, "selected")
-    } else if exec_address_in_range(app, app.run.cpu().pc) {
-        let word = app.run.mem().peek32(app.run.cpu().pc).unwrap_or(0);
-        (app.run.cpu().pc, word, "PC")
+    } else if exec_address_in_range(app, pc) {
+        (pc, app.run.mem().peek32(pc).unwrap_or(0), "PC")
     } else {
         return DetailContext {
-            addr: app.run.cpu().pc,
+            addr: pc,
             word: 0,
             disasm: "<PC out of RAM>".into(),
             origin: "PC",
@@ -171,7 +183,12 @@ fn detail_context(app: &App) -> DetailContext {
     DetailContext {
         addr,
         word,
-        disasm: disasm_word(word),
+        // Through the active backend's disassembler — running RV32's decoder
+        // over another ISA's bytes is how this pane used to show a plausible
+        // but entirely wrong instruction.
+        disasm: app
+            .disassemble_at(u64::from(addr))
+            .unwrap_or_else(|| format!("0x{word:08x}")),
         origin,
         format: detect_format(word),
         comment,
@@ -179,11 +196,20 @@ fn detail_context(app: &App) -> DetailContext {
     }
 }
 
+/// What to title the Instruction panel: the class the backend's own decoder
+/// reports (`I-type` for RV32, `Load` for toy16), falling back to the raw
+/// address when nothing decodes.
+fn instruction_title(app: &App, ctx: &DetailContext) -> String {
+    match inspect_at(app, ctx.addr) {
+        Some(info) => format!("Instruction  [{}]", info.class),
+        None => "Instruction".to_string(),
+    }
+}
+
 // ── Section 1 : Header ───────────────────────────────────────────────────────
 
 fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
-    let fmt_name = ctx.format.name();
-    let title = format!("Instruction  [{fmt_name}]");
+    let title = instruction_title(app, ctx);
     let block = panel::panel_frame(PanelKind::Plain)
         .title(Span::styled(title, style::value()))
         .title_alignment(Alignment::Left);
@@ -249,50 +275,69 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             word_line.push(edit_buf_span(app));
         }
         _ => {
+            // Width comes from the backend, so an 8-bit instruction shows eight
+            // bits rather than being padded out to RV32's word.
+            let info = inspect_at(app, ctx.addr);
+            let bits = info.as_ref().map_or(32, |info| info.encoding_bits);
+            let encoding = info.as_ref().map_or(u64::from(ctx.word), |info| info.encoding);
+            let hex_width = usize::from(bits).div_ceil(4);
+            let bin_width = usize::from(bits);
+
             let word_x = inner.x + 8;
-            push_hitbox(app, inner, InstrFieldKind::Word, inner.y + 1, word_x, 10);
+            push_hitbox(
+                app,
+                inner,
+                InstrFieldKind::Word,
+                inner.y + 1,
+                word_x,
+                hex_width + 2,
+            );
             push_hitbox(
                 app,
                 inner,
                 InstrFieldKind::Bin,
                 inner.y + 1,
-                word_x + 10 + 3,
-                32,
+                word_x + hex_width as u16 + 5,
+                bin_width,
             );
             word_line.push(Span::styled(
-                format!("0x{:08x}", ctx.word),
+                format!("0x{encoding:0hex_width$x}"),
                 Style::default().fg(theme::IMM_COLOR),
             ));
             word_line.push(Span::styled(
-                format!("  ({:032b})", ctx.word),
+                format!("  ({encoding:0bin_width$b})"),
                 Style::default().fg(Color::Rgb(80, 80, 100)),
             ));
         }
     }
 
-    // Compute base CPI cycles for current instruction
-    let cpi = &app.run.cpi_config;
-    let base_cycles = crate::ui::app::classify_cpi_for_display(
-        ctx.word,
-        ctx.addr,
-        app.run.cpu(),
-        cpi,
-        app.run.pipeline().enabled,
-    );
-    let class_label = cpi_class_label(ctx.word);
+    let mut lines = vec![Line::from(mnemonic_line), Line::from(word_line)];
 
-    let mut lines = vec![
-        Line::from(mnemonic_line),
-        Line::from(word_line),
-        Line::from(vec![
+    // The cycle estimate comes from RV32's CPI model, which is tied to its
+    // opcodes; other backends show the class their own decoder reported rather
+    // than a number that would be made up.
+    if app.architecture_id() == raven_riscv_engine::architectures::riscv32::ID {
+        let base_cycles = crate::ui::app::classify_cpi_for_display(
+            ctx.word,
+            ctx.addr,
+            app.run.cpu(),
+            &app.run.cpi_config,
+            app.run.pipeline().enabled,
+        );
+        lines.push(Line::from(vec![
             Span::styled("  cycles  ", style::label()),
             Span::styled(
                 format!("~{base_cycles}"),
                 Style::default().fg(theme::CPI_PANEL).bold(),
             ),
-            Span::styled(format!("  [{class_label}]"), style::label()),
-        ]),
-    ];
+            Span::styled(format!("  [{}]", cpi_class_label(ctx.word)), style::label()),
+        ]));
+    } else if let Some(info) = inspect_at(app, ctx.addr) {
+        lines.push(Line::from(vec![
+            Span::styled("  class   ", style::label()),
+            Span::styled(info.class, Style::default().fg(theme::CPI_PANEL).bold()),
+        ]));
+    }
 
     if let Some(ref comment) = ctx.comment {
         lines.push(Line::from(vec![
@@ -353,9 +398,31 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
 
 // ── Section 2 : Field map ────────────────────────────────────────────────────
 
-fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat, app: &App) {
-    let segs = format.segments();
+/// One contiguous run of bits, ready to draw.
+///
+/// Built from the backend's declared layout — the label and width come from the
+/// ISA, the colour from the role, so nothing here is RV32-shaped.
+pub(super) struct Seg {
+    label: String,
+    width: u8,
+    color: Color,
+}
+
+/// The bit map, drawn from whatever layout the backend declared.
+///
+/// Nothing here knows an instruction is 32 bits wide or that it has an `rs2`:
+/// the segments, their widths and their names all come from the codec, so an
+/// 8-bit SAP instruction renders through the same code as a 32-bit RV32 one.
+fn render_field_map(f: &mut Frame, area: Rect, info: Option<&InstructionInfo>, app: &App) {
     let inner = render_panel(f, area, panel::panel("Field Map", PanelKind::Plain));
+    let segs = info.map(layout_segments).unwrap_or_default();
+    let Some(info) = info.filter(|_| !segs.is_empty()) else {
+        f.render_widget(
+            Paragraph::new("No bit layout for this instruction.").style(style::label()),
+            inner,
+        );
+        return;
+    };
 
     // Each segment's bits row doubles as a click target for editing that
     // field (the editor itself renders in the header/Decoded sections).
@@ -363,27 +430,52 @@ fn render_field_map(f: &mut Frame, area: Rect, word: u32, format: EncFormat, app
     let mut x = inner.x;
     for seg in &segs {
         let w = display_width(seg);
-        if let Some(field) = seg_field(seg.label) {
+        if let Some(field) = seg_field(&seg.label) {
             push_hitbox(app, inner, field, bits_y, x, w);
         }
         x = x.saturating_add(w as u16 + 1);
     }
 
-    // Row 1 — bit position markers
-    let pos_line = bit_position_line(&segs);
-    // Row 2 — colored label blocks (▮▮… label)
-    let label_line = label_line(&segs);
-    // Row 3 — actual bit values
-    let bits_line = bits_line(word, &segs);
-
-    let lines = vec![pos_line, label_line, bits_line];
+    let lines = vec![
+        // Row 1 — bit position markers
+        bit_position_line(&segs, info.encoding_bits),
+        // Row 2 — colored label blocks (▮▮… label)
+        label_line(&segs),
+        // Row 3 — actual bit values
+        bits_line(info.encoding, info.encoding_bits, &segs),
+    ];
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+/// Colour each segment by its role. Which hue means "immediate" is a theme
+/// decision, so it lives here — an ISA should not need an opinion about it to
+/// get a field map.
+fn layout_segments(info: &InstructionInfo) -> Vec<Seg> {
+    if !info.layout_is_complete() {
+        return Vec::new();
+    }
+    info.layout
+        .iter()
+        .map(|field| Seg {
+            label: field.label.clone(),
+            width: field.width,
+            color: match field.role {
+                BitRole::Opcode => Color::Cyan,
+                BitRole::Destination => Color::LightGreen,
+                BitRole::Source => Color::LightMagenta,
+                BitRole::Immediate => Color::Blue,
+                BitRole::Function => Color::Yellow,
+                BitRole::Other => Color::DarkGray,
+            },
+        })
+        .collect()
 }
 
 /// Map a field-map segment label to its editable field. All immediate pieces
 /// (`imm[...]`, `i12`, `i10:5`, …) edit the one logical immediate.
 fn seg_field(label: &str) -> Option<InstrFieldKind> {
     match label {
+        "—" => None,
         "funct7" => Some(InstrFieldKind::Funct7),
         "rs2" => Some(InstrFieldKind::Rs2),
         "rs1" => Some(InstrFieldKind::Rs1),
@@ -395,9 +487,9 @@ fn seg_field(label: &str) -> Option<InstrFieldKind> {
     }
 }
 
-fn bit_position_line(segs: &[Seg]) -> Line<'static> {
+fn bit_position_line(segs: &[Seg], encoding_bits: u8) -> Line<'static> {
     let mut spans = Vec::new();
-    let mut bit = 31i32;
+    let mut bit = i32::from(encoding_bits) - 1;
     for seg in segs {
         let w = display_width(seg);
         let hi = bit;
@@ -431,7 +523,7 @@ fn label_line(segs: &[Seg]) -> Line<'static> {
                 let blocks = "▮".repeat(w - label_len);
                 format!("{}{blocks}", s.label)
             } else {
-                s.label.to_string()
+                s.label.clone()
             };
 
             // Non-last segments get one trailing separator space for alignment
@@ -446,13 +538,14 @@ fn label_line(segs: &[Seg]) -> Line<'static> {
         .into()
 }
 
-fn bits_line(word: u32, segs: &[Seg]) -> Line<'static> {
-    let bit_str = format!("{word:032b}");
+fn bits_line(encoding: u64, encoding_bits: u8, segs: &[Seg]) -> Line<'static> {
+    let width = usize::from(encoding_bits);
+    let bit_str = format!("{encoding:0width$b}");
     let mut spans = Vec::new();
     let mut idx = 0usize;
     for (i, seg) in segs.iter().enumerate() {
-        let end = idx + seg.width as usize;
-        let slice = &bit_str[idx..end];
+        let end = (idx + seg.width as usize).min(bit_str.len());
+        let slice = &bit_str[idx.min(end)..end];
         let disp_w = display_width(seg);
         let padded = if i + 1 < segs.len() {
             format!("{slice:<w$} ", w = disp_w)
@@ -497,24 +590,71 @@ fn render_decoded(
         ]));
         lines.push(Line::from(""));
     }
-    let mut rows = DecodedRows {
-        lines: &mut lines,
-        hits: Vec::new(),
-        editing: editing_field(app, ctx.addr),
-        buf: &app.run.run_edit_buf,
+    // RV32's rows carry inline editing, which is bit-splicing this ISA's
+    // encoding and so cannot be shared. Every other backend renders the fields
+    // its own decoder reported — same panel, same layout, no editing.
+    let hits = if app.architecture_id() == raven_riscv_engine::architectures::riscv32::ID {
+        let mut rows = DecodedRows {
+            lines: &mut lines,
+            hits: Vec::new(),
+            editing: editing_field(app, ctx.addr),
+            buf: &app.run.run_edit_buf,
+        };
+        push_fields(&mut rows, word, format, cpu);
+        let hits = rows.hits;
+        lines.push(Line::from(""));
+        push_description(&mut lines, word, format, disasm);
+        hits
+    } else {
+        push_decoded_fields(&mut lines, app, ctx.addr);
+        Vec::new()
     };
-    push_fields(&mut rows, word, format, cpu);
-    let hits = rows.hits;
-    // blank separator
-    lines.push(Line::from(""));
-    // Semantic description
-    push_description(&mut lines, word, format, disasm);
 
     for (field, idx, len) in hits {
         push_hitbox(app, inner, field, inner.y + idx as u16, inner.x + 10, len);
     }
 
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+}
+
+/// The decoded fields of the instruction at `addr`, exactly as the backend's
+/// decoder named them, plus the mnemonic and raw encoding.
+///
+/// This is the generic counterpart to RV32's `push_fields`: no assumption that
+/// there is an `rd`, an `imm`, or 32 bits to show.
+fn push_decoded_fields(lines: &mut Vec<Line<'static>>, app: &App, addr: u32) {
+    let Some(info) = inspect_at(app, addr) else {
+        lines.push(Line::from(Span::styled(
+            "These bytes do not decode to an instruction.",
+            style::label(),
+        )));
+        return;
+    };
+    let hex_width = usize::from(info.encoding_bits).div_ceil(4);
+    let bin_width = usize::from(info.encoding_bits);
+    lines.push(kv("word", format!("0x{:0hex_width$X}", info.encoding), Color::White));
+    lines.push(kv(
+        "bits",
+        format!("{:0bin_width$b}", info.encoding),
+        Color::Rgb(150, 150, 180),
+    ));
+    lines.push(Line::from(""));
+    for field in &info.fields {
+        lines.push(kv_owned(field.name, field.value.clone(), Color::LightCyan));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("⟹  {}", info.mnemonic),
+        Style::default().fg(Color::Rgb(0, 200, 140)),
+    )));
+}
+
+/// [`kv`] for a key that is not `'static`.
+fn kv_owned(key: &str, val: String, val_color: Color) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{key:<10}"), style::label()),
+        Span::styled(val, Style::default().fg(val_color)),
+    ])
 }
 
 fn kv(key: &'static str, val: String, val_color: Color) -> Line<'static> {

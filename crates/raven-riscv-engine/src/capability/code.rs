@@ -14,6 +14,48 @@ pub struct InstructionField {
     pub value: String,
 }
 
+/// What a run of bits is *for*.
+///
+/// The backend names the role; the host picks the colour. That split is what
+/// lets one field-map renderer serve every ISA without a palette per backend.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BitRole {
+    Opcode,
+    /// The register written.
+    Destination,
+    /// A register read.
+    Source,
+    Immediate,
+    /// Opcode-refining bits — RISC-V's `funct3`/`funct7`, and equivalents.
+    Function,
+    #[default]
+    Other,
+}
+
+/// One contiguous run of bits in an instruction encoding.
+///
+/// A host draws these left to right to build a field map, so they are listed
+/// most-significant first and their widths sum to the instruction's width. An
+/// immediate scattered across the word — RISC-V's B and J formats — appears as
+/// several segments that share [`BitRole::Immediate`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstructionBitField {
+    /// What to print over the bits: `"funct7"`, `"imm[10:5]"`, `"opcode"`.
+    pub label: String,
+    pub width: u8,
+    pub role: BitRole,
+}
+
+impl InstructionBitField {
+    pub fn new(label: impl Into<String>, width: u8, role: BitRole) -> Self {
+        Self {
+            label: label.into(),
+            width,
+            role,
+        }
+    }
+}
+
 /// Backend-neutral data for an instruction inspector.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstructionInfo {
@@ -22,6 +64,24 @@ pub struct InstructionInfo {
     pub encoding: u64,
     pub encoding_bits: u8,
     pub fields: Vec<InstructionField>,
+    /// The encoding's bit layout, most-significant segment first. Empty when
+    /// the backend does not describe one; a host then draws the fields without
+    /// a bit map rather than guessing where they sit.
+    pub layout: Vec<InstructionBitField>,
+}
+
+impl InstructionInfo {
+    /// True when [`Self::layout`] accounts for exactly the instruction's bits,
+    /// which is what a field-map renderer requires before drawing.
+    pub fn layout_is_complete(&self) -> bool {
+        !self.layout.is_empty()
+            && self
+                .layout
+                .iter()
+                .map(|segment| u32::from(segment.width))
+                .sum::<u32>()
+                == u32::from(self.encoding_bits)
+    }
 }
 
 /// Reading and writing a single instruction.

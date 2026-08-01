@@ -266,3 +266,96 @@ fn render_sidebar_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
     );
     f.render_widget(Paragraph::new(">").style(style), arrow_area);
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::app::App;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn screen(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|f| super::render_run(f, f.area(), app))
+            .expect("render");
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn app(id: &str) -> App {
+        App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap()
+    }
+
+    /// The Run tab is one view now, so every architecture gets the same panes —
+    /// the point of the whole refactor. A backend that only got a cut-down
+    /// version would fail here.
+    #[test]
+    fn every_architecture_gets_the_same_run_panes() {
+        for id in crate::arch::registry().ids() {
+            let screen = screen(&app(id), 160, 40);
+            for text in ["Registers", "Instruction Memory", "Field Map"] {
+                assert!(screen.contains(text), "{id} is missing {text}:\n{screen}");
+            }
+        }
+    }
+
+    /// Every pane must show the *loaded* architecture's decode, not RV32's.
+    ///
+    /// This is the regression that matters: running RV32's decoder over SAP
+    /// bytes produced a plausible-looking `addi a0, zero, 1` with RV32 field
+    /// names, which is worse than showing nothing.
+    #[test]
+    fn each_backend_decodes_with_its_own_isa() {
+        // (architecture, a field name only this ISA has, its instruction width
+        //  in binary digits)
+        for (id, own_field, bits) in [
+            ("riscv32", "funct3", 32),
+            ("toy16", "rd", 16),
+            ("sap", "address", 8),
+        ] {
+            let screen = screen(&app(id), 160, 40);
+            assert!(
+                screen.contains(own_field),
+                "{id}: no {own_field} in its own decode:\n{screen}"
+            );
+            // The header prints the encoding in binary at the ISA's real width.
+            // Padding an 8-bit instruction out to RV32's 32 bits — the old
+            // behaviour — would fail this.
+            let binary_runs: Vec<usize> = screen
+                .split(|c: char| !matches!(c, '0' | '1'))
+                .map(str::len)
+                .filter(|len| *len >= 8)
+                .collect();
+            assert!(
+                binary_runs.contains(&bits),
+                "{id}: expected a {bits}-bit encoding, saw runs {binary_runs:?}:\n{screen}"
+            );
+        }
+    }
+
+    /// SAP has a second register bank; the sidebar must offer it by the name
+    /// the backend gave it rather than RV32's "float".
+    #[test]
+    fn the_bank_toggle_is_named_by_the_backend() {
+        assert!(screen(&app("sap"), 160, 40).contains("[Tab]=Flags"));
+        // A single-bank ISA offers no toggle at all.
+        assert!(!screen(&app("toy16"), 160, 40).contains("[Tab]="));
+    }
+
+    /// Small terminals must not panic on any backend.
+    #[test]
+    fn the_run_tab_survives_small_terminals_on_every_architecture() {
+        for id in crate::arch::registry().ids() {
+            let app = app(id);
+            for (w, h) in [(160, 40), (80, 24), (40, 12), (20, 6)] {
+                let _ = screen(&app, w, h);
+            }
+        }
+    }
+}

@@ -4,7 +4,6 @@
 //! truth for where each field sits in the word.
 
 use crate::falcon::asm::utils::{parse_imm, parse_reg};
-use ratatui::style::Color;
 
 // ── Encoding formats ─────────────────────────────────────────────────────────
 
@@ -29,9 +28,6 @@ impl EncFormat {
             EncFormat::J => "J-type",
         }
     }
-    pub(crate) fn segments(self) -> Vec<Seg> {
-        seg_list(self)
-    }
 }
 
 pub(crate) fn detect_format(word: u32) -> EncFormat {
@@ -42,73 +38,6 @@ pub(crate) fn detect_format(word: u32) -> EncFormat {
         0x37 | 0x17 => EncFormat::U,
         0x6f => EncFormat::J,
         _ => EncFormat::R,
-    }
-}
-
-pub(crate) struct Seg {
-    pub(crate) label: &'static str,
-    pub(crate) width: u8,
-    pub(crate) color: Color,
-}
-
-pub(crate) fn seg_list(format: EncFormat) -> Vec<Seg> {
-    macro_rules! s {
-        ($l:expr, $w:expr, $c:expr) => {
-            Seg {
-                label: $l,
-                width: $w,
-                color: $c,
-            }
-        };
-    }
-    use Color::*;
-    match format {
-        EncFormat::R => vec![
-            s!("funct7", 7, Red),
-            s!("rs2", 5, LightRed),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::I => vec![
-            s!("imm[11:0]", 12, Blue),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::S => vec![
-            s!("imm[11:5]", 7, Blue),
-            s!("rs2", 5, LightRed),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("imm[4:0]", 5, Blue),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::B => vec![
-            s!("i12", 1, Blue),
-            s!("i10:5", 6, Blue),
-            s!("rs2", 5, LightRed),
-            s!("rs1", 5, LightMagenta),
-            s!("fn3", 3, Yellow),
-            s!("i4:1", 4, Blue),
-            s!("i11", 1, Blue),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::U => vec![
-            s!("imm[31:12]", 20, Blue),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
-        EncFormat::J => vec![
-            s!("i20", 1, Blue),
-            s!("i10:1", 10, Blue),
-            s!("i11", 1, Blue),
-            s!("i19:12", 8, Blue),
-            s!("rd", 5, LightGreen),
-            s!("opcode", 7, Cyan),
-        ],
     }
 }
 

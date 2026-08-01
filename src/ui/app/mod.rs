@@ -29,7 +29,7 @@ pub(crate) use self::docs_state::{
 pub(crate) use self::hart::{
     HartCoreRuntime, HartLifecycle, is_transparent_single_step_word, step_hart_bg_inner,
 };
-pub(crate) use self::instr_edit::{EncFormat, InstrFieldKind, Seg, detect_format};
+pub(crate) use self::instr_edit::{EncFormat, InstrFieldKind, detect_format};
 pub(crate) use self::run_state::{
     BuildStats, EditorFile, EditorMode, EditorState, FileTabId, FormatMode, MemRegion, RunButton,
     RunEditTarget, RunSpeed, RunState,
@@ -659,6 +659,28 @@ impl App {
             self.run.reg_bank = (self.visible_register_bank() + 1) % banks;
             self.run.regs_scroll = 0;
         }
+    }
+
+    /// The active backend's program counter.
+    pub(crate) fn program_counter(&self) -> u64 {
+        self.registers().map_or(0, |file| file.program_counter())
+    }
+
+    /// The instruction at `address` as assembly text, through the backend's own
+    /// disassembler. `None` when the bytes do not decode.
+    pub(crate) fn disassemble_at(&self, address: u64) -> Option<String> {
+        let (code, memory) = (self.code()?, self.memory()?);
+        code.disassemble(address, &memory.peek(address, 8))
+    }
+
+    /// How many bytes the instruction at `address` occupies, so a listing walks
+    /// a variable-width ISA correctly without knowing it is variable-width.
+    pub(crate) fn instruction_width_at(&self, address: u64) -> usize {
+        let Some((code, memory)) = self.code().zip(self.memory()) else {
+            return 4;
+        };
+        code.instruction_width(address, &memory.peek(address, 8))
+            .max(1)
     }
 
     /// The banks this backend declares, empty when it has no register file.

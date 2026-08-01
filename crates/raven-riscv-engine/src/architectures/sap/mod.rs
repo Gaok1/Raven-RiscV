@@ -1,8 +1,8 @@
 //! Minimal 8-bit SAP (Simple-As-Possible) CPU and assembler.
 
 use crate::capability::{
-    CacheHierarchy, InstructionCodec, InstructionField, InstructionInfo, MemoryInspect,
-    MemoryRegion, RegisterBank, RegisterFile, RegisterId,
+    BitRole, CacheHierarchy, InstructionBitField, InstructionCodec, InstructionField,
+    InstructionInfo, MemoryInspect, MemoryRegion, RegisterBank, RegisterFile, RegisterId,
 };
 use crate::cache_model::TeachingCache;
 use crate::{
@@ -626,6 +626,16 @@ impl InstructionCodec for SapCodec {
             encoding: u64::from(byte),
             encoding_bits: 8,
             fields,
+            // SAP-1's whole encoding: a 4-bit opcode over a 4-bit operand. The
+            // operand is an immediate for LDI and a memory address otherwise.
+            layout: vec![
+                InstructionBitField::new("opcode", 4, BitRole::Opcode),
+                match opcode {
+                    0x5 => InstructionBitField::new("immediate", 4, BitRole::Immediate),
+                    0x1..=0x8 => InstructionBitField::new("address", 4, BitRole::Immediate),
+                    _ => InstructionBitField::new("—", 4, BitRole::Other),
+                },
+            ],
         })
     }
 }

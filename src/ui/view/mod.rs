@@ -16,7 +16,6 @@ pub(crate) mod components;
 pub mod disasm;
 pub mod docs;
 mod editor;
-mod machine_run;
 mod path_input_overlay;
 pub(crate) mod pipeline;
 pub(crate) mod run;
@@ -120,13 +119,7 @@ pub fn ui(f: &mut Frame, app: &App) {
             editor::render_file_tabs(f, editor_chunks[1], app);
             render_editor(f, editor_chunks[2], app);
         }
-        Tab::Run => {
-            if app.trait_driven() {
-                machine_run::render(f, chunks[1], app)
-            } else {
-                render_run(f, chunks[1], app)
-            }
-        }
+        Tab::Run => render_run(f, chunks[1], app),
         Tab::Cache => render_cache(f, chunks[1], app),
         Tab::Tlb => render_tlb_tab(f, chunks[1], app),
         Tab::Pipeline => render_pipeline(f, chunks[1], app),

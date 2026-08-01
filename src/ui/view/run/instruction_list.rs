@@ -3,7 +3,6 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
 
 use super::App;
-use super::instruction_details::disasm_word;
 use super::memory::{exec_address_in_range, imem_address_in_range};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
@@ -151,7 +150,7 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
         }
         items.push(instruction_item(app, addr));
         remaining -= 1;
-        addr = addr.wrapping_add(4);
+        addr = addr.wrapping_add(app.instruction_width_at(u64::from(addr)) as u32);
     }
     items
 }
@@ -173,7 +172,7 @@ fn instruction_items_dynamic(
             break;
         }
         items.push(instruction_item(app, addr));
-        addr = addr.wrapping_add(4);
+        addr = addr.wrapping_add(app.instruction_width_at(u64::from(addr)) as u32);
     }
     items
 }
@@ -217,21 +216,41 @@ fn branch_outcome(word: u32, addr: u32, cpu: &crate::falcon::Cpu) -> Option<(boo
     }
 }
 
-use crate::falcon::arch::*;
-/// Feature 2: instruction type badge color
-fn type_badge(word: u32) -> (&'static str, Color) {
-    match (word & 0x7f) as u8 {
-        OPC_RTYPE => ("[R]", Color::LightRed),
-        OPC_OPIMM | OPC_LOAD | OPC_JALR | OPC_SYSTEM | 0x0F => ("[I]", Color::LightBlue),
-        OPC_STORE => ("[S]", Color::LightYellow),
-        OPC_BRANCH => ("[B]", Color::LightGreen),
-        OPC_LUI | OPC_AUIPC => ("[U]", Color::LightMagenta),
-        OPC_JAL => ("[J]", Color::LightCyan),
-        OPC_FLW | OPC_FSW | OPC_FMADD | OPC_FMSUB | OPC_FNMSUB | OPC_FNMADD | OPC_FP => {
-            ("[F]", Color::LightBlue)
-        }
-        OPC_AMO => ("[A]", Color::LightRed),
-        _ => ("[UNDECODE]", Color::DarkGray),
+/// The class badge for an instruction, named by the backend's own decoder.
+///
+/// RV32 names encoding formats (`R`, `I`, `S`…) and toy16 names semantics
+/// (`Load`, `ALU`…); both are just strings here, so the badge is right for
+/// whichever architecture is loaded. Colour is keyed off the name so a given
+/// class stays one colour down a listing.
+fn type_badge(app: &App, addr: u32) -> (String, Color) {
+    let Some(class) = instruction_class(app, addr) else {
+        return ("[??]".to_string(), Color::DarkGray);
+    };
+    // Short classes are shown whole; longer ones are initialled so the badge
+    // never crowds out the disassembly.
+    let text = if class.len() <= 2 {
+        format!("[{class}]")
+    } else {
+        format!("[{}]", class.chars().next().unwrap_or('?'))
+    };
+    (text, class_color(class))
+}
+
+fn instruction_class(app: &App, addr: u32) -> Option<&'static str> {
+    let (code, memory) = (app.code()?, app.memory()?);
+    let bytes = memory.peek(u64::from(addr), 8);
+    code.inspect(u64::from(addr), &bytes).map(|info| info.class)
+}
+
+fn class_color(class: &str) -> Color {
+    match class {
+        "R" | "A" | "ALU" => Color::LightRed,
+        "I" | "F" => Color::LightBlue,
+        "S" | "Store" => Color::LightYellow,
+        "B" | "Load" => Color::LightGreen,
+        "U" | "I/O" => Color::LightMagenta,
+        "J" | "Control" => Color::LightCyan,
+        _ => Color::Gray,
     }
 }
 
@@ -254,7 +273,7 @@ const SELECTED_BG: Color = theme::BG_RAISED;
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     let word = app.run.mem().peek32(addr).unwrap_or(0);
     let is_bp = app.run.breakpoints.contains(&addr);
-    let is_pc = addr == app.run.cpu().pc;
+    let is_pc = u64::from(addr) == app.program_counter();
     let is_selected = !is_pc && app.run.details_addr == Some(addr);
     let is_hover = !is_pc && app.run.hover_imem_addr == Some(addr);
 
@@ -271,7 +290,11 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         "  "
     };
 
-    let disasm = disasm_word(word);
+    // Through the backend's disassembler; undecodable bytes show as raw hex
+    // rather than an invented mnemonic.
+    let disasm = app
+        .disassemble_at(u64::from(addr))
+        .unwrap_or_else(|| format!("0x{word:08x}"));
 
     let exec_count = app.run.exec_counts.get(&addr).copied().unwrap_or(0);
 
@@ -290,11 +313,8 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
 
     // Type badge (before main text) — shown only if enabled
     if app.run.show_instr_type {
-        let (badge_text, badge_color) = type_badge(word);
-        spans.push(Span::styled(
-            badge_text.to_string(),
-            Style::default().fg(badge_color),
-        ));
+        let (badge_text, badge_color) = type_badge(app, addr);
+        spans.push(Span::styled(badge_text, Style::default().fg(badge_color)));
         spans.push(Span::raw(" "));
     }
 

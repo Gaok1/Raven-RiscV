@@ -1,5 +1,5 @@
 use raven_riscv_engine::architectures::riscv32;
-use raven_riscv_engine::capability::{CacheRole, RegisterId};
+use raven_riscv_engine::capability::{CacheRole, InstructionCodec, RegisterId};
 use raven_riscv_engine::falcon::memory::{Bus, Ram};
 use raven_riscv_engine::{
     ArchitectureRegistry, Engine, MachineState, ProgramImage, ProgramSegment, StepOutcome, ZeroFill,
@@ -801,6 +801,83 @@ fn riscv32_refuses_to_write_x0_through_the_trait() {
     assert!(machine.write_register("zero", 7).is_err());
     let registers = machine.registers().unwrap();
     assert_eq!(registers.read(RegisterId::new(0, 0)), Some(0));
+}
+
+/// The listing badges instructions and the inspector lists fields straight off
+/// `inspect`, so the encoding formats and the scattered B/J immediates have to
+/// be right here or every RV32 row is wrong.
+#[test]
+fn riscv32_inspect_reports_encoding_formats_and_immediates() {
+    let codec = riscv32::RiscV32Codec;
+    let field = |bytes: &[u8], name: &str| {
+        codec
+            .inspect(0, bytes)
+            .and_then(|info| {
+                info.fields
+                    .iter()
+                    .find(|f| f.name == name)
+                    .map(|f| f.value.clone())
+            })
+            .unwrap_or_default()
+    };
+    let class = |word: u32| codec.inspect(0, &word.to_le_bytes()).map(|i| i.class);
+
+    // add x1, x2, x3 — R-type
+    assert_eq!(class(0x003100B3), Some("R"));
+    // addi x1, x2, -1 — I-type, immediate sign-extends
+    let addi = 0xFFF10093u32.to_le_bytes();
+    assert_eq!(class(0xFFF10093), Some("I"));
+    assert_eq!(field(&addi, "imm"), "-1");
+    // beq x0, x0, -4 — B-type immediate is scattered across four fields
+    let beq = 0xFE000EE3u32.to_le_bytes();
+    assert_eq!(class(0xFE000EE3), Some("B"));
+    assert_eq!(field(&beq, "imm"), "-4");
+    // jal x0, 8 — J-type, likewise scattered
+    let jal = 0x0080006Fu32.to_le_bytes();
+    assert_eq!(class(0x0080006F), Some("J"));
+    assert_eq!(field(&jal, "imm"), "8");
+
+    // Bytes that decode to nothing must not be given a format.
+    assert!(codec.inspect(0, &[0xFF, 0xFF, 0xFF, 0xFF]).is_none());
+}
+
+/// The field map draws `layout` left to right over the instruction's bits, so
+/// a backend whose segments do not sum to its width would render a lie. Every
+/// backend is held to this, not just RV32 — that is what lets one renderer
+/// serve all of them.
+#[test]
+fn every_backend_describes_a_complete_instruction_bit_layout() {
+    for (id, source) in [
+        (riscv32::ID, ".text\n    li a0, 42\n    halt\n"),
+        ("toy16", "li r0, 42\nprint r0\nhalt"),
+        ("sap", "LDI 5\nOUT\nHLT\n"),
+    ] {
+        let architecture = ArchitectureRegistry::builtin().get(id).unwrap();
+        let engine = Engine::new(architecture.clone());
+        let image = engine.assemble(source, 0).unwrap();
+        let mut machine = engine
+            .create_machine(architecture.descriptor().default_memory_size)
+            .unwrap();
+        machine.load(&image).unwrap();
+
+        let code = machine.code().unwrap_or_else(|| panic!("{id}: no codec"));
+        let memory = machine.memory().unwrap();
+        let bytes = memory.peek(0, 8);
+        let info = code
+            .inspect(0, &bytes)
+            .unwrap_or_else(|| panic!("{id}: first instruction did not inspect"));
+
+        assert!(
+            info.layout_is_complete(),
+            "{id}: layout covers {} bits, encoding is {}",
+            info.layout.iter().map(|s| u32::from(s.width)).sum::<u32>(),
+            info.encoding_bits,
+        );
+        assert!(
+            info.layout.iter().all(|s| !s.label.is_empty()),
+            "{id}: a layout segment has no label to draw"
+        );
+    }
 }
 
 #[test]

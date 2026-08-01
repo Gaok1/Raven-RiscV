@@ -4,8 +4,8 @@
 //! tested without pretending that every CPU looks like RISC-V.
 
 use crate::capability::{
-    CacheHierarchy, InstructionCodec, InstructionField, InstructionInfo, MemoryInspect,
-    MemoryRegion, RegisterBank, RegisterFile, RegisterId,
+    BitRole, CacheHierarchy, InstructionBitField, InstructionCodec, InstructionField,
+    InstructionInfo, MemoryInspect, MemoryRegion, RegisterBank, RegisterFile, RegisterId,
 };
 use crate::cache_model::TeachingCache;
 use crate::{
@@ -628,6 +628,41 @@ impl InstructionCodec for Toy16Codec {
             encoding: u64::from(word),
             encoding_bits: 16,
             fields,
+            layout: encoding_layout(opcode),
         })
+    }
+}
+
+/// Where each opcode puts its operands in the 16-bit word, most-significant
+/// segment first. A host draws this as a field map, exactly as it does for a
+/// 32-bit ISA — the widths differ, nothing else does.
+fn encoding_layout(opcode: u16) -> Vec<InstructionBitField> {
+    use BitRole::*;
+    let seg = InstructionBitField::new;
+    let op = seg("opcode", 4, Opcode);
+    match opcode {
+        // li rd, imm
+        2 => vec![op, seg("rd", 3, Destination), seg("imm", 9, Immediate)],
+        // alu rd, rs1, rs2
+        3 => vec![
+            op,
+            seg("rd", 3, Destination),
+            seg("rs1", 3, Source),
+            seg("rs2", 3, Source),
+            seg("—", 3, Other),
+        ],
+        // load / store / jump-through-register
+        4 | 5 | 7 => vec![
+            op,
+            seg("reg", 3, Source),
+            seg("—", 1, Other),
+            seg("address", 8, Immediate),
+        ],
+        // jump
+        6 => vec![op, seg("target", 12, Immediate)],
+        // print rs
+        8 => vec![op, seg("rs", 3, Source), seg("—", 9, Other)],
+        // nop / halt carry no operands
+        _ => vec![op, seg("—", 12, Other)],
     }
 }

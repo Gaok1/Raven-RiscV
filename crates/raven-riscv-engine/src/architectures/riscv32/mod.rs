@@ -9,8 +9,9 @@ pub mod falcon;
 pub use crate::falcon::{CacheController, Cpu, jit::BackendKind};
 
 use crate::capability::{
-    CacheHierarchy, CacheLevelView, CacheRole, CacheSetView, InstructionCodec, MemoryInspect,
-    MemoryRegion, PipelineInspect, RegisterBank, RegisterFile, RegisterId,
+    BitRole, CacheHierarchy, CacheLevelView, CacheRole, CacheSetView, InstructionBitField,
+    InstructionCodec, InstructionField, InstructionInfo, MemoryInspect, MemoryRegion,
+    PipelineInspect, RegisterBank, RegisterFile, RegisterId,
 };
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::jit::ExecOutcome;
@@ -612,4 +613,170 @@ impl InstructionCodec for RiscV32Codec {
             .flat_map(|word| word.to_le_bytes())
             .collect())
     }
+
+    /// `class` is the RISC-V *encoding format* — R, I, S, B, U, J and the F/A
+    /// extensions — because that is what an RV32 listing badges and what the
+    /// field list below is a consequence of.
+    fn inspect(&self, address: u64, bytes: &[u8]) -> Option<InstructionInfo> {
+        let word = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?);
+        let opcode = (word & 0x7f) as u8;
+        let class = instruction_class(opcode)?;
+
+        let rd = (word >> 7) & 0x1f;
+        let rs1 = (word >> 15) & 0x1f;
+        let rs2 = (word >> 20) & 0x1f;
+        let funct3 = (word >> 12) & 0x7;
+        let funct7 = word >> 25;
+
+        let mut fields = vec![InstructionField {
+            name: "opcode",
+            value: format!("0x{opcode:02X}"),
+        }];
+        let mut push = |name, value| fields.push(InstructionField { name, value });
+        match class {
+            "R" | "A" | "F" => {
+                push("rd", format!("x{rd}"));
+                push("rs1", format!("x{rs1}"));
+                push("rs2", format!("x{rs2}"));
+                push("funct3", format!("0x{funct3:X}"));
+                push("funct7", format!("0x{funct7:02X}"));
+            }
+            "I" => {
+                push("rd", format!("x{rd}"));
+                push("rs1", format!("x{rs1}"));
+                push("funct3", format!("0x{funct3:X}"));
+                push("imm", sign_extended(word >> 20, 12).to_string());
+            }
+            "S" => {
+                push("rs1", format!("x{rs1}"));
+                push("rs2", format!("x{rs2}"));
+                push("funct3", format!("0x{funct3:X}"));
+                push("imm", sign_extended((funct7 << 5) | rd, 12).to_string());
+            }
+            "B" => {
+                push("rs1", format!("x{rs1}"));
+                push("rs2", format!("x{rs2}"));
+                push("funct3", format!("0x{funct3:X}"));
+                push("imm", branch_immediate(word).to_string());
+            }
+            "U" => {
+                push("rd", format!("x{rd}"));
+                push("imm", format!("0x{:05X}", word >> 12));
+            }
+            "J" => {
+                push("rd", format!("x{rd}"));
+                push("imm", jump_immediate(word).to_string());
+            }
+            _ => {}
+        }
+
+        Some(InstructionInfo {
+            mnemonic: self.disassemble(address, bytes)?,
+            class,
+            encoding: u64::from(word),
+            encoding_bits: 32,
+            fields,
+            layout: encoding_layout(class),
+        })
+    }
+}
+
+/// The bit layout of an RV32 encoding format, most-significant segment first.
+///
+/// B and J scatter their immediate across the word, which is why they list
+/// several `imm` segments rather than one — the field map is showing the real
+/// encoding, not a tidied-up version of it.
+fn encoding_layout(class: &'static str) -> Vec<InstructionBitField> {
+    use BitRole::*;
+    let seg = InstructionBitField::new;
+    match class {
+        "I" => vec![
+            seg("imm[11:0]", 12, Immediate),
+            seg("rs1", 5, Source),
+            seg("fn3", 3, Function),
+            seg("rd", 5, Destination),
+            seg("opcode", 7, Opcode),
+        ],
+        "S" => vec![
+            seg("imm[11:5]", 7, Immediate),
+            seg("rs2", 5, Source),
+            seg("rs1", 5, Source),
+            seg("fn3", 3, Function),
+            seg("imm[4:0]", 5, Immediate),
+            seg("opcode", 7, Opcode),
+        ],
+        "B" => vec![
+            seg("i12", 1, Immediate),
+            seg("i10:5", 6, Immediate),
+            seg("rs2", 5, Source),
+            seg("rs1", 5, Source),
+            seg("fn3", 3, Function),
+            seg("i4:1", 4, Immediate),
+            seg("i11", 1, Immediate),
+            seg("opcode", 7, Opcode),
+        ],
+        "U" => vec![
+            seg("imm[31:12]", 20, Immediate),
+            seg("rd", 5, Destination),
+            seg("opcode", 7, Opcode),
+        ],
+        "J" => vec![
+            seg("i20", 1, Immediate),
+            seg("i10:1", 10, Immediate),
+            seg("i11", 1, Immediate),
+            seg("i19:12", 8, Immediate),
+            seg("rd", 5, Destination),
+            seg("opcode", 7, Opcode),
+        ],
+        // R, and the F/A extensions, which share R's shape.
+        _ => vec![
+            seg("funct7", 7, Function),
+            seg("rs2", 5, Source),
+            seg("rs1", 5, Source),
+            seg("fn3", 3, Function),
+            seg("rd", 5, Destination),
+            seg("opcode", 7, Opcode),
+        ],
+    }
+}
+
+/// The encoding format of an opcode, or `None` when it is not one RV32IMAF
+/// defines — the caller shows raw bytes rather than inventing a format.
+fn instruction_class(opcode: u8) -> Option<&'static str> {
+    use crate::falcon::arch::*;
+    Some(match opcode {
+        OPC_RTYPE => "R",
+        OPC_OPIMM | OPC_LOAD | OPC_JALR | OPC_SYSTEM | 0x0F => "I",
+        OPC_STORE => "S",
+        OPC_BRANCH => "B",
+        OPC_LUI | OPC_AUIPC => "U",
+        OPC_JAL => "J",
+        OPC_FLW | OPC_FSW | OPC_FMADD | OPC_FMSUB | OPC_FNMSUB | OPC_FNMADD | OPC_FP => "F",
+        OPC_AMO => "A",
+        _ => return None,
+    })
+}
+
+/// Reinterpret the low `bits` of `value` as a two's-complement signed number.
+fn sign_extended(value: u32, bits: u32) -> i32 {
+    let shift = 32 - bits;
+    ((value << shift) as i32) >> shift
+}
+
+/// B-type scatters its immediate across four fields, and it is always even.
+fn branch_immediate(word: u32) -> i32 {
+    let imm = ((word >> 31) & 1) << 12
+        | ((word >> 7) & 1) << 11
+        | ((word >> 25) & 0x3f) << 5
+        | ((word >> 8) & 0xf) << 1;
+    sign_extended(imm, 13)
+}
+
+/// J-type scatters its immediate the same way B-type does, over 20 bits.
+fn jump_immediate(word: u32) -> i32 {
+    let imm = ((word >> 31) & 1) << 20
+        | ((word >> 12) & 0xff) << 12
+        | ((word >> 20) & 1) << 11
+        | ((word >> 21) & 0x3ff) << 1;
+    sign_extended(imm, 21)
 }

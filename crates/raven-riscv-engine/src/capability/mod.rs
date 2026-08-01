@@ -71,7 +71,9 @@ pub use cache::{
     CacheLevelView, CacheLineView, CacheReplacementPolicy, CacheRole, CacheSetView,
     CacheWriteAllocation, CacheWritePolicy,
 };
-pub use code::{InstructionCodec, InstructionField, InstructionInfo};
+pub use code::{
+    BitRole, InstructionBitField, InstructionCodec, InstructionField, InstructionInfo,
+};
 pub use memory::{MemoryInspect, MemoryRegion};
 pub use pipeline::{
     PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
