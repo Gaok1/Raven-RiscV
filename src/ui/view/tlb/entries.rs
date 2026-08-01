@@ -16,8 +16,10 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mmu = app.run.mem().mmu();
-    let total = mmu.tlb.entries.len();
+    let Some(translation) = app.translation() else {
+        return;
+    };
+    let total = translation.tlb_len();
     // Reserve one row for the header.
     let visible = (inner.height as usize).saturating_sub(1).max(1);
     let (scroll, _) = visible_window(total, visible, app.tlb.entries_scroll);
@@ -38,10 +40,23 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
         }
     };
 
+    // Page-number columns are sized from the scheme's declared widths, so a
+    // 64-bit paging mode widens them instead of truncating.
+    let scheme = translation.scheme();
+    let vpn_digits = scheme
+        .virtual_hex_width()
+        .saturating_sub(usize::from(scheme.offset_bits) / 4)
+        .max(1);
+    let ppn_digits = usize::from(scheme.physical_bits)
+        .div_ceil(4)
+        .saturating_sub(usize::from(scheme.offset_bits) / 4)
+        .max(1);
+    let page_col = |digits: usize| Constraint::Length(digits as u16 + 3);
+
     let cols = vec![
         Col::new(" # ", Constraint::Length(4), Align::Left),
-        Col::new("VPN", Constraint::Length(9), Align::Left),
-        Col::new("PPN", Constraint::Length(9), Align::Left),
+        Col::new("VPN", page_col(vpn_digits), Align::Left),
+        Col::new("PPN", page_col(ppn_digits), Align::Left),
         Col::new("RWXU", Constraint::Length(5), Align::Left),
         Col::new("ASID", Constraint::Length(5), Align::Left),
         Col::new(" G", Constraint::Length(2), Align::Left),
@@ -51,28 +66,40 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
     ];
 
     let mut table = DataTable::new(cols);
-    for (i, e) in mmu.tlb.entries.iter().enumerate().skip(scroll).take(visible) {
+    for i in scroll..(scroll + visible).min(total) {
+        let Some(e) = translation.tlb_entry(i) else {
+            continue;
+        };
         let idx = Line::from(Span::styled(
             format!("{i:>3}"),
             Style::default().fg(theme::BORDER),
         ));
         let row = if e.valid {
             let perms = Line::from(vec![
-                mark(e.perms.r, "R"),
-                mark(e.perms.w, "W"),
-                mark(e.perms.x, "X"),
-                mark(e.perms.u, "U"),
+                mark(e.permissions.read, "R"),
+                mark(e.permissions.write, "W"),
+                mark(e.permissions.execute, "X"),
+                mark(e.permissions.user, "U"),
             ]);
             vec![
                 idx,
-                Line::from(Span::styled(format!("0x{:05x}", e.vpn), style::value())),
-                Line::from(Span::styled(format!("0x{:06x}", e.ppn), style::value())),
+                Line::from(Span::styled(
+                    format!("0x{:0vpn_digits$x}", e.virtual_page),
+                    style::value(),
+                )),
+                Line::from(Span::styled(
+                    format!("0x{:0ppn_digits$x}", e.physical_page),
+                    style::value(),
+                )),
                 perms,
-                Line::from(Span::styled(format!("{}", e.asid), style::label())),
+                Line::from(Span::styled(
+                    e.address_space.map_or_else(|| "—".into(), |id| id.to_string()),
+                    style::label(),
+                )),
                 Line::from(mark(e.global, "G")),
                 Line::from(mark(e.accessed, "A")),
                 Line::from(mark(e.dirty, "D")),
-                Line::from(mark(e.mask_bits > 0, "M")),
+                Line::from(mark(e.superpage_bits > 0, "M")),
             ]
         } else {
             let dash = || Line::from(Span::styled("\u{2014}", style::idle()));

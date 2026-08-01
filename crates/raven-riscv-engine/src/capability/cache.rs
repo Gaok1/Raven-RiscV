@@ -197,4 +197,58 @@ pub trait CacheHierarchy {
 
     /// Borrow one set for a content pane without performing a cache access.
     fn set(&self, level: usize, role: CacheRole, set: usize) -> Option<CacheSetView<'_>>;
+
+    /// Whether a host may let the user retune this hierarchy — add or remove
+    /// levels, change associativity, swap the replacement policy.
+    ///
+    /// A fixed teaching cache says `false`, and the host hides the editing
+    /// controls rather than offering buttons that cannot take effect.
+    fn is_configurable(&self) -> bool {
+        false
+    }
+
+    /// Cycles this hierarchy has charged the program, across every level and
+    /// role.
+    ///
+    /// The default sums what the levels report. A backend that tracks the
+    /// number directly — because it also charges for writebacks or prefetches
+    /// no single level owns — overrides it.
+    fn total_cycles(&self) -> u64 {
+        (0..self.level_count())
+            .flat_map(|level| {
+                [CacheRole::Instruction, CacheRole::Data, CacheRole::Unified]
+                    .into_iter()
+                    .filter_map(move |role| self.cache(level, role))
+            })
+            .map(|cache| cache.stats.total_cycles)
+            .sum()
+    }
+
+    /// Average memory access time for one cache, in cycles.
+    ///
+    /// The default is the single-level formula, `hit + miss_rate × penalty`. A
+    /// backend with deeper levels overrides it, because a miss there costs the
+    /// next level's AMAT rather than a flat penalty — and only the hierarchy
+    /// knows how its levels chain.
+    fn amat(&self, level: usize, role: CacheRole) -> f64 {
+        let Some(cache) = self.cache(level, role) else {
+            return 0.0;
+        };
+        let total = cache.stats.total_accesses();
+        let miss_rate = if total == 0 {
+            0.0
+        } else {
+            cache.stats.misses as f64 / total as f64
+        };
+        cache.config.hit_latency as f64 + miss_rate * cache.config.miss_penalty as f64
+    }
+
+    /// A display name for `level` — `"L1"`, `"L2"`, … — so a host labels a
+    /// hierarchy of any depth without a naming table of its own.
+    fn level_name(&self, level: usize) -> String {
+        [CacheRole::Unified, CacheRole::Instruction, CacheRole::Data]
+            .into_iter()
+            .find_map(|role| self.cache(level, role))
+            .map_or_else(|| format!("L{}", level + 1), |cache| cache.name.to_string())
+    }
 }

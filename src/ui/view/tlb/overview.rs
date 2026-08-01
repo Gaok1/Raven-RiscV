@@ -37,12 +37,7 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
     let mmu = app.run.mem().mmu();
     let satp_mode = mmu.satp.mode();
     let priv_mode = mmu.priv_mode;
-    // Mirror Mmu::translate: M-mode bypass is skipped when force_translate is
-    // on (didactic auto modes), so the panel must consult it too or it will
-    // lie after Assemble.
-    let active = app.run.vm_enabled()
-        && satp_mode == SatpMode::Sv32
-        && (priv_mode != PrivMode::M || mmu.force_translate);
+    let active = super::translation_active(app);
 
     // ── Quick controls (row 0) ───────────────────────────────────────────────
     let mode_label = format!("< {} >", app.vm_mode().as_str());

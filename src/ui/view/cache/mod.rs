@@ -11,7 +11,6 @@ use crate::ui::view::style;
 pub(crate) mod config;
 mod stats;
 mod view;
-mod portable;
 
 // The session-snapshot popup is shared with the Virtual Memory tab.
 pub(in crate::ui::view) use stats::render_snapshot_popup;
@@ -57,10 +56,8 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     render_cache_exec_controls(f, layout[2], app);
 
     match app.cache.subtab {
-        CacheSubtab::Stats if app.trait_driven() => portable::render_stats(f, layout[3], app),
         CacheSubtab::Stats => stats::render_stats(f, layout[3], app),
         CacheSubtab::View => view::render_view(f, layout[3], app),
-        CacheSubtab::Config if app.trait_driven() => portable::render_config(f, layout[3], app),
         CacheSubtab::Config => config::render_config(f, layout[3], app),
     }
 
@@ -132,7 +129,7 @@ pub(crate) fn build_cache_exec_bar(app: &App) -> Toolbar<RunButton> {
 /// `level ` label). Keyed by [`CacheLevelBtn`].
 pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
     let selected = app.cache.selected_level;
-    let num_extra = if app.trait_driven() {
+    let num_extra = if !app.cache_is_configurable() {
         app.cache_hierarchy()
             .map_or(0, |cache| cache.level_count().saturating_sub(1))
     } else {
@@ -156,7 +153,7 @@ pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
             theme::ACCENT,
         );
     }
-    if !app.trait_driven() {
+    if app.cache_is_configurable() {
         bar.action(
             CacheLevelBtn::Add,
             "add",
@@ -164,7 +161,7 @@ pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
             theme::ACCENT,
         );
     }
-    if !app.trait_driven() && num_extra > 0 {
+    if app.cache_is_configurable() && num_extra > 0 {
         bar.action(
             CacheLevelBtn::Remove,
             "remove",
@@ -180,7 +177,7 @@ pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
 pub(crate) fn build_cache_ctrl_bar(app: &App) -> Toolbar<CacheCtrlBtn> {
     let hov = |t: CacheHoverTarget| app.cache.hover == Some(t);
     let mut bar = Toolbar::new();
-    if !app.trait_driven() {
+    if app.cache_is_configurable() {
         bar.action(
             CacheCtrlBtn::Results,
             "results",
@@ -232,7 +229,7 @@ pub(crate) fn build_cache_scope_bar(app: &App) -> Toolbar<CacheScopeBtn> {
 }
 
 fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
-    let (total, cpi, instr) = if app.trait_driven() {
+    let (total, cpi, instr) = if app.machine.is_some() {
         let instr = app.machine_snapshot().map_or(0, |snapshot| snapshot.instructions);
         let total = app.cache_hierarchy().map_or(0, |caches| {
             [CacheRole::Instruction, CacheRole::Data]
@@ -297,7 +294,7 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
 
     let mut spans = vec![Span::styled("level", style::idle()), Span::raw(" ")];
     spans.extend(build_cache_level_bar(app).spans());
-    if !app.trait_driven() {
+    if app.cache_is_configurable() {
         spans.push(Span::styled("   +/= add level  -/_ remove", style::label()));
     }
 
@@ -372,3 +369,81 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
+
+#[cfg(test)]
+mod tests {
+    use crate::ui::app::App;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn screen(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|f| super::render_cache(f, f.area(), app))
+            .expect("render");
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The tab short-circuits to a notice when cache simulation is off, so
+    /// these turn it on — the point here is the panes, not the notice.
+    fn app(id: &str) -> App {
+        let mut app =
+            App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap();
+        app.run.cache_enabled = true;
+        app
+    }
+
+    /// One Cache tab for every backend that declares a cache — the parallel
+    /// "portable" stats view is gone, so a lesser rendering cannot come back.
+    #[test]
+    fn every_caching_backend_gets_the_same_cache_panes() {
+        for id in crate::arch::registry().ids() {
+            let app = app(id);
+            if !app.architecture.descriptor().capabilities.cache {
+                continue;
+            }
+            let screen = screen(&app, 160, 40);
+            for text in ["I-Cache", "D-Cache", "Program total"] {
+                assert!(screen.contains(text), "{id} is missing {text}:\n{screen}");
+            }
+        }
+    }
+
+    /// Editing controls follow the hierarchy's own answer, not the backend's
+    /// name: a fixed cache offers no add/remove.
+    #[test]
+    fn level_editing_is_offered_only_where_the_cache_is_configurable() {
+        let riscv = app("riscv32");
+        assert!(riscv.cache_is_configurable());
+        assert!(screen(&riscv, 160, 40).contains("add"));
+
+        for id in ["sap", "toy16"] {
+            let app = app(id);
+            if !app.architecture.descriptor().capabilities.cache {
+                continue;
+            }
+            assert!(!app.cache_is_configurable(), "{id} claims a tunable cache");
+            assert!(
+                !screen(&app, 160, 40).contains("add level"),
+                "{id} offers level editing it cannot apply"
+            );
+        }
+    }
+
+    #[test]
+    fn the_cache_tab_survives_small_terminals_on_every_architecture() {
+        for id in crate::arch::registry().ids() {
+            let app = app(id);
+            for (w, h) in [(160, 40), (80, 24), (40, 12), (20, 6)] {
+                let _ = screen(&app, w, h);
+            }
+        }
+    }
+}

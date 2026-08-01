@@ -240,13 +240,14 @@ fn render_tlb_disabled_notice(f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// Whether the machine is actually translating addresses right now.
+///
+/// The backend answers, rather than the panel re-deriving it from `satp`,
+/// privilege and a force flag — that duplication is how the panel could
+/// disagree with the machine it was describing.
 pub(super) fn translation_active(app: &App) -> bool {
-    use crate::falcon::mmu::{PrivMode, SatpMode};
-    let mmu = app.run.mem().mmu();
-    // Mirror `Mmu::translate`: in Auto mode (force_translate) even M-mode
-    // translates, so the priv-level gate only applies otherwise.
-    let priv_ok = mmu.priv_mode != PrivMode::M || mmu.force_translate;
-    app.run.vm_enabled() && mmu.satp.mode() == SatpMode::Sv32 && priv_ok
+    app.translation()
+        .is_some_and(|translation| translation.enabled())
 }
 
 fn btn_style(active: bool, hovered: bool) -> Style {

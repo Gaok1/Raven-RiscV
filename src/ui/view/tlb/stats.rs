@@ -108,15 +108,15 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
-    let mmu = app.run.mem().mmu();
-    let stats = &mmu.tlb.stats;
-    let total = stats.hits + stats.misses;
-    let hit_rate = if total == 0 {
-        0.0
-    } else {
-        stats.hits as f64 / total as f64 * 100.0
+    let Some(translation) = app.translation() else {
+        return;
     };
-    let valid_entries = mmu.tlb.entries.iter().filter(|e| e.valid).count();
+    let stats = translation.tlb_stats();
+    let hit_rate = stats.hit_rate();
+    let valid_entries = (0..translation.tlb_len())
+        .filter_map(|i| translation.tlb_entry(i))
+        .filter(|entry| entry.valid)
+        .count();
     let lines = vec![
         Line::from(vec![
             Span::styled(" Hits:       ", Style::default().fg(theme::LABEL)),
@@ -152,8 +152,8 @@ fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled(" Page Faults:", Style::default().fg(theme::LABEL)),
             Span::styled(
-                format!(" {}", stats.page_faults),
-                Style::default().fg(if stats.page_faults > 0 {
+                format!(" {}", stats.faults),
+                Style::default().fg(if stats.faults > 0 {
                     theme::DANGER
                 } else {
                     theme::TEXT
@@ -163,20 +163,22 @@ fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled(" Valid Entries: ", Style::default().fg(theme::LABEL)),
             Span::styled(
-                format!("{} / {}", valid_entries, mmu.tlb.entries.len()),
+                format!("{} / {}", valid_entries, translation.tlb_len()),
                 Style::default().fg(theme::TEXT),
             ),
         ]),
         Line::from(vec![
             Span::styled(" Sets:       ", Style::default().fg(theme::LABEL)),
             Span::styled(
-                format!("{}", mmu.tlb.num_sets()),
+                format!("{}", translation.tlb_sets()),
                 Style::default().fg(theme::BORDER),
             ),
             Span::raw("   "),
             Span::styled(" Ways:       ", Style::default().fg(theme::LABEL)),
             Span::styled(
-                format!("{}", mmu.tlb.config.associativity),
+                // Ways follow from the geometry the backend reports, so this
+                // stays right for a fully-associative or direct-mapped TLB.
+                format!("{}", translation.tlb_len() / translation.tlb_sets().max(1)),
                 Style::default().fg(theme::BORDER),
             ),
         ]),
@@ -201,7 +203,10 @@ fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme::LABEL),
         ));
 
-    let pts: Vec<(f64, f64)> = app.run.mem().mmu().tlb.stats.history.iter().copied().collect();
+    let pts: Vec<(f64, f64)> = app
+        .translation()
+        .map(|translation| translation.hit_rate_history())
+        .unwrap_or_default();
     if pts.is_empty() {
         let inner = block.inner(area);
         f.render_widget(block, area);

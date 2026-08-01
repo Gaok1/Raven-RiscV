@@ -7,6 +7,7 @@ use ratatui::{
 
 use crate::ui::app::{App, CacheScope};
 use crate::ui::theme;
+use raven_riscv_engine::capability::CacheRole;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{SbGeom, vertical_scrollbar};
@@ -16,13 +17,13 @@ use crate::ui::view::style;
 // Run Controls widget is rendered at the cache tab level (always visible).
 
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
+    let levels = app
+        .cache_hierarchy()
+        .map_or(0, |caches| caches.level_count());
     if app.cache.selected_level == 0 {
         render_l1_stats(f, area, app);
-    } else {
-        let idx = app.cache.selected_level - 1;
-        if idx < app.run.mem().extra_levels.len() {
-            render_unified_stats(f, area, app, idx);
-        }
+    } else if app.cache.selected_level < levels {
+        render_unified_stats(f, area, app, app.cache.selected_level - 1);
     }
 }
 
@@ -82,15 +83,25 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         };
         (cycles, cpi, ipc, committed)
     } else {
-        (
-            app.run.mem().total_program_cycles(),
-            app.run.mem().overall_cpi(),
-            app.run.mem().ipc(),
-            app.run.mem().instruction_count,
-        )
+        // Without a pipeline model, the hierarchy's own cycle count is the
+        // program total, and instructions come from the machine.
+        let cycles = app.cache_total_cycles();
+        let committed = app.instructions_retired();
+        let cpi = if committed == 0 {
+            0.0
+        } else {
+            cycles as f64 / committed as f64
+        };
+        let ipc = if cycles == 0 { 0.0 } else { 1.0 / cpi };
+        (cycles, cpi, ipc, committed)
     };
-    let i_cyc = app.run.mem().icache.stats.total_cycles;
-    let d_cyc = app.run.mem().dcache.stats.total_cycles;
+    let role_cycles = |role| {
+        app.cache_hierarchy()
+            .and_then(|caches| caches.cache(0, role))
+            .map_or(0, |cache| cache.stats.total_cycles)
+    };
+    let i_cyc = role_cycles(CacheRole::Instruction);
+    let d_cyc = role_cycles(CacheRole::Data);
 
     let mut spans = vec![
         Span::styled(
@@ -129,13 +140,19 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
         ),
     ];
 
-    for (i, lvl) in app.run.mem().extra_levels.iter().enumerate() {
-        let name = crate::falcon::cache::CacheController::extra_level_name(i);
-        spans.push(Span::raw(" + "));
-        spans.push(Span::styled(
-            format!("{name} svc: {}", lvl.stats.total_cycles),
-            Style::default().fg(theme::CACHE_L2),
-        ));
+    // Every level past L1, named by the hierarchy rather than a table here, so
+    // a backend with three levels shows three.
+    if let Some(caches) = app.cache_hierarchy() {
+        for level in 1..caches.level_count() {
+            let Some(cache) = caches.cache(level, CacheRole::Unified) else {
+                continue;
+            };
+            spans.push(Span::raw(" + "));
+            spans.push(Span::styled(
+                format!("{} svc: {}", caches.level_name(level), cache.stats.total_cycles),
+                Style::default().fg(theme::CACHE_L2),
+            ));
+        }
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -162,19 +179,18 @@ fn render_metrics(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
-    let (label, cache, instructions) = if icache {
-        (
-            "I-Cache",
-            &app.run.mem().icache,
-            app.run.mem().instruction_count,
-        )
+    let (label, role) = if icache {
+        ("I-Cache", CacheRole::Instruction)
     } else {
-        (
-            "D-Cache",
-            &app.run.mem().dcache,
-            app.run.mem().instruction_count,
-        )
+        ("D-Cache", CacheRole::Data)
     };
+    let Some(cache) = app
+        .cache_hierarchy()
+        .and_then(|caches| caches.cache(0, role))
+    else {
+        return;
+    };
+    let instructions = app.instructions_retired();
     let stats = &cache.stats;
     let cfg = &cache.config;
 
@@ -231,7 +247,7 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     } else {
         format!("  Writebacks: {}", stats.writebacks)
     };
-    let fills = if cfg.is_valid_config() && cfg.line_size > 0 {
+    let fills = if cfg.enabled && cfg.line_size > 0 {
         stats.bytes_loaded / cfg.line_size as u64
     } else {
         0
@@ -314,11 +330,9 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     }
 
     // Line 8: AMAT
-    let amat = if icache {
-        app.run.mem().icache_amat()
-    } else {
-        app.run.mem().dcache_amat()
-    };
+    let amat = app
+        .cache_hierarchy()
+        .map_or(0.0, |caches| caches.amat(0, role));
     let line8 = format!("Avarage Memory Access Time: {amat:.2} cyc");
     f.render_widget(
         Paragraph::new(Span::styled(line8, Style::default().fg(theme::CACHE_L2))),
@@ -438,8 +452,14 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let scope = app.cache.scope;
-    let i_data: Vec<(f64, f64)> = app.run.mem().icache.stats.history.iter().cloned().collect();
-    let d_data: Vec<(f64, f64)> = app.run.mem().dcache.stats.history.iter().cloned().collect();
+    let history = |role| {
+        app.cache_hierarchy()
+            .and_then(|caches| caches.cache(0, role))
+            .map(|cache| cache.stats.history.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let i_data = history(CacheRole::Instruction);
+    let d_data = history(CacheRole::Data);
 
     if i_data.is_empty() && d_data.is_empty() {
         let msg = Paragraph::new("No data yet — run the program to collect cache statistics.")
@@ -520,12 +540,17 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let cache = &app.run.mem().extra_levels[extra_idx];
-    let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
-    let label = format!("{level_name} (Unified)");
+    let level = extra_idx + 1;
+    let Some(caches) = app.cache_hierarchy() else {
+        return;
+    };
+    let Some(cache) = caches.cache(level, CacheRole::Unified) else {
+        return;
+    };
+    let label = format!("{} (Unified)", caches.level_name(level));
     let stats = &cache.stats;
     let cfg = &cache.config;
-    let instructions = app.run.mem().instruction_count;
+    let instructions = app.instructions_retired();
 
     let hit_rate = stats.hit_rate();
     let hit_color = if hit_rate >= 90.0 {
@@ -572,7 +597,7 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         return;
     }
 
-    let fills = if cfg.is_valid_config() && cfg.line_size > 0 {
+    let fills = if cfg.enabled && cfg.line_size > 0 {
         stats.bytes_loaded / cfg.line_size as u64
     } else {
         0
@@ -643,7 +668,9 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         return;
     }
 
-    let amat = app.run.mem().extra_level_amat(extra_idx);
+    let amat = app
+        .cache_hierarchy()
+        .map_or(0.0, |caches| caches.amat(extra_idx + 1, CacheRole::Unified));
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("Avarage Memory Access Time: {amat:.2} cyc"),
@@ -664,12 +691,11 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
         return;
     }
 
-    let data: Vec<(f64, f64)> = app.run.mem().extra_levels[extra_idx]
-        .stats
-        .history
-        .iter()
-        .cloned()
-        .collect();
+    let data: Vec<(f64, f64)> = app
+        .cache_hierarchy()
+        .and_then(|caches| caches.cache(extra_idx + 1, CacheRole::Unified))
+        .map(|cache| cache.stats.history.iter().copied().collect())
+        .unwrap_or_default();
 
     if data.is_empty() {
         f.render_widget(
@@ -688,7 +714,11 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     }
     let x_mid = (x_min + x_max) / 2.0;
 
-    let level_name = crate::falcon::cache::CacheController::extra_level_name(extra_idx);
+    let level_name = app
+        .cache_hierarchy()
+        .map_or_else(|| format!("L{}", extra_idx + 2), |caches| {
+            caches.level_name(extra_idx + 1)
+        });
     let datasets = vec![
         Dataset::default()
             .name(level_name)

@@ -35,9 +35,24 @@ fn levels(scheme: &PagingScheme) -> Vec<TranslationLevel> {
         .collect()
 }
 
+impl Mmu {
+    /// Whether a load or store would actually be translated right now.
+    ///
+    /// Mirrors the gate in `Mmu::translate`: paging on, a paging mode selected,
+    /// and either not in M-mode or forced. Hosts used to re-derive this from
+    /// `satp`, `priv_mode` and `force_translate` themselves, which meant the
+    /// panel could disagree with the machine.
+    fn translation_applies(&self) -> bool {
+        use super::{PrivMode, SatpMode};
+        self.enabled
+            && self.satp.mode() == SatpMode::Sv32
+            && (self.priv_mode != PrivMode::M || self.force_translate)
+    }
+}
+
 impl AddressTranslation for Mmu {
     fn scheme(&self) -> TranslationScheme {
-        if !self.enabled {
+        if !self.translation_applies() {
             return TranslationScheme {
                 name: "bare".into(),
                 virtual_bits: 32,
@@ -72,12 +87,16 @@ impl AddressTranslation for Mmu {
     }
 
     fn enabled(&self) -> bool {
-        self.enabled
+        self.translation_applies()
     }
 
     fn root_table(&self) -> Option<u64> {
-        self.enabled
+        self.translation_applies()
             .then(|| u64::from(self.satp.ppn()) << self.scheme.offset_bits)
+    }
+
+    fn hit_rate_history(&self) -> Vec<(f64, f64)> {
+        self.tlb.stats.history.iter().copied().collect()
     }
 
     fn tlb_stats(&self) -> TlbStatistics {
@@ -125,7 +144,7 @@ impl AddressTranslation for Mmu {
     /// could fault or fill, and this is called while drawing a frame — so a
     /// miss is reported as such rather than resolved.
     fn probe(&self, address: u64) -> TranslationResult {
-        if !self.enabled {
+        if !self.translation_applies() {
             return TranslationResult {
                 outcome: TranslationOutcome::Identity,
                 physical: Some(address),

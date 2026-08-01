@@ -643,6 +643,27 @@ impl App {
         }
     }
 
+    /// Cycles the active backend's cache hierarchy has charged the program.
+    pub(crate) fn cache_total_cycles(&self) -> u64 {
+        self.cache_hierarchy()
+            .map_or(0, |caches| caches.total_cycles())
+    }
+
+    /// Instructions the active backend has retired.
+    pub(crate) fn instructions_retired(&self) -> u64 {
+        match self.machine.as_deref() {
+            Some(machine) => machine.snapshot().instructions,
+            None => self.run.cpu().instr_count,
+        }
+    }
+
+    /// Whether the active backend's cache can be retuned, which is what gates
+    /// the Cache tab's add/remove/edit controls.
+    pub(crate) fn cache_is_configurable(&self) -> bool {
+        self.cache_hierarchy()
+            .is_some_and(|caches| caches.is_configurable())
+    }
+
     pub(crate) fn translation(&self) -> Option<&dyn AddressTranslation> {
         match self.machine.as_deref() {
             Some(machine) => machine.translation(),

@@ -1080,6 +1080,22 @@ impl CacheHierarchy for CacheController {
         1 + self.extra_levels.len()
     }
 
+    /// Fully retunable: this is the hierarchy the Cache tab exists to explore.
+    fn is_configurable(&self) -> bool {
+        true
+    }
+
+    /// Hierarchical: an L1 miss costs the transfer plus the next level's AMAT,
+    /// not a flat penalty.
+    fn amat(&self, level: usize, role: CacheRole) -> f64 {
+        match (level, role) {
+            (0, CacheRole::Instruction) => self.icache_amat(),
+            (0, CacheRole::Data) => self.dcache_amat(),
+            (level, _) if level >= 1 => self.extra_level_amat(level - 1),
+            _ => 0.0,
+        }
+    }
+
     fn cache(&self, level: usize, role: CacheRole) -> Option<CacheLevelView<'_>> {
         let cache = match (level, role) {
             (0, CacheRole::Instruction) => &self.icache,

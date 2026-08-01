@@ -164,4 +164,11 @@ pub trait AddressTranslation {
 
     /// Resolve `address` without touching the machine — no fill, no statistic.
     fn probe(&self, address: u64) -> TranslationResult;
+
+    /// Rolling `(step, hit-rate percent)` samples for a history chart, oldest
+    /// first. Empty when the backend keeps no history — a host then draws the
+    /// current rate without a trend line.
+    fn hit_rate_history(&self) -> Vec<(f64, f64)> {
+        Vec::new()
+    }
 }
