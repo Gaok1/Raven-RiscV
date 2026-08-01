@@ -17,7 +17,8 @@
 //!  ├── memory()              inspectable guest memory   → MemoryInspect
 //!  ├── code()                disassemble / assemble one → InstructionCodec
 //!  ├── caches()              inspectable cache levels   → CacheHierarchy
-//!  └── pipeline()            stages / hazards / history → PipelineInspect
+//!  ├── pipeline()            stages / hazards / history → PipelineInspect
+//!  └── translation()         TLB / page walk            → AddressTranslation
 //! ```
 //!
 //! ## For a host
@@ -65,6 +66,7 @@ mod code;
 mod memory;
 mod pipeline;
 mod registers;
+mod translation;
 
 pub use cache::{
     CacheHierarchy, CacheHistory, CacheInclusionPolicy, CacheLevelConfig, CacheLevelStats,
@@ -81,6 +83,8 @@ pub use pipeline::{
     PipelineTimelineCell, PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind,
     PipelineTraceView, PipelineUnitView,
 };
-pub use registers::{
-    RegisterBank, RegisterEntry, RegisterFile, RegisterFormat, RegisterId,
+pub use registers::{RegisterBank, RegisterEntry, RegisterFile, RegisterFormat, RegisterId};
+pub use translation::{
+    AddressTranslation, TlbEntryView, TlbStatistics, TranslationLevel, TranslationOutcome,
+    TranslationPermissions, TranslationResult, TranslationScheme,
 };

@@ -9,7 +9,8 @@ pub mod falcon;
 pub use crate::falcon::{CacheController, Cpu, jit::BackendKind};
 
 use crate::capability::{
-    BitRole, CacheHierarchy, CacheLevelView, CacheRole, CacheSetView, InstructionBitField,
+    AddressTranslation, BitRole, CacheHierarchy, CacheLevelView, CacheRole, CacheSetView,
+    InstructionBitField,
     InstructionCodec, InstructionField, InstructionInfo, MemoryInspect, MemoryRegion,
     PipelineInspect, RegisterBank, RegisterFile, RegisterId,
 };
@@ -502,6 +503,12 @@ impl Machine for RiscV32Machine {
     /// to hide the tab rather than draw five empty stages.
     fn pipeline(&self) -> Option<&dyn PipelineInspect> {
         self.machine.pipeline_inspect()
+    }
+
+    /// Always `Some`: RV32 has an MMU even when paging is switched off, and the
+    /// scheme it reports then says "bare".
+    fn translation(&self) -> Option<&dyn AddressTranslation> {
+        Some(self.mem().mmu())
     }
 }
 

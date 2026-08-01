@@ -1,5 +1,6 @@
 use crate::capability::{
-    CacheHierarchy, InstructionCodec, MemoryInspect, PipelineInspect, RegisterFile,
+    AddressTranslation, CacheHierarchy, InstructionCodec, MemoryInspect, PipelineInspect,
+    RegisterFile,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -336,6 +337,15 @@ pub trait Machine: Send {
     /// Answering `None` covers both a backend with no pipeline model and one
     /// whose pipeline is currently switched off.
     fn pipeline(&self) -> Option<&dyn PipelineInspect> {
+        None
+    }
+
+    /// Virtual-to-physical translation: the TLB and the page walk behind it.
+    ///
+    /// A backend that runs on physical addresses answers `None`; one whose
+    /// translation is merely switched off still answers `Some`, reporting a
+    /// bare scheme, so a host can show the pane in its "off" state.
+    fn translation(&self) -> Option<&dyn AddressTranslation> {
         None
     }
 

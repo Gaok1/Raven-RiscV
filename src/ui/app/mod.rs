@@ -50,8 +50,8 @@ use super::{
     view::ui,
 };
 use raven_riscv_engine::capability::{
-    CacheHierarchy, InstructionCodec, MemoryInspect, PipelineInspect, RegisterBank, RegisterEntry,
-    RegisterFile, RegisterId,
+    AddressTranslation, CacheHierarchy, InstructionCodec, MemoryInspect, PipelineInspect,
+    RegisterBank, RegisterEntry, RegisterFile, RegisterId,
 };
 
 /// Register age meaning "not changed recently", so the sidebar draws it plain.
@@ -640,6 +640,13 @@ impl App {
         match self.machine.as_deref() {
             Some(machine) => machine.pipeline(),
             None => Some(self.run.pipeline_inspect()),
+        }
+    }
+
+    pub(crate) fn translation(&self) -> Option<&dyn AddressTranslation> {
+        match self.machine.as_deref() {
+            Some(machine) => machine.translation(),
+            None => Some(self.run.mem().mmu()),
         }
     }
 

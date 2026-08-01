@@ -2,7 +2,7 @@ use raven_riscv_engine::architectures::riscv32;
 use raven_riscv_engine::capability::{
     CacheRole, InstructionCodec, PipelineEdge, PipelineEdgeKind, PipelineInspect,
     PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell,
-    PipelineTimelineRow, PipelineTraceView, PipelineUnitView, RegisterId,
+    PipelineTimelineRow, PipelineTraceView, PipelineUnitView, RegisterId, TranslationOutcome,
 };
 use raven_riscv_engine::falcon::memory::{Bus, Ram};
 use raven_riscv_engine::{
@@ -1002,6 +1002,51 @@ fn a_branching_pipeline_lays_out_in_flow_order() {
     assert_eq!(&order[..2], &[0, 1]);
     assert_eq!(*order.last().unwrap(), 4);
     assert!(order[2..4].contains(&2) && order[2..4].contains(&3));
+}
+
+/// Translation is described, not assumed: a host reads the scheme's widths and
+/// levels rather than knowing what Sv32 is.
+#[test]
+fn riscv32_describes_its_paging_scheme() {
+    let architecture = ArchitectureRegistry::builtin().get(riscv32::ID).unwrap();
+    let machine = Engine::new(architecture.clone())
+        .create_machine(architecture.descriptor().default_memory_size)
+        .unwrap();
+    let translation = machine
+        .translation()
+        .expect("RV32 has an MMU even when paging is off");
+
+    // Paging starts off, and the scheme says so rather than the pane vanishing.
+    assert!(!translation.enabled());
+    assert_eq!(translation.scheme().name, "bare");
+    assert!(translation.root_table().is_none());
+
+    // With translation off every address is its own physical address.
+    let probe = translation.probe(0x1234);
+    assert_eq!(probe.outcome, TranslationOutcome::Identity);
+    assert_eq!(probe.physical, Some(0x1234));
+
+    // The TLB geometry is still reportable, so the pane can draw empty ways.
+    assert!(translation.tlb_len() > 0);
+    assert!(translation.tlb_sets() >= 1);
+    assert_eq!(translation.tlb_stats().hits, 0);
+}
+
+/// Backends with no MMU must say so rather than report a fake one.
+#[test]
+fn backends_without_translation_answer_none() {
+    for id in ["sap", "toy16"] {
+        let architecture = ArchitectureRegistry::builtin().get(id).unwrap();
+        let machine = Engine::new(architecture.clone())
+            .create_machine(architecture.descriptor().default_memory_size)
+            .unwrap();
+        assert!(
+            machine.translation().is_none(),
+            "{id} claims address translation"
+        );
+        // …and its descriptor agrees, which is what gates the tab.
+        assert!(!architecture.descriptor().capabilities.virtual_memory);
+    }
 }
 
 #[test]

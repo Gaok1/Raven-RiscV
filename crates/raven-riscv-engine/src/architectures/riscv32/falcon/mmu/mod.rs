@@ -6,6 +6,7 @@
 // TLB; on a miss it walks the Sv32 page table, installs the resulting entry,
 // and surfaces page faults to the caller.
 
+mod capability;
 pub mod satp;
 pub mod tlb;
 pub mod walker;
