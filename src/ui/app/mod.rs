@@ -131,6 +131,44 @@ impl Tab {
     }
 }
 
+/// Cycles and retired instructions as the active backend counts them.
+///
+/// Built by [`App::execution_totals`]; `cpi` is derived rather than stored so
+/// no pane can show a ratio that disagrees with the two numbers beside it.
+#[derive(Clone, Copy)]
+pub(crate) struct ExecutionTotals {
+    pub(crate) cycles: u64,
+    pub(crate) instructions: u64,
+    pub(crate) scope: ExecutionScope,
+}
+
+/// How much of the program the totals cover: a pipeline counts cycles for the
+/// hart it is clocking, a cache hierarchy for everything that ran.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutionScope {
+    Selected,
+    Program,
+}
+
+impl ExecutionTotals {
+    pub(crate) fn cpi(self) -> f64 {
+        if self.instructions == 0 {
+            0.0
+        } else {
+            self.cycles as f64 / self.instructions as f64
+        }
+    }
+}
+
+impl ExecutionScope {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Selected => "selected",
+            Self::Program => "program",
+        }
+    }
+}
+
 // ── Top-level app ──────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -651,6 +689,28 @@ impl App {
     pub(crate) fn cache_total_cycles(&self) -> u64 {
         self.cache_hierarchy()
             .map_or(0, |caches| caches.total_cycles())
+    }
+
+    /// What the run toolbar, the Run status line and the Cache tab all mean by
+    /// "Cycles / CPI / Instrs".
+    ///
+    /// Timing comes from whichever model the active backend actually charges
+    /// cycles to: a running pipeline counts them per stage, everything else
+    /// pays for them through the cache hierarchy. Deciding that here is what
+    /// keeps three panes from disagreeing about the same program.
+    pub(crate) fn execution_totals(&self) -> ExecutionTotals {
+        match self.aggregate_pipeline_snapshot() {
+            Some(pipeline) => ExecutionTotals {
+                cycles: pipeline.cycles,
+                instructions: pipeline.committed,
+                scope: ExecutionScope::Selected,
+            },
+            None => ExecutionTotals {
+                cycles: self.cache_total_cycles(),
+                instructions: self.instructions_retired(),
+                scope: ExecutionScope::Program,
+            },
+        }
     }
 
     /// Instructions the active backend has retired.

@@ -267,22 +267,8 @@ pub(crate) fn render_exec_controls(
         ("pause", theme::PAUSED)
     };
 
-    let (total, cpi, instr) = if let Some(pipeline) = app.aggregate_pipeline_snapshot() {
-        let cycles = pipeline.cycles;
-        let committed = pipeline.committed;
-        let cpi = if committed > 0 {
-            cycles as f64 / committed as f64
-        } else {
-            0.0
-        };
-        (cycles, cpi, committed)
-    } else {
-        (
-            app.run.mem().total_program_cycles(),
-            app.run.mem().overall_cpi(),
-            app.run.mem().instruction_count,
-        )
-    };
+    let totals = app.execution_totals();
+    let (total, cpi, instr) = (totals.cycles, totals.cpi(), totals.instructions);
 
     let mut spans = Vec::new();
     let inner_for_hits = Block::default()

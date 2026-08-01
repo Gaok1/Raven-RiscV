@@ -1,24 +1,17 @@
 use super::{App, FormatMode};
 
+/// The cell as the *program* would read it: `MemoryInspect::peek` answers for
+/// whichever backend is running, and on one with a write-back cache it reports
+/// the dirty line rather than the stale word still in RAM.
 pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
-    // Use effective_read* which returns dirty D-cache values if present,
-    // so write-back stores are visible in the RUN tab memory view.
-    match app.run.mem_view_bytes {
-        4 => format_u32_value(
-            app.run.mem().effective_read32(addr).unwrap_or(0),
-            app.run.fmt_mode,
-            app.run.show_signed,
-        ),
-        2 => format_u16_value(
-            app.run.mem().effective_read16(addr).unwrap_or(0),
-            app.run.fmt_mode,
-            app.run.show_signed,
-        ),
-        _ => format_u8_value(
-            app.run.mem().effective_read8(addr).unwrap_or(0),
-            app.run.fmt_mode,
-            app.run.show_signed,
-        ),
+    let bytes = app.run.mem_view_bytes;
+    let word = app
+        .memory()
+        .map_or(0, |memory| memory.peek_word(u64::from(addr), bytes as usize));
+    match bytes {
+        4 => format_u32_value(word as u32, app.run.fmt_mode, app.run.show_signed),
+        2 => format_u16_value(word as u16, app.run.fmt_mode, app.run.show_signed),
+        _ => format_u8_value(word as u8, app.run.fmt_mode, app.run.show_signed),
     }
 }
 

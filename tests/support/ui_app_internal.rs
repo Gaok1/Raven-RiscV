@@ -2241,6 +2241,30 @@ fn toy16_is_a_runtime_app_backend_with_cache_and_capability_gated_tabs() {
     );
 }
 
+/// The Run status line, the run toolbar and the Cache tab all show "Cycles /
+/// CPI / Instrs" for whatever is running. They used to each pick a source, and
+/// two of the three read RV32's runtime unconditionally — so a toy16 program
+/// was charged against a cache no instruction of it had ever touched.
+#[test]
+fn execution_totals_come_from_the_active_backend() {
+    for id in ["riscv32", "toy16"] {
+        let mut app =
+            App::new_with_architecture(Some(64 * 1024), crate::falcon::jit::BackendKind::None, id)
+                .unwrap();
+        for _ in 0..5 {
+            app.single_step();
+        }
+        let totals = app.execution_totals();
+        assert!(totals.instructions > 0, "{id} retired nothing");
+        assert!(totals.cycles > 0, "{id} charged no cycles");
+        assert_eq!(
+            totals.cpi(),
+            totals.cycles as f64 / totals.instructions as f64,
+            "{id} reported a CPI its own two numbers do not give"
+        );
+    }
+}
+
 /// Both runtimes build through the active backend's assembler and report the
 /// result the same way. Nothing here mentions an ISA — that is the point: the
 /// figures come from the `ProgramImage`, so a new backend needs no change to

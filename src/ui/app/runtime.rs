@@ -15,8 +15,12 @@ impl App {
         dst.fu_capacity = src.fu_capacity;
     }
 
+    /// Timing summed across every hart, or `None` when the active backend is
+    /// not clocking a pipeline at all — which is how a backend with no pipeline
+    /// capability answers, so callers fall back to cache timing without asking
+    /// which architecture is running.
     pub(crate) fn aggregate_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.run.pipeline().enabled {
+        if !self.pipeline().is_some_and(|pipeline| pipeline.status().enabled) {
             return None;
         }
 
@@ -93,7 +97,7 @@ impl App {
     }
 
     pub(crate) fn selected_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.run.pipeline().enabled {
+        if !self.pipeline().is_some_and(|pipeline| pipeline.status().enabled) {
             return None;
         }
 

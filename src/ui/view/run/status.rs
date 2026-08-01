@@ -49,26 +49,8 @@ fn edit_status_line(app: &App) -> Line<'static> {
 }
 
 fn cycle_line(app: &App) -> Line<'static> {
-    let (total, cpi, instr) = if app.run.pipeline().enabled || app.run.pipeline().sequential_mode {
-        let cycles = app.run.pipeline().cycle_count;
-        let cpi = if app.run.pipeline().instr_committed > 0 {
-            cycles as f64 / app.run.pipeline().instr_committed as f64
-        } else {
-            0.0
-        };
-        (cycles, cpi, app.run.pipeline().instr_committed)
-    } else {
-        (
-            app.run.mem().total_program_cycles(),
-            app.run.mem().overall_cpi(),
-            app.run.mem().instruction_count,
-        )
-    };
-    let scope_label = if app.run.pipeline().enabled || app.run.pipeline().sequential_mode {
-        "Scope:selected"
-    } else {
-        "Scope:program"
-    };
+    let totals = app.execution_totals();
+    let (total, cpi, instr) = (totals.cycles, totals.cpi(), totals.instructions);
     Line::from(vec![
         Span::styled(
             format!(
@@ -88,7 +70,7 @@ fn cycle_line(app: &App) -> Line<'static> {
         Span::raw("  "),
         Span::styled(format!("Instrs:{instr}"), style::label()),
         Span::raw("  "),
-        Span::styled(scope_label, style::label()),
+        Span::styled(format!("Scope:{}", totals.scope.label()), style::label()),
     ])
 }
 

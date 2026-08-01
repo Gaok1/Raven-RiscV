@@ -1,6 +1,5 @@
 // ui/view/cache/mod.rs — Cache tab top-level renderer
 use ratatui::{Frame, prelude::*, widgets::Paragraph};
-use raven_riscv_engine::capability::CacheRole;
 
 use crate::ui::app::{App, CacheHoverTarget, CacheScope, CacheSubtab, RunButton};
 use crate::ui::theme;
@@ -229,33 +228,8 @@ pub(crate) fn build_cache_scope_bar(app: &App) -> Toolbar<CacheScopeBtn> {
 }
 
 fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
-    let (total, cpi, instr) = if app.machine.is_some() {
-        let instr = app.machine_snapshot().map_or(0, |snapshot| snapshot.instructions);
-        let total = app.cache_hierarchy().map_or(0, |caches| {
-            [CacheRole::Instruction, CacheRole::Data]
-                .iter()
-                .filter_map(|role| caches.cache(0, *role))
-                .map(|cache| cache.stats.total_cycles)
-                .sum()
-        });
-        let cpi = if instr == 0 { 0.0 } else { total as f64 / instr as f64 };
-        (total, cpi, instr)
-    } else if let Some(pipeline) = app.aggregate_pipeline_snapshot() {
-        let cycles = pipeline.cycles;
-        let committed = pipeline.committed;
-        let cpi = if committed > 0 {
-            cycles as f64 / committed as f64
-        } else {
-            0.0
-        };
-        (cycles, cpi, committed)
-    } else {
-        (
-            app.run.mem().total_program_cycles(),
-            app.run.mem().overall_cpi(),
-            app.run.mem().instruction_count,
-        )
-    };
+    let totals = app.execution_totals();
+    let (total, cpi, instr) = (totals.cycles, totals.cpi(), totals.instructions);
 
     let mut spans = build_cache_exec_bar(app).spans();
     spans.push(Span::styled(
