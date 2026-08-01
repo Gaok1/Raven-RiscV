@@ -8,6 +8,7 @@ use crate::ui::pipeline::PipelineSubtab;
 use crate::ui::theme;
 use crate::ui::view::components::{SpanRow, dense_action, dense_value};
 use crate::ui::view::style;
+use raven_riscv_engine::capability::PipelineInspect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -16,9 +17,9 @@ use ratatui::{
 };
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
-    app.run.pipeline().gantt_area_rect.set((0, 0, 0, 0));
-    if !matches!(app.run.pipeline().subtab, PipelineSubtab::Config) {
-        app.run.pipeline()
+    app.run.pipeline_view().gantt_area_rect.set((0, 0, 0, 0));
+    if !matches!(app.run.pipeline_view().subtab, PipelineSubtab::Config) {
+        app.run.pipeline_view()
             .config_row_rects
             .set([(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS]);
     }
@@ -29,7 +30,7 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(2), Constraint::Min(0)])
         .split(area);
 
-    render_header(f, layout[0], app);
+    render_header(f, layout[0], app, app.run.pipeline_inspect());
 
     // When pipeline is disabled the sequential visualization is available;
     // fall through to the normal rendering path.
@@ -49,8 +50,10 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    match app.run.pipeline().subtab {
-        PipelineSubtab::Main => main_view::render_pipeline_main(f, layout[1], app),
+    match app.run.pipeline_view().subtab {
+        PipelineSubtab::Main => {
+            main_view::render_pipeline_main(f, layout[1], app, app.run.pipeline_inspect())
+        }
         PipelineSubtab::Config => config_view::render_pipeline_config(f, layout[1], app),
     }
 }
@@ -61,14 +64,16 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
 //   L1: title, subtab buttons, core/hart/status, speed/state/reset, file actions
 //   L2: cycle metrics + stall breakdown (+ sequential note / key hints)
 
-fn render_header(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
+fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineInspect) {
+    let p = app.run.pipeline_view();
+    let status = inspect.status();
+    let stats = inspect.stats();
     let single_core = app.max_cores <= 1;
-    let state_clickable = !p.faulted;
+    let state_clickable = !status.faulted;
 
-    let (state_label, state_color) = if p.faulted {
+    let (state_label, state_color) = if status.faulted {
         ("fault", theme::DANGER)
-    } else if p.halted {
+    } else if status.halted {
         ("halt", theme::PAUSED)
     } else if app.run.is_running {
         ("run", theme::RUNNING)
@@ -172,31 +177,35 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 
     // ── Line 2: metrics ──
     let mut spans: Vec<Span<'static>> = vec![Span::styled(
-        format!(" cyc {}", p.cycle_count),
+        format!(" cyc {}", stats.cycles),
         Style::default().fg(theme::METRIC_CYC),
     )];
-    if p.instr_committed > 0 {
-        let cpi = p.cycle_count as f64 / p.instr_committed as f64;
+    if stats.committed > 0 {
+        let cpi = stats.cpi();
         spans.push(Span::styled(
             format!("  CPI {cpi:.2}"),
             Style::default().fg(theme::METRIC_CPI),
         ));
         let stalls = if header_drops_stall_breakdown(area.width) {
-            format!("  instr {}  stalls {}", p.instr_committed, p.stall_count)
+            format!("  instr {}  stalls {}", stats.committed, stats.stalls)
         } else {
-            let [raw, lu, br, fu, mem] = p.stall_by_type;
+            let raw = stats.raw_stalls;
+            let lu = stats.load_use_stalls;
+            let br = stats.branch_stalls;
+            let fu = stats.functional_unit_stalls;
+            let mem = stats.memory_stalls;
             format!(
                 "  instr {}  stalls {} (RAW {raw} · LD {lu} · BR {br} · FU {fu} · MEM {mem})",
-                p.instr_committed, p.stall_count
+                stats.committed, stats.stalls
             )
         };
         spans.push(Span::styled(stalls, Style::default().fg(theme::LABEL)));
-        if p.branches_executed > 0 {
-            let mispredict_pct = p.flush_count as f64 / p.branches_executed as f64 * 100.0;
+        if stats.branches > 0 {
+            let mispredict_pct = stats.flushes as f64 / stats.branches as f64 * 100.0;
             spans.push(Span::styled(
                 format!(
                     "  br {} · mispred {} ({mispredict_pct:.0}%)",
-                    p.branches_executed, p.flush_count
+                    stats.branches, stats.flushes
                 ),
                 Style::default().fg(theme::LABEL),
             ));
@@ -207,7 +216,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme::LABEL),
         ));
     }
-    if p.sequential_mode {
+    if status.sequential {
         spans.push(Span::styled(
             "  ·  Sequential (pipeline off)",
             Style::default().fg(theme::PAUSED),

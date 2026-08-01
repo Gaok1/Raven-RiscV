@@ -6,6 +6,7 @@ use crate::falcon::cache::Cache;
 use crate::falcon::memory::Bus;
 use crate::falcon::{CacheController, Cpu};
 use crate::ui::pipeline::{HazardType, Stage, TraceKind};
+use raven_riscv_engine::{Machine, MachineSnapshot, StepOutcome};
 
 // ── JSON output ───────────────────────────────────────────────────────────────
 
@@ -188,14 +189,22 @@ pub fn parse_expect_reg_spec(spec: &str) -> Result<(u8, u32), String> {
         .split_once('=')
         .ok_or_else(|| format!("invalid --expect-reg '{spec}' (use reg=value)"))?;
     let name = reg.trim();
-    let reg = name
-        .strip_prefix('r')
-        .or_else(|| name.strip_prefix('R'))
-        .and_then(|number| number.parse::<u8>().ok())
-        .or_else(|| parse_reg(name))
-        .ok_or_else(|| format!("invalid register '{}'", name))?;
+    let reg = parse_reg(name)
+        .or_else(|| parse_numbered_reg(name))
+        .ok_or_else(|| format!("invalid register '{name}'"))?;
     let value = parse_u32_value(value, "register value")?;
     Ok((reg, value))
+}
+
+/// `r0`..`r31`, the backend-neutral spelling used by non-RISC-V architectures.
+///
+/// The upper bound matters: the index is used to address a 32-entry register
+/// file, so an out-of-range one has to be rejected here rather than panic later.
+fn parse_numbered_reg(name: &str) -> Option<u8> {
+    name.strip_prefix(['r', 'R'])?
+        .parse::<u8>()
+        .ok()
+        .filter(|index| *index < 32)
 }
 
 pub fn parse_expect_mem_spec(spec: &str) -> Result<(u32, u32), String> {
@@ -267,8 +276,85 @@ pub(super) fn validate_expectations(
     Ok(())
 }
 
+/// Trait-backed twin of [`validate_expectations`], for the architectures the
+/// CLI drives through [`Machine`] instead of through the RV32 [`Cpu`].
+pub(super) fn validate_machine_expectations(
+    machine: &dyn Machine,
+    snapshot: &MachineSnapshot,
+    outcome: StepOutcome,
+    expect_exit: Option<u32>,
+    expect_stdout: Option<&str>,
+    expect_regs: &[(u8, u32)],
+    expect_mems: &[(u32, u32)],
+) -> Result<(), String> {
+    if let Some(expected) = expect_exit {
+        let actual = match outcome {
+            StepOutcome::Exited(code) => code as u32,
+            StepOutcome::Halted => 0,
+            _ => {
+                return Err(format!(
+                    "exit-code assertion failed: expected {expected}, but program did not exit"
+                ));
+            }
+        };
+        if actual != expected {
+            return Err(format!(
+                "exit-code assertion failed: expected {expected}, got {actual}"
+            ));
+        }
+    }
+
+    if let Some(expected) = expect_stdout {
+        if snapshot.stdout != expected.as_bytes() {
+            return Err(format!(
+                "stdout assertion failed: expected {:?}, got {:?}",
+                expected,
+                String::from_utf8_lossy(&snapshot.stdout)
+            ));
+        }
+    }
+
+    for &(index, expected) in expect_regs {
+        let register = snapshot.registers.get(index as usize).ok_or_else(|| {
+            format!(
+                "register assertion failed: {} has no register {index}",
+                snapshot.architecture
+            )
+        })?;
+        if register.value != u64::from(expected) {
+            return Err(format!(
+                "register assertion failed: {} expected 0x{expected:08X}, got 0x{:08X}",
+                register.name, register.value
+            ));
+        }
+    }
+
+    for &(address, expected) in expect_mems {
+        let bytes = machine
+            .read_memory(u64::from(address), 4)
+            .map_err(|e| format!("memory assertion failed at 0x{address:08X}: {e}"))?;
+        let actual = u32::from_le_bytes(bytes.try_into().expect("read_memory returned 4 bytes"));
+        if actual != expected {
+            return Err(format!(
+                "memory assertion failed: [0x{address:08X}] expected 0x{expected:08X}, got 0x{actual:08X}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Minimal run report for trait-driven backends: they have no cache or pipeline
+/// statistics to report, so [`format_json`] does not apply.
+pub(super) fn format_machine_json(architecture: &str, snapshot: &MachineSnapshot) -> String {
+    format!(
+        "{{\n  \"architecture\": \"{architecture}\",\n  \"instructions\": {},\n  \"pc\": {},\n  \"state\": \"{}\"\n}}\n",
+        snapshot.instructions, snapshot.pc, snapshot.state
+    )
+}
+
 pub(super) fn reg_name_cli(r: u8) -> &'static str {
-    crate::ui::pipeline::sim::reg_name(r)
+    raven_riscv_engine::falcon::pipeline::sim::reg_name(r)
 }
 
 pub(super) fn hazard_type_label(hazard: HazardType) -> &'static str {
@@ -284,8 +370,8 @@ pub(super) fn hazard_type_label(hazard: HazardType) -> &'static str {
 }
 
 pub(super) fn snapshot_pipeline_trace_step(
-    state: &crate::ui::pipeline::PipelineSimState,
-    commit: Option<&crate::ui::pipeline::sim::CommitInfo>,
+    state: &raven_riscv_engine::falcon::pipeline::PipelineSimState,
+    commit: Option<&raven_riscv_engine::falcon::pipeline::sim::CommitInfo>,
 ) -> PipelineTraceStep {
     let mut stages = Vec::with_capacity(5);
     for (idx, stage) in Stage::all().iter().enumerate() {

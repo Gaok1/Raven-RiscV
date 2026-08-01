@@ -95,11 +95,11 @@ fn target_config(term: Rect, _app: &App) -> Option<Rect> {
 }
 
 fn setup_main(app: &mut App) {
-    app.run.pipeline_mut().subtab = PipelineSubtab::Main;
+    app.run.pipeline_view_mut().subtab = PipelineSubtab::Main;
 }
 
 fn setup_config(app: &mut App) {
-    app.run.pipeline_mut().subtab = PipelineSubtab::Config;
+    app.run.pipeline_view_mut().subtab = PipelineSubtab::Config;
 }
 
 pub static STEPS: &[TutorialStep] = &[

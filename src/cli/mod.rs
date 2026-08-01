@@ -13,7 +13,7 @@ use crate::falcon::jit::{self, BackendKind, ExecCtx, ExecOutcome, ExecutionBacke
 use crate::falcon::program::{load_bytes, load_elf};
 use crate::falcon::registers::HartStartRequest;
 use crate::falcon::{CacheController, Cpu};
-use crate::ui::pipeline::sim::pipeline_tick;
+use raven_riscv_engine::falcon::pipeline::sim::pipeline_tick;
 use crate::ui::pipeline::{PipelineConfig, parse_pipeline_config, serialize_pipeline_config};
 use crate::ui::{Console, CpiConfig};
 use std::collections::HashMap;
@@ -106,23 +106,16 @@ struct HeadlessHart {
 
 // ── raven build ───────────────────────────────────────────────────────────────
 
-/// Assemble `file` and optionally write a FALC binary.
-/// `nout = true` → check-only (no output file written).
-pub fn build_program(file: &str, output: Option<&str>, nout: bool) -> Result<(), String> {
-    build_program_for_arch(file, output, nout, "riscv32")
-}
-
-pub fn build_program_for_arch(
+/// Assemble `file` with `architecture`'s assembler and optionally write a FALC
+/// binary. `nout = true` → check-only (no output file written).
+pub fn build_program(
     file: &str,
     output: Option<&str>,
     nout: bool,
     architecture: &str,
 ) -> Result<(), String> {
     let src = std::fs::read_to_string(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
-    let registry = raven_riscv_engine::ArchitectureRegistry::with_builtins();
-    let architecture = registry
-        .get(architecture)
-        .ok_or_else(|| format!("unknown architecture '{architecture}'"))?;
+    let architecture = crate::arch::lookup(architecture)?;
     let image = architecture
         .assembler()
         .assemble(&src, 0)
@@ -158,8 +151,7 @@ pub fn build_program_for_arch(
         .map(str::to_string)
         .unwrap_or_else(|| replace_ext(file, "bin"));
     let binary = image.to_falc_v2().map_err(|e| e.to_string())?;
-    std::fs::write(&out_path, binary)
-        .map_err(|e| format!("cannot write '{}': {e}", out_path))?;
+    std::fs::write(&out_path, binary).map_err(|e| format!("cannot write '{}': {e}", out_path))?;
     eprintln!("  → {out_path}");
     Ok(())
 }
@@ -404,11 +396,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
 
     // ── 5. Serialize and output ──────────────────────────────────────────────
     if !args.nout {
-        let exit_code = if pipeline_report.as_ref().map(|r| !r.enabled).unwrap_or(true) {
-            cpu.exit_code
-        } else {
-            cpu.exit_code
-        };
+        let exit_code = cpu.exit_code;
         let text = match args.format {
             OutputFormat::Json => format_json(&mem, &file_name, exit_code, pipeline_report),
             OutputFormat::Rstats => format_rstats(&mem, &file_name, exit_code, pipeline_report),
@@ -425,100 +413,82 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Run a backend that plugs in through the [`Machine`](raven_riscv_engine::Machine)
+/// trait, i.e. anything other than RV32.
 fn run_portable(args: RunArgs) -> Result<(), String> {
-    let registry = raven_riscv_engine::ArchitectureRegistry::with_builtins();
-    let architecture = registry
-        .get(&args.architecture)
-        .ok_or_else(|| format!("unknown architecture '{}'", args.architecture))?;
-    if args.pipeline
-        || args.pipeline_trace_out.is_some()
-        || args.config.is_some()
-        || args.max_cores > 1
-        || args.jit_mode != BackendKind::None
-        || args.screen_window
-    {
-        return Err(format!(
-            "architecture '{}' does not support pipeline, RV32 config, multicore, JIT, or screen options",
-            args.architecture
-        ));
-    }
-    let bytes =
-        std::fs::read(&args.file).map_err(|e| format!("cannot read '{}': {e}", args.file))?;
-    let image = if bytes.starts_with(b"FALC") {
-        raven_riscv_engine::ProgramImage::from_falc(&bytes).map_err(|e| e.to_string())?
-    } else {
-        let source = std::str::from_utf8(&bytes)
-            .map_err(|_| format!("'{}' is neither UTF-8 source nor FALC", args.file))?;
-        architecture
-            .assembler()
-            .assemble(source, 0)
-            .map_err(|e| e.to_string())?
-    };
+    let architecture = crate::arch::lookup(&args.architecture)?;
+    reject_rv32_only_options(&args)?;
+
+    let descriptor = architecture.descriptor();
+    let image = read_portable_image(&args.file, architecture.assembler())?;
+    let memory_size = args
+        .mem_size
+        .map_or(descriptor.default_memory_size, |requested| {
+            descriptor.clamp_memory_size(requested)
+        });
     let mut machine = architecture
-        .create_machine(args.mem_size.unwrap_or(64 * 1024))
+        .create_machine(memory_size)
         .map_err(|e| e.to_string())?;
     machine.load(&image).map_err(|e| e.to_string())?;
+
     let outcome = machine.run(args.max_cycles).map_err(|e| e.to_string())?;
     let snapshot = machine.snapshot();
     print!("{}", String::from_utf8_lossy(&snapshot.stdout));
-    if let Some(expected) = args.expect_stdout.as_deref() {
-        let actual = String::from_utf8_lossy(&snapshot.stdout);
-        if actual != expected {
-            return Err(format!(
-                "stdout mismatch: expected {expected:?}, got {actual:?}"
-            ));
-        }
-    }
-    for (index, expected) in &args.expect_regs {
-        let actual = snapshot
-            .registers
-            .get(*index as usize)
-            .ok_or_else(|| {
-                format!(
-                    "register index {index} is unavailable on {}",
-                    args.architecture
-                )
-            })?
-            .value;
-        if actual != u64::from(*expected) {
-            return Err(format!(
-                "register r{index}: expected {expected}, got {actual}"
-            ));
-        }
-    }
-    for (address, expected) in &args.expect_mems {
-        let bytes = machine
-            .read_memory(u64::from(*address), 4)
-            .map_err(|e| e.to_string())?;
-        let actual = u32::from_le_bytes(bytes.try_into().unwrap());
-        if actual != *expected {
-            return Err(format!(
-                "memory 0x{address:X}: expected {expected}, got {actual}"
-            ));
-        }
-    }
-    if let Some(expected) = args.expect_exit {
-        let actual = match outcome {
-            raven_riscv_engine::StepOutcome::Exited(code) => code as u32,
-            raven_riscv_engine::StepOutcome::Halted => 0,
-            _ => u32::MAX,
-        };
-        if actual != expected {
-            return Err(format!("exit mismatch: expected {expected}, got {actual}"));
-        }
-    }
+    validate_machine_expectations(
+        machine.as_ref(),
+        &snapshot,
+        outcome,
+        args.expect_exit,
+        args.expect_stdout.as_deref(),
+        &args.expect_regs,
+        &args.expect_mems,
+    )?;
+
     if !args.nout {
-        let report = format!(
-            "{{\n  \"architecture\": \"{}\",\n  \"instructions\": {},\n  \"state\": \"{:?}\"\n}}\n",
-            args.architecture, snapshot.instructions, snapshot.state
-        );
-        if let Some(path) = args.output {
-            std::fs::write(&path, report).map_err(|e| format!("cannot write '{path}': {e}"))?;
-        } else {
-            eprint!("{report}");
+        let text = format_machine_json(&args.architecture, &snapshot);
+        match &args.output {
+            Some(path) => {
+                std::fs::write(path, &text).map_err(|e| format!("Cannot write '{}': {e}", path))?
+            }
+            None => print!("{text}"),
         }
     }
     Ok(())
+}
+
+/// These `RunArgs` fields only mean something to the RV32 backend. Rejecting
+/// them beats silently ignoring a flag the user asked for.
+fn reject_rv32_only_options(args: &RunArgs) -> Result<(), String> {
+    let unsupported = [
+        ("--pipeline", args.pipeline),
+        ("--pipeline-trace-out", args.pipeline_trace_out.is_some()),
+        ("--config", args.config.is_some()),
+        ("--max-cores", args.max_cores > 1),
+        ("--jit", args.jit_mode != BackendKind::None),
+        ("--screen-window", args.screen_window),
+    ];
+    match unsupported.iter().find(|(_, used)| *used) {
+        Some((flag, _)) => Err(format!(
+            "architecture '{}' does not support {flag}",
+            args.architecture
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Accept either a FALC container or assembler source, the same as `raven run`
+/// does for RV32.
+fn read_portable_image(
+    file: &str,
+    assembler: &dyn raven_riscv_engine::Assembler,
+) -> Result<raven_riscv_engine::ProgramImage, String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
+    if is_falc(&bytes) {
+        return raven_riscv_engine::ProgramImage::from_falc(&bytes).map_err(|e| e.to_string());
+    }
+    let source = std::str::from_utf8(&bytes)
+        .map_err(|_| format!("'{}' is neither UTF-8 source nor FALC", file))?;
+    assembler.assemble(source, 0).map_err(|e| e.to_string())
 }
 
 /// Serialize the default unified config to a `.rcfg` v3 file (sim + cache +
@@ -1050,7 +1020,7 @@ fn run_headless_pipeline(
     max_cycles: u64,
     capture_trace: bool,
 ) -> Result<(PipelineReport, Vec<PipelineTraceStep>), String> {
-    let mut state = crate::ui::pipeline::PipelineSimState::new();
+    let mut state = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
     pcfg.apply_to_state(&mut state);
     state.reset_stages(cpu.pc);
     let mut trace_steps = Vec::new();

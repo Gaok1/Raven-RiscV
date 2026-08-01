@@ -122,10 +122,10 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             },
             Tab::Pipeline => {
                 // Bottom-anchored scroll: wheel-up moves into scrollback.
-                if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
-                    let max = app.run.pipeline().gantt_max_scroll_cache.get();
-                    app.run.pipeline_mut().gantt_scroll =
-                        (app.run.pipeline_mut().gantt_scroll + 1).min(max);
+                if point_in_rect(me.column, me.row, app.run.pipeline_view().gantt_area_rect.get()) {
+                    let max = app.run.pipeline_view().gantt_max_scroll_cache.get();
+                    app.run.pipeline_view_mut().gantt_scroll =
+                        (app.run.pipeline_view_mut().gantt_scroll + 1).min(max);
                 }
             }
             Tab::Docs => {
@@ -186,9 +186,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             },
             Tab::Pipeline => {
                 // Bottom-anchored scroll: wheel-down moves back toward follow (0).
-                if point_in_rect(me.column, me.row, app.run.pipeline().gantt_area_rect.get()) {
-                    app.run.pipeline_mut().gantt_scroll =
-                        app.run.pipeline_mut().gantt_scroll.saturating_sub(1);
+                if point_in_rect(me.column, me.row, app.run.pipeline_view().gantt_area_rect.get()) {
+                    app.run.pipeline_view_mut().gantt_scroll =
+                        app.run.pipeline_view_mut().gantt_scroll.saturating_sub(1);
                 }
             }
             Tab::Docs => {
@@ -626,6 +626,10 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
             app.run.show_instr_type = !app.run.show_instr_type;
         }
         RunButton::State => {
+            if app.trait_driven() {
+                app.machine_toggle_run();
+                return;
+            }
             if app.run.is_running {
                 app.run.is_running = false;
             } else if matches!(
@@ -1568,7 +1572,7 @@ fn handle_imem_click(app: &mut App, me: MouseEvent, area: Rect) {
                     app.run.prev_pc = app.run.cpu().pc;
                     app.run.machine.cpu_mut_unjournaled().pc = addr;
                     if app.run.pipeline().enabled {
-                        app.run.pipeline_mut().redirect_pc(addr);
+                        app.run.redirect_pipeline_pc(addr);
                     }
                     return;
                 }
@@ -1954,6 +1958,7 @@ fn handle_elf_prompt_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         app.editor.buf.lines = vec![String::new()];
         app.editor.buf.cursor_row = 0;
         app.editor.buf.cursor_col = 0;
+        app.editor.last_ok_image = None;
         app.editor.last_ok_text = None;
         app.editor.last_ok_data = None;
         app.editor.last_compile_ok = None;
@@ -2769,8 +2774,8 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
 // ── Pipeline tab mouse ────────────────────────────────────────────────────────
 
 fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
-    let p = app.run.pipeline_mut();
-    let state_clickable = !p.faulted;
+    let state_clickable = !app.run.pipeline().faulted;
+    let p = app.run.pipeline_view_mut();
     p.hover_subtab_main = false;
     p.hover_subtab_config = false;
     p.hover_core = false;
@@ -2846,33 +2851,33 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineSubtab,
     };
 
-    let (main_y, main_x0, main_x1) = app.run.pipeline().btn_subtab_main_rect.get();
+    let (main_y, main_x0, main_x1) = app.run.pipeline_view().btn_subtab_main_rect.get();
     if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
-        app.run.pipeline_mut().subtab = PipelineSubtab::Main;
+        app.run.pipeline_view_mut().subtab = PipelineSubtab::Main;
         return;
     }
-    let (cfg_y, cfg_x0, cfg_x1) = app.run.pipeline().btn_subtab_config_rect.get();
+    let (cfg_y, cfg_x0, cfg_x1) = app.run.pipeline_view().btn_subtab_config_rect.get();
     if me.row == cfg_y && me.column >= cfg_x0 && me.column < cfg_x1 {
-        app.run.pipeline_mut().subtab = PipelineSubtab::Config;
+        app.run.pipeline_view_mut().subtab = PipelineSubtab::Config;
         return;
     }
-    let (core_y, core_x0, core_x1) = app.run.pipeline().btn_core_rect.get();
+    let (core_y, core_x0, core_x1) = app.run.pipeline_view().btn_core_rect.get();
     if me.row == core_y && me.column >= core_x0 && me.column < core_x1 {
         app.cycle_selected_core(1);
         return;
     }
-    let (rst_y, rst_x0, rst_x1) = app.run.pipeline().btn_reset_rect.get();
+    let (rst_y, rst_x0, rst_x1) = app.run.pipeline_view().btn_reset_rect.get();
     if me.row == rst_y && me.column >= rst_x0 && me.column < rst_x1 {
         app.restart_simulation();
         return;
     }
-    let (spd_y, spd_x0, spd_x1) = app.run.pipeline().btn_speed_rect.get();
+    let (spd_y, spd_x0, spd_x1) = app.run.pipeline_view().btn_speed_rect.get();
     if me.row == spd_y && me.column >= spd_x0 && me.column < spd_x1 {
-        app.run.pipeline_mut().speed = app.run.pipeline_mut().speed.next();
-        app.run.pipeline_mut().last_tick = std::time::Instant::now();
+        app.run.pipeline_view_mut().speed = app.run.pipeline_view_mut().speed.next();
+        app.run.pipeline_view_mut().last_tick = std::time::Instant::now();
         return;
     }
-    let (st_y, st_x0, st_x1) = app.run.pipeline().btn_state_rect.get();
+    let (st_y, st_x0, st_x1) = app.run.pipeline_view().btn_state_rect.get();
     if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
         if app.run.pipeline().enabled && !app.run.pipeline().faulted {
             if app.run.pipeline().halted {
@@ -2891,25 +2896,25 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         }
         return;
     }
-    let (res_y, res_x0, res_x1) = app.run.pipeline().btn_export_results_rect.get();
+    let (res_y, res_x0, res_x1) = app.run.pipeline_view().btn_export_results_rect.get();
     if me.row == res_y && me.column >= res_x0 && me.column < res_x1 {
         do_export_results(app);
         return;
     }
-    let (in_y, in_x0, in_x1) = app.run.pipeline().btn_import_cfg_rect.get();
+    let (in_y, in_x0, in_x1) = app.run.pipeline_view().btn_import_cfg_rect.get();
     if me.row == in_y && me.column >= in_x0 && me.column < in_x1 {
         do_import_config(app);
         return;
     }
-    let (out_y, out_x0, out_x1) = app.run.pipeline().btn_export_cfg_rect.get();
+    let (out_y, out_x0, out_x1) = app.run.pipeline_view().btn_export_cfg_rect.get();
     if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
         do_export_config(app);
         return;
     }
 
     // Config row clicks — toggle on click like Cache tab
-    if matches!(app.run.pipeline().subtab, PipelineSubtab::Config) {
-        let rects = app.run.pipeline().config_row_rects.get();
+    if matches!(app.run.pipeline_view().subtab, PipelineSubtab::Config) {
+        let rects = app.run.pipeline_view().config_row_rects.get();
         for i in 0..PipelineBypassConfig::CONFIG_ROWS {
             let (ry, rx0, rx1) = rects[i];
             if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
@@ -3010,7 +3015,7 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                     _ => {}
                 }
                 app.reconfigure_pipeline_model();
-                app.run.pipeline_mut().config_cursor = i;
+                app.run.pipeline_view_mut().config_cursor = i;
                 return;
             }
         }

@@ -4,6 +4,7 @@ mod docs_state;
 mod formatting;
 mod hart;
 mod instr_edit;
+mod program;
 mod run_loop;
 mod run_state;
 mod runtime;
@@ -11,6 +12,7 @@ mod settings_state;
 mod tlb_state;
 
 use self::cpi::classify_cpi_cycles;
+use self::program::Diagnostics;
 pub(crate) use self::cpi::{classify_cpi_for_display, cpi_class_label};
 use self::formatting::{classify_mem_access, word_at};
 
@@ -70,112 +72,12 @@ use std::{
 
 pub use run_loop::run;
 
+/// RAM handed to the RV32 runtime when `--mem` says nothing.
+const DEFAULT_MEM_SIZE: usize = 16 * 1024 * 1024;
+
 // ── CPI (Cycles Per Instruction) configuration ───────────────────────────────
 
-/// Base execution cycles per instruction class.
-/// These are added on top of cache latency cycles.
-#[derive(Clone, Debug)]
-pub struct CpiConfig {
-    pub alu: u64,              // Add, sub, logic, shifts, lui, auipc, immediate variants = 1
-    pub mul: u64,              // mul, mulh, mulhsu, mulhu = 3
-    pub div: u64,              // div, divu, rem, remu = 20
-    pub load: u64,             // lb, lh, lw, lbu, lhu (extra over cache) = 0
-    pub store: u64,            // sb, sh, sw (extra over cache) = 0
-    pub branch_taken: u64,     // branch when taken = 3
-    pub branch_not_taken: u64, // branch when not taken = 1
-    pub jump: u64,             // jal, jalr = 2
-    pub system: u64,           // ecall, ebreak, halt = 10
-    pub fp: u64,               // RV32F instructions = 5
-    pub stage_overhead: u64, // Non-pipeline stage overhead (IF+ID+WB), added when pipeline off = 3
-}
-
-impl Default for CpiConfig {
-    fn default() -> Self {
-        // Values are EXTRA cycles beyond the base 1 cycle per instruction.
-        // Effective cost = 1 + field_value.
-        Self {
-            alu: 0,              // effective 1
-            mul: 2,              // effective 3
-            div: 19,             // effective 20
-            load: 0,             // effective 1 base; cache adds miss-penalty on top
-            store: 0,            // effective 1 base
-            branch_taken: 2,     // effective 3
-            branch_not_taken: 0, // effective 1
-            jump: 1,             // effective 2
-            system: 9,           // effective 10
-            fp: 4,               // effective 5
-            stage_overhead: 3,   // IF+ID+WB added in non-pipeline mode
-        }
-    }
-}
-
-impl CpiConfig {
-    pub(crate) fn field_names() -> &'static [&'static str] {
-        &[
-            "ALU",
-            "MUL",
-            "DIV",
-            "Load+",
-            "Store+",
-            "Branch-T",
-            "Branch-NT",
-            "Jump",
-            "System",
-            "FP",
-            "Stages",
-        ]
-    }
-
-    pub(crate) fn get(&self, idx: usize) -> u64 {
-        match idx {
-            0 => self.alu,
-            1 => self.mul,
-            2 => self.div,
-            3 => self.load,
-            4 => self.store,
-            5 => self.branch_taken,
-            6 => self.branch_not_taken,
-            7 => self.jump,
-            8 => self.system,
-            9 => self.fp,
-            10 => self.stage_overhead,
-            _ => 0,
-        }
-    }
-
-    pub(crate) fn set(&mut self, idx: usize, val: u64) {
-        match idx {
-            0 => self.alu = val,
-            1 => self.mul = val,
-            2 => self.div = val,
-            3 => self.load = val,
-            4 => self.store = val,
-            5 => self.branch_taken = val,
-            6 => self.branch_not_taken = val,
-            7 => self.jump = val,
-            8 => self.system = val,
-            9 => self.fp = val,
-            10 => self.stage_overhead = val,
-            _ => {}
-        }
-    }
-
-    pub(crate) fn descriptions() -> &'static [&'static str] {
-        &[
-            "add/sub/logic/shift/lui/auipc/imm",
-            "mul/mulh/mulhsu/mulhu",
-            "div/divu/rem/remu",
-            "load (extra over cache miss)",
-            "store (extra over cache)",
-            "branch when taken (pipeline flush)",
-            "branch when not taken",
-            "jal / jalr",
-            "ecall / ebreak / halt",
-            "RV32F float instructions",
-            "stage overhead added when pipeline is off (IF+ID+WB)",
-        ]
-    }
-}
+pub use raven_riscv_engine::falcon::pipeline::PipelineTiming as CpiConfig;
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(crate) enum Tab {
@@ -225,8 +127,13 @@ impl Tab {
 
 pub struct App {
     pub(crate) architecture: Arc<dyn raven_riscv_engine::Architecture>,
-    pub(crate) portable_machine: Option<Box<dyn raven_riscv_engine::Machine>>,
-    portable_image: Option<raven_riscv_engine::ProgramImage>,
+    /// The active backend's machine, for every architecture driven purely
+    /// through the engine's `Machine` trait.
+    ///
+    /// `None` means RV32, whose runtime — pipeline, cache hierarchy, MMU,
+    /// harts, JIT and the step-back journal — lives in [`RunState`] because the
+    /// trait deliberately models none of it. See [`program`] for the split.
+    pub(crate) machine: Option<Box<dyn raven_riscv_engine::Machine>>,
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
 
@@ -325,9 +232,8 @@ impl App {
         let data_base = base_pc + 0x1000;
         cpu.heap_break = data_base;
         let mut app = Self {
-            architecture: raven_riscv_engine::architectures::riscv32::architecture(),
-            portable_machine: None,
-            portable_image: None,
+            architecture: crate::riscv32::architecture(),
+            machine: None,
             tab: Tab::Editor,
             mode: EditorMode::Insert,
             editor: EditorState {
@@ -349,6 +255,7 @@ impl App {
                 last_assemble_msg: None,
                 last_build_stats: None,
                 last_compile_ok: None,
+                last_ok_image: None,
                 last_ok_text: None,
                 last_ok_data: None,
                 last_ok_data_base: None,
@@ -385,8 +292,9 @@ impl App {
                         vec![],
                         mem_size,
                     ),
-                    crate::ui::pipeline::PipelineSimState::new(),
+                    raven_riscv_engine::falcon::pipeline::PipelineSimState::new(),
                 ),
+                pipeline_view: crate::ui::pipeline::PipelineViewState::new(),
                 prev_x: [0; 32],
                 prev_pc: base_pc,
                 mem_size,
@@ -602,17 +510,24 @@ impl App {
         self.architecture.descriptor().id
     }
 
-    pub(crate) fn is_portable_architecture(&self) -> bool {
-        self.portable_machine.is_some()
+    /// True when the active backend is driven entirely through the engine's
+    /// `Machine` trait.
+    ///
+    /// False for RV32 alone, and not because of its name: the Run, Cache,
+    /// Virtual Memory and Pipeline tabs drive microarchitectural state the
+    /// trait does not model, so RV32 runs on the native runtime in
+    /// [`RunState`] instead. Every backend-neutral step — assembling,
+    /// diagnostics, image loading, build statistics — is shared either way.
+    pub(crate) fn trait_driven(&self) -> bool {
+        self.machine.is_some()
     }
 
+    /// Move to the next registered architecture, wrapping around.
     pub(crate) fn cycle_architecture(&mut self) {
-        let next = if self.architecture_id() == "riscv32" {
-            "toy16"
-        } else {
-            "riscv32"
+        let Some(next) = crate::arch::registry().next_after(self.architecture_id()) else {
+            return;
         };
-        if let Err(error) = self.activate_architecture(next, false) {
+        if let Err(error) = self.activate_architecture(next.descriptor().id, false) {
             self.console.push_error(error);
         }
     }
@@ -622,19 +537,28 @@ impl App {
         architecture_id: &str,
         replace_source: bool,
     ) -> Result<(), String> {
-        let registry = raven_riscv_engine::ArchitectureRegistry::with_builtins();
-        let architecture = registry.get(architecture_id).ok_or_else(|| {
-            format!("unknown architecture '{architecture_id}' (use riscv32 or toy16)")
-        })?;
-        let portable = architecture_id != "riscv32";
-        let machine = portable
-            .then(|| architecture.create_machine(self.ram_override.unwrap_or(64 * 1024)))
+        let architecture = crate::arch::lookup(architecture_id)?;
+        // RV32 is the one backend this crate has a native runtime for; see
+        // `program` for what that runtime covers that the trait cannot.
+        let machine = (architecture_id != crate::riscv32::ID)
+            .then(|| {
+                let descriptor = architecture.descriptor();
+                let memory_size = self
+                    .ram_override
+                    .map_or(descriptor.default_memory_size, |requested| {
+                        descriptor.clamp_memory_size(requested)
+                    });
+                architecture.create_machine(memory_size)
+            })
             .transpose()
             .map_err(|e| e.to_string())?;
         self.run.is_running = false;
         self.architecture = architecture;
-        self.portable_machine = machine;
-        self.portable_image = None;
+        self.machine = machine;
+        if self.trait_driven() && self.architecture.descriptor().capabilities.cache {
+            self.run.cache_enabled = true;
+        }
+        self.editor.last_ok_image = None;
         if replace_source {
             self.editor.buf.lines = self
                 .architecture
@@ -650,90 +574,62 @@ impl App {
         Ok(())
     }
 
-    fn portable_assemble_and_load(&mut self) {
-        let (source, offsets) = self.combined_source();
-        match self.architecture.assembler().assemble(&source, 0) {
-            Ok(image) => {
-                if let Some(machine) = self.portable_machine.as_mut()
-                    && let Err(error) = machine.load(&image)
-                {
-                    self.editor.last_compile_ok = Some(false);
-                    self.console.push_error(error.to_string());
-                    return;
-                }
-                let instruction_count = image.executable_bytes().map_or(0, |b| {
-                    b.len() / usize::from(self.architecture.descriptor().instruction_alignment)
-                });
-                self.editor.last_build_stats = Some(BuildStats {
-                    instruction_count,
-                    data_bytes: image
-                        .segments
-                        .iter()
-                        .filter(|s| !s.executable)
-                        .map(|s| s.bytes.len())
-                        .sum(),
-                });
-                self.editor.last_assemble_msg = Some(format!(
-                    "{}: assembled {instruction_count} instructions",
-                    self.architecture.descriptor().display_name
-                ));
-                self.editor.last_compile_ok = Some(true);
-                self.editor.diag_line = None;
-                self.editor.diag_msg = None;
-                self.editor.diag_line_text = None;
-                self.portable_image = Some(image);
-            }
-            Err(error) => {
-                let line = error.line.unwrap_or(0);
-                self.set_diag(line, &error.message, &offsets);
-            }
+    pub(crate) fn machine_snapshot(&self) -> Option<raven_riscv_engine::MachineSnapshot> {
+        self.machine.as_ref().map(|machine| machine.snapshot())
+    }
+
+    pub(crate) fn cache_hierarchy(
+        &self,
+    ) -> Option<&dyn raven_riscv_engine::capability::CacheHierarchy> {
+        match self.machine.as_deref() {
+            Some(machine) => machine.caches(),
+            None => Some(self.run.mem()),
         }
-        self.editor.dirty = false;
     }
 
-    pub(crate) fn portable_snapshot(&self) -> Option<raven_riscv_engine::MachineSnapshot> {
-        self.portable_machine
-            .as_ref()
-            .map(|machine| machine.snapshot())
-    }
-
+    /// Assemble the workspace for export ("save binary"), at the same base
+    /// address the running program was built with.
     pub(crate) fn export_program_image(&self) -> Result<raven_riscv_engine::ProgramImage, String> {
         self.architecture
             .assembler()
-            .assemble(&self.combined_source().0, 0)
+            .assemble(&self.combined_source().0, u64::from(self.run.base_pc))
             .map_err(|error| error.to_string())
     }
 
-    pub(crate) fn portable_toggle_run(&mut self) {
+    /// Run/pause for a trait-driven backend. A program that already finished is
+    /// reset first, so the key restarts it rather than doing nothing.
+    pub(crate) fn machine_toggle_run(&mut self) {
         if self.run.is_running {
             self.run.is_running = false;
             return;
         }
-        if self
-            .portable_machine
-            .as_ref()
-            .is_some_and(|machine| {
-                matches!(
-                    machine.snapshot().state,
-                    raven_riscv_engine::MachineState::Halted
-                        | raven_riscv_engine::MachineState::Exited(_)
-                        | raven_riscv_engine::MachineState::Faulted
-                )
-            })
-            && let Some(machine) = self.portable_machine.as_mut()
+        if self.machine.as_ref().is_some_and(|machine| {
+            matches!(
+                machine.snapshot().state,
+                raven_riscv_engine::MachineState::Halted
+                    | raven_riscv_engine::MachineState::Exited(_)
+                    | raven_riscv_engine::MachineState::Faulted
+            )
+        }) && let Some(machine) = self.machine.as_mut()
         {
             machine.reset();
         }
         self.run.is_running = true;
     }
 
-    fn portable_step(&mut self) {
-        let Some(machine) = self.portable_machine.as_mut() else {
+    fn machine_step(&mut self) {
+        let Some(machine) = self.machine.as_mut() else {
             return;
         };
+        let pc = machine.snapshot().pc;
         match machine.step() {
-            Ok(raven_riscv_engine::StepOutcome::Stepped) => {}
-            Ok(_) => self.run.is_running = false,
+            Ok(raven_riscv_engine::StepOutcome::Stepped) => {
+                *self.run.exec_counts.entry(pc as u32).or_insert(0) += 1;
+            }
+            Ok(_) => {
+                *self.run.exec_counts.entry(pc as u32).or_insert(0) += 1;
+                self.run.is_running = false;
+            }
             Err(error) => {
                 self.run.is_running = false;
                 self.console.push_error(error.to_string());
@@ -761,7 +657,7 @@ impl App {
     /// Reset the pipeline to the current CPU PC (used after loading a preset).
     pub(crate) fn pipeline_reset_to_current_pc(&mut self) {
         let __rpc = self.run.cpu().pc;
-        self.run.pipeline_mut().reset_stages(__rpc);
+        self.run.reset_pipeline_stages(__rpc);
     }
 
     // ── Multi-file workspace ───────────────────────────────────────────────
@@ -924,200 +820,31 @@ impl App {
         }
     }
 
+    /// Build the workspace and load it into the active backend.
+    ///
+    /// Every architecture takes this path: assemble with the backend's own
+    /// assembler, install the resulting image, refresh the derived views. See
+    /// [`program`] for what "install" means on each of the two runtimes.
     pub(crate) fn assemble_and_load(&mut self) {
-        if self.is_portable_architecture() {
-            self.portable_assemble_and_load();
+        let Some((image, offsets)) = self.assemble_workspace(Diagnostics::Follow) else {
+            return;
+        };
+        if !self.install_program(&image) {
             return;
         }
-        use falcon::asm::assemble;
-        use falcon::program::{load_bytes, load_words, zero_bytes};
-
-        self.run.prev_x = self.run.cpu().x;
-        self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024);
-        *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
-        self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
-        self.run.prev_pc = self.run.cpu().pc;
-        self.run
-            .machine
-            .cpu_mut_unjournaled()
-            .write(2, self.run.mem_size as u32);
-        *self.run.machine.mem_mut_unjournaled() = CacheController::new(
-            self.cache.pending_icache.clone(),
-            self.cache.pending_dcache.clone(),
-            self.cache.extra_pending.clone(),
-            self.run.mem_size,
-        );
-        self.run.machine.mem_mut_unjournaled().bypass = !self.run.cache_enabled;
-        self.run
-            .machine
-            .mem_mut_unjournaled()
-            .mmu_mut()
-            .tlb
-            .reconfigure(self.tlb.pending.clone());
-        self.push_vm_mode_to_mmu();
-        self.run.faulted = false;
-
-        let (src, offsets) = self.combined_source();
-        match assemble(&src, self.run.base_pc) {
-            Ok(prog) => {
-                // Write directly to RAM (bypass cache) so invalidate() won't discard data
-                if let Err(e) = load_words(
-                    &mut self.run.machine.mem_mut_unjournaled().ram,
-                    self.run.base_pc,
-                    &prog.text,
-                ) {
-                    self.console.push_error(e.to_string());
-                    self.run.faulted = true;
-                    return;
-                }
-                if let Err(e) = load_bytes(
-                    &mut self.run.machine.mem_mut_unjournaled().ram,
-                    prog.data_base,
-                    &prog.data,
-                ) {
-                    self.console.push_error(e.to_string());
-                    self.run.faulted = true;
-                    return;
-                }
-                let bss_base = prog.data_base.saturating_add(prog.data.len() as u32);
-                if prog.bss_size > 0 {
-                    if let Err(e) = zero_bytes(
-                        &mut self.run.machine.mem_mut_unjournaled().ram,
-                        bss_base,
-                        prog.bss_size,
-                    ) {
-                        self.console.push_error(e.to_string());
-                        self.run.faulted = true;
-                        return;
-                    }
-                }
-                self.run.data_base = prog.data_base;
-                self.run.mem_view_addr = prog.data_base;
-                self.run.mem_region = MemRegion::Data;
-                // Invalidate & reset stats so execution starts from cold cache
-                self.run.machine.mem_mut_unjournaled().invalidate_all();
-                self.run.machine.mem_mut_unjournaled().reset_stats();
-                let bss_end = prog
-                    .data_base
-                    .wrapping_add(prog.data.len() as u32 + prog.bss_size);
-                self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
-                self.run.machine.cpu_mut_unjournaled().heap_break = self.run.heap_start;
-
-                self.run.comments = prog.comments;
-                self.run.block_comments = prog.block_comments;
-                self.run.labels = prog.labels;
-                self.run.halt_pcs = prog.halt_pcs.clone();
-                self.run.exec_counts.clear();
-                self.run.exec_trace.clear();
-                self.run.reg_age = [255u8; 32];
-                self.run.reg_last_write_pc = [None; 32];
-                self.store_source_meta(prog.label_to_line, prog.line_addrs, offsets);
-                self.editor.last_ok_text = Some(prog.text.clone());
-                self.rebuild_imem_vrow_cache();
-                self.editor.last_ok_data = Some(prog.data.clone());
-                self.editor.last_ok_data_base = Some(prog.data_base);
-                self.editor.last_ok_bss_size = Some(prog.bss_size);
-                self.editor.last_build_stats = Some(BuildStats {
-                    instruction_count: prog.text.len(),
-                    data_bytes: prog.data.len(),
-                });
-                self.run.imem_scroll = 0;
-                self.run.hover_imem_addr = None;
-                self.clear_details_selection();
-                self.reset_exec_regions_to_loaded_text();
-                self.sync_pipeline_program_range();
-
-                // Didactic VM modes (Sv32 / Custom): auto-install the configured
-                // page map so any program sees TLB activity without manual PT
-                // setup. The map + scheme are editable in Virtual Memory →
-                // settings. Manual mode leaves satp to the program.
-                if self.run.vm_mode.is_auto() {
-                    let scheme = self.active_scheme();
-                    let root_pa = scheme.root_pa(self.run.mem_size as u32);
-                    let window = (self.run.base_pc.min(prog.data_base), self.run.heap_start);
-                    crate::falcon::mmu::Mmu::install_map_scheme(
-                        &mut self.run.machine.mem_mut_unjournaled().ram,
-                        root_pa,
-                        &scheme,
-                        self.tlb.page_map,
-                        window,
-                    );
-                    let satp_val =
-                        crate::falcon::mmu::Mmu::make_satp(root_pa, self.tlb.page_map.asid);
-                    self.run.machine.cpu_mut_unjournaled().satp = satp_val;
-                    let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
-                    mmu.satp = crate::falcon::mmu::Satp::new(satp_val);
-                    mmu.force_translate = true;
-                }
-
-                // Reset pipeline stages (shares cpu/mem with RunState)
-                let __rpc = self.run.cpu().pc;
-                self.run.pipeline_mut().reset_stages(__rpc);
-
-                self.editor.last_assemble_msg = Some(format!(
-                    "Assembled {} instructions, {} data bytes, {} bss bytes.",
-                    prog.text.len(),
-                    prog.data.len(),
-                    prog.bss_size
-                ));
-                self.editor.last_compile_ok = Some(true);
-                self.editor.last_ok_elf_bytes = None;
-                self.editor.diag_line = None;
-                self.editor.diag_msg = None;
-                self.editor.diag_line_text = None;
-                self.rebuild_harts();
-            }
-            Err(e) => {
-                // Explicit compile: jump to the file with the error so the
-                // underline lands where the fix goes.
-                self.editor.file_line_offsets = offsets.clone();
-                let (fidx, _) = self.combined_to_local(e.line);
-                if fidx != self.editor.active_file {
-                    self.switch_file(fidx);
-                }
-                self.set_diag(e.line, &e.msg, &offsets);
-            }
-        }
+        self.record_build(&image, "Assembled");
+        self.cache_last_ok(&image);
+        self.adopt_program(&image, offsets);
+        self.editor.dirty = false;
     }
 
+    /// The background syntax check: build, remember the result, touch no
+    /// machine state.
     fn check_assemble(&mut self) {
-        if self.is_portable_architecture() {
-            self.portable_assemble_and_load();
-            return;
-        }
-        use falcon::asm::assemble;
-        let (src, offsets) = self.combined_source();
-        match assemble(&src, self.run.base_pc) {
-            Ok(prog) => {
-                self.editor.last_ok_text = Some(prog.text.clone());
-                self.editor.last_ok_data = Some(prog.data.clone());
-                self.editor.last_ok_data_base = Some(prog.data_base);
-                self.editor.last_ok_bss_size = Some(prog.bss_size);
-                self.editor.last_build_stats = Some(BuildStats {
-                    instruction_count: prog.text.len(),
-                    data_bytes: prog.data.len(),
-                });
-                self.editor.last_ok_comments = prog.comments;
-                self.editor.last_ok_block_comments = prog.block_comments;
-                self.editor.last_ok_labels = prog.labels.clone();
-                self.editor.last_ok_halt_pcs = prog.halt_pcs;
-                self.store_source_meta(prog.label_to_line, prog.line_addrs, offsets);
-                self.editor.last_assemble_msg = Some(format!(
-                    "OK: {} instructions, {} data bytes, {} bss bytes",
-                    prog.text.len(),
-                    prog.data.len(),
-                    prog.bss_size
-                ));
-                self.editor.last_compile_ok = Some(true);
-                self.editor.last_ok_elf_bytes = None;
-                self.editor.diag_line = None;
-                self.editor.diag_msg = None;
-                self.editor.diag_line_text = None;
-            }
-            Err(e) => {
-                // Background check: report only, never yank the user to another file.
-                self.set_diag(e.line, &e.msg, &offsets);
-            }
+        if let Some((image, offsets)) = self.assemble_workspace(Diagnostics::Report) {
+            self.record_build(&image, "OK:");
+            self.cache_last_ok(&image);
+            self.store_image_source_meta(&image, offsets);
         }
         self.editor.dirty = false;
     }
@@ -1132,168 +859,44 @@ impl App {
         }
     }
 
+    /// Reload the last program that built, without rebuilding it.
+    ///
+    /// A loaded ELF re-parses its original bytes so every section comes back;
+    /// anything else replays the image the last successful build produced.
     fn load_last_ok_program(&mut self) {
-        if self.is_portable_architecture() {
-            if let (Some(machine), Some(image)) =
-                (self.portable_machine.as_mut(), self.portable_image.as_ref())
-            {
-                if let Err(error) = machine.load(image) {
-                    self.console.push_error(error.to_string());
-                }
-            }
-            return;
-        }
-        self.reset_screen_device();
-        // ELF path: re-parse the original bytes so all segments are restored correctly.
         if let Some(elf_bytes) = self.editor.last_ok_elf_bytes.clone() {
             self.load_binary(&elf_bytes);
             return;
         }
-
-        use falcon::program::{load_bytes, load_words, zero_bytes};
-        if let (Some(ref text), Some(ref data), Some(data_base)) = (
-            self.editor.last_ok_text.as_ref(),
-            self.editor.last_ok_data.as_ref(),
-            self.editor.last_ok_data_base,
-        ) {
-            self.run.prev_x = self.run.cpu().x;
-            self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024);
-            *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
-            self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
-            self.run.prev_pc = self.run.cpu().pc;
-            self.run
-                .machine
-                .cpu_mut_unjournaled()
-                .write(2, self.run.mem_size as u32);
-            *self.run.machine.mem_mut_unjournaled() = CacheController::new(
-                self.cache.pending_icache.clone(),
-                self.cache.pending_dcache.clone(),
-                self.cache.extra_pending.clone(),
-                self.run.mem_size,
-            );
-            self.run.machine.mem_mut_unjournaled().bypass = !self.run.cache_enabled;
-            self.run
-                .machine
-                .mem_mut_unjournaled()
-                .mmu_mut()
-                .tlb
-                .reconfigure(self.tlb.pending.clone());
-            // Inlined `push_vm_mode_to_mmu` (the destructuring `let` above holds
-            // an immutable borrow of `self.editor`, so we can't take `&mut self`).
-            {
-                let (enabled, force_translate) = self.run.vm_mode.flags();
-                let scheme = self.active_scheme();
-                let tlb_enabled = self.run.tlb_enabled;
-                let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
-                mmu.set_scheme(scheme);
-                mmu.enabled = enabled;
-                mmu.force_translate = force_translate;
-                mmu.tlb_enabled = tlb_enabled;
-            }
-            self.run.faulted = false;
-
-            // Write directly to RAM (bypass cache) so invalidate() won't discard data
-            if let Err(e) = load_words(
-                &mut self.run.machine.mem_mut_unjournaled().ram,
-                self.run.base_pc,
-                text,
-            ) {
-                self.console.push_error(e.to_string());
-                self.run.faulted = true;
-                return;
-            }
-            if let Err(e) = load_bytes(
-                &mut self.run.machine.mem_mut_unjournaled().ram,
-                data_base,
-                data,
-            ) {
-                self.console.push_error(e.to_string());
-                self.run.faulted = true;
-                return;
-            }
-            if let Some(bss) = self.editor.last_ok_bss_size {
-                if bss > 0 {
-                    let bss_base = data_base.saturating_add(data.len() as u32);
-                    if let Err(e) = zero_bytes(
-                        &mut self.run.machine.mem_mut_unjournaled().ram,
-                        bss_base,
-                        bss,
-                    ) {
-                        self.console.push_error(e.to_string());
-                        self.run.faulted = true;
-                        return;
-                    }
-                }
-            }
-
-            self.run.data_base = data_base;
-            self.run.mem_view_addr = data_base;
-            self.run.mem_region = MemRegion::Data;
-            self.run.machine.mem_mut_unjournaled().invalidate_all();
-            self.run.machine.mem_mut_unjournaled().reset_stats();
-            let bss_sz = self.editor.last_ok_bss_size.unwrap_or(0);
-            let bss_end = data_base
-                .wrapping_add(data.len() as u32)
-                .wrapping_add(bss_sz);
-            self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
-            self.run.machine.cpu_mut_unjournaled().heap_break = self.run.heap_start;
-
-            self.run.reg_age = [255u8; 32];
-            self.run.f_age = [255u8; 32];
-            self.run.f_last_write_pc = [None; 32];
-            self.run.comments = self.editor.last_ok_comments.clone();
-            self.run.block_comments = self.editor.last_ok_block_comments.clone();
-            self.run.labels = self.editor.last_ok_labels.clone();
-            self.run.halt_pcs = self.editor.last_ok_halt_pcs.clone();
-            let text_len = text.len();
-            let data_len = data.len();
-            self.editor.last_build_stats = Some(BuildStats {
-                instruction_count: text_len,
-                data_bytes: data_len,
-            });
-            self.editor.last_assemble_msg = Some(format!(
-                "Loaded last successful build: {} instructions, {} data bytes, {} bss bytes.",
-                text_len, data_len, bss_sz
-            ));
-            self.rebuild_imem_vrow_cache();
-            self.run.imem_scroll = 0;
-            self.run.hover_imem_addr = None;
-            self.clear_details_selection();
-            self.reset_exec_regions_to_loaded_text();
-            self.sync_pipeline_program_range();
-            // Reset pipeline stages so it picks up the reloaded program
-            let __rpc = self.run.cpu().pc;
-            self.run.pipeline_mut().reset_stages(__rpc);
-            self.rebuild_harts();
+        let Some(image) = self.editor.last_ok_image.clone() else {
+            return;
+        };
+        if !self.trait_driven() {
+            self.reset_screen_device();
         }
+        if !self.install_program(&image) {
+            return;
+        }
+        self.record_build(&image, "Loaded last successful build:");
+        let offsets = self.editor.file_line_offsets.clone();
+        self.adopt_program(&image, offsets);
     }
 
     pub(super) fn restart_simulation(&mut self) {
-        if let Some(machine) = self.portable_machine.as_mut() {
-            self.run.is_running = false;
+        self.run.is_running = false;
+        if let Some(machine) = self.machine.as_mut() {
             machine.reset();
+            self.run.exec_counts.clear();
             return;
         }
-        self.run.is_running = false;
         self.run.faulted = false;
         // Drop step-back history: the timeline (and any GO checkpoint) belongs to
         // the program being replaced.
         self.run.machine.clear_journal();
         self.run.go_checkpointed = false;
         self.run.machine.cpu_mut_unjournaled().ebreak_hit = false;
-        self.run.reg_last_write_pc = [None; 32];
-        self.run.f_last_write_pc = [None; 32];
-        self.run.reg_age = [255u8; 32];
-        self.run.f_age = [255u8; 32];
-        self.run.exec_counts.clear();
-        self.run.exec_trace.clear();
-        self.run.mem_access_log.clear();
         self.cache.window_start_instr = 0;
         self.load_last_ok_program();
-        // Reset pipeline AFTER loading program (cpu.pc is now set correctly)
-        let __rpc = self.run.cpu().pc;
-        self.run.pipeline_mut().reset_stages(__rpc);
-        self.rebuild_harts();
         // Rebuild JIT backend AFTER load so FullBackend can scan the loaded program.
         self.rebuild_backend();
     }
@@ -1307,63 +910,51 @@ impl App {
         self.run.screen_seen = false;
     }
 
+    /// Open a compiled program: an ELF, a FALC container, or a flat block of
+    /// machine code.
+    ///
+    /// ELF keeps a path of its own — it carries a symbol table and a section
+    /// list a [`ProgramImage`](raven_riscv_engine::ProgramImage) cannot express
+    /// — and is offered only by backends that declare ELF support. Everything
+    /// else is decoded into an image and takes the shared load path, so a
+    /// container opens the same way here as it does in the CLI.
     pub(super) fn load_binary(&mut self, bytes: &[u8]) {
-        if self.is_portable_architecture() {
-            let result = raven_riscv_engine::ProgramImage::from_falc(bytes)
-                .map_err(|error| error.to_string())
-                .and_then(|image| {
-                    self.portable_machine
-                        .as_mut()
-                        .unwrap()
-                        .load(&image)
-                        .map_err(|e| e.to_string())?;
-                    self.portable_image = Some(image);
-                    Ok(())
-                });
-            if let Err(error) = result {
-                self.console.push_error(error);
-            }
+        if self.architecture.descriptor().capabilities.elf && bytes.starts_with(b"\x7fELF") {
+            self.load_elf_binary(bytes);
             return;
         }
-        self.reset_screen_device();
-        self.run.prev_x = self.run.cpu().x;
-        self.run.mem_size = self.ram_override.unwrap_or(16 * 1024 * 1024); // default 16 MB for ELF (heap support)
-        *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
-        self.run.reg_age = [255u8; 32];
-        self.run.f_age = [255u8; 32];
-        self.run.reg_last_write_pc = [None; 32];
-        self.run.f_last_write_pc = [None; 32];
-        self.run.exec_counts.clear();
-        self.run.exec_trace.clear();
-        self.run.mem_access_log.clear();
-        self.run
-            .machine
-            .cpu_mut_unjournaled()
-            .write(2, self.run.mem_size as u32);
-        *self.run.machine.mem_mut_unjournaled() = CacheController::new(
-            self.cache.pending_icache.clone(),
-            self.cache.pending_dcache.clone(),
-            self.cache.extra_pending.clone(),
-            self.run.mem_size,
-        );
-        self.run.machine.mem_mut_unjournaled().bypass = !self.run.cache_enabled;
-        self.run
-            .machine
-            .mem_mut_unjournaled()
-            .mmu_mut()
-            .tlb
-            .reconfigure(self.tlb.pending.clone());
-        self.push_vm_mode_to_mmu();
-        self.run.faulted = false;
+        let image = match self.decode_binary(bytes) {
+            Ok(image) => image,
+            Err(error) => {
+                self.console.push_error(error);
+                self.run.faulted = !self.trait_driven();
+                return;
+            }
+        };
+        if !self.trait_driven() {
+            self.reset_screen_device();
+            // The container names where it runs; the panes key off `base_pc`.
+            self.run.base_pc = u32::try_from(image.entry).unwrap_or(self.run.base_pc);
+        }
+        if !self.install_program(&image) {
+            return;
+        }
+        self.record_build(&image, "Loaded binary:");
+        self.cache_last_ok(&image);
+        let offsets = self.editor.file_line_offsets.clone();
+        self.adopt_program(&image, offsets);
+        self.lock_editor_on_binary();
+    }
 
-        // ── Detect format and load ───────────────────────────────────────
-        if bytes.len() >= 4 && &bytes[0..4] == b"\x7fELF" {
-            // ── ELF32 LE RISC-V ─────────────────────────────────────────
-            let info = match falcon::program::load_elf(
-                bytes,
-                &mut self.run.machine.mem_mut_unjournaled().ram,
-            ) {
-                Ok(i) => i,
+    /// Load an ELF32 RISC-V image into the native runtime, taking the entry
+    /// point, the section list and the symbol table from the file.
+    fn load_elf_binary(&mut self, bytes: &[u8]) {
+        self.reset_screen_device();
+        self.reset_native_runtime();
+        let info =
+            match falcon::program::load_elf(bytes, &mut self.run.machine.mem_mut_unjournaled().ram)
+            {
+                Ok(info) => info,
                 Err(e) => {
                     self.console.push_error(e.to_string());
                     self.run.faulted = true;
@@ -1371,229 +962,81 @@ impl App {
                 }
             };
 
-            self.run.machine.cpu_mut_unjournaled().pc = info.entry;
-            self.run.prev_pc = info.entry;
-            self.run.base_pc = info.text_base;
-            self.run.data_base = info.data_base;
-            self.run.mem_view_addr = info.data_base;
-            self.run.mem_region = crate::ui::app::MemRegion::Data;
-            self.run.machine.mem_mut_unjournaled().invalidate_all();
-            self.run.machine.mem_mut_unjournaled().reset_stats();
-            let elf_data_bytes = info
-                .sections
-                .iter()
-                .map(|section| section.bytes.len())
-                .sum();
+        self.run.machine.cpu_mut_unjournaled().pc = info.entry;
+        self.run.prev_pc = info.entry;
+        self.run.base_pc = info.text_base;
+        self.run.data_base = info.data_base;
+        self.run.mem_view_addr = info.data_base;
+        self.run.mem_region = MemRegion::Data;
+        self.run.machine.mem_mut_unjournaled().invalidate_all();
+        self.run.machine.mem_mut_unjournaled().reset_stats();
+        self.run.heap_start = info.heap_start;
+        self.run.machine.cpu_mut_unjournaled().heap_break = info.heap_start;
 
-            // Populate labels and sections viewer from ELF symbol table
-            self.run.labels = info.symbols;
-            self.run.halt_pcs.clear();
-            self.run.elf_sections = info.sections;
-            self.run.heap_start = info.heap_start;
-            self.run.machine.cpu_mut_unjournaled().heap_break = info.heap_start;
+        // Labels and the sections viewer come from the ELF symbol table.
+        self.run.labels = info.symbols;
+        self.run.halt_pcs.clear();
+        self.run.elf_sections = info.sections;
+        self.run.exec_counts.clear();
+        self.run.exec_trace.clear();
+        self.run.mem_access_log.clear();
+        self.run.reg_age = [255u8; 32];
+        self.run.f_age = [255u8; 32];
+        self.run.reg_last_write_pc = [None; 32];
+        self.run.f_last_write_pc = [None; 32];
 
-            let mut words = Vec::with_capacity(info.text_bytes.len() / 4);
-            for chunk in info.text_bytes.chunks(4) {
-                let mut b = [0u8; 4];
-                for (i, &v) in chunk.iter().enumerate() {
-                    b[i] = v;
-                }
-                words.push(u32::from_le_bytes(b));
-            }
-            let entry = info.entry;
-            let data_base = info.data_base;
-            self.editor.last_ok_text = Some(words);
-            self.rebuild_imem_vrow_cache();
-            self.editor.last_ok_data = Some(Vec::new());
-            self.editor.last_ok_data_base = Some(data_base);
-            self.editor.last_ok_bss_size = Some(0);
-            self.editor.last_ok_elf_bytes = Some(bytes.to_vec());
-            self.editor.last_build_stats = Some(BuildStats {
-                instruction_count: self
-                    .editor
-                    .last_ok_text
-                    .as_ref()
-                    .map(|v| v.len())
-                    .unwrap_or(0),
-                data_bytes: elf_data_bytes,
-            });
-            self.editor.last_assemble_msg = Some(format!(
-                "Loaded ELF: {} bytes, entry 0x{entry:08X} ({} instructions)",
-                info.total_bytes,
-                self.editor
-                    .last_ok_text
-                    .as_ref()
-                    .map(|v| v.len())
-                    .unwrap_or(0),
-            ));
-        } else {
-            // ── FALC or flat binary ──────────────────────────────────────
-            self.run.elf_sections = Vec::new();
-            use falcon::program::{load_bytes, zero_bytes};
-            let (text_bytes, data_bytes, bss_size): (Vec<u8>, Vec<u8>, u32) = if bytes.len() >= 16
-                && &bytes[0..4] == b"FALC"
-            {
-                if u32::from_le_bytes(bytes[4..8].try_into().unwrap()) == u32::MAX {
-                    let image = match raven_riscv_engine::ProgramImage::from_falc(bytes) {
-                        Ok(image) if image.architecture == "riscv32" => image,
-                        Ok(image) => {
-                            self.console.push_error(format!(
-                                "Binary targets {}; switch architecture before opening it",
-                                image.architecture
-                            ));
-                            self.run.faulted = true;
-                            return;
-                        }
-                        Err(error) => {
-                            self.console.push_error(error.to_string());
-                            self.run.faulted = true;
-                            return;
-                        }
-                    };
-                    self.run.base_pc = image.entry as u32;
-                    let text = image
-                        .segments
-                        .iter()
-                        .find(|segment| segment.executable)
-                        .map(|segment| segment.bytes.clone())
-                        .unwrap_or_default();
-                    let data_segment = image.segments.iter().find(|segment| !segment.executable);
-                    if let Some(segment) = data_segment {
-                        self.run.data_base = segment.address as u32;
-                    }
-                    let data = data_segment
-                        .map(|segment| segment.bytes.clone())
-                        .unwrap_or_default();
-                    let bss = image
-                        .zero_fill
-                        .first()
-                        .map(|fill| fill.size as u32)
-                        .unwrap_or(0);
-                    (text, data, bss)
-                } else {
-                    let text_sz = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-                    let data_sz = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-                    let bss_sz = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
-                    let body = &bytes[16..];
-                    if body.len() < text_sz + data_sz {
-                        self.console.push_error("Binary truncated or corrupt");
-                        self.run.faulted = true;
-                        return;
-                    }
-                    (
-                        body[..text_sz].to_vec(),
-                        body[text_sz..text_sz + data_sz].to_vec(),
-                        bss_sz,
-                    )
-                }
-            } else {
-                (bytes.to_vec(), Vec::new(), 0)
-            };
-
-            if let Err(e) = load_bytes(
-                &mut self.run.machine.mem_mut_unjournaled().ram,
-                self.run.base_pc,
-                &text_bytes,
-            ) {
-                self.console.push_error(e.to_string());
-                self.run.faulted = true;
-                return;
-            }
-            if !data_bytes.is_empty() {
-                if let Err(e) = load_bytes(
-                    &mut self.run.machine.mem_mut_unjournaled().ram,
-                    self.run.data_base,
-                    &data_bytes,
-                ) {
-                    self.console.push_error(e.to_string());
-                    self.run.faulted = true;
-                    return;
-                }
-            }
-            if bss_size > 0 {
-                let bss_base = self.run.data_base + data_bytes.len() as u32;
-                if let Err(e) = zero_bytes(
-                    &mut self.run.machine.mem_mut_unjournaled().ram,
-                    bss_base,
-                    bss_size,
-                ) {
-                    self.console.push_error(e.to_string());
-                    self.run.faulted = true;
-                    return;
-                }
-            }
-
-            self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
-            self.run.prev_pc = self.run.base_pc;
-            self.run.machine.mem_mut_unjournaled().invalidate_all();
-            self.run.machine.mem_mut_unjournaled().reset_stats();
-
-            // Heap starts right after BSS, 16-byte aligned
-            let bss_end = self
-                .run
-                .data_base
-                .wrapping_add(data_bytes.len() as u32)
-                .wrapping_add(bss_size);
-            self.run.heap_start = (bss_end.wrapping_add(15)) & !15;
-            self.run.machine.cpu_mut_unjournaled().heap_break = self.run.heap_start;
-
-            let mut words = Vec::with_capacity(text_bytes.len() / 4);
-            for chunk in text_bytes.chunks(4) {
-                let mut b = [0u8; 4];
-                for (i, &v) in chunk.iter().enumerate() {
-                    b[i] = v;
-                }
-                words.push(u32::from_le_bytes(b));
-            }
-            let total = text_bytes.len() + data_bytes.len();
-            self.editor.last_ok_text = Some(words);
-            self.editor.last_ok_data = Some(data_bytes);
-            self.editor.last_ok_data_base = Some(self.run.data_base);
-            self.editor.last_ok_bss_size = Some(bss_size);
-            self.editor.last_ok_elf_bytes = None;
-            self.editor.last_build_stats = Some(BuildStats {
-                instruction_count: self
-                    .editor
-                    .last_ok_text
-                    .as_ref()
-                    .map(|v| v.len())
-                    .unwrap_or(0),
-                data_bytes: self
-                    .editor
-                    .last_ok_data
-                    .as_ref()
-                    .map(|v| v.len())
-                    .unwrap_or(0),
-            });
-            self.editor.last_assemble_msg = Some(format!(
-                "Loaded binary: {} bytes ({} instructions)",
-                total,
-                self.editor
-                    .last_ok_text
-                    .as_ref()
-                    .map(|v| v.len())
-                    .unwrap_or(0),
-            ));
-        }
-
+        let words: Vec<u32> = info
+            .text_bytes
+            .chunks(4)
+            .map(|chunk| {
+                let mut word = [0u8; 4];
+                word[..chunk.len()].copy_from_slice(chunk);
+                u32::from_le_bytes(word)
+            })
+            .collect();
+        let instruction_count = words.len();
+        let data_bytes = self
+            .run
+            .elf_sections
+            .iter()
+            .map(|section| section.bytes.len())
+            .sum();
+        self.editor.last_ok_image = None;
+        self.editor.last_ok_text = Some(words);
+        self.editor.last_ok_data = Some(Vec::new());
+        self.editor.last_ok_data_base = Some(info.data_base);
+        self.editor.last_ok_bss_size = Some(0);
+        self.editor.last_ok_elf_bytes = Some(bytes.to_vec());
+        self.editor.last_build_stats = Some(BuildStats {
+            instruction_count,
+            data_bytes,
+        });
+        self.editor.last_assemble_msg = Some(format!(
+            "Loaded ELF: {} bytes, entry 0x{:08X} ({instruction_count} instructions)",
+            info.total_bytes, info.entry,
+        ));
         self.editor.last_compile_ok = Some(true);
         self.editor.diag_line = None;
         self.editor.diag_msg = None;
         self.editor.diag_line_text = None;
+
         self.run.imem_scroll = 0;
         self.run.hover_imem_addr = None;
+        self.rebuild_imem_vrow_cache();
         self.clear_details_selection();
         self.reset_exec_regions_to_loaded_text();
         self.sync_pipeline_program_range();
-        // Lock the editor when a binary is loaded; close any stale prompt.
+        let pc = self.run.cpu().pc;
+        self.run.reset_pipeline_stages(pc);
+        self.rebuild_harts();
+        self.lock_editor_on_binary();
+    }
+
+    /// A loaded binary is not editable text: leave command mode in charge and
+    /// close any stale "edit opcodes?" prompt.
+    fn lock_editor_on_binary(&mut self) {
         self.mode = EditorMode::Command;
         self.editor.elf_prompt_open = false;
-        // Reset pipeline stages (shares cpu/mem with RunState)
-        let __rpc = self.run.cpu().pc;
-        self.run.pipeline_mut().reset_stages(__rpc);
-        self.rebuild_harts();
-        let __rpc = self.run.cpu().pc;
-        self.run.pipeline_mut().reset_stages(__rpc);
     }
 
     /// Convert the currently-loaded ELF into an editable assembly source and load
@@ -2320,9 +1763,35 @@ impl App {
     }
 
     fn tick(&mut self) {
-        if self.is_portable_architecture() {
+        // A trait-driven backend has one gear: step while running. The rest of
+        // this method is the native runtime's — speed limiting, GO checkpoints,
+        // pipeline cycles, background harts — none of which the trait models.
+        if self.trait_driven() {
             if self.run.is_running {
-                self.portable_step();
+                match self.run.speed {
+                    RunSpeed::X1 | RunSpeed::X2 => {
+                        let divisor = if matches!(self.run.speed, RunSpeed::X2) { 2 } else { 1 };
+                        if self.run.last_step_time.elapsed() >= self.run.step_interval / divisor {
+                            self.machine_step();
+                            self.run.last_step_time = Instant::now();
+                        }
+                    }
+                    RunSpeed::X4 | RunSpeed::X8 => {
+                        let steps = if matches!(self.run.speed, RunSpeed::X4) { 4 } else { 8 };
+                        for _ in 0..steps {
+                            if !self.run.is_running {
+                                break;
+                            }
+                            self.machine_step();
+                        }
+                    }
+                    RunSpeed::Instant => {
+                        let start = Instant::now();
+                        while self.run.is_running && start.elapsed() < Duration::from_millis(8) {
+                            self.machine_step();
+                        }
+                    }
+                }
             }
             if matches!(self.tab, Tab::Editor)
                 && self.editor.dirty
@@ -2363,23 +1832,23 @@ impl App {
                 && matches!(self.tab, Tab::Pipeline);
 
             if use_pipeline_speed {
-                match self.run.pipeline().speed {
+                match self.run.pipeline_view().speed {
                     PipelineSpeed::Slow => {
-                        if self.run.pipeline().last_tick.elapsed() >= Duration::from_millis(600) {
+                        if self.run.pipeline_view().last_tick.elapsed() >= Duration::from_millis(600) {
                             self.single_step();
-                            self.run.pipeline_mut().last_tick = Instant::now();
+                            self.run.pipeline_view_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Normal => {
-                        if self.run.pipeline().last_tick.elapsed() >= Duration::from_millis(300) {
+                        if self.run.pipeline_view().last_tick.elapsed() >= Duration::from_millis(300) {
                             self.single_step();
-                            self.run.pipeline_mut().last_tick = Instant::now();
+                            self.run.pipeline_view_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Fast => {
-                        if self.run.pipeline().last_tick.elapsed() >= Duration::from_millis(80) {
+                        if self.run.pipeline_view().last_tick.elapsed() >= Duration::from_millis(80) {
                             self.single_step();
-                            self.run.pipeline_mut().last_tick = Instant::now();
+                            self.run.pipeline_view_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Instant => {
@@ -2728,7 +2197,7 @@ impl App {
                     && self.run.pipeline().enabled
                 {
                     let pc = self.run.cpu().pc;
-                    self.run.pipeline_mut().redirect_pc(pc);
+                    self.run.redirect_pipeline_pc(pc);
                 }
                 self.cancel_run_edit();
                 self.refresh_after_edit(before_x, before_f, target);
@@ -2751,7 +2220,7 @@ impl App {
         // refetch from the current PC so the stale instruction never executes.
         if self.run.pipeline().enabled {
             let pc = self.run.cpu().pc;
-            self.run.pipeline_mut().redirect_pc(pc);
+            self.run.redirect_pipeline_pc(pc);
         }
         Ok(())
     }
@@ -2978,7 +2447,7 @@ impl App {
                 && !self.run.pipeline().faulted
             {
                 let __rpc = self.run.cpu().pc;
-                self.run.pipeline_mut().reset_stages(__rpc);
+                self.run.reset_pipeline_stages(__rpc);
             }
         }
 
@@ -3000,7 +2469,7 @@ impl App {
         // the console, which is disjoint from `self.run.machine`.
         let console = &mut self.console;
         let commit = self.run.machine.step_pipeline(
-            |pipe, cpu, mem| crate::ui::pipeline::sim::pipeline_tick(pipe, cpu, mem, &cpi, console),
+            |pipe, cpu, mem| raven_riscv_engine::falcon::pipeline::sim::pipeline_tick(pipe, cpu, mem, &cpi, console),
             |commit| commit.is_some(),
         );
 
@@ -3183,8 +2652,10 @@ impl App {
     }
 
     pub(super) fn single_step(&mut self) {
-        if self.is_portable_architecture() {
-            self.portable_step();
+        // One instruction is the whole of "step" for a trait-driven backend;
+        // below, a step may be a pipeline cycle or a round of every hart.
+        if self.trait_driven() {
+            self.machine_step();
             return;
         }
         if self.core_status(self.selected_core) == HartLifecycle::Paused {
@@ -3547,12 +3018,6 @@ impl App {
             return;
         }
         let lines = &self.editor.buf.lines;
-        let total = lines.len();
-        // Search from after current cursor position
-        for offset in 1..=(total * lines[0].len().max(80) + 1) {
-            let _ = offset; // silence lint
-            break; // use proper search below
-        }
         // Find next occurrence after (row, col+word.len())
         let start_col = col + 1;
         let positions: Vec<(usize, usize)> = lines

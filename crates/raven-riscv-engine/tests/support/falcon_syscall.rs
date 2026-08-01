@@ -289,7 +289,7 @@ fn unknown_but_plausible_syscall_never_halts() {
 
     // 999 is not claimed by any ABI module: must report -ENOSYS and keep
     // the run alive instead of stopping it (the core contract of this
-    // module — see crates/raven-riscv-engine/src/falcon/syscall.rs).
+    // module — see crates/raven-riscv-engine/src/architectures/riscv32/falcon/syscall.rs).
     let cont = handle_syscall(999, &mut cpu, &mut mem, &mut console).expect("syscall");
 
     assert!(cont);

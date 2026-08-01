@@ -2211,7 +2211,7 @@ fn multi_file_workspace_assembles_across_tabs_and_maps_lines() {
 }
 
 #[test]
-fn toy16_is_a_runtime_app_backend_with_capability_gated_tabs() {
+fn toy16_is_a_runtime_app_backend_with_cache_and_capability_gated_tabs() {
     let mut app = App::new_with_architecture(
         Some(64 * 1024),
         crate::falcon::jit::BackendKind::None,
@@ -2219,17 +2219,115 @@ fn toy16_is_a_runtime_app_backend_with_capability_gated_tabs() {
     )
     .unwrap();
     assert_eq!(app.architecture_id(), "toy16");
-    assert!(app.is_portable_architecture());
-    assert!(!app.tab_visible(Tab::Cache));
+    assert!(app.trait_driven());
+    assert!(app.tab_visible(Tab::Cache));
     assert!(!app.tab_visible(Tab::Tlb));
     assert!(!app.tab_visible(Tab::Pipeline));
 
     for _ in 0..5 {
         app.single_step();
     }
-    let snapshot = app.portable_snapshot().unwrap();
+    let snapshot = app.machine_snapshot().unwrap();
     assert_eq!(snapshot.registers[2].value, 42);
     assert_eq!(snapshot.stdout, b"42\n");
+    let caches = app.cache_hierarchy().unwrap();
+    assert!(
+        caches
+            .cache(0, raven_riscv_engine::capability::CacheRole::Instruction)
+            .unwrap()
+            .stats
+            .total_accesses()
+            > 0
+    );
+}
+
+/// Both runtimes build through the active backend's assembler and report the
+/// result the same way. Nothing here mentions an ISA — that is the point: the
+/// figures come from the `ProgramImage`, so a new backend needs no change to
+/// the editor's status line or its build stats.
+#[test]
+fn every_backend_builds_and_reports_through_the_same_path() {
+    for (id, source) in [
+        ("riscv32", ".data\nv: .word 1\n.text\n    li a0, 1\n    halt\n"),
+        ("toy16", "li r0, 1\nprint r0\nhalt"),
+    ] {
+        let mut app =
+            App::new_with_architecture(Some(64 * 1024), crate::falcon::jit::BackendKind::None, id)
+                .unwrap();
+        app.editor.buf.lines = source.lines().map(str::to_string).collect();
+        app.assemble_and_load();
+
+        assert_eq!(app.editor.last_compile_ok, Some(true), "{id} failed to build");
+        let stats = app.editor.last_build_stats.as_ref().unwrap();
+        assert!(stats.instruction_count > 0, "{id} reported no instructions");
+        assert!(
+            app.editor
+                .last_assemble_msg
+                .as_deref()
+                .unwrap()
+                .starts_with("Assembled "),
+            "{id}: {:?}",
+            app.editor.last_assemble_msg
+        );
+        // The image is kept so a restart replays exactly what was loaded.
+        let image = app.editor.last_ok_image.as_ref().unwrap();
+        assert_eq!(image.architecture, id);
+    }
+}
+
+/// A build error is reported without disturbing what is loaded, and the image
+/// kept for restart is the one that actually built.
+#[test]
+fn a_failed_build_leaves_the_loaded_program_alone() {
+    let mut app = App::new(None);
+    app.editor.buf.lines = vec!["li a0, 5".into(), "halt".into()];
+    app.assemble_and_load();
+    let good = app.editor.last_ok_image.clone().unwrap();
+
+    app.editor.buf.lines = vec!["this is not an instruction".into()];
+    app.assemble_and_load();
+    assert_eq!(app.editor.last_compile_ok, Some(false));
+    assert_eq!(app.editor.last_ok_image.as_ref(), Some(&good));
+
+    // Restarting replays the last program that built, not the broken buffer.
+    app.restart_simulation();
+    app.single_step();
+    assert_eq!(app.run.cpu().read(10), 5);
+}
+
+/// Opening a container in the TUI must land the program exactly where building
+/// it did — same entry, same data base, same bytes. This is the one path that
+/// has no assembler to fall back on, so a placement bug here is invisible until
+/// a user opens their own `.bin`.
+#[test]
+fn a_container_opens_where_it_was_built() {
+    let source = [
+        ".data",
+        "value: .word 7",
+        ".text",
+        "    li a0, 3",
+        "    halt",
+    ];
+    let mut built = App::new(None);
+    built.editor.buf.lines = source.iter().map(|l| l.to_string()).collect();
+    built.assemble_and_load();
+    let container = built.export_program_image().unwrap().to_falc_v2().unwrap();
+    let data_base = built.run.data_base;
+
+    let mut opened = App::new(None);
+    opened.load_binary(&container);
+    assert_eq!(opened.editor.last_compile_ok, Some(true));
+    assert_eq!(opened.run.data_base, data_base, "the data pane moved");
+    assert_eq!(
+        opened.run.machine.mem().ram.as_bytes()[data_base as usize],
+        7,
+        "the data segment did not survive the container"
+    );
+    // Loading a binary locks the editor: there is no source to edit.
+    assert!(matches!(opened.mode, super::EditorMode::Command));
+
+    opened.single_step();
+    assert_eq!(opened.run.cpu().read(10), 3);
 }
 
 #[test]
@@ -2242,4 +2340,31 @@ fn switching_architecture_preserves_an_edited_workspace() {
     app.activate_architecture("riscv32", false).unwrap();
     assert_eq!(app.editor.buf.lines, ["custom source"]);
     assert_eq!(app.architecture_id(), "riscv32");
+}
+
+#[test]
+fn cycling_visits_every_registered_architecture() {
+    let mut app = App::new(None);
+    let expected = crate::arch::registry().ids();
+    let mut visited = vec![app.architecture_id()];
+    for _ in 1..expected.len() {
+        app.cycle_architecture();
+        visited.push(app.architecture_id());
+    }
+    visited.sort_unstable();
+    assert_eq!(visited, expected);
+
+    // One more hop wraps back to where we started.
+    app.cycle_architecture();
+    assert_eq!(app.architecture_id(), expected[0]);
+}
+
+#[test]
+fn an_unknown_architecture_names_the_valid_ones() {
+    let error = App::new(None)
+        .activate_architecture("z80", false)
+        .expect_err("z80 is not a backend");
+    for id in crate::arch::registry().ids() {
+        assert!(error.contains(id), "{error:?} should mention {id}");
+    }
 }

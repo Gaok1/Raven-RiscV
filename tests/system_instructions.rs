@@ -1,4 +1,4 @@
-use raven::riscv32::{decoder::decode, encoder::encode, instruction::Instruction};
+use raven::falcon::{decoder::decode, encoder::encode, instruction::Instruction};
 
 #[test]
 fn halt_and_ebreak_keep_distinct_system_encodings() {

@@ -19,11 +19,15 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
-            app.add_cache_level();
+            if !app.trait_driven() {
+                app.add_cache_level();
+            }
             true
         }
         KeyCode::Char('-') | KeyCode::Char('_') => {
-            app.remove_last_cache_level();
+            if !app.trait_driven() {
+                app.remove_last_cache_level();
+            }
             true
         }
         KeyCode::Char('r') if !matches!(app.cache.subtab, CacheSubtab::Config) => {
@@ -33,6 +37,10 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('p') | KeyCode::Char(' ')
             if !matches!(app.cache.subtab, CacheSubtab::Config) =>
         {
+            if app.trait_driven() {
+                app.machine_toggle_run();
+                return true;
+            }
             if app.run.is_running {
                 app.run.is_running = false;
             } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
@@ -85,7 +93,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('k') if !matches!(app.cache.subtab, CacheSubtab::Config) => {
-            cycle_memory_region(app);
+            if !app.trait_driven() {
+                cycle_memory_region(app);
+            }
             true
         }
         KeyCode::Char('e') if !matches!(app.cache.subtab, CacheSubtab::Config) => {
@@ -97,7 +107,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Char('s') if matches!(app.cache.subtab, CacheSubtab::Stats) => {
-            capture_session_snapshot(app);
+            if !app.trait_driven() {
+                capture_session_snapshot(app);
+            }
             true
         }
         KeyCode::Char('s') if matches!(app.cache.subtab, CacheSubtab::View) => {

@@ -32,8 +32,8 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
             true
         }
         KeyCode::Char('p') | KeyCode::Char(' ') => {
-            if app.is_portable_architecture() {
-                app.portable_toggle_run();
+            if app.trait_driven() {
+                app.machine_toggle_run();
                 return true;
             }
             if app.run.is_running {

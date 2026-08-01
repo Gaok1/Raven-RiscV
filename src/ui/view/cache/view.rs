@@ -18,8 +18,9 @@ use ratatui::{
 };
 use unicode_truncate::UnicodeTruncateStr;
 
-use crate::falcon::cache::{
-    CacheConfig, CacheController, CacheLineView, CacheSetView, ReplacementPolicy,
+use raven_riscv_engine::capability::{
+    CacheHierarchy, CacheLevelConfig as CacheConfig, CacheLineView,
+    CacheReplacementPolicy as ReplacementPolicy, CacheRole, CacheSetView,
 };
 use crate::ui::app::{
     App, CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope,
@@ -37,7 +38,7 @@ fn addr_mode_hint(addr_mode: CacheAddrMode, cfgs: &[&CacheConfig]) -> String {
     let valid: Vec<&CacheConfig> = cfgs
         .iter()
         .copied()
-        .filter(|cfg| cfg.is_valid_config())
+        .filter(|cfg| cfg.is_enabled())
         .collect();
     if valid.is_empty() {
         return String::new();
@@ -46,7 +47,7 @@ fn addr_mode_hint(addr_mode: CacheAddrMode, cfgs: &[&CacheConfig]) -> String {
     let first = valid[0];
     let off = first.offset_bits();
     let idx = first.index_bits();
-    let tag = 32u32.saturating_sub(off + idx);
+    let tag = first.address_bits.saturating_sub(off + idx);
     let same = valid
         .iter()
         .all(|cfg| cfg.offset_bits() == off && cfg.index_bits() == idx);
@@ -60,11 +61,13 @@ fn addr_mode_hint(addr_mode: CacheAddrMode, cfgs: &[&CacheConfig]) -> String {
 
 fn addr_text_width(addr_mode: CacheAddrMode, cfg: &CacheConfig) -> usize {
     match addr_mode {
-        CacheAddrMode::Base => 10,
+        CacheAddrMode::Base => 2 + cfg.address_bits.div_ceil(4),
         CacheAddrMode::Breakdown => {
-            let off_hex = ((cfg.offset_bits() as usize).saturating_add(3) / 4).max(1);
+            let off_hex = (cfg.offset_bits().saturating_add(3) / 4).max(1);
             let idx_digits = cfg.num_sets().saturating_sub(1).to_string().len().max(1);
-            let tag_hex = (32usize.saturating_sub((cfg.offset_bits() + cfg.index_bits()) as usize))
+            let tag_hex = cfg
+                .address_bits
+                .saturating_sub(cfg.offset_bits() + cfg.index_bits())
                 .div_ceil(4)
                 .max(1);
             2 + off_hex + 3 + idx_digits + 3 + tag_hex
@@ -80,17 +83,20 @@ pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
     app.cache.view_scroll_max.set(0);
     app.cache.view_scroll_max_d.set(0);
 
+    let Some(caches) = app.cache_hierarchy() else {
+        return;
+    };
     if app.cache.selected_level == 0 {
-        render_l1_view(f, area, app);
+        render_l1_view(f, area, app, caches);
     } else {
-        let idx = app.cache.selected_level - 1;
-        if idx < app.run.mem().extra_levels.len() {
-            render_unified_view(f, area, app, idx);
+        let level = app.cache.selected_level;
+        if caches.cache(level, CacheRole::Unified).is_some() {
+            render_unified_view(f, area, app, caches, level);
         }
     }
 }
 
-fn render_l1_view(f: &mut Frame, area: Rect, app: &App) {
+fn render_l1_view(f: &mut Frame, area: Rect, app: &App, caches: &dyn CacheHierarchy) {
     // Reset both scrollbar slots; render_cache_matrix will fill them.
     app.cache.hscroll_bars.set([None; 2]);
 
@@ -105,30 +111,45 @@ fn render_l1_view(f: &mut Frame, area: Rect, app: &App) {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(layout[0]);
-            render_cache_matrix(f, cols[0], app, true);
-            render_cache_matrix(f, cols[1], app, false);
+            render_cache_matrix(f, cols[0], app, caches, CacheRole::Instruction);
+            render_cache_matrix(f, cols[1], app, caches, CacheRole::Data);
         }
-        CacheScope::ICache => render_cache_matrix(f, layout[0], app, true),
-        CacheScope::DCache => render_cache_matrix(f, layout[0], app, false),
+        CacheScope::ICache => {
+            render_cache_matrix(f, layout[0], app, caches, CacheRole::Instruction)
+        }
+        CacheScope::DCache => render_cache_matrix(f, layout[0], app, caches, CacheRole::Data),
     }
 
-    render_legend_bar(f, layout[1], app);
+    render_legend_bar(f, layout[1], app, caches);
 }
 
-fn render_unified_view(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
+fn render_unified_view(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    caches: &dyn CacheHierarchy,
+    level: usize,
+) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    render_extra_cache_matrix(f, layout[0], app, extra_idx);
-    render_unified_legend_bar(f, layout[1], app, extra_idx);
+    render_extra_cache_matrix(f, layout[0], app, caches, level);
+    render_unified_legend_bar(f, layout[1], app, caches, level);
 }
 
 // ── Legend bar (outside the matrix block, 1 line, no border) ─────────────────
 
-fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let cfg = &app.run.mem().extra_levels[extra_idx].config;
+fn render_unified_legend_bar(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    caches: &dyn CacheHierarchy,
+    level: usize,
+) {
+    let cache = caches.cache(level, CacheRole::Unified).unwrap();
+    let cfg = &cache.config;
     let scroll_hint = vertical_scroll_hint(app);
     let policy_hint = policy_hint_str(cfg.replacement);
 
@@ -167,10 +188,12 @@ fn render_unified_legend_bar(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     f.render_widget(Paragraph::new(line), area);
 }
 
-fn render_legend_bar(f: &mut Frame, area: Rect, app: &App) {
+fn render_legend_bar(f: &mut Frame, area: Rect, app: &App, caches: &dyn CacheHierarchy) {
     let scope = app.cache.scope;
-    let icfg = &app.run.mem().icache.config;
-    let dcfg = &app.run.mem().dcache.config;
+    let icache = caches.cache(0, CacheRole::Instruction).unwrap();
+    let dcache = caches.cache(0, CacheRole::Data).unwrap();
+    let icfg = &icache.config;
+    let dcfg = &dcache.config;
 
     // Policy-specific hint — if both caches have the same policy, show once
     let policy_hint: String = match scope {
@@ -370,12 +393,18 @@ fn policy_hint_short(p: ReplacementPolicy) -> &'static str {
 
 // ── Cache matrix ──────────────────────────────────────────────────────────────
 
-fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) {
-    let cache = &app.run.mem().extra_levels[extra_idx];
-    let level_name = CacheController::extra_level_name(extra_idx);
+fn render_extra_cache_matrix(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    caches: &dyn CacheHierarchy,
+    level: usize,
+) {
+    let cache = caches.cache(level, CacheRole::Unified).unwrap();
+    let level_name = &cache.name;
     let cfg = &cache.config;
 
-    let title = if cfg.is_valid_config() {
+    let title = if cfg.is_enabled() {
         let policy_str = match cfg.replacement {
             ReplacementPolicy::Lru => "LRU",
             ReplacementPolicy::Mru => "MRU",
@@ -397,7 +426,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
 
     let inner = render_panel(f, area, panel::panel(title, PanelKind::Accent));
 
-    if !cfg.is_valid_config() {
+    if !cfg.is_enabled() {
         if inner.height > 0 {
             f.render_widget(
                 Paragraph::new("Cache disabled — configure it in the Settings tab")
@@ -413,8 +442,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         return;
     }
 
-    let sets_view = cache.view();
-    let num_sets = sets_view.len();
+    let num_sets = cfg.num_sets();
     let ways = cfg.associativity;
     let policy = cfg.replacement;
 
@@ -500,7 +528,9 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
         if set_idx >= num_sets || term_row >= rows_h {
             break;
         }
-        let set = &sets_view[set_idx];
+        let Some(set) = caches.set(level, CacheRole::Unified, set_idx) else {
+            break;
+        };
         let has_valid = set.lines.iter().any(|l| l.valid);
         let set_style = if has_valid {
             style::value()
@@ -528,7 +558,7 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
             for w in 0..ways {
                 let cell = build_cell(
                     &set.lines[w],
-                    set,
+                    &set,
                     w,
                     true, // unified = can be dirty
                     policy,
@@ -593,16 +623,19 @@ fn render_extra_cache_matrix(f: &mut Frame, area: Rect, app: &App, extra_idx: us
     }
 }
 
-fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
-    let cache = if icache {
-        &app.run.mem().icache
-    } else {
-        &app.run.mem().dcache
-    };
-    let label = if icache { "I-Cache" } else { "D-Cache" };
+fn render_cache_matrix(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    caches: &dyn CacheHierarchy,
+    role: CacheRole,
+) {
+    let cache = caches.cache(0, role).unwrap();
+    let icache = role == CacheRole::Instruction;
+    let label = &cache.name;
     let cfg = &cache.config;
 
-    let title = if cfg.is_valid_config() {
+    let title = if cfg.is_enabled() {
         let policy_str = match cfg.replacement {
             ReplacementPolicy::Lru => "LRU",
             ReplacementPolicy::Mru => "MRU",
@@ -624,7 +657,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
 
     let inner = render_panel(f, area, panel::panel(title, PanelKind::Accent));
 
-    if !cfg.is_valid_config() {
+    if !cfg.is_enabled() {
         if inner.height > 0 {
             f.render_widget(
                 Paragraph::new("Cache disabled — configure it in the Settings tab")
@@ -640,8 +673,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         return;
     }
 
-    let sets_view = cache.view();
-    let num_sets = sets_view.len();
+    let num_sets = cfg.num_sets();
     let ways = cfg.associativity;
     let policy = cfg.replacement;
 
@@ -750,7 +782,9 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         if set_idx >= num_sets || term_row >= rows_h {
             break;
         }
-        let set = &sets_view[set_idx];
+        let Some(set) = caches.set(0, role, set_idx) else {
+            break;
+        };
         let has_valid = set.lines.iter().any(|l| l.valid);
         let set_style = if has_valid {
             Style::default().fg(Color::White)
@@ -778,7 +812,7 @@ fn render_cache_matrix(f: &mut Frame, area: Rect, app: &App, icache: bool) {
             for w in 0..ways {
                 let cell = build_cell(
                     &set.lines[w],
-                    set,
+                    &set,
                     w,
                     !icache,
                     policy,
@@ -989,8 +1023,8 @@ fn render_data(
 // ── Cell builder ──────────────────────────────────────────────────────────────
 
 fn build_cell(
-    line: &CacheLineView,
-    set: &CacheSetView,
+    line: &CacheLineView<'_>,
+    set: &CacheSetView<'_>,
     way: usize,
     is_dcache: bool,
     policy: ReplacementPolicy,
@@ -1104,13 +1138,19 @@ fn build_cell(
     match addr_mode {
         CacheAddrMode::Base => {
             let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
-                | ((set_idx as u32) << cfg.offset_bits());
-            spans.push(Span::styled(format!("0x{base:08X}"), addr_style));
+                | ((set_idx as u64) << cfg.offset_bits());
+            let width = cfg.address_bits.div_ceil(4);
+            spans.push(Span::styled(
+                format!("0x{base:0width$X}"),
+                addr_style,
+            ));
         }
         CacheAddrMode::Breakdown => {
-            let off_hex_w = ((cfg.offset_bits() as usize).saturating_add(3) / 4).max(1);
+            let off_hex_w = (cfg.offset_bits().saturating_add(3) / 4).max(1);
             let idx_w = cfg.num_sets().saturating_sub(1).to_string().len().max(1);
-            let tag_w = (32usize.saturating_sub((cfg.offset_bits() + cfg.index_bits()) as usize))
+            let tag_w = cfg
+                .address_bits
+                .saturating_sub(cfg.offset_bits() + cfg.index_bits())
                 .div_ceil(4)
                 .max(1);
             let breakdown = format!(
@@ -1192,12 +1232,12 @@ fn build_cell(
             spans.push(Span::styled(format!("r:{pos}"), style));
         }
         ReplacementPolicy::Lfu => {
-            let freq = line.freq;
+            let freq = line.frequency;
             let min_freq = set
                 .lines
                 .iter()
                 .filter(|l| l.valid)
-                .map(|l| l.freq)
+                .map(|l| l.frequency)
                 .min()
                 .unwrap_or(0);
             let style = if freq == min_freq {
@@ -1217,7 +1257,7 @@ fn build_cell(
         ReplacementPolicy::Clock => {
             let n = set.lines.len().max(1);
             let is_hand = (set.clock_hand % n) == way;
-            let (icon, style) = match (is_hand, line.ref_bit) {
+            let (icon, style) = match (is_hand, line.referenced) {
                 (true, true) => (">R", Style::default().fg(theme::LABEL_Y).bold()),
                 (true, false) => ("> ", style::danger().bold()),
                 (false, true) => (" R", Style::default().fg(theme::LABEL_Y)),

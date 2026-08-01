@@ -151,7 +151,13 @@ pub(crate) struct EditorState {
     pub(crate) last_build_stats: Option<BuildStats>,
     pub(crate) last_compile_ok: Option<bool>,
 
-    // Last successfully assembled program (for restart without re-parsing)
+    /// The last program that built, as the backend produced it. Restarting
+    /// replays this instead of re-assembling, so a restart always reloads
+    /// exactly what is running rather than whatever the buffer says now.
+    /// `None` while an ELF is loaded — see `last_ok_elf_bytes`.
+    pub(crate) last_ok_image: Option<raven_riscv_engine::ProgramImage>,
+
+    // Flattened views of `last_ok_image` that the editor and Run panes read.
     pub(crate) last_ok_text: Option<Vec<u32>>,
     pub(crate) last_ok_data: Option<Vec<u8>>,
     pub(crate) last_ok_data_base: Option<u32>,
@@ -240,16 +246,45 @@ impl RunState {
     /// `Machine` so a clock cycle is journaled together with the CPU and memory
     /// (see [`crate::falcon::machine::Machine::step_pipeline`]); reads borrow
     /// through here.
-    pub(crate) fn pipeline(&self) -> &crate::ui::pipeline::PipelineSimState {
+    pub(crate) fn pipeline(&self) -> &raven_riscv_engine::falcon::pipeline::PipelineSimState {
         self.machine.pipeline()
     }
 
-    /// Mutable pipeline access for UI/config changes (hover, scroll, subtab,
-    /// forwarding/branch config, reset). Does **not** journal and does **not**
+    /// Read-only pipeline data for renderers that should not depend on the
+    /// concrete RV32 simulator state.
+    pub(crate) fn pipeline_inspect(
+        &self,
+    ) -> &dyn raven_riscv_engine::capability::PipelineInspect {
+        self.machine
+            .pipeline_inspect()
+            .expect("the TUI runtime always owns an inspectable pipeline")
+    }
+
+    /// Mutable pipeline access for physical configuration and reset. Visual
+    /// interaction state is owned separately by `pipeline_view`. Does **not** journal and does **not**
     /// clear history. Never use it to advance execution — that is
     /// [`crate::falcon::machine::Machine::step_pipeline`].
-    pub(crate) fn pipeline_mut(&mut self) -> &mut crate::ui::pipeline::PipelineSimState {
+    pub(crate) fn pipeline_mut(&mut self) -> &mut raven_riscv_engine::falcon::pipeline::PipelineSimState {
         self.machine.pipeline_mut()
+    }
+
+    pub(crate) fn pipeline_view(&self) -> &crate::ui::pipeline::PipelineViewState {
+        &self.pipeline_view
+    }
+
+    pub(crate) fn pipeline_view_mut(&mut self) -> &mut crate::ui::pipeline::PipelineViewState {
+        &mut self.pipeline_view
+    }
+
+    pub(crate) fn reset_pipeline_stages(&mut self, pc: u32) {
+        self.machine.pipeline_mut().reset_stages(pc);
+        self.pipeline_view.reset_for_program();
+    }
+
+    pub(crate) fn redirect_pipeline_pc(&mut self, pc: u32) {
+        self.machine.pipeline_mut().redirect_pc(pc);
+        self.pipeline_view.status_msg = None;
+        self.pipeline_view.status_error = None;
     }
 }
 
@@ -257,7 +292,8 @@ pub(crate) struct RunState {
     /// The simulator's CPU + memory hierarchy, owned behind the journaling
     /// gateway. Reads go through [`RunState::cpu`] / [`RunState::mem`]; mutation
     /// is only expressible via `Machine`'s methods (see its module docs).
-    pub(crate) machine: Machine<crate::ui::pipeline::PipelineSimState>,
+    pub(crate) machine: Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState>,
+    pub(crate) pipeline_view: crate::ui::pipeline::PipelineViewState,
     pub(crate) prev_x: [u32; 32],
     pub(crate) prev_pc: u32,
     pub(crate) breakpoints: std::collections::HashSet<u32>,

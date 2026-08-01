@@ -53,7 +53,7 @@ pub(crate) struct HartCoreRuntime {
     pub(crate) exec_trace: std::collections::VecDeque<(u32, String)>,
     pub(crate) dyn_mem_access: Option<(u32, u32, bool)>,
     pub(crate) mem_access_log: Vec<(u32, u32, u8)>,
-    pub(crate) pipeline: Option<crate::ui::pipeline::PipelineSimState>,
+    pub(crate) pipeline: Option<raven_riscv_engine::falcon::pipeline::PipelineSimState>,
 }
 
 impl HartCoreRuntime {
@@ -77,7 +77,7 @@ impl HartCoreRuntime {
             exec_trace: std::collections::VecDeque::new(),
             dyn_mem_access: None,
             mem_access_log: Vec::new(),
-            pipeline: Some(crate::ui::pipeline::PipelineSimState::new()),
+            pipeline: Some(raven_riscv_engine::falcon::pipeline::PipelineSimState::new()),
         }
     }
 }
@@ -135,7 +135,7 @@ pub(crate) fn step_hart_bg_inner(
                 return hart.faulted;
             }
             let commit =
-                crate::ui::pipeline::sim::pipeline_tick(pipe, &mut hart.cpu, mem, cpi, console);
+                raven_riscv_engine::falcon::pipeline::sim::pipeline_tick(pipe, &mut hart.cpu, mem, cpi, console);
             if let Some(info) = commit {
                 *hart.exec_counts.entry(info.pc).or_insert(0) += 1;
                 mem.instruction_count = mem.instruction_count.saturating_add(1);

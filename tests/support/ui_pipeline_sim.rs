@@ -6,7 +6,7 @@ use crate::falcon::exec;
 use crate::falcon::instruction::Instruction;
 use crate::falcon::memory::Bus;
 use crate::falcon::program::{load_bytes, load_words, zero_bytes};
-use crate::ui::pipeline::FuState;
+use crate::falcon::pipeline::FuState;
 
 fn slow_level(line_size: usize, size: usize, hit_latency: u64) -> CacheConfig {
     CacheConfig {
@@ -1802,7 +1802,7 @@ fn gantt_retains_up_to_200_cycles_per_row() {
         .max()
         .unwrap_or(0);
     assert!(
-        longest <= crate::ui::pipeline::MAX_GANTT_COLS,
+        longest <= crate::falcon::pipeline::MAX_GANTT_COLS,
         "gantt row exceeded retention: {longest}"
     );
     assert!(
@@ -1858,7 +1858,7 @@ fn gantt_retains_far_more_than_old_12_rows_for_vertical_scroll() {
 #[test]
 fn functional_units_keep_div_in_ex_for_multiple_cycles() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     cpu.write(11, 12);
     cpu.write(12, 3);
@@ -1901,7 +1901,7 @@ fn functional_units_keep_div_in_ex_for_multiple_cycles() {
     let mut div_cycles_left = 0;
     for _ in 0..8 {
         pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
-        if let Some(slot) = state.fu_bank[crate::ui::pipeline::FuKind::Div.index()]
+        if let Some(slot) = state.fu_bank[crate::falcon::pipeline::FuKind::Div.index()]
             .iter()
             .filter_map(|fu| fu.slot.as_ref())
             .find(|slot| !slot.is_bubble && slot.disasm.starts_with("div"))
@@ -1920,7 +1920,7 @@ fn functional_units_keep_div_in_ex_for_multiple_cycles() {
 
     pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
 
-    let div_slot = state.fu_bank[crate::ui::pipeline::FuKind::Div.index()]
+    let div_slot = state.fu_bank[crate::falcon::pipeline::FuKind::Div.index()]
         .iter()
         .filter_map(|fu| fu.slot.as_ref())
         .find(|slot| !slot.is_bubble)
@@ -1931,7 +1931,7 @@ fn functional_units_keep_div_in_ex_for_multiple_cycles() {
         "remaining DIV cycles should decrease while div stays in its functional unit"
     );
     assert!(
-        !state.stages[crate::ui::pipeline::Stage::ID as usize]
+        !state.stages[crate::falcon::pipeline::Stage::ID as usize]
             .as_ref()
             .is_some_and(|slot| !slot.is_bubble && slot.disasm.starts_with("addi")),
         "younger independent addi should not remain blocked in ID while div runs in its own FU"
@@ -1941,7 +1941,7 @@ fn functional_units_keep_div_in_ex_for_multiple_cycles() {
 #[test]
 fn single_cycle_mode_holds_div_in_ex_for_configured_cpi() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::SingleCycle;
+    state.mode = crate::falcon::pipeline::PipelineMode::SingleCycle;
     let mut cpu = Cpu::default();
     cpu.write(11, 12);
     cpu.write(12, 3);
@@ -1972,7 +1972,7 @@ fn single_cycle_mode_holds_div_in_ex_for_configured_cpi() {
 
     for _ in 0..8 {
         pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
-        if state.stages[crate::ui::pipeline::Stage::EX as usize]
+        if state.stages[crate::falcon::pipeline::Stage::EX as usize]
             .as_ref()
             .is_some_and(|slot| !slot.is_bubble && slot.disasm.starts_with("div"))
         {
@@ -1981,13 +1981,13 @@ fn single_cycle_mode_holds_div_in_ex_for_configured_cpi() {
     }
 
     assert!(
-        state.stages[crate::ui::pipeline::Stage::EX as usize]
+        state.stages[crate::falcon::pipeline::Stage::EX as usize]
             .as_ref()
             .is_some_and(|slot| !slot.is_bubble && slot.disasm.starts_with("div")),
         "div should reach EX"
     );
 
-    let ex_cycles_left = state.stages[crate::ui::pipeline::Stage::EX as usize]
+    let ex_cycles_left = state.stages[crate::falcon::pipeline::Stage::EX as usize]
         .as_ref()
         .map(|slot| slot.fu_cycles_left)
         .expect("div in EX");
@@ -1999,13 +1999,13 @@ fn single_cycle_mode_holds_div_in_ex_for_configured_cpi() {
     pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
 
     assert!(
-        state.stages[crate::ui::pipeline::Stage::EX as usize]
+        state.stages[crate::falcon::pipeline::Stage::EX as usize]
             .as_ref()
             .is_some_and(|slot| !slot.is_bubble && slot.disasm.starts_with("div")),
         "single-cycle mode should keep div in EX while CPI cycles remain"
     );
     assert!(
-        state.stages[crate::ui::pipeline::Stage::EX as usize]
+        state.stages[crate::falcon::pipeline::Stage::EX as usize]
             .as_ref()
             .is_some_and(|slot| slot.fu_cycles_left < ex_cycles_left),
         "remaining EX cycles should decrease while div stays in EX"
@@ -2015,7 +2015,7 @@ fn single_cycle_mode_holds_div_in_ex_for_configured_cpi() {
 #[test]
 fn single_cycle_mode_holds_alu_in_ex_for_configured_cpi() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::SingleCycle;
+    state.mode = crate::falcon::pipeline::PipelineMode::SingleCycle;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -2044,7 +2044,7 @@ fn single_cycle_mode_holds_alu_in_ex_for_configured_cpi() {
 
     for _ in 0..8 {
         pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
-        if state.stages[crate::ui::pipeline::Stage::EX as usize]
+        if state.stages[crate::falcon::pipeline::Stage::EX as usize]
             .as_ref()
             .is_some_and(|slot| !slot.is_bubble && slot.disasm.starts_with("addi"))
         {
@@ -2052,7 +2052,7 @@ fn single_cycle_mode_holds_alu_in_ex_for_configured_cpi() {
         }
     }
 
-    let ex_cycles_left = state.stages[crate::ui::pipeline::Stage::EX as usize]
+    let ex_cycles_left = state.stages[crate::falcon::pipeline::Stage::EX as usize]
         .as_ref()
         .map(|slot| slot.fu_cycles_left)
         .expect("addi should reach EX");
@@ -2061,7 +2061,7 @@ fn single_cycle_mode_holds_alu_in_ex_for_configured_cpi() {
     pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
 
     assert!(
-        state.stages[crate::ui::pipeline::Stage::EX as usize]
+        state.stages[crate::falcon::pipeline::Stage::EX as usize]
             .as_ref()
             .is_some_and(|slot| !slot.is_bubble && slot.disasm.starts_with("addi")),
         "ALU instruction should remain in EX while CPI cycles remain"
@@ -2802,7 +2802,7 @@ fn gantt_keeps_distinct_rows_for_repeated_same_pc() {
 #[test]
 fn parallel_fu_mode_dispatches_independent_alu_work_while_load_is_still_in_lsu() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -2847,13 +2847,13 @@ fn parallel_fu_mode_dispatches_independent_alu_work_while_load_is_still_in_lsu()
         }
     }
 
-    let lsu_slot = state.fu_bank[crate::ui::pipeline::FuKind::Lsu.index()]
+    let lsu_slot = state.fu_bank[crate::falcon::pipeline::FuKind::Lsu.index()]
         .first()
         .and_then(|fu| fu.slot.as_ref())
         .expect("load should dispatch into LSU bank");
     assert!(matches!(lsu_slot.class, InstrClass::Load));
 
-    let alu_slot = state.fu_bank[crate::ui::pipeline::FuKind::Alu.index()]
+    let alu_slot = state.fu_bank[crate::falcon::pipeline::FuKind::Alu.index()]
         .first()
         .and_then(|fu| fu.slot.as_ref())
         .expect("independent addi should dispatch into ALU bank");
@@ -2869,7 +2869,7 @@ fn parallel_fu_mode_dispatches_independent_alu_work_while_load_is_still_in_lsu()
 #[test]
 fn parallel_fu_mode_dispatches_load_to_lsu_bank() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -2957,7 +2957,7 @@ fn parallel_fu_mode_serializes_lsu_ops_to_preserve_store_then_load_order() {
 #[test]
 fn parallel_fu_mode_keeps_younger_result_uncommitted_while_older_load_finishes() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -3031,7 +3031,7 @@ fn parallel_fu_mode_keeps_younger_result_uncommitted_while_older_load_finishes()
 #[test]
 fn parallel_fu_mode_keeps_dependent_consumer_blocked_until_producer_finishes() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -3076,14 +3076,14 @@ fn parallel_fu_mode_keeps_dependent_consumer_blocked_until_producer_finishes() {
         }
     }
 
-    let mul_slot = state.fu_bank[crate::ui::pipeline::FuKind::Mul.index()]
+    let mul_slot = state.fu_bank[crate::falcon::pipeline::FuKind::Mul.index()]
         .first()
         .and_then(|fu| fu.slot.as_ref())
         .expect("mul should still be active in MUL bank");
     assert!(matches!(mul_slot.class, InstrClass::Mul));
 
     assert!(
-        state.fu_bank[crate::ui::pipeline::FuKind::Alu.index()]
+        state.fu_bank[crate::falcon::pipeline::FuKind::Alu.index()]
             .iter()
             .all(|fu| fu.slot.is_none()),
         "dependent addi must not dispatch into ALU bank while mul still owns x5"
@@ -3098,8 +3098,8 @@ fn parallel_fu_mode_keeps_dependent_consumer_blocked_until_producer_finishes() {
 #[test]
 fn parallel_fu_mode_respects_configured_alu_capacity() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
-    state.fu_capacity[crate::ui::pipeline::FuKind::Alu.index()] = 2;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
+    state.fu_capacity[crate::falcon::pipeline::FuKind::Alu.index()] = 2;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -3139,7 +3139,7 @@ fn parallel_fu_mode_respects_configured_alu_capacity() {
     for _ in 0..8 {
         pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
         max_active_alu = max_active_alu.max(
-            state.fu_bank[crate::ui::pipeline::FuKind::Alu.index()]
+            state.fu_bank[crate::falcon::pipeline::FuKind::Alu.index()]
                 .iter()
                 .filter(|fu| fu.slot.as_ref().is_some_and(|slot| !slot.is_bubble))
                 .count(),
@@ -3243,7 +3243,7 @@ fn parallel_fu_mode_stalls_in_id_when_parallel_alu_bank_is_full() {
 #[test]
 fn store_data_hazard_does_not_emit_fu_to_id_bypass_trace() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -3309,7 +3309,7 @@ fn store_data_hazard_does_not_emit_fu_to_id_bypass_trace() {
 #[test]
 fn id_raw_stall_does_not_freeze_parallel_fu_progress() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -3375,7 +3375,7 @@ fn id_raw_stall_does_not_freeze_parallel_fu_progress() {
 #[test]
 fn remu_store_data_dependency_eventually_completes() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -3431,7 +3431,7 @@ fn remu_store_data_dependency_eventually_completes() {
 #[test]
 fn ready_fu_result_can_promote_into_bubbled_wb() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     state.stages[Stage::WB as usize] = Some(PipeSlot::bubble());
     state.fu_bank[FuKind::Div.index()].push(FuState {
         kind: Some(FuKind::Div),
@@ -3484,7 +3484,7 @@ fn parallel_fu_mode_keeps_correct_jump_after_taken_branch_flush() {
 
     let (_prog_seq, cpu_seq, _mem_seq) = run_sequential(asm);
     let (_prog_pipe, mut cpu_pipe, mut mem_pipe, mut state) = run_pipeline_prog(asm);
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     state.reset_stages(cpu_pipe.pc);
     let cpi = CpiConfig::default();
     let mut console = Console::default();
@@ -3541,7 +3541,7 @@ fn parallel_fu_mode_does_not_duplicate_taken_jump_after_remu_branch_path() {
     mem.store32(0x1000 + 24, 0x1000).unwrap();
 
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     state.reset_stages(0);
     let cpi = CpiConfig::default();
     let mut committed_pcs = Vec::new();
@@ -3571,7 +3571,7 @@ fn parallel_fu_mode_does_not_duplicate_taken_jump_after_remu_branch_path() {
 #[test]
 fn ready_lsu_result_can_promote_into_bubbled_mem() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     state.stages[Stage::MEM as usize] = Some(PipeSlot::bubble());
     state.fu_bank[FuKind::Lsu.index()].push(FuState {
         kind: Some(FuKind::Lsu),
@@ -3608,7 +3608,7 @@ fn ready_lsu_result_can_promote_into_bubbled_mem() {
 #[test]
 fn mem_cache_stall_does_not_freeze_parallel_fu_progress() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     state.stages[Stage::MEM as usize] = Some(PipeSlot {
         is_bubble: false,
         instr: Some(Instruction::Lw {
@@ -3667,7 +3667,7 @@ fn mem_cache_stall_does_not_freeze_parallel_fu_progress() {
 #[test]
 fn parallel_fu_mode_allows_mixed_fu_types_to_run_together() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),
@@ -3749,7 +3749,7 @@ fn parallel_fu_mode_allows_mixed_fu_types_to_run_together() {
 #[test]
 fn parallel_fu_mode_respects_per_type_capacities_independently() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     state.fu_capacity[FuKind::Alu.index()] = 2;
     state.fu_capacity[FuKind::Mul.index()] = 1;
     let mut cpu = Cpu::default();
@@ -3885,9 +3885,9 @@ fn forwarding_prefers_youngest_ready_fu_writer_for_same_register() {
         ..PipeSlot::bubble()
     };
 
-    crate::ui::pipeline::forwarding::apply_forwarding_to_id(
+    crate::falcon::pipeline::forwarding::apply_forwarding_to_id(
         &mut consumer,
-        crate::ui::pipeline::PipelineBypassConfig::legacy_enabled(),
+        crate::falcon::pipeline::PipelineBypassConfig::legacy_enabled(),
         &None,
         &[older_writer, younger_writer],
     );
@@ -3901,7 +3901,7 @@ fn forwarding_prefers_youngest_ready_fu_writer_for_same_register() {
 #[test]
 fn branch_flush_clears_speculative_work_already_dispatched_to_fu_bank() {
     let mut state = PipelineSimState::new();
-    state.mode = crate::ui::pipeline::PipelineMode::FunctionalUnits;
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
         CacheConfig::default(),

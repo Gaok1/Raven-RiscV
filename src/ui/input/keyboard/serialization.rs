@@ -134,9 +134,12 @@ pub(super) fn serialize_rcfg(
     s
 }
 
-pub(super) fn serialize_pcfg(pipeline: &crate::ui::pipeline::PipelineSimState) -> String {
+pub(super) fn serialize_pcfg(
+    pipeline: &raven_riscv_engine::falcon::pipeline::PipelineSimState,
+    speed: crate::ui::pipeline::PipelineSpeed,
+) -> String {
     crate::ui::pipeline::serialize_pipeline_config(
-        &crate::ui::pipeline::PipelineConfig::from_state(pipeline),
+        &crate::ui::pipeline::PipelineConfig::from_state_and_speed(pipeline, speed),
     )
 }
 
@@ -230,10 +233,8 @@ pub(super) fn parse_config_v3(text: &str) -> Result<ConfigV3, String> {
                 .eq_ignore_ascii_case("architecture")
                 .then(|| value.trim().to_ascii_lowercase())
         })
-        .unwrap_or_else(|| "riscv32".to_string());
-    if !matches!(architecture.as_str(), "riscv32" | "toy16") {
-        return Err(format!("unknown architecture '{architecture}'"));
-    }
+        .unwrap_or_else(|| crate::arch::DEFAULT_ID.to_string());
+    crate::arch::lookup(&architecture)?;
     let sim = parse_rcfg(&sim_t)?;
     let (icfg, dcfg, extra, tlb) = parse_cache_configs(&cache_t)?;
     let pipeline = parse_pcfg(&pipe_t)?;
@@ -270,7 +271,7 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
         &app.cache.extra_pending,
         &app.tlb.pending,
     );
-    let pipeline = serialize_pcfg(&app.run.pipeline());
+    let pipeline = serialize_pcfg(app.run.pipeline(), app.run.pipeline_view().speed);
     wrap_config_v3(&sim, &cache, &pipeline)
 }
 
@@ -299,7 +300,8 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
         .mmu_mut()
         .tlb
         .reconfigure(cfg.tlb);
-    cfg.pipeline.apply_to_state(&mut app.run.pipeline_mut());
+    cfg.pipeline.apply_to_state(app.run.pipeline_mut());
+    app.run.pipeline_view_mut().speed = cfg.pipeline.speed;
     // Sim settings applied last: may trigger a simulation restart.
     apply_rcfg(app, cfg.sim);
     if let Err(error) = app.activate_architecture(&architecture, false) {
@@ -806,7 +808,8 @@ pub(crate) fn apply_rcfg_text(app: &mut App, text: &str) -> Result<(), String> {
 /// Apply a raw .pcfg text to the app (parse + apply, no file I/O).
 pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
     let cfg = parse_pcfg(text)?;
-    cfg.apply_to_state(&mut app.run.pipeline_mut());
+    cfg.apply_to_state(app.run.pipeline_mut());
+    app.run.pipeline_view_mut().speed = cfg.speed;
     Ok(())
 }
 

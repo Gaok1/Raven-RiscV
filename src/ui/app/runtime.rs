@@ -2,8 +2,8 @@ use super::*;
 
 impl App {
     fn copy_pipeline_config_to_hart(
-        src: &crate::ui::pipeline::PipelineSimState,
-        dst: &mut crate::ui::pipeline::PipelineSimState,
+        src: &raven_riscv_engine::falcon::pipeline::PipelineSimState,
+        dst: &mut raven_riscv_engine::falcon::pipeline::PipelineSimState,
     ) {
         dst.enabled = src.enabled;
         dst.sequential_mode = src.sequential_mode;
@@ -11,7 +11,6 @@ impl App {
         dst.branch_resolve = src.branch_resolve;
         dst.mode = src.mode;
         dst.set_predict(src.predict);
-        dst.speed = src.speed;
         dst.exec_regions = src.exec_regions.clone();
         dst.fu_capacity = src.fu_capacity;
     }
@@ -29,7 +28,7 @@ impl App {
         let mut branches = 0u64;
         let mut stall_by_type = [0u64; crate::ui::pipeline::HazardType::STALL_TYPE_COUNT];
 
-        let mut accumulate = |pipe: &crate::ui::pipeline::PipelineSimState| {
+        let mut accumulate = |pipe: &raven_riscv_engine::falcon::pipeline::PipelineSimState| {
             saw_pipeline = true;
             cycles = cycles.max(pipe.cycle_count);
             committed = committed.saturating_add(pipe.instr_committed);
@@ -165,8 +164,10 @@ impl App {
 
     pub(in crate::ui) fn set_cache_enabled(&mut self, enabled: bool) {
         self.run.cache_enabled = enabled;
-        self.run.machine.mem_mut_unjournaled().bypass = !enabled;
-        self.run.machine.mem_mut_unjournaled().flush_all();
+        if !self.trait_driven() {
+            self.run.machine.mem_mut_unjournaled().bypass = !enabled;
+            self.run.machine.mem_mut_unjournaled().flush_all();
+        }
         self.ensure_visible_tab();
     }
 
@@ -286,7 +287,7 @@ impl App {
     pub(crate) fn reconfigure_pipeline_model(&mut self) {
         self.run.is_running = false;
         let __rpc = self.run.cpu().pc;
-        self.run.pipeline_mut().reset_stages(__rpc);
+        self.run.reset_pipeline_stages(__rpc);
 
         for (idx, hart) in self.harts.iter_mut().enumerate() {
             if idx == self.selected_core {
@@ -363,7 +364,7 @@ impl App {
 
     pub(super) fn sync_selected_core_to_runtime(&mut self) {
         let selected = self.selected_core;
-        let replacement = crate::ui::pipeline::PipelineSimState::new();
+        let replacement = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
         if let Some(runtime) = self.harts.get_mut(selected) {
             runtime.cpu = self.run.cpu().clone();
             runtime.prev_x = self.run.prev_x;
@@ -405,7 +406,7 @@ impl App {
             let mut pipeline = runtime
                 .pipeline
                 .take()
-                .unwrap_or_else(crate::ui::pipeline::PipelineSimState::new);
+                .unwrap_or_else(raven_riscv_engine::falcon::pipeline::PipelineSimState::new);
             Self::copy_pipeline_config_to_hart(&self.run.pipeline(), &mut pipeline);
             if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
                 pipeline.reset_stages(self.run.cpu().pc);

@@ -1,7 +1,7 @@
 // ui/view/cache/mod.rs — Cache tab top-level renderer
 use ratatui::{Frame, prelude::*, widgets::Paragraph};
+use raven_riscv_engine::capability::CacheRole;
 
-use crate::falcon::cache::CacheController;
 use crate::ui::app::{App, CacheHoverTarget, CacheScope, CacheSubtab, RunButton};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
@@ -11,6 +11,7 @@ use crate::ui::view::style;
 pub(crate) mod config;
 mod stats;
 mod view;
+mod portable;
 
 // The session-snapshot popup is shared with the Virtual Memory tab.
 pub(in crate::ui::view) use stats::render_snapshot_popup;
@@ -56,8 +57,10 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
     render_cache_exec_controls(f, layout[2], app);
 
     match app.cache.subtab {
+        CacheSubtab::Stats if app.trait_driven() => portable::render_stats(f, layout[3], app),
         CacheSubtab::Stats => stats::render_stats(f, layout[3], app),
         CacheSubtab::View => view::render_view(f, layout[3], app),
+        CacheSubtab::Config if app.trait_driven() => portable::render_config(f, layout[3], app),
         CacheSubtab::Config => config::render_config(f, layout[3], app),
     }
 
@@ -129,7 +132,12 @@ pub(crate) fn build_cache_exec_bar(app: &App) -> Toolbar<RunButton> {
 /// `level ` label). Keyed by [`CacheLevelBtn`].
 pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
     let selected = app.cache.selected_level;
-    let num_extra = app.cache.extra_pending.len();
+    let num_extra = if app.trait_driven() {
+        app.cache_hierarchy()
+            .map_or(0, |cache| cache.level_count().saturating_sub(1))
+    } else {
+        app.cache.extra_pending.len()
+    };
     let hov = |t: CacheHoverTarget| app.cache.hover == Some(t);
     let mut bar = Toolbar::new();
     bar.value(
@@ -140,7 +148,7 @@ pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
     );
     for i in 0..num_extra {
         let level = i + 1;
-        let label = CacheController::extra_level_name(i).to_lowercase();
+        let label = format!("l{}", i + 2);
         bar.value(
             CacheLevelBtn::Level(level),
             &label,
@@ -148,13 +156,15 @@ pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
             theme::ACCENT,
         );
     }
-    bar.action(
-        CacheLevelBtn::Add,
-        "add",
-        ControlState::chip(false, hov(CacheHoverTarget::AddLevel)),
-        theme::ACCENT,
-    );
-    if num_extra > 0 {
+    if !app.trait_driven() {
+        bar.action(
+            CacheLevelBtn::Add,
+            "add",
+            ControlState::chip(false, hov(CacheHoverTarget::AddLevel)),
+            theme::ACCENT,
+        );
+    }
+    if !app.trait_driven() && num_extra > 0 {
         bar.action(
             CacheLevelBtn::Remove,
             "remove",
@@ -170,12 +180,14 @@ pub(crate) fn build_cache_level_bar(app: &App) -> Toolbar<CacheLevelBtn> {
 pub(crate) fn build_cache_ctrl_bar(app: &App) -> Toolbar<CacheCtrlBtn> {
     let hov = |t: CacheHoverTarget| app.cache.hover == Some(t);
     let mut bar = Toolbar::new();
-    bar.action(
-        CacheCtrlBtn::Results,
-        "results",
-        ControlState::chip(false, hov(CacheHoverTarget::ExportResults)),
-        theme::ACCENT,
-    );
+    if !app.trait_driven() {
+        bar.action(
+            CacheCtrlBtn::Results,
+            "results",
+            ControlState::chip(false, hov(CacheHoverTarget::ExportResults)),
+            theme::ACCENT,
+        );
+    }
     if matches!(app.cache.subtab, CacheSubtab::Config) {
         bar.action(
             CacheCtrlBtn::ImportCfg,
@@ -220,7 +232,18 @@ pub(crate) fn build_cache_scope_bar(app: &App) -> Toolbar<CacheScopeBtn> {
 }
 
 fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
-    let (total, cpi, instr) = if let Some(pipeline) = app.aggregate_pipeline_snapshot() {
+    let (total, cpi, instr) = if app.trait_driven() {
+        let instr = app.machine_snapshot().map_or(0, |snapshot| snapshot.instructions);
+        let total = app.cache_hierarchy().map_or(0, |caches| {
+            [CacheRole::Instruction, CacheRole::Data]
+                .iter()
+                .filter_map(|role| caches.cache(0, *role))
+                .map(|cache| cache.stats.total_cycles)
+                .sum()
+        });
+        let cpi = if instr == 0 { 0.0 } else { total as f64 / instr as f64 };
+        (total, cpi, instr)
+    } else if let Some(pipeline) = app.aggregate_pipeline_snapshot() {
         let cycles = pipeline.cycles;
         let committed = pipeline.committed;
         let cpi = if committed > 0 {
@@ -274,7 +297,9 @@ fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
 
     let mut spans = vec![Span::styled("level", style::idle()), Span::raw(" ")];
     spans.extend(build_cache_level_bar(app).spans());
-    spans.push(Span::styled("   +/= add level  -/_ remove", style::label()));
+    if !app.trait_driven() {
+        spans.push(Span::styled("   +/= add level  -/_ remove", style::label()));
+    }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -297,10 +322,7 @@ fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
     let level_label = if app.cache.selected_level == 0 {
         "L1 Split I/D".to_string()
     } else {
-        format!(
-            "{} Unified",
-            CacheController::extra_level_name(app.cache.selected_level - 1)
-        )
+        format!("L{} Unified", app.cache.selected_level + 1)
     };
 
     let block = panel::panel(

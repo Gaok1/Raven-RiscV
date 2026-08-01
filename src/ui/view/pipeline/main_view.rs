@@ -1,8 +1,10 @@
 use crate::ui::app::App;
-use crate::ui::pipeline::sim::reg_name;
 use crate::ui::pipeline::{
-    FuKind, GanttCell, HazardTrace, HazardType, InstrClass, Stage, TraceKind, fu_latency_for_class,
-    gantt_max_scroll, gantt_view_rows, gantt_visible_rows, gantt_window_bounds,
+    FuKind, InstrClass, Stage, gantt_visible_rows,
+};
+use raven_riscv_engine::capability::{
+    PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
+    PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
 };
 use crate::ui::theme;
 use crate::ui::view::style;
@@ -17,23 +19,67 @@ use ratatui::{
 use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
-fn is_atomic_instr(slot: &crate::ui::pipeline::PipeSlot) -> bool {
-    matches!(
-        slot.instr,
-        Some(
-            crate::falcon::instruction::Instruction::LrW { .. }
-                | crate::falcon::instruction::Instruction::ScW { .. }
-                | crate::falcon::instruction::Instruction::AmoswapW { .. }
-                | crate::falcon::instruction::Instruction::AmoaddW { .. }
-                | crate::falcon::instruction::Instruction::AmoxorW { .. }
-                | crate::falcon::instruction::Instruction::AmoandW { .. }
-                | crate::falcon::instruction::Instruction::AmoorW { .. }
-                | crate::falcon::instruction::Instruction::AmomaxW { .. }
-                | crate::falcon::instruction::Instruction::AmominW { .. }
-                | crate::falcon::instruction::Instruction::AmomaxuW { .. }
-                | crate::falcon::instruction::Instruction::AmominuW { .. }
-        )
-    )
+fn class_label(class: PipelineInstructionClass) -> &'static str {
+    match class {
+        PipelineInstructionClass::Alu => "ALU",
+        PipelineInstructionClass::Multiply => "MUL",
+        PipelineInstructionClass::Divide => "DIV",
+        PipelineInstructionClass::Load => "Load",
+        PipelineInstructionClass::Store => "Store",
+        PipelineInstructionClass::Branch => "Branch",
+        PipelineInstructionClass::Jump => "Jump",
+        PipelineInstructionClass::System => "System",
+        PipelineInstructionClass::FloatingPoint => "FP",
+        PipelineInstructionClass::Unknown => "?",
+    }
+}
+
+fn class_color(class: PipelineInstructionClass) -> Color {
+    match class {
+        PipelineInstructionClass::Alu => Color::Cyan,
+        PipelineInstructionClass::Multiply => Color::Magenta,
+        PipelineInstructionClass::Divide => Color::Red,
+        PipelineInstructionClass::Load => Color::Green,
+        PipelineInstructionClass::Store => Color::Yellow,
+        PipelineInstructionClass::Branch => Color::LightYellow,
+        PipelineInstructionClass::Jump => Color::LightMagenta,
+        PipelineInstructionClass::System => Color::Gray,
+        PipelineInstructionClass::FloatingPoint => Color::LightCyan,
+        PipelineInstructionClass::Unknown => Color::DarkGray,
+    }
+}
+
+fn hazard_color(hazard: PipelineHazardKind) -> Color {
+    match hazard {
+        PipelineHazardKind::ReadAfterWrite | PipelineHazardKind::LoadUse => {
+            Color::Rgb(225, 180, 80)
+        }
+        PipelineHazardKind::BranchFlush => Color::Rgb(210, 72, 68),
+        PipelineHazardKind::FunctionalUnitBusy => Color::Rgb(195, 105, 250),
+        PipelineHazardKind::MemoryLatency => Color::Rgb(110, 175, 220),
+        PipelineHazardKind::WriteAfterWrite => Color::Rgb(115, 178, 235),
+        PipelineHazardKind::WriteAfterRead => Color::Rgb(88, 200, 148),
+    }
+}
+
+fn trace_color(kind: PipelineTraceKind) -> Color {
+    match kind {
+        PipelineTraceKind::Hazard(hazard) => hazard_color(hazard),
+        PipelineTraceKind::Forward => Color::Rgb(110, 175, 220),
+    }
+}
+
+fn trace_short_label(kind: PipelineTraceKind) -> &'static str {
+    match kind {
+        PipelineTraceKind::Hazard(PipelineHazardKind::ReadAfterWrite) => "RAW",
+        PipelineTraceKind::Hazard(PipelineHazardKind::LoadUse) => "LOAD",
+        PipelineTraceKind::Hazard(PipelineHazardKind::BranchFlush) => "CTRL",
+        PipelineTraceKind::Hazard(PipelineHazardKind::FunctionalUnitBusy) => "FU",
+        PipelineTraceKind::Hazard(PipelineHazardKind::MemoryLatency) => "MEM",
+        PipelineTraceKind::Hazard(PipelineHazardKind::WriteAfterWrite) => "WAW",
+        PipelineTraceKind::Hazard(PipelineHazardKind::WriteAfterRead) => "WAR",
+        PipelineTraceKind::Forward => "FWD",
+    }
 }
 
 /// Vertical budget for the Main subtab: compact strips on top, HISTORY gets
@@ -76,17 +122,21 @@ pub(crate) fn plan_main_layout(h: u16, w: u16, n_traces: usize) -> MainLayoutPla
     }
 }
 
-pub fn render_pipeline_main(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
-    let plan = plan_main_layout(area.height, area.width, p.hazard_traces.len());
+pub fn render_pipeline_main(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    pipeline: &dyn PipelineInspect,
+) {
+    let plan = plan_main_layout(area.height, area.width, pipeline.trace_count());
 
     if plan.collapsed {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
             .split(area);
-        render_collapsed_strip(f, chunks[0], app);
-        render_gantt(f, chunks[1], app);
+        render_collapsed_strip(f, chunks[0], pipeline);
+        render_gantt(f, chunks[1], app, pipeline);
         return;
     }
 
@@ -100,38 +150,42 @@ pub fn render_pipeline_main(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    render_stages(f, chunks[0], app, plan.fu_h == 0);
+    render_stages(f, chunks[0], pipeline, plan.fu_h == 0);
     if plan.fu_h > 0 {
-        render_fu_strip(f, chunks[1], app);
+        render_fu_strip(f, chunks[1], app, pipeline);
     }
-    render_hazards(f, chunks[2], app);
-    render_gantt(f, chunks[3], app);
+    render_hazards(f, chunks[2], pipeline);
+    render_gantt(f, chunks[3], app, pipeline);
 }
 
 /// Sub-9-line fallback: one line summarizing the stages and hazard count so
 /// the HISTORY gantt can keep the rest of a very short terminal.
-fn render_collapsed_strip(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
-    let stage_labels = ["IF", "ID", "EX", "MEM", "WB"];
+fn render_collapsed_strip(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInspect) {
     let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
-    for (i, label) in stage_labels.iter().enumerate() {
+    for i in 0..pipeline.stage_count() {
+        let stage = pipeline.stage(i).unwrap();
         if i > 0 {
             spans.push(Span::styled(" │ ", Style::default().fg(theme::BORDER)));
         }
         spans.push(Span::styled(
-            format!("{label} "),
+            format!("{} ", stage.name),
             Style::default().fg(theme::LABEL_Y).add_modifier(Modifier::BOLD),
         ));
-        let text = match p.stages[i].as_ref() {
+        let text = match stage.slot {
             None => "—".to_string(),
-            Some(s) if s.is_bubble => "◦".to_string(),
-            Some(s) => s.disasm.split_whitespace().next().unwrap_or("?").to_string(),
+            Some(slot) if slot.bubble => "◦".to_string(),
+            Some(slot) => slot
+                .disassembly
+                .split_whitespace()
+                .next()
+                .unwrap_or("?")
+                .to_string(),
         };
         spans.push(Span::styled(text, Style::default().fg(theme::TEXT)));
     }
-    if !p.hazard_traces.is_empty() {
+    if pipeline.trace_count() > 0 {
         spans.push(Span::styled(
-            format!("  · {} hazards", p.hazard_traces.len()),
+            format!("  · {} hazards", pipeline.trace_count()),
             Style::default().fg(theme::PAUSED),
         ));
     }
@@ -140,45 +194,51 @@ fn render_collapsed_strip(f: &mut Frame, area: Rect, app: &App) {
 
 // ── 5-stage boxes ─────────────────────────────────────────────────────────────
 
-fn render_stages(f: &mut Frame, area: Rect, app: &App, fu_in_ex_title: bool) {
-    let p = &app.run.pipeline();
-    let stage_labels = ["IF", "ID", "EX", "MEM", "WB"];
-
+fn render_stages(
+    f: &mut Frame,
+    area: Rect,
+    pipeline: &dyn PipelineInspect,
+    fu_in_ex_title: bool,
+) {
+    let stage_count = pipeline.stage_count().max(1);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Ratio(1, 5); 5])
+        .constraints(vec![Constraint::Ratio(1, stage_count as u32); stage_count])
         .split(area);
 
-    for (i, _stage) in Stage::all().iter().enumerate() {
-        let slot = p.stages[i].as_ref();
-        let mut stage_badges = stage_status_badges(p, i, slot);
+    for i in 0..pipeline.stage_count() {
+        let stage = pipeline.stage(i).unwrap();
+        let slot = stage.slot;
+        let mut stage_badges = stage_status_badges(pipeline, i, slot.as_ref());
 
-        let border_style = match slot {
-            Some(s) if s.class == InstrClass::Unknown => Style::default().fg(Color::DarkGray),
-            Some(s) if s.hazard.is_some() => Style::default().fg(s.hazard.unwrap().color()),
-            Some(s) if s.is_bubble => style::warning(),
-            Some(s) if s.is_speculative => style::warning(),
+        let border_style = match slot.as_ref() {
+            Some(slot) if slot.class == PipelineInstructionClass::Unknown => {
+                Style::default().fg(Color::DarkGray)
+            }
+            Some(slot) if slot.hazard.is_some() => {
+                Style::default().fg(hazard_color(slot.hazard.unwrap()))
+            }
+            Some(slot) if slot.bubble => style::warning(),
+            Some(slot) if slot.speculative => style::warning(),
             Some(_) => Style::default().fg(theme::ACCENT),
             None => Style::default().fg(theme::BORDER),
         };
 
-        let mut title_label = match slot {
-            Some(s) if s.is_speculative && !s.is_bubble => format!("{} ⟪P⟫", stage_labels[i]),
-            Some(s) if s.hazard == Some(HazardType::BranchFlush) => {
-                format!("{} ⟪X⟫", stage_labels[i])
+        let mut title_label = match slot.as_ref() {
+            Some(slot) if slot.speculative && !slot.bubble => format!("{} ⟪P⟫", stage.name),
+            Some(slot) if slot.hazard == Some(PipelineHazardKind::BranchFlush) => {
+                format!("{} ⟪X⟫", stage.name)
             }
-            _ => stage_labels[i].to_string(),
+            _ => stage.name.to_string(),
         };
         // With the FU strip folded away, surface overall FU occupancy here so
         // functional-unit pressure stays visible.
-        if i == Stage::EX as usize && fu_in_ex_title {
-            let busy = p
-                .fu_bank
-                .iter()
-                .flatten()
-                .filter(|fu| fu.slot.as_ref().is_some_and(|s| !s.is_bubble))
-                .count();
-            let cap: u8 = p.fu_capacity.iter().sum();
+        if stage.name == "EX" && fu_in_ex_title {
+            let units: Vec<_> = (0..pipeline.unit_count())
+                .filter_map(|unit| pipeline.unit(unit))
+                .collect();
+            let busy: usize = units.iter().map(|unit| unit.active).sum();
+            let cap: usize = units.iter().map(|unit| unit.capacity).sum();
             title_label = format!("{title_label} {busy}/{cap}");
         }
 
@@ -196,33 +256,33 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App, fu_in_ex_title: bool) {
             continue;
         }
 
-        let lines = match slot {
+        let lines = match slot.as_ref() {
             None => vec![Line::from(Span::styled(
                 "—",
                 Style::default().fg(theme::BORDER),
             ))],
-            Some(s) if s.is_bubble => {
-                let label = bubble_label_for_stage(i, s);
+            Some(slot) if slot.bubble => {
+                let label = bubble_label_for_stage(i, slot);
                 vec![Line::from(Span::styled(
                     label,
                     border_style.add_modifier(Modifier::BOLD),
                 ))]
             }
-            Some(s) if s.class == InstrClass::Unknown => {
+            Some(slot) if slot.class == PipelineInstructionClass::Unknown => {
                 // Undecodable instruction — visual indicator that it's ignored
                 let dim = Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::DIM);
                 vec![
-                    Line::from(Span::styled(format!("0x{:04X}", s.pc), dim)),
+                    Line::from(Span::styled(format!("0x{:04X}", slot.address), dim)),
                     Line::from(Span::styled(
                         "⊘ invalid",
                         style::danger().add_modifier(Modifier::DIM),
                     )),
-                    Line::from(Span::styled(format!(".word 0x{:08x}", s.word), dim)),
+                    Line::from(Span::styled(slot.disassembly.to_string(), dim)),
                 ]
             }
-            Some(s) => stage_slot_lines(i, s, inner, &mut stage_badges),
+            Some(slot) => stage_slot_lines(i, slot, inner, &mut stage_badges),
         };
 
         let visible_lines: Vec<_> = lines.into_iter().take(inner.height as usize).collect();
@@ -235,19 +295,22 @@ fn render_stages(f: &mut Frame, area: Rect, app: &App, fu_in_ex_title: bool) {
 /// (disasm + badges / PC + regs).
 fn stage_slot_lines(
     stage_idx: usize,
-    s: &crate::ui::pipeline::PipeSlot,
+    slot: &PipelineSlotView<'_>,
     inner: Rect,
     stage_badges: &mut Vec<(String, Style)>,
 ) -> Vec<Line<'static>> {
     let w = inner.width as usize;
-    let pc_str = format!("0x{:04X}", s.pc);
-    let hazard_indicator = s.hazard.map(|h| {
+    let pc_str = format!("0x{:04X}", slot.address);
+    let hazard_indicator = slot.hazard.map(|hazard| {
         Span::styled(
-            format!(" ⚠{}", compact_stage_hazard_label(stage_idx, Some(s), h)),
-            Style::default().fg(h.color()),
+            format!(
+                " ⚠{}",
+                compact_stage_hazard_label(stage_idx, Some(slot), hazard)
+            ),
+            Style::default().fg(hazard_color(hazard)),
         )
     });
-    let pred_badge = speculative_compact_badge(s, w);
+    let pred_badge = speculative_compact_badge(slot, w);
     let pred_w = pred_badge
         .as_ref()
         .map_or(0, |(label, _)| UnicodeWidthStr::width(label.as_str()));
@@ -266,18 +329,18 @@ fn stage_slot_lines(
         badge_spans.push(Span::styled(label, style));
     }
 
-    let reg_str = compact_reg_summary(s);
+    let reg_str = compact_reg_summary(slot);
 
     if inner.height >= 3 {
         // PC + badges / disasm / class + regs
         let mut pc_spans = vec![Span::styled(pc_str, Style::default().fg(theme::LABEL))];
         pc_spans.extend(badge_spans);
 
-        let (disasm_trunc, _) = s.disasm.unicode_truncate(w.max(4));
+        let (disasm_trunc, _) = slot.disassembly.unicode_truncate(w.max(4));
         let mut class_spans = vec![Span::styled(
-            format!("[{}]", s.class.label()),
+            format!("[{}]", class_label(slot.class)),
             Style::default()
-                .fg(s.class.color())
+                .fg(class_color(slot.class))
                 .add_modifier(Modifier::DIM),
         )];
         if !reg_str.is_empty() {
@@ -305,7 +368,7 @@ fn stage_slot_lines(
             .saturating_sub(pred_w)
             .saturating_sub(1)
             .max(4);
-        let (disasm_trunc, _) = s.disasm.unicode_truncate(disasm_w);
+        let (disasm_trunc, _) = slot.disassembly.unicode_truncate(disasm_w);
         let mut disasm_spans = vec![Span::styled(
             disasm_trunc.to_string(),
             Style::default().fg(theme::TEXT),
@@ -324,63 +387,64 @@ fn stage_slot_lines(
 }
 
 /// "a0←a1,a2"-style register summary for a stage column.
-fn compact_reg_summary(s: &crate::ui::pipeline::PipeSlot) -> String {
-    let srcs: Vec<&str> = [s.rs1, s.rs2].iter().flatten().map(|r| reg_name(*r)).collect();
+fn compact_reg_summary(slot: &PipelineSlotView<'_>) -> String {
+    let srcs: Vec<&str> = slot.sources.iter().flatten().copied().collect();
     let srcs = srcs.join(",");
-    match (s.rd, srcs.is_empty()) {
-        (Some(rd), false) => format!("{}←{}", reg_name(rd), srcs),
-        (Some(rd), true) => reg_name(rd).to_string(),
+    match (slot.destination, srcs.is_empty()) {
+        (Some(destination), false) => format!("{destination}←{srcs}"),
+        (Some(destination), true) => destination.to_string(),
         (None, false) => srcs,
         (None, true) => String::new(),
     }
 }
 
 fn stage_status_badges(
-    p: &crate::ui::pipeline::PipelineSimState,
+    pipeline: &dyn PipelineInspect,
     stage_idx: usize,
-    slot: Option<&crate::ui::pipeline::PipeSlot>,
+    slot: Option<&PipelineSlotView<'_>>,
 ) -> Vec<(String, Style)> {
     let mut tags: Vec<(String, Style)> = Vec::new();
 
-    if let Some(s) = slot {
-        if is_atomic_instr(s) {
+    if let Some(slot) = slot {
+        if slot.atomic {
             push_badge(
                 &mut tags,
                 "AT".to_string(),
                 Style::default().fg(Color::LightYellow),
             );
         }
-        if let Some(h) = s.hazard {
+        if let Some(hazard) = slot.hazard {
             push_badge(
                 &mut tags,
-                compact_stage_hazard_label(stage_idx, slot, h).to_string(),
-                Style::default().fg(h.color()),
+                compact_stage_hazard_label(stage_idx, Some(slot), hazard).to_string(),
+                Style::default().fg(hazard_color(hazard)),
             );
         }
     }
 
-    for trace in &p.hazard_traces {
+    for index in 0..pipeline.trace_count() {
+        let trace = pipeline.trace(index).unwrap();
         if trace.from_stage != stage_idx && trace.to_stage != stage_idx {
             continue;
         }
         match trace.kind {
-            TraceKind::Forward => {
+            PipelineTraceKind::Forward => {
                 push_badge(
                     &mut tags,
                     "RAW".to_string(),
-                    Style::default().fg(HazardType::Raw.color()),
+                    Style::default().fg(hazard_color(PipelineHazardKind::ReadAfterWrite)),
                 );
                 push_badge(
                     &mut tags,
                     "FWD".to_string(),
-                    Style::default().fg(TraceKind::Forward.color()),
+                    Style::default().fg(trace_color(PipelineTraceKind::Forward)),
                 );
             }
-            TraceKind::Hazard(h) => {
+            PipelineTraceKind::Hazard(hazard) => {
                 push_badge(
                     &mut tags,
-                    compact_stage_hazard_label(stage_idx, slot, h).to_string(),
-                    Style::default().fg(h.color()),
+                    compact_stage_hazard_label(stage_idx, slot, hazard).to_string(),
+                    Style::default().fg(hazard_color(hazard)),
                 );
             }
         }
@@ -399,10 +463,10 @@ fn push_badge(tags: &mut Vec<(String, Style)>, label: String, style: Style) {
     tags.push((label, style));
 }
 
-fn bubble_label_for_stage(stage_idx: usize, slot: &crate::ui::pipeline::PipeSlot) -> &'static str {
+fn bubble_label_for_stage(stage_idx: usize, slot: &PipelineSlotView<'_>) -> &'static str {
     match slot.hazard {
-        Some(HazardType::BranchFlush) => "✕ squashed",
-        Some(HazardType::MemLatency) => match stage_idx {
+        Some(PipelineHazardKind::BranchFlush) => "✕ squashed",
+        Some(PipelineHazardKind::MemoryLatency) => match stage_idx {
             x if x == Stage::ID as usize => "waiting for IF",
             x if x > Stage::ID as usize => "front-end bubble",
             _ => "wait",
@@ -413,16 +477,16 @@ fn bubble_label_for_stage(stage_idx: usize, slot: &crate::ui::pipeline::PipeSlot
 
 fn compact_stage_hazard_label(
     stage_idx: usize,
-    slot: Option<&crate::ui::pipeline::PipeSlot>,
-    h: HazardType,
+    slot: Option<&PipelineSlotView<'_>>,
+    hazard: PipelineHazardKind,
 ) -> &'static str {
-    match h {
-        HazardType::Raw => "RAW",
-        HazardType::LoadUse => "LOAD",
-        HazardType::BranchFlush => "CTRL",
-        HazardType::FuBusy => "FU",
-        HazardType::MemLatency => {
-            if slot.is_some_and(|s| s.is_bubble) {
+    match hazard {
+        PipelineHazardKind::ReadAfterWrite => "RAW",
+        PipelineHazardKind::LoadUse => "LOAD",
+        PipelineHazardKind::BranchFlush => "CTRL",
+        PipelineHazardKind::FunctionalUnitBusy => "FU",
+        PipelineHazardKind::MemoryLatency => {
+            if slot.is_some_and(|slot| slot.bubble) {
                 if stage_idx == Stage::ID as usize {
                     "UP"
                 } else {
@@ -436,8 +500,8 @@ fn compact_stage_hazard_label(
                 "WAIT"
             }
         }
-        HazardType::Waw => "WAW",
-        HazardType::War => "WAR",
+        PipelineHazardKind::WriteAfterWrite => "WAW",
+        PipelineHazardKind::WriteAfterRead => "WAR",
     }
 }
 
@@ -466,10 +530,13 @@ pub(crate) fn fu_strip_is_compact(w: u16) -> bool {
     w < 90
 }
 
-fn render_fu_strip(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
+fn render_fu_strip(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    pipeline: &dyn PipelineInspect,
+) {
     let cpi = &app.run.cpi_config;
-    let ex_slot = p.stages[Stage::EX as usize].as_ref();
     let wide = !fu_strip_is_compact(area.width);
 
     let mut spans: Vec<Span<'static>> = vec![Span::styled(
@@ -480,41 +547,23 @@ fn render_fu_strip(f: &mut Frame, area: Rect, app: &App) {
     )];
     let mut active_note: Option<String> = None;
 
-    for (idx, fu_kind) in FuKind::all().iter().copied().enumerate() {
-        if idx > 0 {
+    for index in 0..pipeline.unit_count() {
+        if index > 0 {
             spans.push(Span::styled(" · ", Style::default().fg(theme::BORDER)));
         }
-        let fu_states = &p.fu_bank[fu_kind.index()];
-        let (parallel_slots, mirrored_ex_slot) = split_fu_activity(fu_kind, fu_states, ex_slot);
-        let active_slots: Vec<_> = parallel_slots
-            .iter()
-            .copied()
-            .chain(mirrored_ex_slot.into_iter())
-            .collect();
-        let capacity = p.fu_capacity[fu_kind.index()].max(1);
+        let unit = pipeline.unit(index).unwrap();
 
-        if let Some(s) = active_slots.first().copied() {
-            let latency_class = match fu_kind {
-                FuKind::Alu => s.class,
-                FuKind::Mul => InstrClass::Mul,
-                FuKind::Div => InstrClass::Div,
-                FuKind::Fpu => InstrClass::Fp,
-                FuKind::Lsu => match s.class {
-                    InstrClass::Store => InstrClass::Store,
-                    _ => InstrClass::Load,
-                },
-                FuKind::Sys => InstrClass::System,
-            };
-            let total = fu_latency_for_class(latency_class, cpi).max(1);
-            let done = total.saturating_sub(s.fu_cycles_left);
+        if let Some(slot) = unit.first {
+            let total = pipeline_latency(unit.latency_class, cpi);
+            let done = total.saturating_sub(slot.cycles_remaining);
             spans.push(Span::styled(
-                fu_kind.label().to_string(),
+                unit.name.to_string(),
                 Style::default()
-                    .fg(s.class.color())
+                    .fg(class_color(slot.class))
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
-                format!(" {}/{}", active_slots.len(), capacity),
+                format!(" {}/{}", unit.active, unit.capacity),
                 Style::default().fg(theme::LABEL_Y),
             ));
             if wide {
@@ -530,20 +579,20 @@ fn render_fu_strip(f: &mut Frame, area: Rect, app: &App) {
                 ));
             }
             if active_note.is_none() {
-                let summary = if active_slots.len() > 1 {
-                    format!("{} (+{} more)", s.disasm, active_slots.len() - 1)
+                let summary = if unit.active > 1 {
+                    format!("{} (+{} more)", slot.disassembly, unit.active - 1)
                 } else {
-                    s.disasm.clone()
+                    slot.disassembly.to_string()
                 };
                 active_note = Some(format!("{summary} ({}/{total})", done + 1));
             }
         } else {
             spans.push(Span::styled(
-                fu_kind.label().to_string(),
+                unit.name.to_string(),
                 Style::default().fg(theme::BORDER),
             ));
             spans.push(Span::styled(
-                format!(" 0/{capacity}"),
+                format!(" 0/{}", unit.capacity),
                 Style::default()
                     .fg(theme::BORDER)
                     .add_modifier(Modifier::DIM),
@@ -557,6 +606,22 @@ fn render_fu_strip(f: &mut Frame, area: Rect, app: &App) {
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn pipeline_latency(class: PipelineInstructionClass, cpi: &crate::ui::app::CpiConfig) -> u8 {
+    let extra = match class {
+        PipelineInstructionClass::Alu => cpi.alu,
+        PipelineInstructionClass::Multiply => cpi.mul,
+        PipelineInstructionClass::Divide => cpi.div,
+        PipelineInstructionClass::Load => cpi.load,
+        PipelineInstructionClass::Store => cpi.store,
+        PipelineInstructionClass::System => cpi.system,
+        PipelineInstructionClass::FloatingPoint => cpi.fp,
+        PipelineInstructionClass::Branch
+        | PipelineInstructionClass::Jump
+        | PipelineInstructionClass::Unknown => 0,
+    };
+    u8::try_from(1u64.saturating_add(extra)).unwrap_or(u8::MAX)
 }
 
 fn slot_belongs_to_fu_kind(slot: &crate::ui::pipeline::PipeSlot, fu_kind: FuKind) -> bool {
@@ -606,9 +671,7 @@ fn split_fu_activity<'a>(
 
 // ── Hazard messages ────────────────────────────────────────────────────────────
 
-fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
-
+fn render_hazards(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInspect) {
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme::BORDER))
@@ -629,41 +692,42 @@ fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
         .add_modifier(Modifier::DIM);
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    if p.hazard_traces.is_empty() {
-        let status = if p.halted {
+    if pipeline.trace_count() == 0 {
+        let status = pipeline.status();
+        let status = if status.halted {
             " ✓ Halted"
-        } else if p.faulted {
+        } else if status.faulted {
             " ✗ Fault"
         } else {
             " No active links"
         };
         let mut text = status.to_string();
-        if let Some((_, msg)) = p.hazard_msgs.first() {
+        if let Some(message) = pipeline.status_message() {
             text.push_str("  ·  ");
-            text.push_str(msg);
+            text.push_str(message);
         }
         let (trunc, _) = text.unicode_truncate(w);
         lines.push(Line::from(Span::styled(trunc.to_string(), dim)));
     } else {
-        let n = p.hazard_traces.len();
+        let n = pipeline.trace_count();
         let shown = if n > rows_avail {
             rows_avail.saturating_sub(1)
         } else {
             n
         };
-        for trace in p.hazard_traces.iter().take(shown) {
-            let detail = trace_detail_for(trace, &p.hazard_msgs);
-            lines.push(render_hazard_row(trace, &detail, w));
+        for index in 0..shown {
+            let trace = pipeline.trace(index).unwrap();
+            lines.push(render_hazard_row(pipeline, &trace, w));
         }
         if n > shown {
-            let hidden = &p.hazard_traces[shown..];
-            let fwd = hidden
-                .iter()
-                .filter(|t| matches!(t.kind, TraceKind::Forward))
+            let fwd = (shown..n)
+                .filter_map(|index| pipeline.trace(index))
+                .filter(|trace| trace.kind == PipelineTraceKind::Forward)
                 .count();
-            let hzd = hidden.len() - fwd;
+            let hidden = n - shown;
+            let hzd = hidden - fwd;
             lines.push(Line::from(Span::styled(
-                format!(" +{} more ({fwd} FWD · {hzd} HZD)", hidden.len()),
+                format!(" +{hidden} more ({fwd} FWD · {hzd} HZD)"),
                 dim,
             )));
         }
@@ -673,64 +737,50 @@ fn render_hazards(f: &mut Frame, area: Rect, app: &App) {
 }
 
 /// One hazard/forwarding link per line: `[FWD] MEM -> EX  detail…`.
-fn render_hazard_row(trace: &HazardTrace, detail: &str, width: usize) -> Line<'static> {
-    let badge = format!("[{}]", trace.kind.short_label());
-    let route = format!(" {:<10}", trace_stage_summary(trace));
+fn render_hazard_row(
+    pipeline: &dyn PipelineInspect,
+    trace: &PipelineTraceView<'_>,
+    width: usize,
+) -> Line<'static> {
+    let badge = format!("[{}]", trace_short_label(trace.kind));
+    let route = format!(" {:<10}", trace_stage_summary(pipeline, trace));
     let used = 1 + UnicodeWidthStr::width(badge.as_str()) + UnicodeWidthStr::width(route.as_str());
-    let (detail_trunc, _) = detail.unicode_truncate(width.saturating_sub(used).max(8));
+    let (detail_trunc, _) = trace
+        .detail
+        .unicode_truncate(width.saturating_sub(used).max(8));
     Line::from(vec![
         Span::raw(" "),
         Span::styled(badge, trace_badge_style(trace.kind)),
         Span::styled(
             route,
             Style::default()
-                .fg(trace.kind.color())
+                .fg(trace_color(trace.kind))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(detail_trunc.to_string(), Style::default().fg(theme::TEXT)),
     ])
 }
 
-fn trace_detail_for(trace: &HazardTrace, hazard_msgs: &[(HazardType, String)]) -> String {
-    match trace.kind {
-        TraceKind::Forward => trace.detail.clone(),
-        TraceKind::Hazard(ht) => {
-            if !trace.detail.is_empty() {
-                trace.detail.clone()
-            } else {
-                hazard_msgs
-                    .iter()
-                    .find(|(msg_ht, _)| *msg_ht == ht)
-                    .map(|(_, msg)| msg.clone())
-                    .unwrap_or_default()
-            }
-        }
-    }
-}
-
-fn trace_stage_summary(trace: &HazardTrace) -> String {
+fn trace_stage_summary(
+    pipeline: &dyn PipelineInspect,
+    trace: &PipelineTraceView<'_>,
+) -> String {
     format!(
         "{} -> {}",
-        stage_name_from_idx(trace.from_stage),
-        stage_name_from_idx(trace.to_stage)
+        stage_name_from_idx(pipeline, trace.from_stage),
+        stage_name_from_idx(pipeline, trace.to_stage)
     )
 }
 
-fn stage_name_from_idx(idx: usize) -> &'static str {
-    match idx {
-        x if x == Stage::IF as usize => Stage::IF.label(),
-        x if x == Stage::ID as usize => Stage::ID.label(),
-        x if x == Stage::EX as usize => Stage::EX.label(),
-        x if x == Stage::MEM as usize => Stage::MEM.label(),
-        _ => Stage::WB.label(),
-    }
+fn stage_name_from_idx(pipeline: &dyn PipelineInspect, index: usize) -> &str {
+    pipeline.stage(index).map_or("?", |stage| stage.name)
 }
 
 fn speculative_compact_badge(
-    slot: &crate::ui::pipeline::PipeSlot,
+    slot: &PipelineSlotView<'_>,
     width: usize,
 ) -> Option<(String, Style)> {
-    if !slot.is_speculative {
+    if !slot.speculative {
         return None;
     }
     let badge = if slot.predicted_taken {
@@ -747,17 +797,22 @@ fn speculative_compact_badge(
     ))
 }
 
-fn trace_badge_style(kind: TraceKind) -> Style {
+fn trace_badge_style(kind: PipelineTraceKind) -> Style {
     Style::default()
-        .fg(kind.color())
+        .fg(trace_color(kind))
         .bg(theme::BG_SEP)
         .add_modifier(Modifier::BOLD)
 }
 
 // ── Gantt diagram ─────────────────────────────────────────────────────────────
 
-fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
+fn render_gantt(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    pipeline: &dyn PipelineInspect,
+) {
+    let view = app.run.pipeline_view();
 
     const LABEL_W: usize = 12;
     const CELL_W: usize = 4;
@@ -765,10 +820,10 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     let preview_cols = ((preview_inner_w.saturating_sub(LABEL_W)) / CELL_W).max(1);
     let visible_cols = preview_cols.min(crate::ui::pipeline::MAX_GANTT_COLS);
 
-    let scroll_hint = if p.gantt_scroll == 0 {
+    let scroll_hint = if view.gantt_scroll == 0 {
         format!(" HISTORY  up to {} cycles · following ", visible_cols)
     } else {
-        format!(" HISTORY  scrollback ↑{} · End=follow ", p.gantt_scroll)
+        format!(" HISTORY  scrollback ↑{} · End=follow ", view.gantt_scroll)
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -776,11 +831,11 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
         .title(Span::styled(scroll_hint, Style::default().fg(theme::LABEL)));
 
     let inner = block.inner(area);
-    p.gantt_area_rect
+    view.gantt_area_rect
         .set((inner.x, inner.y, inner.width, inner.height));
     f.render_widget(block, area);
 
-    if p.gantt.is_empty() {
+    if pipeline.timeline_len() == 0 {
         f.render_widget(
             Paragraph::new("  — no history yet —")
                 .style(style::label().add_modifier(Modifier::DIM)),
@@ -790,17 +845,19 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let max_cols = ((inner.width as usize).saturating_sub(LABEL_W)) / CELL_W;
-    let history_cols = max_cols.min(crate::ui::pipeline::MAX_GANTT_COLS).max(1);
+    let history_cols = max_cols.clamp(1, crate::ui::pipeline::MAX_GANTT_COLS);
     let max_rows = inner.height as usize;
     let visible_capacity = max_rows.saturating_sub(2).max(1);
 
     let visible_rows = gantt_visible_rows(area.height);
-    p.gantt_visible_rows_cache.set(visible_rows);
-    let max_scroll = gantt_max_scroll(p, area.height);
-    p.gantt_max_scroll_cache.set(max_scroll);
-    let scroll = p.gantt_scroll.min(max_scroll);
-    let visible_rows = gantt_view_rows(&p.gantt, scroll, visible_capacity);
-    let (start_cycle, end_cycle) = gantt_window_bounds(&visible_rows, history_cols);
+    view.gantt_visible_rows_cache.set(visible_rows);
+    let max_scroll = pipeline.timeline_len().saturating_sub(visible_rows.max(1));
+    view.gantt_max_scroll_cache.set(max_scroll);
+    let scroll = view.gantt_scroll.min(max_scroll);
+    let end_row = pipeline.timeline_len().saturating_sub(scroll);
+    let start_row = end_row.saturating_sub(visible_capacity.max(1));
+    let visible_rows = start_row..end_row;
+    let (start_cycle, end_cycle) = timeline_window_bounds(pipeline, visible_rows.clone(), history_cols);
 
     let mut header_spans = vec![Span::styled(
         format!("{:<width$}", "instr", width = LABEL_W),
@@ -820,23 +877,13 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled(separator, Style::default().fg(theme::BORDER))),
     ];
 
-    for row in visible_rows {
-        let is_invalid = row.class == InstrClass::Unknown;
-        let row_label = if row.disasm.starts_with("lr.w")
-            || row.disasm.starts_with("sc.w")
-            || row.disasm.starts_with("amoswap.w")
-            || row.disasm.starts_with("amoadd.w")
-            || row.disasm.starts_with("amoxor.w")
-            || row.disasm.starts_with("amoand.w")
-            || row.disasm.starts_with("amoor.w")
-            || row.disasm.starts_with("amomax.w")
-            || row.disasm.starts_with("amomin.w")
-            || row.disasm.starts_with("amomaxu.w")
-            || row.disasm.starts_with("amominu.w")
-        {
-            format!("{} [AT]", row.disasm)
+    for row_index in visible_rows {
+        let row = pipeline.timeline_row(row_index).unwrap();
+        let is_invalid = row.class == PipelineInstructionClass::Unknown;
+        let row_label = if row.atomic {
+            format!("{} [AT]", row.disassembly)
         } else {
-            row.disasm.clone()
+            row.disassembly.to_string()
         };
         let (label, _) = row_label.unicode_truncate(LABEL_W - 1);
         let label_style = if is_invalid {
@@ -853,10 +900,16 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
 
         for c in start_cycle..end_cycle {
             let cell = if c < row.first_cycle {
-                GanttCell::Empty
+                PipelineTimelineCell {
+                    label: "·",
+                    state: PipelineTimelineState::Empty,
+                }
             } else {
                 let cell_idx = (c - row.first_cycle) as usize;
-                row.cells.get(cell_idx).copied().unwrap_or(GanttCell::Empty)
+                pipeline.timeline_cell(row_index, cell_idx).unwrap_or(PipelineTimelineCell {
+                    label: "·",
+                    state: PipelineTimelineState::Empty,
+                })
             };
             let (text, style) = if is_invalid {
                 let (t, _) = cell_to_span(cell);
@@ -878,38 +931,44 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn cell_to_span(cell: GanttCell) -> (&'static str, Style) {
-    // Speculative stages: same label as InStage but in orange — shows instruction
-    // was fetched/decoded speculatively while a branch was unresolved.
-    let spec_style = Style::default().fg(theme::SPECULATIVE);
-    match cell {
-        GanttCell::Empty => ("·", Style::default().fg(theme::BORDER)),
-        GanttCell::InStage(Stage::IF) => ("IF", Style::default().fg(theme::ACCENT)),
-        GanttCell::InStage(Stage::ID) => ("ID", Style::default().fg(theme::LABEL_Y)),
-        GanttCell::InStage(Stage::EX) => ("EX", style::success()),
-        GanttCell::InStage(Stage::MEM) => ("MEM", Style::default().fg(theme::LABEL_Y)),
-        GanttCell::InStage(Stage::WB) => ("WB", Style::default().fg(theme::ACCENT)),
-        GanttCell::InFu(FuKind::Alu) => ("EX", style::success()),
-        GanttCell::InFu(FuKind::Mul) => ("EX", style::success()),
-        GanttCell::InFu(FuKind::Div) => ("EX", style::success()),
-        GanttCell::InFu(FuKind::Fpu) => ("EX", style::success()),
-        GanttCell::InFu(FuKind::Lsu) => ("EX", style::success()),
-        GanttCell::InFu(FuKind::Sys) => ("EX", style::success()),
-        GanttCell::Speculative(Stage::IF) => ("IF", spec_style),
-        GanttCell::Speculative(Stage::ID) => ("ID", spec_style),
-        GanttCell::Speculative(Stage::EX) => ("EX", spec_style),
-        GanttCell::Speculative(Stage::MEM) => ("MEM", spec_style),
-        GanttCell::Speculative(Stage::WB) => ("WB", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Alu) => ("EX", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Mul) => ("EX", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Div) => ("EX", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Fpu) => ("EX", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Lsu) => ("EX", spec_style),
-        GanttCell::SpeculativeFu(FuKind::Sys) => ("EX", spec_style),
-        GanttCell::Stall => ("──", style::warning()),
-        GanttCell::Bubble => ("NOP", style::warning().add_modifier(Modifier::DIM)),
-        GanttCell::Flush => ("◀FL", style::danger()),
+fn timeline_window_bounds(
+    pipeline: &dyn PipelineInspect,
+    rows: std::ops::Range<usize>,
+    history_cols: usize,
+) -> (u64, u64) {
+    let mut min_start = None;
+    let mut max_end = None;
+    for index in rows {
+        let row = pipeline.timeline_row(index).unwrap();
+        if row.cells == 0 {
+            continue;
+        }
+        min_start = Some(min_start.map_or(row.first_cycle, |start: u64| start.min(row.first_cycle)));
+        let row_end = row.first_cycle.saturating_add(row.cells as u64);
+        max_end = Some(max_end.map_or(row_end, |end: u64| end.max(row_end)));
     }
+    let min_start = min_start.unwrap_or(0);
+    let end = max_end.unwrap_or(min_start).max(min_start + 1);
+    let start = end
+        .saturating_sub(history_cols.max(1) as u64)
+        .max(min_start);
+    (start, end)
+}
+
+fn cell_to_span(cell: PipelineTimelineCell<'_>) -> (&str, Style) {
+    let style = match cell.state {
+        PipelineTimelineState::Empty => Style::default().fg(theme::BORDER),
+        PipelineTimelineState::Active => match cell.label {
+            "IF" | "WB" => Style::default().fg(theme::ACCENT),
+            "ID" | "MEM" => Style::default().fg(theme::LABEL_Y),
+            _ => style::success(),
+        },
+        PipelineTimelineState::Speculative => Style::default().fg(theme::SPECULATIVE),
+        PipelineTimelineState::Stalled => style::warning(),
+        PipelineTimelineState::Bubble => style::warning().add_modifier(Modifier::DIM),
+        PipelineTimelineState::Flushed => style::danger(),
+    };
+    (cell.label, style)
 }
 
 #[cfg(test)]
@@ -921,39 +980,63 @@ mod tests {
     use crate::ui::pipeline::{
         FuKind, FuState, GanttCell, HazardTrace, HazardType, PipeSlot, Stage, TraceKind,
     };
+    use raven_riscv_engine::capability::{
+        PipelineHazardKind, PipelineInstructionClass, PipelineSlotView, PipelineTimelineCell,
+        PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
+    };
+
+    fn slot(hazard: Option<PipelineHazardKind>, bubble: bool) -> PipelineSlotView<'static> {
+        PipelineSlotView {
+            address: 0,
+            disassembly: "addi x0, x0, 0",
+            class: PipelineInstructionClass::Alu,
+            destination: None,
+            sources: [None, None],
+            bubble,
+            speculative: false,
+            predicted_taken: false,
+            hazard,
+            atomic: false,
+            cycles_remaining: 0,
+        }
+    }
 
     #[test]
     fn mem_latency_bubble_in_id_reads_as_waiting_for_if() {
-        let mut slot = PipeSlot::bubble();
-        slot.hazard = Some(HazardType::MemLatency);
+        let slot = slot(Some(PipelineHazardKind::MemoryLatency), true);
 
         assert_eq!(
             bubble_label_for_stage(Stage::ID as usize, &slot),
             "waiting for IF"
         );
         assert_eq!(
-            compact_stage_hazard_label(Stage::ID as usize, Some(&slot), HazardType::MemLatency),
+            compact_stage_hazard_label(
+                Stage::ID as usize,
+                Some(&slot),
+                PipelineHazardKind::MemoryLatency
+            ),
             "UP"
         );
     }
 
     #[test]
     fn mem_latency_on_if_and_mem_uses_stage_specific_badges() {
-        let mut if_slot = PipeSlot::from_word(0, 0x0000_0013);
-        if_slot.hazard = Some(HazardType::MemLatency);
-
-        let mut mem_slot = PipeSlot::from_word(4, 0x0000_0013);
-        mem_slot.hazard = Some(HazardType::MemLatency);
+        let if_slot = slot(Some(PipelineHazardKind::MemoryLatency), false);
+        let mem_slot = slot(Some(PipelineHazardKind::MemoryLatency), false);
 
         assert_eq!(
-            compact_stage_hazard_label(Stage::IF as usize, Some(&if_slot), HazardType::MemLatency),
+            compact_stage_hazard_label(
+                Stage::IF as usize,
+                Some(&if_slot),
+                PipelineHazardKind::MemoryLatency
+            ),
             "IFWT"
         );
         assert_eq!(
             compact_stage_hazard_label(
                 Stage::MEM as usize,
                 Some(&mem_slot),
-                HazardType::MemLatency
+                PipelineHazardKind::MemoryLatency
             ),
             "MEMWT"
         );
@@ -1055,21 +1138,43 @@ mod tests {
 
     #[test]
     fn compact_trace_summary_uses_stage_route_labels() {
-        let trace = HazardTrace {
-            kind: TraceKind::Forward,
+        let app = crate::ui::app::App::new(None);
+        let trace = PipelineTraceView {
+            kind: PipelineTraceKind::Forward,
             from_stage: Stage::MEM as usize,
             to_stage: Stage::EX as usize,
-            detail: "BYPASS".to_string(),
+            detail: "BYPASS",
         };
 
-        assert_eq!(trace_stage_summary(&trace), "MEM -> EX");
+        assert_eq!(trace_stage_summary(app.run.pipeline_inspect(), &trace), "MEM -> EX");
     }
 
     #[test]
     fn gantt_fu_cells_render_as_ex_in_history() {
-        assert_eq!(cell_to_span(GanttCell::InFu(FuKind::Mul)).0, "EX");
-        assert_eq!(cell_to_span(GanttCell::SpeculativeFu(FuKind::Lsu)).0, "EX");
-        assert_eq!(cell_to_span(GanttCell::Stall).0, "──");
+        assert_eq!(
+            cell_to_span(PipelineTimelineCell {
+                label: "EX",
+                state: PipelineTimelineState::Active,
+            })
+            .0,
+            "EX"
+        );
+        assert_eq!(
+            cell_to_span(PipelineTimelineCell {
+                label: "EX",
+                state: PipelineTimelineState::Speculative,
+            })
+            .0,
+            "EX"
+        );
+        assert_eq!(
+            cell_to_span(PipelineTimelineCell {
+                label: "──",
+                state: PipelineTimelineState::Stalled,
+            })
+            .0,
+            "──"
+        );
     }
 
     #[test]

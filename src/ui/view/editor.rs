@@ -310,7 +310,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     let mut rows: Vec<Line> = Vec::with_capacity(end.saturating_sub(start));
     for i in start..end {
         let line_str: &str = &app.editor.buf.lines[i];
-        let mut line = Line::from(highlight_line(line_str));
+        let mut line = Line::from(highlight_line(line_str, app.architecture.assembler()));
         if let Some(((sr, sc), (er, ec))) = app.editor.buf.selection_range() {
             if i >= sr && i <= er {
                 let (sel_start, sel_end) = if sr == er {
@@ -394,7 +394,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         spans.extend(line.spans);
 
         if i == app.editor.buf.cursor_row {
-            if let Some(ghost) = ghost_spans_for_line(line_str, &labels) {
+            if let Some(ghost) = ghost_spans_for_line(line_str, app.architecture.assembler()) {
                 let gutter_w = (hint_w as u16) + (num_width as u16) + 3;
                 let used_w = gutter_w.saturating_add(Editor::char_count(line_str) as u16);
                 let remaining = content_w.saturating_sub(used_w);
@@ -729,7 +729,10 @@ fn highlight_directive_rest<'a>(directive: &str, rest: &'a str) -> Vec<Span<'a>>
     }
 }
 
-fn highlight_line(s: &str) -> Vec<Span<'_>> {
+fn highlight_line<'a>(
+    s: &'a str,
+    assembler: &dyn raven_riscv_engine::Assembler,
+) -> Vec<Span<'a>> {
     use Color::*;
     if s.is_empty() {
         return vec![Span::raw("")];
@@ -845,7 +848,7 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
                 for ch in rest.chars() {
                     if ",()\t ".contains(ch) {
                         if !token.is_empty() {
-                            out.push(color_operand(&token));
+                            out.push(color_operand(&token, assembler));
                             token.clear();
                         }
                         out.push(Span::raw(ch.to_string()));
@@ -854,7 +857,7 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
                     }
                 }
                 if !token.is_empty() {
-                    out.push(color_operand(&token));
+                    out.push(color_operand(&token, assembler));
                 }
             }
         }
@@ -886,51 +889,14 @@ fn highlight_line(s: &str) -> Vec<Span<'_>> {
     out
 }
 
-fn color_operand(tok: &str) -> Span<'static> {
+fn color_operand(tok: &str, assembler: &dyn raven_riscv_engine::Assembler) -> Span<'static> {
     use Color::*;
-    let is_xreg = tok.starts_with('x') && tok[1..].chars().all(|c| c.is_ascii_digit());
-    let is_alias = matches!(
-        tok,
-        "zero"
-            | "ra"
-            | "sp"
-            | "gp"
-            | "tp"
-            | "s0"
-            | "fp"
-            | "s1"
-            | "s2"
-            | "s3"
-            | "s4"
-            | "s5"
-            | "s6"
-            | "s7"
-            | "s8"
-            | "s9"
-            | "s10"
-            | "s11"
-            | "t0"
-            | "t1"
-            | "t2"
-            | "t3"
-            | "t4"
-            | "t5"
-            | "t6"
-            | "a0"
-            | "a1"
-            | "a2"
-            | "a3"
-            | "a4"
-            | "a5"
-            | "a6"
-            | "a7"
-    );
     let is_imm = tok.starts_with("0x")
         || tok.starts_with("0X")
         || tok.starts_with("0b")
         || tok.starts_with("0B")
         || tok.parse::<i32>().is_ok();
-    let style = if is_xreg || is_alias {
+    let style = if assembler.is_register(tok) {
         Style::default().fg(Green)
     } else if is_imm {
         Style::default().fg(Magenta)
@@ -1046,248 +1012,47 @@ fn strip_comments(line: &str) -> &str {
     if let Some(i) = cut { &line[..i] } else { line }
 }
 
-fn ghost_spans_for_line(line: &str, labels: &HashSet<String>) -> Option<Vec<Span<'static>>> {
-    use crate::falcon::asm::utils::{
-        check_signed, check_u_imm, parse_imm, parse_reg, parse_shamt, split_operands,
-    };
-
+fn ghost_spans_for_line(
+    line: &str,
+    assembler: &dyn raven_riscv_engine::Assembler,
+) -> Option<Vec<Span<'static>>> {
     let mut code = strip_comments(line).trim();
-    if code.is_empty() {
+    if code.is_empty() || code.starts_with('.') {
         return None;
     }
-
-    if code.starts_with('.') {
-        return None;
-    }
-
-    if let Some((_lab, rest)) = code.split_once(':') {
+    if let Some((_label, rest)) = code.split_once(':') {
         code = rest.trim();
         if code.is_empty() {
             return None;
         }
     }
 
-    let mut parts = code.split_whitespace();
-    let mnemonic_raw = parts.next()?;
-    let rest = parts.collect::<Vec<_>>().join(" ");
-    let ops = split_operands(&rest);
-    let ops_len = ops.len();
-
-    let is_reg = |t: &str| parse_reg(t).is_some();
-    let is_imm12 = |t: &str| {
-        parse_imm(t)
-            .and_then(|v| check_signed(v, 12, "imm").ok())
-            .is_some()
-    };
-    let is_imm20u = |t: &str| {
-        parse_imm(t)
-            .and_then(|v| check_u_imm(v, "imm").ok())
-            .is_some()
-    };
-    let is_shamt = |t: &str| parse_shamt(t).is_ok();
-    let is_label = |t: &str| labels.contains(t.trim());
-    let is_label_or_imm_even = |t: &str, bits: u32| {
-        if let Some(v) = parse_imm(t) {
-            v % 2 == 0 && check_signed(v, bits, "off").is_ok()
-        } else {
-            is_label(t)
-        }
-    };
-
-    let mnemonic_lc = mnemonic_raw.to_ascii_lowercase();
-
-    let strict_valid = match mnemonic_lc.as_str() {
-        // Pseudo-instructions
-        "nop" => ops.is_empty(),
-        "mv" => ops.len() == 2 && is_reg(&ops[0]) && is_reg(&ops[1]),
-        "li" => ops.len() == 2 && is_reg(&ops[0]) && is_imm12(&ops[1]),
-        "j" => ops.len() == 1 && is_label_or_imm_even(&ops[0], 21),
-        "call" => ops.len() == 1 && is_label_or_imm_even(&ops[0], 21),
-        "jr" => ops.len() == 1 && is_reg(&ops[0]),
-        "ret" => ops.is_empty(),
-        "subi" => {
-            if ops.len() == 3 && is_reg(&ops[0]) && is_reg(&ops[1]) {
-                if let Some(v) = parse_imm(&ops[2]) {
-                    check_signed(-v, 12, "subi").is_ok()
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        }
-
-        // R-type
-        "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" | "mul"
-        | "mulh" | "mulhsu" | "mulhu" | "div" | "divu" | "rem" | "remu" => {
-            ops.len() == 3 && is_reg(&ops[0]) && is_reg(&ops[1]) && is_reg(&ops[2])
-        }
-
-        // I-type (imm12)
-        "addi" | "andi" | "ori" | "xori" | "slti" | "sltiu" => {
-            ops.len() == 3 && is_reg(&ops[0]) && is_reg(&ops[1]) && is_imm12(&ops[2])
-        }
-        "slli" | "srli" | "srai" => {
-            ops.len() == 3 && is_reg(&ops[0]) && is_reg(&ops[1]) && is_shamt(&ops[2])
-        }
-
-        // Loads / Stores
-        "lb" | "lh" | "lw" | "lbu" | "lhu" => {
-            use crate::falcon::asm::utils::load_like;
-            load_like(&ops)
-                .and_then(|(_rd, imm, _rs1)| check_signed(imm, 12, "load").map(|_| ()))
-                .is_ok()
-        }
-        "sb" | "sh" | "sw" => {
-            use crate::falcon::asm::utils::store_like;
-            store_like(&ops)
-                .and_then(|(_rs2, imm, _rs1)| check_signed(imm, 12, "store").map(|_| ()))
-                .is_ok()
-        }
-
-        // Branches
-        "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" => {
-            ops.len() == 3
-                && is_reg(&ops[0])
-                && is_reg(&ops[1])
-                && is_label_or_imm_even(&ops[2], 13)
-        }
-        // Zero-compare branch pseudos
-        "bez" | "beqz" | "bnez" => {
-            ops.len() == 2 && is_reg(&ops[0]) && is_label_or_imm_even(&ops[1], 13)
-        }
-
-        // U-type
-        "lui" => ops.len() == 2 && is_reg(&ops[0]) && is_imm20u(&ops[1]),
-        "auipc" => ops.len() == 2 && is_reg(&ops[0]) && is_imm20u(&ops[1]),
-
-        // Jumps
-        "jal" => match ops.len() {
-            1 => is_label_or_imm_even(&ops[0], 21),
-            2 => is_reg(&ops[0]) && is_label_or_imm_even(&ops[1], 21),
-            _ => false,
-        },
-        "jalr" => ops.len() == 3 && is_reg(&ops[0]) && is_reg(&ops[1]) && is_imm12(&ops[2]),
-
-        // System
-        "ecall" => ops.is_empty(),
-        "ebreak" => ops.is_empty(),
-        "halt" => ops.is_empty(),
-
-        // Standard pseudos (case-insensitive via mnemonic_lc)
-        "bgt" | "ble" | "bgtu" | "bleu" => ops.len() == 3 && is_reg(&ops[0]) && is_reg(&ops[1]),
-        "bltz" | "bgez" | "blez" | "bgtz" => ops.len() == 2 && is_reg(&ops[0]),
-        "seqz" | "snez" | "sltz" | "sgtz" => ops.len() == 2 && is_reg(&ops[0]) && is_reg(&ops[1]),
-        "neg" | "not" => ops.len() == 2 && is_reg(&ops[0]) && is_reg(&ops[1]),
-        "fence" => ops.is_empty(),
-
-        // RV32F
-        "flw" => ops.len() == 2,
-        "fsw" => ops.len() == 2,
-        "fadd.s" | "fsub.s" | "fmul.s" | "fdiv.s" | "fmin.s" | "fmax.s" | "fsgnj.s"
-        | "fsgnjn.s" | "fsgnjx.s" => ops.len() == 3,
-        "fsqrt.s" | "fmv.s" | "fneg.s" | "fabs.s" => ops.len() == 2,
-        "feq.s" | "flt.s" | "fle.s" => ops.len() == 3,
-        "fcvt.w.s" | "fcvt.wu.s" => ops.len() == 2 || ops.len() == 3,
-        "fcvt.s.w" | "fcvt.s.wu" | "fmv.x.w" | "fmv.w.x" | "fclass.s" => ops.len() == 2,
-        "fmadd.s" | "fmsub.s" | "fnmsub.s" | "fnmadd.s" => ops.len() == 4,
-
-        _ => {
-            // Macro-pseudos are case-sensitive in the assembler first pass.
-            match mnemonic_raw {
-                "la" => ops.len() == 2 && is_reg(&ops[0]) && is_label(&ops[1]),
-                "push" => ops.len() == 1 && is_reg(&ops[0]),
-                "pop" => ops.len() == 1 && is_reg(&ops[0]),
-                "print" => ops.len() == 1 && is_reg(&ops[0]),
-                "print_str" | "printStr" | "printString" => ops.len() == 1 && is_label(&ops[0]),
-                "print_str_ln" | "printStrLn" => ops.len() == 1 && is_label(&ops[0]),
-                "read" => ops.len() == 1 && is_label(&ops[0]),
-                "read_byte" | "readByte" => ops.len() == 1 && is_label(&ops[0]),
-                "read_half" | "readHalf" => ops.len() == 1 && is_label(&ops[0]),
-                "read_word" | "readWord" => ops.len() == 1 && is_label(&ops[0]),
-                "random" => ops.len() == 1 && is_reg(&ops[0]),
-                "random_bytes" | "randomBytes" => ops.len() == 2 && is_label(&ops[0]),
-                _ => return None,
-            }
-        }
-    };
-
-    if strict_valid {
+    let mut parts = code.splitn(2, char::is_whitespace);
+    let mnemonic = parts.next()?;
+    let operands = parts.next().unwrap_or("").trim();
+    let forms = assembler.instruction_forms(mnemonic);
+    if forms.is_empty() {
         return None;
     }
 
-    let variants: Vec<Vec<&'static str>> = match mnemonic_lc.as_str() {
-        "nop" => vec![vec![]],
-        "mv" => vec![vec!["rd", "rs"]],
-        "li" => vec![vec!["rd", "imm"]],
-        "j" => vec![vec!["label"]],
-        "call" => vec![vec!["label"]],
-        "jr" => vec![vec!["rs"]],
-        "ret" => vec![vec![]],
-        "subi" => vec![vec!["rd", "rs1", "imm"]],
+    let operand_count = operands
+        .split(',')
+        .filter(|operand| !operand.trim().is_empty())
+        .count();
+    let variants: Vec<Vec<&'static str>> = forms
+        .iter()
+        .map(|form| {
+            form.split(',')
+                .map(str::trim)
+                .filter(|operand| !operand.is_empty())
+                .collect()
+        })
+        .collect();
+    if !operands.ends_with(',') && variants.iter().any(|form| form.len() == operand_count) {
+        return None;
+    }
 
-        "add" | "sub" | "and" | "or" | "xor" | "sll" | "srl" | "sra" | "slt" | "sltu" | "mul"
-        | "mulh" | "mulhsu" | "mulhu" | "div" | "divu" | "rem" | "remu" => {
-            vec![vec!["rd", "rs1", "rs2"]]
-        }
-
-        "addi" | "andi" | "ori" | "xori" | "slti" | "sltiu" => vec![vec!["rd", "rs1", "imm"]],
-        "slli" | "srli" | "srai" => vec![vec!["rd", "rs1", "shamt"]],
-
-        "lb" | "lh" | "lw" | "lbu" | "lhu" => vec![vec!["rd", "imm(rs1)"]],
-        "sb" | "sh" | "sw" => vec![vec!["rs2", "imm(rs1)"]],
-
-        "beq" | "bne" | "blt" | "bge" | "bltu" | "bgeu" => vec![vec!["rs1", "rs2", "label"]],
-        "bez" | "beqz" | "bnez" => vec![vec!["rs", "label"]],
-        "bgt" | "ble" | "bgtu" | "bleu" => vec![vec!["rs", "rt", "label"]],
-        "bltz" | "bgez" | "blez" | "bgtz" => vec![vec!["rs", "label"]],
-        "seqz" | "snez" | "sltz" | "sgtz" => vec![vec!["rd", "rs"]],
-        "neg" | "not" => vec![vec!["rd", "rs"]],
-        "fence" => vec![vec![]],
-
-        "lui" => vec![vec!["rd", "imm"]],
-        "auipc" => vec![vec!["rd", "imm"]],
-
-        "jal" => vec![vec!["label"], vec!["rd", "label"]],
-        "jalr" => vec![vec!["rd", "rs1", "imm"]],
-
-        "ecall" => vec![vec![]],
-        "ebreak" => vec![vec![]],
-        "halt" => vec![vec![]],
-
-        // RV32F
-        "flw" => vec![vec!["frd", "imm(rs1)"]],
-        "fsw" => vec![vec!["frs2", "imm(rs1)"]],
-        "fadd.s" | "fsub.s" | "fmul.s" | "fdiv.s" | "fmin.s" | "fmax.s" | "fsgnj.s"
-        | "fsgnjn.s" | "fsgnjx.s" => vec![vec!["frd", "frs1", "frs2"]],
-        "fsqrt.s" | "fmv.s" | "fneg.s" | "fabs.s" => vec![vec!["frd", "frs"]],
-        "feq.s" | "flt.s" | "fle.s" => vec![vec!["rd", "frs1", "frs2"]],
-        "fcvt.w.s" | "fcvt.wu.s" => vec![vec!["rd", "frs1"], vec!["rd", "frs1", "rm"]],
-        "fcvt.s.w" | "fcvt.s.wu" => vec![vec!["frd", "rs1"]],
-        "fmv.x.w" | "fclass.s" => vec![vec!["rd", "frs1"]],
-        "fmv.w.x" => vec![vec!["frd", "rs1"]],
-        "fmadd.s" | "fmsub.s" | "fnmsub.s" | "fnmadd.s" => {
-            vec![vec!["frd", "frs1", "frs2", "frs3"]]
-        }
-
-        _ => match mnemonic_raw {
-            "la" => vec![vec!["rd", "label"]],
-            "push" => vec![vec!["rs"]],
-            "pop" => vec![vec!["rd"]],
-            "print" => vec![vec!["rd"]],
-            "print_str" | "printStr" | "printString" => vec![vec!["label"]],
-            "print_str_ln" | "printStrLn" => vec![vec!["label"]],
-            "read" => vec![vec!["label"]],
-            "read_byte" | "readByte" => vec![vec!["label"]],
-            "read_half" | "readHalf" => vec![vec!["label"]],
-            "read_word" | "readWord" => vec![vec!["label"]],
-            "random" => vec![vec!["rd"]],
-            "random_bytes" | "randomBytes" => vec![vec!["label", "n"]],
-            _ => return None,
-        },
-    };
-
-    Some(build_ghost_variants_spans(mnemonic_raw, ops_len, &variants))
+    Some(build_ghost_variants_spans(mnemonic, operand_count, &variants))
 }
 
 fn truncate_spans_to_width(spans: Vec<Span<'static>>, max_chars: usize) -> Vec<Span<'static>> {
@@ -1535,4 +1300,26 @@ fn is_reg_token(tok: &str) -> bool {
             | "a6"
             | "a7"
     )
+}
+
+#[cfg(test)]
+mod ghost_tests {
+    fn ghost(id: &str, line: &str) -> Option<String> {
+        let architecture = crate::arch::lookup(id).unwrap();
+        super::ghost_spans_for_line(line, architecture.assembler()).map(|spans| {
+            spans
+                .into_iter()
+                .map(|span| span.content.into_owned())
+                .collect()
+        })
+    }
+
+    #[test]
+    fn mnemonic_helpers_come_from_the_active_isa() {
+        assert!(ghost("riscv32", "lw").unwrap().contains("imm(rs1)"));
+        assert!(ghost("toy16", "load").unwrap().contains("[addr]"));
+        assert!(ghost("sap", "lda").unwrap().contains("address"));
+        assert!(ghost("sap", "lw").is_none());
+        assert!(ghost("toy16", "lda").is_none());
+    }
 }

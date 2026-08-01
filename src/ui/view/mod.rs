@@ -16,6 +16,7 @@ pub(crate) mod components;
 pub mod disasm;
 pub mod docs;
 mod editor;
+mod machine_run;
 mod path_input_overlay;
 pub(crate) mod pipeline;
 pub(crate) mod run;
@@ -120,8 +121,8 @@ pub fn ui(f: &mut Frame, app: &App) {
             render_editor(f, editor_chunks[2], app);
         }
         Tab::Run => {
-            if app.is_portable_architecture() {
-                render_portable_run(f, chunks[1], app)
+            if app.trait_driven() {
+                machine_run::render(f, chunks[1], app)
             } else {
                 render_run(f, chunks[1], app)
             }
@@ -165,9 +166,9 @@ pub fn ui(f: &mut Frame, app: &App) {
             ("[?]", "Help"),
         ]),
         Tab::Pipeline => {
-            if let Some(ref err) = app.run.pipeline().status_error {
+            if let Some(ref err) = app.run.pipeline_view().status_error {
                 Line::from(Span::styled(format!("✗  {err}"), style::danger()))
-            } else if let Some(ref ok) = app.run.pipeline().status_msg {
+            } else if let Some(ref ok) = app.run.pipeline_view().status_msg {
                 Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
                 style::hint_bar(&[
@@ -260,59 +261,6 @@ pub fn ui(f: &mut Frame, app: &App) {
     if app.tutorial.active {
         crate::ui::tutorial::render::render_tutorial_overlay(f, size, app);
     }
-}
-
-fn render_portable_run(f: &mut Frame, area: Rect, app: &App) {
-    let Some(snapshot) = app.portable_snapshot() else {
-        return;
-    };
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .split(area);
-    let mut state = vec![
-        Line::from(vec![
-            Span::styled("Architecture  ", style::label()),
-            Span::raw(app.architecture.descriptor().display_name),
-        ]),
-        Line::from(vec![
-            Span::styled("State         ", style::label()),
-            Span::raw(format!("{:?}", snapshot.state)),
-        ]),
-        Line::from(vec![
-            Span::styled("PC            ", style::label()),
-            Span::raw(format!("0x{:X}", snapshot.pc)),
-        ]),
-        Line::from(vec![
-            Span::styled("Instructions  ", style::label()),
-            Span::raw(snapshot.instructions.to_string()),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled("Registers", style::label())),
-    ];
-    state.extend(snapshot.registers.iter().map(|register| {
-        Line::from(format!(
-            "  {:<5}  0x{:0width$X}  ({})",
-            register.name,
-            register.value,
-            register.value,
-            width = usize::from(register.bits / 4),
-        ))
-    }));
-    f.render_widget(
-        Paragraph::new(state).block(Block::default().borders(Borders::ALL).title(" Machine ")),
-        columns[0],
-    );
-    let output = String::from_utf8_lossy(&snapshot.stdout).into_owned();
-    f.render_widget(
-        Paragraph::new(if output.is_empty() {
-            "(no output)".to_string()
-        } else {
-            output
-        })
-        .block(Block::default().borders(Borders::ALL).title(" Console ")),
-        columns[1],
-    );
 }
 
 /// The top navigation tab bar as a [`Toolbar`] keyed by [`Tab`] (gap 2, each

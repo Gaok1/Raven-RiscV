@@ -109,13 +109,13 @@ fn run_status_hit_exposes_stepback_only_when_undoable() {
             .collect()
     };
 
-    // Fresh: nothing journaled → step-back renders dim and is not clickable,
+    // Fresh: nothing journaled â†’ step-back renders dim and is not clickable,
     // while the rest of the bar still resolves around it.
     let before = hits(&app);
     assert!(!before.contains(&RunButton::Stepback));
     assert!(before.contains(&RunButton::Reset));
 
-    // Journal a change → step-back becomes clickable without disturbing reset.
+    // Journal a change â†’ step-back becomes clickable without disturbing reset.
     app.run
         .machine
         .write_reg(RegTarget::X(RegId::new(5).unwrap()), 0xABCD)
@@ -403,7 +403,7 @@ fn cache_view_mouse_wheel_clamps_to_rendered_max_scroll() {
 fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.run.pipeline().gantt_area_rect.set((0, 10, 80, 8));
+    app.run.pipeline_view().gantt_area_rect.set((0, 10, 80, 8));
     app.run.pipeline_mut().gantt = (0..10)
         .map(|i| GanttRow {
             gantt_id: i + 1,
@@ -416,10 +416,10 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
             last_stage: None,
         })
         .collect();
-    app.run.pipeline()
+    app.run.pipeline_view()
         .gantt_max_scroll_cache
         .set(gantt_max_scroll(&app.run.pipeline(), 20));
-    app.run.pipeline_mut().gantt_scroll = app.run.pipeline_mut().gantt_max_scroll_cache.get();
+    app.run.pipeline_view_mut().gantt_scroll = app.run.pipeline_view_mut().gantt_max_scroll_cache.get();
 
     // Bottom-anchored: wheel-up digs into scrollback but clamps at the oldest row.
     handle_mouse(
@@ -434,12 +434,12 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
     );
 
     assert_eq!(
-        app.run.pipeline().gantt_scroll,
-        app.run.pipeline().gantt_max_scroll_cache.get()
+        app.run.pipeline_view().gantt_scroll,
+        app.run.pipeline_view().gantt_max_scroll_cache.get()
     );
 
     // Wheel-down returns toward follow (0) and saturates there.
-    app.run.pipeline_mut().gantt_scroll = 1;
+    app.run.pipeline_view_mut().gantt_scroll = 1;
     for _ in 0..2 {
         handle_mouse(
             &mut app,
@@ -452,15 +452,15 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
             Rect::new(0, 0, 160, 20),
         );
     }
-    assert_eq!(app.run.pipeline().gantt_scroll, 0);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 0);
 }
 
 #[test]
 fn pipeline_history_mouse_wheel_ignores_scroll_outside_history_panel() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.run.pipeline().gantt_area_rect.set((0, 10, 80, 8));
-    app.run.pipeline_mut().gantt_scroll = 3;
+    app.run.pipeline_view().gantt_area_rect.set((0, 10, 80, 8));
+    app.run.pipeline_view_mut().gantt_scroll = 3;
 
     handle_mouse(
         &mut app,
@@ -473,7 +473,7 @@ fn pipeline_history_mouse_wheel_ignores_scroll_outside_history_panel() {
         Rect::new(0, 0, 160, 20),
     );
 
-    assert_eq!(app.run.pipeline().gantt_scroll, 3);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 3);
 }
 
 #[test]
@@ -482,7 +482,7 @@ fn pipeline_state_click_restarts_when_halted() {
     app.tab = Tab::Pipeline;
     app.run.pipeline_mut().enabled = true;
     app.run.pipeline_mut().halted = true;
-    app.run.pipeline().btn_state_rect.set((6, 20, 31));
+    app.run.pipeline_view().btn_state_rect.set((6, 20, 31));
     app.run.machine.cpu_mut_unjournaled().pc = 32;
     app.run.pipeline_mut().fetch_pc = 32;
 
@@ -505,11 +505,11 @@ fn pipeline_state_click_restarts_when_halted() {
 fn pipeline_main_subtab_ignores_stale_config_row_hitboxes() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
-    app.run.pipeline_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
+    app.run.pipeline_view_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
     let original = app.run.pipeline().bypass.ex_to_ex;
     let mut rects = [(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS];
     rects[0] = (12, 4, 40);
-    app.run.pipeline().config_row_rects.set(rects);
+    app.run.pipeline_view().config_row_rects.set(rects);
 
     handle_mouse(
         &mut app,
@@ -579,7 +579,7 @@ fn cache_level_selector_uses_rendered_hitboxes() {
     let mut app = App::new(None);
     app.set_cache_enabled(true);
     app.tab = Tab::Cache;
-    app.add_cache_level(); // one extra level → l1 l2 add remove
+    app.add_cache_level(); // one extra level â†’ l1 l2 add remove
     let area = Rect::new(0, 0, 160, 40);
     let (level_area, ..) = cache_content_area(area);
     let origin_x = level_area.x + "level ".len() as u16;
@@ -633,7 +633,7 @@ fn cache_level_selector_help_text_is_not_clickable() {
         .level_origin
         .set((level_area.y, level_area.x + "level ".len() as u16));
 
-    // Far right, over the `+/= add level` help text — no control there.
+    // Far right, over the `+/= add level` help text â€” no control there.
     handle_mouse(
         &mut app,
         MouseEvent {
@@ -710,7 +710,7 @@ fn cache_view_hscroll_drag_uses_hovered_panel_max_scroll() {
 
     let area = Rect::new(0, 0, 160, 40);
 
-    // Down inside the D-cache thumb (offset 0 → thumb starts at column 81).
+    // Down inside the D-cache thumb (offset 0 â†’ thumb starts at column 81).
     handle_mouse(
         &mut app,
         MouseEvent {
@@ -971,7 +971,7 @@ fn run_sidebar_register_scrollbar_click_scrolls_instead_of_editing() {
     let (grab, jumped) = bar.begin_drag(14);
     assert!(app.run.regs_sb_drag.is_some());
     assert_eq!(app.run.regs_scroll, jumped);
-    // The click was consumed by the bar — no inline register editor opened.
+    // The click was consumed by the bar â€” no inline register editor opened.
     assert!(app.run.run_edit.is_none());
 
     handle_mouse(

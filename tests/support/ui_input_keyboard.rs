@@ -299,14 +299,14 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
     // Bottom-anchored scroll: 0 = follow newest; Up moves into scrollback.
-    app.run.pipeline_mut().gantt_scroll = 2;
-    app.run.pipeline().gantt_visible_rows_cache.set(4);
-    app.run.pipeline().gantt_max_scroll_cache.set(9);
+    app.run.pipeline_view_mut().gantt_scroll = 2;
+    app.run.pipeline_view().gantt_visible_rows_cache.set(4);
+    app.run.pipeline_view().gantt_max_scroll_cache.set(9);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
         .expect("pipeline down handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 1);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 1);
 
     let outcome = handle_key(
         &mut app,
@@ -314,27 +314,27 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
     )
     .expect("pipeline page down handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 0);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 0);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
         .expect("pipeline page up handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 4);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 4);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
         .expect("pipeline up handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 5);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 5);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
         .expect("pipeline home handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 9);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 9);
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
         .expect("pipeline end handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().gantt_scroll, 0);
+    assert_eq!(app.run.pipeline_view().gantt_scroll, 0);
 }
 
 #[test]
@@ -483,14 +483,14 @@ fn pipeline_up_down_do_not_move_hidden_config_cursor_on_main_subtab() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.run.pipeline_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
-    app.run.pipeline_mut().config_cursor = 3;
+    app.run.pipeline_view_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
+    app.run.pipeline_view_mut().config_cursor = 3;
 
     let outcome = handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
         .expect("pipeline down handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.pipeline().config_cursor, 3);
+    assert_eq!(app.run.pipeline_view().config_cursor, 3);
 }
 
 #[test]
@@ -498,18 +498,18 @@ fn pipeline_tab_switch_clears_stale_config_row_hover() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.run.pipeline_mut().subtab = crate::ui::pipeline::PipelineSubtab::Config;
-    app.run.pipeline_mut().hover_config_row = Some(4);
+    app.run.pipeline_view_mut().subtab = crate::ui::pipeline::PipelineSubtab::Config;
+    app.run.pipeline_view_mut().hover_config_row = Some(4);
 
     let outcome =
         handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).expect("tab handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
     assert!(matches!(
-        app.run.pipeline().subtab,
+        app.run.pipeline_view().subtab,
         crate::ui::pipeline::PipelineSubtab::Main
     ));
-    assert_eq!(app.run.pipeline().hover_config_row, None);
+    assert_eq!(app.run.pipeline_view().hover_config_row, None);
 }
 
 #[test]
@@ -517,9 +517,9 @@ fn pipeline_keyboard_actions_clear_stale_button_hover_flags() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.run.pipeline_mut().hover_speed = true;
-    app.run.pipeline_mut().hover_state = true;
-    app.run.pipeline_mut().hover_subtab_config = true;
+    app.run.pipeline_view_mut().hover_speed = true;
+    app.run.pipeline_view_mut().hover_state = true;
+    app.run.pipeline_view_mut().hover_subtab_config = true;
 
     let outcome = handle_key(
         &mut app,
@@ -528,9 +528,9 @@ fn pipeline_keyboard_actions_clear_stale_button_hover_flags() {
     .expect("f handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(!app.run.pipeline().hover_speed);
-    assert!(!app.run.pipeline().hover_state);
-    assert!(!app.run.pipeline().hover_subtab_config);
+    assert!(!app.run.pipeline_view().hover_speed);
+    assert!(!app.run.pipeline_view().hover_state);
+    assert!(!app.run.pipeline_view().hover_subtab_config);
 }
 
 #[test]

@@ -1,6 +1,7 @@
+use crate::capability::{CacheHierarchy, InstructionCodec, MemoryInspect, RegisterFile};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Endianness {
@@ -27,8 +28,30 @@ pub struct ArchitectureDescriptor {
     pub source_extension: &'static str,
     pub address_bits: u8,
     pub instruction_alignment: u8,
+    /// RAM handed to [`Architecture::create_machine`] when the caller has no
+    /// preference of its own.
+    pub default_memory_size: usize,
     pub endianness: Endianness,
     pub capabilities: ArchitectureCapabilities,
+}
+
+impl ArchitectureDescriptor {
+    /// Number of distinct byte addresses this architecture can name.
+    pub fn address_space_bytes(&self) -> u64 {
+        1u64 << self.address_bits
+    }
+
+    /// Reduce a requested RAM size to something this architecture can address.
+    ///
+    /// Callers that let a user pick a memory size should route it through here
+    /// rather than hand [`Architecture::create_machine`] a size the backend has
+    /// to reject.
+    pub fn clamp_memory_size(&self, requested: usize) -> usize {
+        if requested == 0 {
+            return self.default_memory_size;
+        }
+        usize::try_from(self.address_space_bytes()).map_or(requested, |max| requested.min(max))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,169 +122,93 @@ impl ProgramImage {
             .map(|s| s.bytes.as_slice())
     }
 
+    /// The image's data segment — the first non-executable one — if it has any.
+    ///
+    /// Hosts that show a memory pane open it here, so they do not have to guess
+    /// where an architecture puts `.data`.
+    pub fn data_segment(&self) -> Option<&ProgramSegment> {
+        self.segments.iter().find(|s| !s.executable)
+    }
+
+    /// How many instructions the executable segment holds, at the alignment the
+    /// architecture's descriptor reports.
+    pub fn instruction_count(&self, instruction_alignment: u8) -> usize {
+        let stride = usize::from(instruction_alignment).max(1);
+        self.executable_bytes().map_or(0, |b| b.len() / stride)
+    }
+
+    /// Total initialized bytes outside the executable segment.
+    pub fn data_bytes(&self) -> usize {
+        self.segments
+            .iter()
+            .filter(|s| !s.executable)
+            .map(|s| s.bytes.len())
+            .sum()
+    }
+
+    /// Total bytes the image asks the loader to zero (`.bss` and friends).
+    pub fn zero_filled_bytes(&self) -> u64 {
+        self.zero_fill.iter().map(|f| f.size).sum()
+    }
+
+    /// One byte past the highest address the image occupies.
+    ///
+    /// Loaders use this to place the initial program break: everything above it
+    /// is free for the guest heap.
+    pub fn end_address(&self) -> u64 {
+        let segments = self
+            .segments
+            .iter()
+            .map(|s| s.address.saturating_add(s.bytes.len() as u64));
+        let fills = self
+            .zero_fill
+            .iter()
+            .map(|f| f.address.saturating_add(f.size));
+        segments.chain(fills).max().unwrap_or(0)
+    }
+
     /// Serialize the architecture-neutral FALC v2 container.
+    ///
+    /// The container carries segments and zero-fill regions only; the
+    /// [`SourceMap`] is not round-tripped.
     pub fn to_falc_v2(&self) -> Result<Vec<u8>, MachineError> {
-        let arch = self.architecture.as_bytes();
-        let arch_len = u16::try_from(arch.len())
-            .map_err(|_| MachineError::new("FALC architecture ID is too long"))?;
-        let segment_count = u32::try_from(self.segments.len())
-            .map_err(|_| MachineError::new("too many FALC segments"))?;
-        let fill_count = u32::try_from(self.zero_fill.len())
-            .map_err(|_| MachineError::new("too many FALC zero-fill regions"))?;
-        let mut out = Vec::new();
-        out.extend_from_slice(b"FALC");
-        out.extend_from_slice(&u32::MAX.to_le_bytes());
-        out.extend_from_slice(&2u16.to_le_bytes());
-        out.extend_from_slice(&arch_len.to_le_bytes());
-        out.extend_from_slice(&self.entry.to_le_bytes());
-        out.extend_from_slice(&segment_count.to_le_bytes());
-        out.extend_from_slice(&fill_count.to_le_bytes());
-        out.extend_from_slice(arch);
-        for segment in &self.segments {
-            out.extend_from_slice(&segment.address.to_le_bytes());
-            out.extend_from_slice(&(segment.bytes.len() as u64).to_le_bytes());
-            out.push(u8::from(segment.executable) | (u8::from(segment.writable) << 1));
-            out.extend_from_slice(&[0; 7]);
-            out.extend_from_slice(&segment.bytes);
-        }
-        for fill in &self.zero_fill {
-            out.extend_from_slice(&fill.address.to_le_bytes());
-            out.extend_from_slice(&fill.size.to_le_bytes());
-        }
-        Ok(out)
+        crate::falc::encode_v2(self)
     }
 
     /// Read FALC v2, or map the legacy RV32-only FALC v1 layout to an image.
     pub fn from_falc(bytes: &[u8]) -> Result<Self, MachineError> {
-        if bytes.len() < 16 || &bytes[..4] != b"FALC" {
-            return Err(MachineError::new("not a FALC container"));
+        crate::falc::decode(bytes)
+    }
+
+    /// Reject an image that was built for a different backend.
+    ///
+    /// Every [`Machine::load`] implementation starts with this check, so the
+    /// error message stays identical across backends.
+    pub fn expect_architecture(&self, id: &str) -> Result<(), MachineError> {
+        if self.architecture == id {
+            return Ok(());
         }
-        let marker = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        if marker != u32::MAX {
-            let text_size = marker as usize;
-            let data_size = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-            let bss_size = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as u64;
-            let payload_size = text_size
-                .checked_add(data_size)
-                .ok_or_else(|| MachineError::new("invalid FALC v1 payload size"))?;
-            let end = 16usize
-                .checked_add(payload_size)
-                .ok_or_else(|| MachineError::new("invalid FALC v1 payload size"))?;
-            if bytes.len() < end {
-                return Err(MachineError::new("truncated FALC v1 container"));
-            }
-            let data_base = ((text_size as u64) + 3) & !3;
-            let mut segments = vec![ProgramSegment {
-                address: 0,
-                bytes: bytes[16..16 + text_size].to_vec(),
-                executable: true,
-                writable: false,
-            }];
-            if data_size > 0 {
-                segments.push(ProgramSegment {
-                    address: data_base,
-                    bytes: bytes[16 + text_size..16 + text_size + data_size].to_vec(),
-                    executable: false,
-                    writable: true,
-                });
-            }
-            return Ok(Self {
-                architecture: "riscv32".into(),
-                entry: 0,
-                segments,
-                zero_fill: (bss_size > 0)
-                    .then_some(ZeroFill {
-                        address: data_base + data_size as u64,
-                        size: bss_size,
-                    })
-                    .into_iter()
-                    .collect(),
-                source_map: SourceMap::default(),
-            });
-        }
-        if bytes.len() < 28 {
-            return Err(MachineError::new("truncated FALC v2 header"));
-        }
-        let version = u16::from_le_bytes(bytes[8..10].try_into().unwrap());
-        if version != 2 {
-            return Err(MachineError::new(format!(
-                "unsupported FALC version {version}"
-            )));
-        }
-        let arch_len = u16::from_le_bytes(bytes[10..12].try_into().unwrap()) as usize;
-        let entry = u64::from_le_bytes(bytes[12..20].try_into().unwrap());
-        let segment_count = u32::from_le_bytes(bytes[20..24].try_into().unwrap()) as usize;
-        let fill_count = u32::from_le_bytes(bytes[24..28].try_into().unwrap()) as usize;
-        let mut cursor = 28usize;
-        let arch_end = cursor
-            .checked_add(arch_len)
-            .ok_or_else(|| MachineError::new("invalid FALC architecture length"))?;
-        let architecture = std::str::from_utf8(
-            bytes
-                .get(cursor..arch_end)
-                .ok_or_else(|| MachineError::new("truncated FALC architecture ID"))?,
-        )
-        .map_err(|_| MachineError::new("FALC architecture ID is not UTF-8"))?
-        .to_string();
-        cursor = arch_end;
-        let mut segments = Vec::with_capacity(segment_count);
-        for _ in 0..segment_count {
-            let header_end = cursor
-                .checked_add(24)
-                .ok_or_else(|| MachineError::new("invalid FALC segment header"))?;
-            let header = bytes
-                .get(cursor..header_end)
-                .ok_or_else(|| MachineError::new("truncated FALC segment header"))?;
-            let address = u64::from_le_bytes(header[0..8].try_into().unwrap());
-            let len = usize::try_from(u64::from_le_bytes(header[8..16].try_into().unwrap()))
-                .map_err(|_| MachineError::new("FALC segment is too large"))?;
-            let flags = header[16];
-            cursor = header_end;
-            let end = cursor
-                .checked_add(len)
-                .ok_or_else(|| MachineError::new("invalid FALC segment length"))?;
-            let payload = bytes
-                .get(cursor..end)
-                .ok_or_else(|| MachineError::new("truncated FALC segment"))?
-                .to_vec();
-            cursor = end;
-            segments.push(ProgramSegment {
-                address,
-                bytes: payload,
-                executable: flags & 1 != 0,
-                writable: flags & 2 != 0,
-            });
-        }
-        let mut zero_fill = Vec::with_capacity(fill_count);
-        for _ in 0..fill_count {
-            let fill_end = cursor
-                .checked_add(16)
-                .ok_or_else(|| MachineError::new("invalid FALC zero-fill"))?;
-            let fill = bytes
-                .get(cursor..fill_end)
-                .ok_or_else(|| MachineError::new("truncated FALC zero-fill"))?;
-            zero_fill.push(ZeroFill {
-                address: u64::from_le_bytes(fill[0..8].try_into().unwrap()),
-                size: u64::from_le_bytes(fill[8..16].try_into().unwrap()),
-            });
-            cursor = fill_end;
-        }
-        if cursor != bytes.len() {
-            return Err(MachineError::new("trailing bytes in FALC v2 container"));
-        }
-        Ok(Self {
-            architecture,
-            entry,
-            segments,
-            zero_fill,
-            source_map: SourceMap::default(),
-        })
+        Err(MachineError::new(format!(
+            "cannot load {} image into {id}",
+            self.architecture
+        )))
     }
 }
 
 pub trait Assembler: Send + Sync {
     fn architecture_id(&self) -> &'static str;
     fn assemble(&self, source: &str, base_address: u64) -> Result<ProgramImage, Diagnostic>;
+
+    /// Operand forms shown by editor mnemonic helpers, such as
+    /// `&["rd, rs1, rs2"]`. The metadata belongs to the ISA, not the host.
+    fn instruction_forms(&self, _mnemonic: &str) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Whether `token` names a register in this ISA, for editor highlighting.
+    fn is_register(&self, _token: &str) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -279,6 +226,21 @@ pub enum MachineState {
     Halted,
     Exited(i32),
     Faulted,
+}
+
+impl fmt::Display for MachineState {
+    /// Stable, lower-case spelling — this reaches users through run reports and
+    /// the TUI, so it must not drift with the `Debug` derive.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ready => f.write_str("ready"),
+            Self::Running => f.write_str("running"),
+            Self::AwaitingInput => f.write_str("awaiting-input"),
+            Self::Halted => f.write_str("halted"),
+            Self::Exited(code) => write!(f, "exited({code})"),
+            Self::Faulted => f.write_str("faulted"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -328,6 +290,44 @@ pub trait Machine: Send {
     fn write_register(&mut self, name: &str, value: u64) -> Result<(), MachineError>;
     fn push_input(&mut self, line: &str);
 
+    // ── Optional capabilities ────────────────────────────────────────────
+    //
+    // Everything above is the floor every backend implements. These say what
+    // else this machine can do; see [`crate::capability`] for the contract and
+    // for how to add one. Answering `None` is always valid and always safe —
+    // hosts show one pane fewer, nothing breaks.
+
+    /// Named register banks, for a host that wants to draw or edit registers
+    /// without assuming this ISA's shape.
+    fn registers(&self) -> Option<&dyn RegisterFile> {
+        None
+    }
+
+    fn registers_mut(&mut self) -> Option<&mut dyn RegisterFile> {
+        None
+    }
+
+    /// Guest memory, readable without disturbing the machine.
+    fn memory(&self) -> Option<&dyn MemoryInspect> {
+        None
+    }
+
+    fn memory_mut(&mut self) -> Option<&mut dyn MemoryInspect> {
+        None
+    }
+
+    /// Disassembling and assembling a single instruction, for a listing pane
+    /// and for editing an instruction in place.
+    fn code(&self) -> Option<&dyn InstructionCodec> {
+        None
+    }
+
+    /// Cache levels and counters, borrowed without warming a line or changing
+    /// replacement state while a host draws them.
+    fn caches(&self) -> Option<&dyn CacheHierarchy> {
+        None
+    }
+
     fn run(&mut self, max_steps: u64) -> Result<StepOutcome, MachineError> {
         for _ in 0..max_steps {
             let outcome = self.step()?;
@@ -345,6 +345,12 @@ pub trait Architecture: Send + Sync {
     fn descriptor(&self) -> &'static ArchitectureDescriptor;
     fn assembler(&self) -> &'static dyn Assembler;
     fn default_source(&self) -> &'static str;
+
+    /// Build a machine with `memory_size` bytes of RAM.
+    ///
+    /// Backends reject a size their address space cannot cover instead of
+    /// silently shrinking it; use
+    /// [`ArchitectureDescriptor::clamp_memory_size`] on user-supplied values.
     fn create_machine(&self, memory_size: usize) -> Result<Box<dyn Machine>, MachineError>;
 }
 
@@ -358,11 +364,35 @@ impl ArchitectureRegistry {
         Self::default()
     }
 
+    /// The shared registry of built-in backends.
+    ///
+    /// Prefer this over [`Self::with_builtins`] unless you intend to
+    /// [`register`](Self::register) extra architectures into your own copy.
+    pub fn builtin() -> &'static Self {
+        static BUILTIN: OnceLock<ArchitectureRegistry> = OnceLock::new();
+        BUILTIN.get_or_init(Self::with_builtins)
+    }
+
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
         registry.register(crate::architectures::riscv32::architecture());
+        registry.register(crate::architectures::sap::architecture());
         registry.register(crate::architectures::toy16::architecture());
         registry
+    }
+
+    /// Every registered ID, sorted — for error messages and UI listings.
+    pub fn ids(&self) -> Vec<&'static str> {
+        let mut ids: Vec<_> = self.entries.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// The architecture following `id` in registration order, wrapping around.
+    pub fn next_after(&self, id: &str) -> Option<Arc<dyn Architecture>> {
+        let all = self.architectures();
+        let current = all.iter().position(|a| a.descriptor().id == id)?;
+        all.get((current + 1) % all.len()).cloned()
     }
 
     pub fn register(

@@ -6,13 +6,25 @@
 
 mod architecture;
 pub mod architectures;
-mod falcon;
+pub mod capability;
+mod cache_model;
+mod falc;
+
+/// Compatibility path for the production RV32 backend.
+///
+/// The implementation is owned by [`architectures::riscv32`]; this reexport
+/// keeps the established `raven_riscv_engine::falcon` API stable.
+pub use architectures::riscv32::falcon;
 
 pub use architecture::{
     Architecture, ArchitectureCapabilities, ArchitectureDescriptor, ArchitectureRegistry,
     Assembler, Diagnostic, Endianness, Machine, MachineError, MachineSnapshot, MachineState,
     ProgramImage, ProgramSegment, RegisterValue, SourceMap, StepOutcome, ZeroFill,
 };
+
+/// The batteries-included RV32 runner, kept at the crate root because it is the
+/// crate's documented entry point for graders and tests.
+pub use falcon::engine::{Falcon, RunResult};
 
 /// Minimal host-side console and screen device used by the Falcon engine.
 #[allow(clippy::collapsible_if)]

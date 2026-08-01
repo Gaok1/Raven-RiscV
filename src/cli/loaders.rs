@@ -1,8 +1,8 @@
 // loaders.rs — file format detection and program loading helpers
 
-use crate::falcon;
-use crate::falcon::program::{load_bytes, load_words, zero_bytes};
 use crate::falcon::{CacheController, Cpu};
+use crate::riscv32;
+use raven_riscv_engine::ProgramImage;
 
 // ── Loaders ───────────────────────────────────────────────────────────────────
 
@@ -31,94 +31,38 @@ pub(super) fn load_asm_text(
     cpu: &mut Cpu,
     mem: &mut CacheController,
 ) -> Result<(), String> {
-    let text = String::from_utf8_lossy(bytes).to_string();
-    let prog = falcon::asm::assemble(&text, 0x0)
-        .map_err(|e| format!("Assembly error at line {}: {}", e.line + 1, e.msg))?;
-
-    load_words(&mut mem.ram, 0x0, &prog.text).map_err(|e| format!("Load error: {e}"))?;
-
-    if !prog.data.is_empty() {
-        load_bytes(&mut mem.ram, prog.data_base, &prog.data)
-            .map_err(|e| format!("Data load error: {e}"))?;
-    }
-
-    let bss_base = prog.data_base.wrapping_add(prog.data.len() as u32);
-    if prog.bss_size > 0 {
-        zero_bytes(&mut mem.ram, bss_base, prog.bss_size).map_err(|e| format!("BSS error: {e}"))?;
-    }
-
-    cpu.pc = 0x0;
-    let bss_end = bss_base.wrapping_add(prog.bss_size);
-    cpu.heap_break = (bss_end.wrapping_add(15)) & !15;
-    Ok(())
+    let text = String::from_utf8_lossy(bytes);
+    let image = riscv32::architecture()
+        .assembler()
+        .assemble(&text, 0)
+        .map_err(|e| format!("Assembly error at {e}"))?;
+    let mem_size = mem.ram.data_len();
+    install(&image, cpu, mem, mem_size)
 }
 
+/// Load a FALC container (either version). Images built for another backend are
+/// rejected by name so the user knows which `--arch` to pass.
 pub(super) fn load_falc(
     bytes: &[u8],
     cpu: &mut Cpu,
     mem: &mut CacheController,
     mem_size: usize,
 ) -> Result<(), String> {
-    if u32::from_le_bytes(bytes[4..8].try_into().unwrap()) == u32::MAX {
-        let image =
-            raven_riscv_engine::ProgramImage::from_falc(bytes).map_err(|e| e.to_string())?;
-        if image.architecture != "riscv32" {
-            return Err(format!(
-                "FALC image targets '{}'; use --arch {}",
-                image.architecture, image.architecture
-            ));
-        }
-        for segment in &image.segments {
-            let address = u32::try_from(segment.address)
-                .map_err(|_| "FALC segment exceeds RV32".to_string())?;
-            load_bytes(&mut mem.ram, address, &segment.bytes)
-                .map_err(|e| format!("Load error: {e}"))?;
-        }
-        for fill in &image.zero_fill {
-            let address = u32::try_from(fill.address)
-                .map_err(|_| "FALC zero-fill exceeds RV32".to_string())?;
-            let size =
-                u32::try_from(fill.size).map_err(|_| "FALC zero-fill is too large".to_string())?;
-            zero_bytes(&mut mem.ram, address, size).map_err(|e| format!("BSS error: {e}"))?;
-        }
-        cpu.pc = u32::try_from(image.entry).map_err(|_| "FALC entry exceeds RV32".to_string())?;
-        cpu.write(2, mem_size as u32);
-        return Ok(());
-    }
-    let text_sz = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-    let data_sz = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-    let bss_sz = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
-    let body = &bytes[16..];
+    let image = riscv32::image_from_binary(bytes, 0).map_err(|e| e.to_string())?;
+    install(&image, cpu, mem, mem_size)
+}
 
-    if body.len() < text_sz + data_sz {
-        return Err("FALC binary truncated or corrupt".to_string());
-    }
-
-    let text_bytes = &body[..text_sz];
-    let data_bytes = &body[text_sz..text_sz + data_sz];
-
-    // Text at 0x0, data right after (4-byte aligned)
-    let data_base: u32 = ((text_sz as u32).wrapping_add(3)) & !3;
-
-    load_bytes(&mut mem.ram, 0, text_bytes).map_err(|e| format!("Load error: {e}"))?;
-
-    if !data_bytes.is_empty() {
-        load_bytes(&mut mem.ram, data_base, data_bytes)
-            .map_err(|e| format!("Data load error: {e}"))?;
-    }
-
-    if bss_sz > 0 {
-        let bss_base = data_base.wrapping_add(data_bytes.len() as u32);
-        zero_bytes(&mut mem.ram, bss_base, bss_sz).map_err(|e| format!("BSS error: {e}"))?;
-    }
-
-    cpu.pc = 0;
+/// Place `image` in memory and hand the CPU a stack pointer, an entry point and
+/// a heap break — the same placement the engine's own RV32 machine uses.
+fn install(
+    image: &ProgramImage,
+    cpu: &mut Cpu,
+    mem: &mut CacheController,
+    mem_size: usize,
+) -> Result<(), String> {
+    riscv32::install_image(&mut mem.ram, image).map_err(|e| e.to_string())?;
+    cpu.pc = u32::try_from(image.entry).map_err(|_| "entry point exceeds RV32".to_string())?;
     cpu.write(2, mem_size as u32);
-
-    let bss_end = data_base
-        .wrapping_add(data_bytes.len() as u32)
-        .wrapping_add(bss_sz);
-    cpu.heap_break = (bss_end.wrapping_add(15)) & !15;
-
+    cpu.heap_break = riscv32::heap_break_after(image);
     Ok(())
 }

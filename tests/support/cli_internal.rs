@@ -1,7 +1,7 @@
 use super::{
-    HeadlessHart, PipelineReport, format_csv, format_json, format_rstats, parse_expect_mem_spec,
-    parse_expect_reg_spec, run_headless_multihart_sequential, run_headless_sequential,
-    service_pending_hart_start, validate_expectations,
+    HeadlessHart, PipelineReport, format_csv, format_json, format_rstats, load_falc,
+    parse_expect_mem_spec, parse_expect_reg_spec, run_headless_multihart_sequential,
+    run_headless_sequential, service_pending_hart_start, validate_expectations,
 };
 use crate::falcon::asm::assemble;
 use crate::falcon::cache::{CacheConfig, CacheController};
@@ -15,6 +15,42 @@ fn expect_reg_spec_supports_alias_and_hex() {
     let (reg, value) = parse_expect_reg_spec("a0=0x2a").expect("spec should parse");
     assert_eq!(reg, 10);
     assert_eq!(value, 42);
+}
+
+#[test]
+fn expect_reg_spec_accepts_numbered_form_within_the_register_file() {
+    assert_eq!(parse_expect_reg_spec("r2=1").expect("r2 is valid").0, 2);
+    // Out-of-range indices must be rejected here: the index later addresses a
+    // 32-entry array, so letting one through is a panic, not a wrong answer.
+    assert!(parse_expect_reg_spec("r99=1").is_err());
+    assert!(parse_expect_reg_spec("r32=1").is_err());
+}
+
+/// `raven build` emits FALC v2, so the v2 loader has to set up the same guest
+/// state the v1 loader did — including the program break that `brk`/`sbrk`
+/// hand out.
+#[test]
+fn falc_v2_load_sets_the_program_break_past_the_image() {
+    let source = ".data\nbuf: .space 64\n.text\n    li a0, 1\n    halt\n";
+    let image = crate::riscv32::architecture()
+        .assembler()
+        .assemble(source, 0)
+        .expect("program should assemble");
+    let bytes = image.to_falc_v2().expect("image should serialize");
+
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        64 * 1024,
+    );
+    load_falc(&bytes, &mut cpu, &mut mem, 64 * 1024).expect("v2 image should load");
+
+    let end = image.end_address() as u32;
+    assert!(end > 0, "the fixture must actually occupy memory");
+    assert!(cpu.heap_break >= end, "heap must start past the image");
+    assert_eq!(cpu.heap_break % 16, 0, "heap break must be 16-byte aligned");
 }
 
 #[test]

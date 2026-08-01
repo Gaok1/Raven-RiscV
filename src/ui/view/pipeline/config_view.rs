@@ -26,7 +26,8 @@ const CONFIG_LABEL_W: usize = 18;
 const LATENCY_LABEL_W: usize = 8;
 
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
-    let p = &app.run.pipeline();
+    let p = app.run.pipeline();
+    let view = app.run.pipeline_view();
 
     let inner = render_panel(
         f,
@@ -95,8 +96,8 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
 
     let mut rects = [(0u16, 0u16, 0u16); PipelineBypassConfig::CONFIG_ROWS];
     for (idx, label, val) in &rows_data {
-        let highlight = p.config_cursor == *idx;
-        let hovered = p.hover_config_row == Some(*idx);
+        let highlight = view.config_cursor == *idx;
+        let hovered = view.hover_config_row == Some(*idx);
         let state = ControlState::from(highlight, hovered);
         let value = match val {
             Val::Bool(b) => bool_value(*b, hovered),
@@ -124,9 +125,9 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
             }
         }
     }
-    app.run.pipeline().config_row_rects.set(rects);
+    app.run.pipeline_view().config_row_rects.set(rects);
 
-    let desc_row = p.config_cursor;
+    let desc_row = view.config_cursor;
     let desc_lines = config_description_lines(desc_row);
     if rows.len() > 16 {
         for (i, line) in desc_lines.into_iter().enumerate() {
