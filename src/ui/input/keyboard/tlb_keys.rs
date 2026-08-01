@@ -95,7 +95,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                         app.tlb.vm_settings_scroll.saturating_add(1).min(max);
                 }
                 VmSubtab::Tlb => {
-                    let total = app.run.mem().mmu().tlb.entries.len();
+                    let total = app.native().mem().mmu().tlb.entries.len();
                     let next = app.tlb.entries_scroll.saturating_add(1);
                     app.tlb.entries_scroll = next.min(total.saturating_sub(1));
                 }
@@ -142,7 +142,7 @@ fn next_subtab(cur: VmSubtab, forward: bool) -> VmSubtab {
 pub(crate) fn select(app: &mut App, vm: VmSubtab) {
     app.tlb.vm_subtab = vm;
     if matches!(vm, VmSubtab::Settings) {
-        app.tlb.pending = app.run.mem().mmu().tlb.config.clone();
+        app.tlb.pending = app.native().mem().mmu().tlb.config.clone();
         app.tlb.vm_edit_field = None;
         app.tlb.vm_edit_buf.clear();
         app.tlb.map_status = None;

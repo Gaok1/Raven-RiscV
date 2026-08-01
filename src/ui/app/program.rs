@@ -158,22 +158,22 @@ impl App {
     /// Rebuild the RV32 runtime's CPU and memory hierarchy from the current
     /// cache, TLB and VM settings, ready to receive a program.
     pub(super) fn reset_native_runtime(&mut self) {
-        self.run.prev_x = self.run.cpu().x;
+        self.run.prev_x = self.native().cpu().x;
         self.run.mem_size = self.ram_override.unwrap_or(super::DEFAULT_MEM_SIZE);
-        *self.run.machine.cpu_mut_unjournaled() = Cpu::default();
-        self.run.machine.cpu_mut_unjournaled().pc = self.run.base_pc;
+        *self.native_mut().cpu_mut_unjournaled() = Cpu::default();
+        self.native_mut().cpu_mut_unjournaled().pc = self.run.base_pc;
         self.run.prev_pc = self.run.base_pc;
         self.run
             .machine
             .cpu_mut_unjournaled()
             .write(2, self.run.mem_size as u32);
-        *self.run.machine.mem_mut_unjournaled() = CacheController::new(
+        *self.native_mut().mem_mut_unjournaled() = CacheController::new(
             self.cache.pending_icache.clone(),
             self.cache.pending_dcache.clone(),
             self.cache.extra_pending.clone(),
             self.run.mem_size,
         );
-        self.run.machine.mem_mut_unjournaled().bypass = !self.run.cache_enabled;
+        self.native_mut().mem_mut_unjournaled().bypass = !self.run.cache_enabled;
         self.run
             .machine
             .mem_mut_unjournaled()
@@ -190,15 +190,15 @@ impl App {
     fn fill_native_memory(&mut self, image: &ProgramImage) -> Result<(), String> {
         let entry =
             u32::try_from(image.entry).map_err(|_| "entry point exceeds RV32".to_string())?;
-        crate::riscv32::install_image(&mut self.run.machine.mem_mut_unjournaled().ram, image)
+        crate::riscv32::install_image(&mut self.native_mut().mem_mut_unjournaled().ram, image)
             .map_err(|error| error.to_string())?;
-        self.run.machine.mem_mut_unjournaled().invalidate_all();
-        self.run.machine.mem_mut_unjournaled().reset_stats();
+        self.native_mut().mem_mut_unjournaled().invalidate_all();
+        self.native_mut().mem_mut_unjournaled().reset_stats();
 
-        self.run.machine.cpu_mut_unjournaled().pc = entry;
+        self.native_mut().cpu_mut_unjournaled().pc = entry;
         self.run.prev_pc = entry;
         self.run.heap_start = crate::riscv32::heap_break_after(image);
-        self.run.machine.cpu_mut_unjournaled().heap_break = self.run.heap_start;
+        self.native_mut().cpu_mut_unjournaled().heap_break = self.run.heap_start;
         self.run.data_base = data_base(image, self.run.base_pc);
         self.run.mem_view_addr = self.run.data_base;
         self.run.mem_region = MemRegion::Data;
@@ -234,7 +234,7 @@ impl App {
         self.reset_exec_regions_to_loaded_text();
         self.sync_pipeline_program_range();
         self.install_didactic_page_map();
-        let pc = self.run.cpu().pc;
+        let pc = self.native().cpu().pc;
         self.run.reset_pipeline_stages(pc);
         self.rebuild_harts();
     }
@@ -260,8 +260,8 @@ impl App {
             window,
         );
         let satp = crate::falcon::mmu::Mmu::make_satp(root_pa, self.tlb.page_map.asid);
-        self.run.machine.cpu_mut_unjournaled().satp = satp;
-        let mmu = self.run.machine.mem_mut_unjournaled().mmu_mut();
+        self.native_mut().cpu_mut_unjournaled().satp = satp;
+        let mmu = self.native_mut().mem_mut_unjournaled().mmu_mut();
         mmu.satp = crate::falcon::mmu::Satp::new(satp);
         mmu.force_translate = true;
     }

@@ -46,7 +46,7 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
         ctx.format,
         &ctx.disasm,
         ctx.comment.as_deref(),
-        Some(app.run.cpu()),
+        Some(app.native().cpu()),
         app,
         &ctx,
     );
@@ -120,7 +120,7 @@ struct DetailContext {
 fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Option<String>)> {
     use crate::falcon::decoder::decode;
     use crate::falcon::instruction::Instruction::*;
-    let cpu = app.run.cpu();
+    let cpu = app.native().cpu();
     let (taken, target) = match decode(word) {
         Ok(Beq { rs1, rs2, imm }) => (
             cpu.x[rs1 as usize] == cpu.x[rs2 as usize],
@@ -160,11 +160,11 @@ fn detail_context(app: &App) -> DetailContext {
     let selected = app
         .run
         .details_addr
-        .and_then(|addr| app.run.mem().peek32(addr).ok().map(|word| (addr, word)));
+        .and_then(|addr| app.native().mem().peek32(addr).ok().map(|word| (addr, word)));
     let (addr, word, origin) = if let Some((addr, word)) = selected {
         (addr, word, "selected")
     } else if exec_address_in_range(app, pc) {
-        (pc, app.run.mem().peek32(pc).unwrap_or(0), "PC")
+        (pc, app.native().mem().peek32(pc).unwrap_or(0), "PC")
     } else {
         return DetailContext {
             addr: pc,
@@ -320,9 +320,9 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
         let base_cycles = crate::ui::app::classify_cpi_for_display(
             ctx.word,
             ctx.addr,
-            app.run.cpu(),
+            app.native().cpu(),
             &app.run.cpi_config,
-            app.run.pipeline().enabled,
+            app.native().pipeline().enabled,
         );
         lines.push(Line::from(vec![
             Span::styled("  cycles  ", style::label()),

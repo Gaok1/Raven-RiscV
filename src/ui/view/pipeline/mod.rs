@@ -30,7 +30,13 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(2), Constraint::Min(0)])
         .split(area);
 
-    render_header(f, layout[0], app, app.run.pipeline_inspect());
+    // The tab is only offered to a backend that declares a pipeline, so `None`
+    // here means the capability went away under us — draw nothing rather than
+    // an empty datapath.
+    let Some(pipeline) = app.pipeline() else {
+        return;
+    };
+    render_header(f, layout[0], app, pipeline);
 
     // When pipeline is disabled the sequential visualization is available;
     // fall through to the normal rendering path.
@@ -52,7 +58,7 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
 
     match app.run.pipeline_view().subtab {
         PipelineSubtab::Main => {
-            main_view::render_pipeline_main(f, layout[1], app, app.run.pipeline_inspect())
+            main_view::render_pipeline_main(f, layout[1], app, pipeline)
         }
         PipelineSubtab::Config => config_view::render_pipeline_config(f, layout[1], app),
     }

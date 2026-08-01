@@ -26,7 +26,7 @@ const CONFIG_LABEL_W: usize = 18;
 const LATENCY_LABEL_W: usize = 8;
 
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
-    let p = app.run.pipeline();
+    let p = app.native().pipeline();
     let view = app.run.pipeline_view();
 
     let inner = render_panel(

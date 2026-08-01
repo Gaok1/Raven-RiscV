@@ -19,17 +19,17 @@ pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
 pub(super) fn format_stale_value(app: &App, addr: u32) -> String {
     match app.run.mem_view_bytes {
         4 => format_u32_value(
-            app.run.mem().peek32(addr).unwrap_or(0),
+            app.native().mem().peek32(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         2 => format_u16_value(
-            app.run.mem().peek16(addr).unwrap_or(0),
+            app.native().mem().peek16(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),
         _ => format_u8_value(
-            app.run.mem().peek8(addr).unwrap_or(0),
+            app.native().mem().peek8(addr).unwrap_or(0),
             app.run.fmt_mode,
             app.run.show_signed,
         ),

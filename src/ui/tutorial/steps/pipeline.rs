@@ -41,7 +41,7 @@ fn main_plan(content: Rect, app: &App) -> crate::ui::view::pipeline::MainLayoutP
     crate::ui::view::pipeline::plan_main_layout(
         content.height,
         content.width,
-        app.run.pipeline().hazard_traces.len(),
+        app.native().pipeline().hazard_traces.len(),
     )
 }
 

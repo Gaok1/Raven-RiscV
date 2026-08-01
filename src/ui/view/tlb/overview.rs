@@ -34,7 +34,7 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mmu = app.run.mem().mmu();
+    let mmu = app.native().mem().mmu();
     let satp_mode = mmu.satp.mode();
     let priv_mode = mmu.priv_mode;
     let active = super::translation_active(app);

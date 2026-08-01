@@ -255,7 +255,7 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
     let mut sim = serialize_rcfg(
         &app.run.cpi_config,
         app.run.cache_enabled,
-        app.run.pipeline().enabled,
+        app.native().pipeline().enabled,
         app.vm_mode(),
         &app.active_scheme(),
         app.run.trace_syscalls,
@@ -271,7 +271,7 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
         &app.cache.extra_pending,
         &app.tlb.pending,
     );
-    let pipeline = serialize_pcfg(app.run.pipeline(), app.run.pipeline_view().speed);
+    let pipeline = serialize_pcfg(app.native().pipeline(), app.run.pipeline_view().speed);
     wrap_config_v3(&sim, &cache, &pipeline)
 }
 
@@ -282,7 +282,7 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
     app.cache.pending_dcache = cfg.dcfg;
     let n_extra = cfg.extra.len();
     app.cache.extra_pending = cfg.extra;
-    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
+    app.native_mut().mem_mut_unjournaled().extra_levels.clear();
     for c in &app.cache.extra_pending {
         app.run
             .machine
@@ -300,7 +300,7 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
         .mmu_mut()
         .tlb
         .reconfigure(cfg.tlb);
-    cfg.pipeline.apply_to_state(app.run.pipeline_mut());
+    cfg.pipeline.apply_to_state(app.native_mut().pipeline_mut());
     app.run.pipeline_view_mut().speed = cfg.pipeline.speed;
     // Sim settings applied last: may trigger a simulation restart.
     apply_rcfg(app, cfg.sim);
@@ -653,7 +653,7 @@ pub(super) fn make_level_snapshot(
 }
 
 pub(super) fn capture_snapshot(app: &App) -> CacheResultsSnapshot {
-    let mem = app.run.mem();
+    let mem = app.native().mem();
     let pipeline = capture_pipeline_snapshot(app);
     let i_amat = mem.icache_amat();
     let d_amat = mem.dcache_amat();
@@ -808,7 +808,7 @@ pub(crate) fn apply_rcfg_text(app: &mut App, text: &str) -> Result<(), String> {
 /// Apply a raw .pcfg text to the app (parse + apply, no file I/O).
 pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
     let cfg = parse_pcfg(text)?;
-    cfg.apply_to_state(app.run.pipeline_mut());
+    cfg.apply_to_state(app.native_mut().pipeline_mut());
     app.run.pipeline_view_mut().speed = cfg.speed;
     Ok(())
 }
@@ -820,7 +820,7 @@ pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String>
     app.cache.pending_dcache = dcfg;
     let n_extra = extra.len();
     app.cache.extra_pending = extra;
-    app.run.machine.mem_mut_unjournaled().extra_levels.clear();
+    app.native_mut().mem_mut_unjournaled().extra_levels.clear();
     for cfg in &app.cache.extra_pending {
         app.run
             .machine

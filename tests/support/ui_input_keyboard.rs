@@ -340,7 +340,7 @@ fn pipeline_history_keyboard_scrolls_main_gantt_view() {
 #[test]
 fn run_r_key_restarts_after_exit() {
     let mut app = App::new(None);
-    app.run.pipeline_mut().enabled = false;
+    app.native_mut().pipeline_mut().enabled = false;
     app.tab = Tab::Run;
     app.mode = EditorMode::Command;
     load_program(
@@ -370,8 +370,8 @@ fn run_r_key_restarts_after_exit() {
 
     assert_eq!(outcome, KeyOutcome::Handled);
     assert!(!app.run.is_running);
-    assert_eq!(app.run.cpu().exit_code, None);
-    assert_eq!(app.run.cpu().pc, app.run.base_pc);
+    assert_eq!(app.native().cpu().exit_code, None);
+    assert_eq!(app.native().cpu().pc, app.run.base_pc);
 }
 
 #[test]
@@ -651,7 +651,7 @@ fn pipeline_step_key_is_handled_without_requesting_quit() {
     let mut app = App::new(None);
     app.tab = Tab::Pipeline;
     app.mode = EditorMode::Command;
-    app.run.pipeline_mut().enabled = true;
+    app.native_mut().pipeline_mut().enabled = true;
 
     let outcome = handle_key(
         &mut app,
@@ -683,7 +683,7 @@ fn run_step_key_advances_even_when_not_paused() {
     .expect("run step key handled");
 
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert_eq!(app.run.cpu().x[10], 7);
+    assert_eq!(app.native().cpu().x[10], 7);
 }
 
 #[test]
@@ -691,14 +691,14 @@ fn pipeline_snapshot_and_exports_use_pipeline_clock_model() {
     let mut app = App::new(None);
     app.set_cache_enabled(true);
     app.set_pipeline_enabled(true);
-    app.run.machine.mem_mut_unjournaled().instruction_count = 41;
-    app.run.machine.mem_mut_unjournaled().extra_cycles = 99;
-    app.run.pipeline_mut().cycle_count = 12;
-    app.run.pipeline_mut().instr_committed = 3;
-    app.run.pipeline_mut().stall_count = 4;
-    app.run.pipeline_mut().flush_count = 1;
-    app.run.pipeline_mut().branches_executed = 2;
-    app.run.pipeline_mut().stall_by_type = [1, 1, 1, 1, 0];
+    app.native_mut().mem_mut_unjournaled().instruction_count = 41;
+    app.native_mut().mem_mut_unjournaled().extra_cycles = 99;
+    app.native_mut().pipeline_mut().cycle_count = 12;
+    app.native_mut().pipeline_mut().instr_committed = 3;
+    app.native_mut().pipeline_mut().stall_count = 4;
+    app.native_mut().pipeline_mut().flush_count = 1;
+    app.native_mut().pipeline_mut().branches_executed = 2;
+    app.native_mut().pipeline_mut().stall_by_type = [1, 1, 1, 1, 0];
 
     let snap = capture_snapshot(&app);
     assert_eq!(snap.instruction_count, 3);

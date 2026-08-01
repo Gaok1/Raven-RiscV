@@ -3,7 +3,7 @@ use super::instr_edit::InstrFieldKind;
 use crate::falcon::jit::ExecutionBackend;
 use crate::falcon::machine::Machine;
 use crate::falcon::machine::types::{FRegId, MemWidth, RegTarget};
-use crate::falcon::{CacheController, Cpu, registers::ExecRegion};
+use crate::falcon::{CacheController, registers::ExecRegion};
 use crate::ui::editor::Editor;
 use std::time::{Duration, Instant};
 
@@ -229,58 +229,6 @@ impl RunState {
         };
         let align_mask = !(bytes - 1);
         base & align_mask
-    }
-
-    /// The runtime seen through the engine's capability traits, which it
-    /// implements directly — this is what lets the view layer draw RV32's
-    /// registers and memory with the same code it uses for every other
-    /// architecture.
-    pub(crate) fn machine(&self) -> &Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState>
-    {
-        &self.machine
-    }
-
-    pub(crate) fn machine_mut(
-        &mut self,
-    ) -> &mut Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState> {
-        &mut self.machine
-    }
-
-    /// Shared read access to the CPU. The `~117` `run.cpu` read sites borrow
-    /// through here; mutation must go through a `Machine` method.
-    pub(crate) fn cpu(&self) -> &Cpu {
-        self.machine.cpu()
-    }
-
-    /// Shared read access to the memory hierarchy. See [`RunState::cpu`].
-    pub(crate) fn mem(&self) -> &CacheController {
-        self.machine.mem()
-    }
-
-    /// Shared read access to the pipeline simulator. The pipeline lives inside
-    /// `Machine` so a clock cycle is journaled together with the CPU and memory
-    /// (see [`crate::falcon::machine::Machine::step_pipeline`]); reads borrow
-    /// through here.
-    pub(crate) fn pipeline(&self) -> &raven_riscv_engine::falcon::pipeline::PipelineSimState {
-        self.machine.pipeline()
-    }
-
-    /// Read-only pipeline data for renderers that should not depend on the
-    /// concrete RV32 simulator state.
-    pub(crate) fn pipeline_inspect(
-        &self,
-    ) -> &dyn raven_riscv_engine::capability::PipelineInspect {
-        self.machine
-            .pipeline_inspect()
-            .expect("the TUI runtime always owns an inspectable pipeline")
-    }
-
-    /// Mutable pipeline access for physical configuration and reset. Visual
-    /// interaction state is owned separately by `pipeline_view`. Does **not** journal and does **not**
-    /// clear history. Never use it to advance execution — that is
-    /// [`crate::falcon::machine::Machine::step_pipeline`].
-    pub(crate) fn pipeline_mut(&mut self) -> &mut raven_riscv_engine::falcon::pipeline::PipelineSimState {
-        self.machine.pipeline_mut()
     }
 
     pub(crate) fn pipeline_view(&self) -> &crate::ui::pipeline::PipelineViewState {

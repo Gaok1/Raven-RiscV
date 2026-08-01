@@ -167,7 +167,7 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::raw("  "),
         bool_value(
-            app.run.pipeline().enabled,
+            app.native().pipeline().enabled,
             app.settings.hover_pipeline_enabled,
         ),
     ]));

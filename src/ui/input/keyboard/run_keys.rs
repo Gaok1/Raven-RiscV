@@ -208,7 +208,7 @@ pub(super) fn cycle_memory_region(app: &mut App) {
     match app.run.mem_region {
         MemRegion::Data | MemRegion::Custom => {
             app.run.mem_region = MemRegion::Stack;
-            let sp = app.run.cpu().x[2];
+            let sp = app.native().cpu().x[2];
             app.run.mem_view_addr = sp & !(app.run.mem_view_bytes - 1);
         }
         MemRegion::Stack => {
@@ -216,7 +216,7 @@ pub(super) fn cycle_memory_region(app: &mut App) {
         }
         MemRegion::Access => {
             app.run.mem_region = MemRegion::Heap;
-            let hb = app.run.cpu().heap_break;
+            let hb = app.native().cpu().heap_break;
             app.run.mem_view_addr = hb & !(app.run.mem_view_bytes - 1);
         }
         MemRegion::Heap => {
