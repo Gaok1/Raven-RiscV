@@ -32,20 +32,7 @@ pub(super) fn handle_execution_key(app: &mut App, code: KeyCode) -> bool {
             true
         }
         KeyCode::Char('p') | KeyCode::Char(' ') => {
-            if app.trait_driven() {
-                app.machine_toggle_run();
-                return true;
-            }
-            if app.run.is_running {
-                app.run.is_running = false;
-            } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
-                || !app.run.faulted
-            {
-                app.resume_selected_hart();
-                if app.can_start_run() {
-                    app.run.is_running = true;
-                }
-            }
+            app.toggle_run();
             true
         }
         _ => false,

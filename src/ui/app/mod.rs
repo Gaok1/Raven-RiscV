@@ -518,15 +518,19 @@ impl App {
         self.architecture.descriptor().id
     }
 
-    /// True when the active backend is driven entirely through the engine's
-    /// `Machine` trait.
+    /// True when the active backend is *stepped* through the engine's `Machine`
+    /// trait rather than the native runtime in [`RunState`].
     ///
-    /// False for RV32 alone, and not because of its name: the Run, Cache,
-    /// Virtual Memory and Pipeline tabs drive microarchitectural state the
-    /// trait does not model, so RV32 runs on the native runtime in
-    /// [`RunState`] instead. Every backend-neutral step — assembling,
-    /// diagnostics, image loading, build statistics — is shared either way.
-    pub(crate) fn trait_driven(&self) -> bool {
+    /// This says nothing about what the UI can draw: every pane reads backend
+    /// state through the capability accessors above, so all architectures get
+    /// the same tabs. What remains behind this flag is execution control that
+    /// the trait does not cover — multi-hart scheduling, JIT backend selection,
+    /// breakpoints and step-back. RV32 owns those, so it still runs natively.
+    ///
+    /// Collapsing the two is the remaining step: `RiscV32Machine` already wraps
+    /// the very runtime `RunState` holds, so this fork is ownership, not
+    /// capability.
+    pub(crate) fn uses_trait_runtime(&self) -> bool {
         self.machine.is_some()
     }
 
@@ -563,7 +567,7 @@ impl App {
         self.run.is_running = false;
         self.architecture = architecture;
         self.machine = machine;
-        if self.trait_driven() && self.architecture.descriptor().capabilities.cache {
+        if self.uses_trait_runtime() && self.architecture.descriptor().capabilities.cache {
             self.run.cache_enabled = true;
         }
         self.editor.last_ok_image = None;
@@ -769,6 +773,32 @@ impl App {
 
     /// Run/pause for a trait-driven backend. A program that already finished is
     /// reset first, so the key restarts it rather than doing nothing.
+    /// Run/pause, whichever runtime drives the active backend.
+    ///
+    /// The single place that fork lives. Every caller — the Run tab key, the
+    /// Cache tab key, the toolbar button — goes through here, so the two paths
+    /// cannot drift apart in what a spacebar means.
+    pub(crate) fn toggle_run(&mut self) {
+        if self.machine.is_some() {
+            self.machine_toggle_run();
+            return;
+        }
+        if self.run.is_running {
+            self.run.is_running = false;
+            return;
+        }
+        if self.core_status(self.selected_core) == HartLifecycle::Exited {
+            self.restart_simulation();
+        } else if self.core_status(self.selected_core) == HartLifecycle::Paused
+            || !self.run.faulted
+        {
+            self.resume_selected_hart();
+        }
+        if self.can_start_run() {
+            self.run.is_running = true;
+        }
+    }
+
     pub(crate) fn machine_toggle_run(&mut self) {
         if self.run.is_running {
             self.run.is_running = false;
@@ -1042,7 +1072,7 @@ impl App {
         let Some(image) = self.editor.last_ok_image.clone() else {
             return;
         };
-        if !self.trait_driven() {
+        if !self.uses_trait_runtime() {
             self.reset_screen_device();
         }
         if !self.install_program(&image) {
@@ -1098,11 +1128,11 @@ impl App {
             Ok(image) => image,
             Err(error) => {
                 self.console.push_error(error);
-                self.run.faulted = !self.trait_driven();
+                self.run.faulted = !self.uses_trait_runtime();
                 return;
             }
         };
-        if !self.trait_driven() {
+        if !self.uses_trait_runtime() {
             self.reset_screen_device();
             // The container names where it runs; the panes key off `base_pc`.
             self.run.base_pc = u32::try_from(image.entry).unwrap_or(self.run.base_pc);
@@ -1216,7 +1246,7 @@ impl App {
         let Some(text_words) = self.editor.last_ok_text.as_ref() else {
             return;
         };
-        let source = crate::ui::view::disasm::elf_to_asm_source(
+        let source = crate::elf_listing::elf_to_asm_source(
             text_words,
             self.run.base_pc,
             &self.run.labels,
@@ -1937,7 +1967,7 @@ impl App {
         // A trait-driven backend has one gear: step while running. The rest of
         // this method is the native runtime's — speed limiting, GO checkpoints,
         // pipeline cycles, background harts — none of which the trait models.
-        if self.trait_driven() {
+        if self.uses_trait_runtime() {
             if self.run.is_running {
                 match self.run.speed {
                     RunSpeed::X1 | RunSpeed::X2 => {
@@ -2825,7 +2855,7 @@ impl App {
     pub(super) fn single_step(&mut self) {
         // One instruction is the whole of "step" for a trait-driven backend;
         // below, a step may be a pipeline cycle or a round of every hart.
-        if self.trait_driven() {
+        if self.uses_trait_runtime() {
             self.machine_step();
             return;
         }

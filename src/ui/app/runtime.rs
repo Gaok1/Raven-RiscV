@@ -164,7 +164,7 @@ impl App {
 
     pub(in crate::ui) fn set_cache_enabled(&mut self, enabled: bool) {
         self.run.cache_enabled = enabled;
-        if !self.trait_driven() {
+        if !self.uses_trait_runtime() {
             self.run.machine.mem_mut_unjournaled().bypass = !enabled;
             self.run.machine.mem_mut_unjournaled().flush_all();
         }

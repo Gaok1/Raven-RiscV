@@ -1509,7 +1509,7 @@ pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path) {
         || std::str::from_utf8(&bytes).is_err();
     if is_binary {
         app.load_binary(&bytes);
-        use crate::ui::view::disasm::disasm_word;
+        use crate::elf_listing::disasm_word;
         let lines: Vec<String> = if let Some(ref words) = app.editor.last_ok_text {
             words.iter().map(|&w| disasm_word(w)).collect()
         } else {
@@ -1574,7 +1574,7 @@ pub(super) fn dispatch_path_input(
         PathInputAction::OpenBin => {
             if let Ok(bytes) = std::fs::read(&path) {
                 app.load_binary(&bytes);
-                use crate::ui::view::disasm::disasm_word;
+                use crate::elf_listing::disasm_word;
                 let lines: Vec<String> = if let Some(ref words) = app.editor.last_ok_text {
                     words.iter().map(|&w| disasm_word(w)).collect()
                 } else {

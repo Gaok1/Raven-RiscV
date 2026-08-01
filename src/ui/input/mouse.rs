@@ -625,30 +625,7 @@ fn apply_run_button(app: &mut App, btn: RunButton) {
         RunButton::InstrType => {
             app.run.show_instr_type = !app.run.show_instr_type;
         }
-        RunButton::State => {
-            if app.trait_driven() {
-                app.machine_toggle_run();
-                return;
-            }
-            if app.run.is_running {
-                app.run.is_running = false;
-            } else if matches!(
-                app.core_status(app.selected_core),
-                crate::ui::app::HartLifecycle::Exited
-            ) {
-                app.restart_simulation();
-                if app.can_start_run() {
-                    app.run.is_running = true;
-                }
-            } else if app.core_status(app.selected_core) == crate::ui::app::HartLifecycle::Paused
-                || !app.run.faulted
-            {
-                app.resume_selected_hart();
-                if app.can_start_run() {
-                    app.run.is_running = true;
-                }
-            }
-        }
+        RunButton::State => app.toggle_run(),
         RunButton::Stepback => {
             app.stepback_one();
         }
@@ -1163,7 +1140,7 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
                 app.load_binary(&bytes);
                 // Build editor disassembly from the already-decoded text words (ELF text
                 // segment or FALC/flat text section), not from raw file bytes.
-                use crate::ui::view::disasm::disasm_word;
+                use crate::elf_listing::disasm_word;
                 let lines: Vec<String> = if let Some(ref words) = app.editor.last_ok_text {
                     words.iter().map(|&w| disasm_word(w)).collect()
                 } else {

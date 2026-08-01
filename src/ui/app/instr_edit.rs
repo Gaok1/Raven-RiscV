@@ -121,7 +121,7 @@ pub(crate) fn seed_field(word: u32, field: InstrFieldKind) -> String {
     match field {
         Word => String::new(),
         Asm => match crate::falcon::decoder::decode(word) {
-            Ok(_) => crate::ui::view::disasm::disasm_word(word),
+            Ok(_) => crate::elf_listing::disasm_word(word),
             Err(_) => String::new(),
         },
         Bin => format!("{word:032b}"),

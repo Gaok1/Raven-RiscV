@@ -2219,7 +2219,7 @@ fn toy16_is_a_runtime_app_backend_with_cache_and_capability_gated_tabs() {
     )
     .unwrap();
     assert_eq!(app.architecture_id(), "toy16");
-    assert!(app.trait_driven());
+    assert!(app.uses_trait_runtime());
     assert!(app.tab_visible(Tab::Cache));
     assert!(!app.tab_visible(Tab::Tlb));
     assert!(!app.tab_visible(Tab::Pipeline));

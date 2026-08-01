@@ -149,7 +149,7 @@ impl App {
             // stop saying it is fine.
             self.editor.last_compile_ok = Some(false);
             self.console.push_error(error);
-            self.run.faulted = !self.trait_driven();
+            self.run.faulted = !self.uses_trait_runtime();
             return false;
         }
         true
@@ -213,7 +213,7 @@ impl App {
     /// none of those panes.
     pub(super) fn adopt_program(&mut self, image: &ProgramImage, offsets: Vec<usize>) {
         self.store_image_source_meta(image, offsets);
-        if self.trait_driven() {
+        if self.uses_trait_runtime() {
             return;
         }
         self.run.comments = narrow(image.source_map.comments.clone());
@@ -275,7 +275,7 @@ impl App {
     /// reaches here — it carries a symbol table and a section list a
     /// [`ProgramImage`] cannot express, so it keeps its own path.
     pub(super) fn decode_binary(&self, bytes: &[u8]) -> Result<ProgramImage, String> {
-        if self.trait_driven() {
+        if self.uses_trait_runtime() {
             let image = ProgramImage::from_falc(bytes).map_err(|error| error.to_string())?;
             let id = self.architecture_id();
             return image

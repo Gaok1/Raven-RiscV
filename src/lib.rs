@@ -1,3 +1,4 @@
+pub mod elf_listing;
 pub mod arch;
 pub mod cli;
 pub use raven_riscv_engine::architectures::riscv32;

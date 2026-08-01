@@ -13,7 +13,6 @@ use crate::ui::view::components::{ControlState, Toolbar};
 
 pub(crate) mod cache;
 pub(crate) mod components;
-pub mod disasm;
 pub mod docs;
 mod editor;
 mod path_input_overlay;
