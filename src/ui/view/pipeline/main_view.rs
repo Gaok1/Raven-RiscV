@@ -1,10 +1,5 @@
 use crate::ui::app::App;
 use crate::ui::pipeline::{FuKind, InstrClass, gantt_visible_rows};
-use raven_riscv_engine::capability::{
-    PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
-    PipelineStageRole, PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind,
-    PipelineTraceView,
-};
 use crate::ui::theme;
 use crate::ui::view::style;
 use ratatui::{
@@ -13,6 +8,11 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
+};
+use raven_engine::capability::{
+    PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
+    PipelineStageRole, PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind,
+    PipelineTraceView,
 };
 
 use unicode_truncate::UnicodeTruncateStr;
@@ -121,12 +121,7 @@ pub(crate) fn plan_main_layout(h: u16, w: u16, n_traces: usize) -> MainLayoutPla
     }
 }
 
-pub fn render_pipeline_main(
-    f: &mut Frame,
-    area: Rect,
-    app: &App,
-    pipeline: &dyn PipelineInspect,
-) {
+pub fn render_pipeline_main(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn PipelineInspect) {
     let plan = plan_main_layout(area.height, area.width, pipeline.trace_count());
 
     if plan.collapsed {
@@ -168,7 +163,9 @@ fn render_collapsed_strip(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInsp
         }
         spans.push(Span::styled(
             format!("{} ", stage.name),
-            Style::default().fg(theme::LABEL_Y).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::LABEL_Y)
+                .add_modifier(Modifier::BOLD),
         ));
         let text = match stage.slot {
             None => "—".to_string(),
@@ -193,12 +190,7 @@ fn render_collapsed_strip(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInsp
 
 // ── Stage boxes ───────────────────────────────────────────────────────────────
 
-fn render_stages(
-    f: &mut Frame,
-    area: Rect,
-    pipeline: &dyn PipelineInspect,
-    fu_in_ex_title: bool,
-) {
+fn render_stages(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInspect, fu_in_ex_title: bool) {
     // Laid out in the graph's flow order, not index order: a backend whose
     // stages are not numbered along the datapath still draws left to right in
     // the order instructions actually move through it.
@@ -542,12 +534,7 @@ pub(crate) fn fu_strip_is_compact(w: u16) -> bool {
     w < 90
 }
 
-fn render_fu_strip(
-    f: &mut Frame,
-    area: Rect,
-    app: &App,
-    pipeline: &dyn PipelineInspect,
-) {
+fn render_fu_strip(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn PipelineInspect) {
     let cpi = &app.session.cpi_config;
     let wide = !fu_strip_is_compact(area.width);
 
@@ -773,10 +760,7 @@ fn render_hazard_row(
     ])
 }
 
-fn trace_stage_summary(
-    pipeline: &dyn PipelineInspect,
-    trace: &PipelineTraceView<'_>,
-) -> String {
+fn trace_stage_summary(pipeline: &dyn PipelineInspect, trace: &PipelineTraceView<'_>) -> String {
     format!(
         "{} -> {}",
         stage_name_from_idx(pipeline, trace.from_stage),
@@ -788,10 +772,7 @@ fn stage_name_from_idx(pipeline: &dyn PipelineInspect, index: usize) -> &str {
     pipeline.stage(index).map_or("?", |stage| stage.name)
 }
 
-fn speculative_compact_badge(
-    slot: &PipelineSlotView<'_>,
-    width: usize,
-) -> Option<(String, Style)> {
+fn speculative_compact_badge(slot: &PipelineSlotView<'_>, width: usize) -> Option<(String, Style)> {
     if !slot.speculative {
         return None;
     }
@@ -818,12 +799,7 @@ fn trace_badge_style(kind: PipelineTraceKind) -> Style {
 
 // ── Gantt diagram ─────────────────────────────────────────────────────────────
 
-fn render_gantt(
-    f: &mut Frame,
-    area: Rect,
-    app: &App,
-    pipeline: &dyn PipelineInspect,
-) {
+fn render_gantt(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn PipelineInspect) {
     let view = app.run.pipeline_view();
 
     const LABEL_W: usize = 12;
@@ -869,7 +845,8 @@ fn render_gantt(
     let end_row = pipeline.timeline_len().saturating_sub(scroll);
     let start_row = end_row.saturating_sub(visible_capacity.max(1));
     let visible_rows = start_row..end_row;
-    let (start_cycle, end_cycle) = timeline_window_bounds(pipeline, visible_rows.clone(), history_cols);
+    let (start_cycle, end_cycle) =
+        timeline_window_bounds(pipeline, visible_rows.clone(), history_cols);
 
     let mut header_spans = vec![Span::styled(
         format!("{:<width$}", "instr", width = LABEL_W),
@@ -919,11 +896,13 @@ fn render_gantt(
                 }
             } else {
                 let cell_idx = (c - row.first_cycle) as usize;
-                pipeline.timeline_cell(row_index, cell_idx).unwrap_or(PipelineTimelineCell {
-                    label: "·",
-                    state: PipelineTimelineState::Empty,
-                    role: PipelineStageRole::Other,
-                })
+                pipeline
+                    .timeline_cell(row_index, cell_idx)
+                    .unwrap_or(PipelineTimelineCell {
+                        label: "·",
+                        state: PipelineTimelineState::Empty,
+                        role: PipelineStageRole::Other,
+                    })
             };
             let (text, style) = if is_invalid {
                 let (t, _) = cell_to_span(cell);
@@ -957,7 +936,8 @@ fn timeline_window_bounds(
         if row.cells == 0 {
             continue;
         }
-        min_start = Some(min_start.map_or(row.first_cycle, |start: u64| start.min(row.first_cycle)));
+        min_start =
+            Some(min_start.map_or(row.first_cycle, |start: u64| start.min(row.first_cycle)));
         let row_end = row.first_cycle.saturating_add(row.cells as u64);
         max_end = Some(max_end.map_or(row_end, |end: u64| end.max(row_end)));
     }
@@ -1000,7 +980,7 @@ mod tests {
     use crate::ui::pipeline::{
         FuKind, FuState, GanttCell, HazardTrace, HazardType, PipeSlot, Stage, TraceKind,
     };
-    use raven_riscv_engine::capability::{
+    use raven_engine::capability::{
         PipelineHazardKind, PipelineInstructionClass, PipelineSlotView, PipelineStageRole,
         PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
     };
@@ -1053,11 +1033,7 @@ mod tests {
             (PipelineStageRole::Commit, "WAIT"),
         ] {
             assert_eq!(
-                compact_stage_hazard_label(
-                    role,
-                    Some(&waiting),
-                    PipelineHazardKind::MemoryLatency
-                ),
+                compact_stage_hazard_label(role, Some(&waiting), PipelineHazardKind::MemoryLatency),
                 expected,
                 "{role:?}"
             );
@@ -1221,3 +1197,4 @@ mod tests {
         assert!(mirror.is_some());
     }
 }
+

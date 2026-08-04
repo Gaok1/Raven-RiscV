@@ -2,7 +2,7 @@
 
 use crate::falcon::{CacheController, Cpu};
 use crate::riscv32;
-use raven_riscv_engine::ProgramImage;
+use raven_engine::ProgramImage;
 
 // ── Loaders ───────────────────────────────────────────────────────────────────
 

@@ -396,7 +396,10 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
             if i > 0 {
                 r.raw("  ");
             }
-            r.hit(Hit::Preset(i), dense_action(label, theme::ACCENT, hov_preset(i)));
+            r.hit(
+                Hit::Preset(i),
+                dense_action(label, theme::ACCENT, hov_preset(i)),
+            );
         }
         rows.push(r);
     }

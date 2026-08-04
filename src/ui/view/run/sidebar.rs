@@ -2,22 +2,19 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell, List, ListItem, Paragraph, Row, Table};
 
-use super::formatting::{
-    format_memory_value, format_register_value, format_stale_value,
-};
+use super::formatting::{format_memory_value, format_register_value, format_stale_value};
 use super::{App, MemRegion};
 use crate::ui::app::{NO_REG_AGE, RunEditTarget};
-use raven_riscv_engine::capability::{RegisterEntry, RegisterId};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{SbGeom, vertical_scrollbar};
 use crate::ui::view::style;
+use raven_engine::capability::{RegisterEntry, RegisterId};
 
 /// The cursor-suffixed edit buffer to paint in a cell, when it is the target of
 /// the open inline editor. `None` means render the cell's value normally.
 fn edit_overlay(app: &App, target: Option<RunEditTarget>) -> Option<String> {
-    (target.is_some() && app.run.run_edit == target)
-        .then(|| format!("{}█", app.run.run_edit_buf))
+    (target.is_some() && app.run.run_edit == target).then(|| format!("{}█", app.run.run_edit_buf))
 }
 
 /// Like [`edit_overlay`] for the memory cell at `addr`.
@@ -86,7 +83,12 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
     if total > viewport && viewport > 0 {
         let max_scroll = total - viewport;
         let start = app.run.regs_scroll.min(max_scroll);
-        let sb_area = Rect::new(inner.x, inner.y + offset as u16, inner.width, viewport as u16);
+        let sb_area = Rect::new(
+            inner.x,
+            inner.y + offset as u16,
+            inner.width,
+            viewport as u16,
+        );
         vertical_scrollbar(f, sb_area, total, viewport, start);
         app.run.regs_sb.set(Some(SbGeom {
             start: sb_area.y,
@@ -303,9 +305,9 @@ fn render_secondary_bank_table(f: &mut Frame, area: Rect, app: &App) {
             let label = format!("{} ", entry_label(entry));
             let (value, value_style) =
                 match edit_overlay(app, Some(RunEditTarget::Register(entry.id))) {
-                Some(overlay) => (overlay, edit_value_style()),
-                None => (entry_value(app, entry), style),
-            };
+                    Some(overlay) => (overlay, edit_value_style()),
+                    None => (entry_value(app, entry), style),
+                };
             Row::new(vec![
                 Cell::from(label).style(style),
                 Cell::from(value).style(value_style),
@@ -489,7 +491,10 @@ fn classify_memory_section<'a>(app: &'a App, addr: u32) -> &'a str {
         }
     }
 
-    let data_base = app.editor.last_ok_data_base.unwrap_or(app.session.data_base);
+    let data_base = app
+        .editor
+        .last_ok_data_base
+        .unwrap_or(app.session.data_base);
     let data_len = app
         .editor
         .last_ok_data
@@ -564,20 +569,21 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
     let is_hb = addr == hb_aligned;
 
     let cache_presence = if app.session.cache_enabled {
-        app.rv32().and_then(|rv32| cache_presence_label(rv32.mem(), addr))
+        app.rv32()
+            .and_then(|rv32| cache_presence_label(rv32.mem(), addr))
     } else {
         None
     };
     let data_cache_loc = if app.session.cache_enabled {
-        app.rv32().and_then(|rv32| rv32.mem().data_cache_location(addr))
+        app.rv32()
+            .and_then(|rv32| rv32.mem().data_cache_location(addr))
     } else {
         None
     };
-    let is_dirty =
-        app.session.cache_enabled
-            && app
-                .rv32()
-                .is_some_and(|rv32| rv32.mem().is_dirty_cached(addr, app.run.mem_view_bytes));
+    let is_dirty = app.session.cache_enabled
+        && app
+            .rv32()
+            .is_some_and(|rv32| rv32.mem().is_dirty_cached(addr, app.run.mem_view_bytes));
 
     // Check if any recent memory access overlaps this row's byte range
     let row_end = addr.wrapping_add(app.run.mem_view_bytes);
@@ -766,7 +772,12 @@ fn elf_sections_height(app: &App) -> u16 {
         lines += 1; // section header line
         if sec.bytes.is_empty() {
             // Count any symbol label at the section base address
-            lines += app.session.labels.get(&sec.addr).map(|v| v.len()).unwrap_or(0);
+            lines += app
+                .session
+                .labels
+                .get(&sec.addr)
+                .map(|v| v.len())
+                .unwrap_or(0);
             lines += 1; // bss placeholder line
         } else {
             let word_count = (sec.bytes.len() / 4).min(MAX_LINES_PER_SECTION);
@@ -895,7 +906,10 @@ mod tests {
         app.session.data_base = 0x1000;
         app.session.heap_start = 0x1040;
         app.rv32_mut().unwrap().cpu_mut_unjournaled().heap_break = 0x1080;
-        app.rv32_mut().unwrap().cpu_mut_unjournaled().write(2, 0x2000);
+        app.rv32_mut()
+            .unwrap()
+            .cpu_mut_unjournaled()
+            .write(2, 0x2000);
         app.session.mem_size = 0x2000;
         app.run.mem_view_bytes = 4;
         app
@@ -914,7 +928,10 @@ mod tests {
     #[test]
     fn stack_classification_uses_current_sp_boundary() {
         let mut app = make_app();
-        app.rv32_mut().unwrap().cpu_mut_unjournaled().write(2, 0x1ff0);
+        app.rv32_mut()
+            .unwrap()
+            .cpu_mut_unjournaled()
+            .write(2, 0x1ff0);
         assert_eq!(classify_memory_section(&app, 0x1ff0), "stack");
         assert_eq!(classify_memory_section(&app, 0x1fec), "free");
     }

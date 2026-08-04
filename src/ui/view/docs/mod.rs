@@ -3,7 +3,7 @@ mod content;
 mod free_page;
 mod instr_ref;
 
-pub(crate) use self::chrome::{ALL_MASK, FILTER_ITEMS};
+pub(crate) use self::chrome::{all_mask, filter_items, visible_pages};
 pub(crate) use self::free_page::free_page_line_count;
 pub(crate) use self::instr_ref::docs_body_line_count;
 
@@ -34,3 +34,5 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
         ),
     }
 }
+
+

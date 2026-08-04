@@ -38,11 +38,12 @@ fn run_inner(
             break;
         }
 
-        let poll_timeout = if app.session.is_running && matches!(app.session.speed, RunSpeed::Instant) {
-            Duration::ZERO
-        } else {
-            Duration::from_millis(10)
-        };
+        let poll_timeout =
+            if app.session.is_running && matches!(app.session.speed, RunSpeed::Instant) {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(10)
+            };
         match event::poll(poll_timeout) {
             Ok(true) => match event::read() {
                 Ok(Event::Key(key)) => {

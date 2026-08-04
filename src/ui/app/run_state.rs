@@ -3,8 +3,8 @@ use super::instr_edit::InstrFieldKind;
 use crate::falcon::jit::ExecutionBackend;
 use crate::falcon::machine::types::MemWidth;
 use crate::falcon::{CacheController, registers::ExecRegion};
-use raven_riscv_engine::capability::RegisterId;
 use crate::ui::editor::Editor;
+use raven_engine::capability::RegisterId;
 use std::time::{Duration, Instant};
 
 /// What the Run tab is editing inline, when [`RunView::run_edit`] is `Some`.
@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 /// whose writes are journaled (RV32's are) that also makes a manual edit
 /// undoable by step-back, exactly like an executed instruction.
 ///
-/// [`RegisterFile::write`]: raven_riscv_engine::capability::RegisterFile::write
-/// [`MemoryInspect::poke`]: raven_riscv_engine::capability::MemoryInspect::poke
-/// [`InstructionCodec`]: raven_riscv_engine::capability::InstructionCodec
+/// [`RegisterFile::write`]: raven_engine::capability::RegisterFile::write
+/// [`MemoryInspect::poke`]: raven_engine::capability::MemoryInspect::poke
+/// [`InstructionCodec`]: raven_engine::capability::InstructionCodec
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunEditTarget {
     /// A register in the backend's own file — any bank, any width. A file that
@@ -163,7 +163,7 @@ pub(crate) struct EditorState {
     /// replays this instead of re-assembling, so a restart always reloads
     /// exactly what is running rather than whatever the buffer says now.
     /// `None` while an ELF is loaded — see `last_ok_elf_bytes`.
-    pub(crate) last_ok_image: Option<raven_riscv_engine::ProgramImage>,
+    pub(crate) last_ok_image: Option<raven_engine::ProgramImage>,
 
     // Flattened views of `last_ok_image` that the editor and Run panes read.
     pub(crate) last_ok_text: Option<Vec<u32>>,
@@ -331,7 +331,7 @@ pub(crate) struct RunView {
     /// stays on 0. Read it through `App::visible_register_bank`, which clamps it
     /// to the active backend.
     ///
-    /// [`RegisterFile::banks`]: raven_riscv_engine::capability::RegisterFile::banks
+    /// [`RegisterFile::banks`]: raven_engine::capability::RegisterFile::banks
     pub(crate) reg_bank: usize,
 
     // ── Inline editing of live state (registers / PC / RAM / instructions) ──
@@ -362,7 +362,7 @@ pub(crate) struct RunView {
 /// and the settings execution runs under.
 ///
 /// This is the host's own bookkeeping *beside* the machine — the parts of a
-/// session the [`Machine`](raven_riscv_engine::Machine) trait does not carry:
+/// session the [`Machine`](raven_engine::Machine) trait does not carry:
 /// breakpoints, per-address execution counts, which registers changed
 /// recently, the JIT backend, and the cache/VM switches the Run and Settings
 /// tabs offer. Reset it and the program starts over; redraw and none of it

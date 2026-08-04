@@ -237,9 +237,9 @@ fn type_badge(app: &App, addr: u32) -> (String, Color) {
 }
 
 fn instruction_class(app: &App, addr: u32) -> Option<&'static str> {
-    let (code, memory) = (app.code()?, app.memory()?);
-    let bytes = memory.peek(u64::from(addr), 8);
-    code.inspect(u64::from(addr), &bytes).map(|info| info.class)
+    app.code()?
+        .inspect(u64::from(addr), &app.instruction_bytes_at(u64::from(addr)))
+        .map(|info| info.class)
 }
 
 fn class_color(class: &str) -> Color {
@@ -271,7 +271,9 @@ const HOVER_BG: Color = theme::BG_HOVER;
 const SELECTED_BG: Color = theme::BG_RAISED;
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
-    let word = app.memory().map_or(0, |memory| memory.peek_word(u64::from(addr), 4)) as u32;
+    let word = app
+        .memory()
+        .map_or(0, |memory| memory.peek_word(u64::from(addr), 4)) as u32;
     let is_bp = app.session.breakpoints.contains(&addr);
     let is_pc = u64::from(addr) == app.program_counter();
     let is_selected = !is_pc && app.run.details_addr == Some(addr);
@@ -341,8 +343,9 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
 
     // Branch/jump indicator on current PC instruction
     if is_pc {
-        if let Some((taken, target)) =
-            app.rv32().and_then(|rv32| branch_outcome(word, addr, rv32.cpu()))
+        if let Some((taken, target)) = app
+            .rv32()
+            .and_then(|rv32| branch_outcome(word, addr, rv32.cpu()))
         {
             let label = app
                 .session

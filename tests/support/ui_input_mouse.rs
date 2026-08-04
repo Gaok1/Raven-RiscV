@@ -116,7 +116,8 @@ fn run_status_hit_exposes_stepback_only_when_undoable() {
     assert!(before.contains(&RunButton::Reset));
 
     // Journal a change â†’ step-back becomes clickable without disturbing reset.
-    app.rv32_mut().unwrap()
+    app.rv32_mut()
+        .unwrap()
         .write_reg(RegTarget::X(RegId::new(5).unwrap()), 0xABCD)
         .unwrap();
     let after = hits(&app);
@@ -262,13 +263,15 @@ fn cache_view_mouse_wheel_updates_vertical_scroll() {
         "halt".into(),
     ];
     app.assemble_and_load();
-    app.rv32_mut().unwrap().mem_mut_unjournaled().icache.config = crate::falcon::cache::CacheConfig {
-        size: 512,
-        line_size: 16,
-        associativity: 1,
-        ..crate::falcon::cache::CacheConfig::default()
-    };
-    app.rv32_mut().unwrap().mem_mut_unjournaled().dcache.config = app.rv32().unwrap().mem().icache.config.clone();
+    app.rv32_mut().unwrap().mem_mut_unjournaled().icache.config =
+        crate::falcon::cache::CacheConfig {
+            size: 512,
+            line_size: 16,
+            associativity: 1,
+            ..crate::falcon::cache::CacheConfig::default()
+        };
+    app.rv32_mut().unwrap().mem_mut_unjournaled().dcache.config =
+        app.rv32().unwrap().mem().icache.config.clone();
     let area = Rect::new(0, 0, 160, 40);
 
     handle_mouse(
@@ -415,10 +418,12 @@ fn pipeline_history_mouse_wheel_clamps_to_rendered_max_scroll() {
             last_stage: None,
         })
         .collect();
-    app.run.pipeline_view()
+    app.run
+        .pipeline_view()
         .gantt_max_scroll_cache
         .set(gantt_max_scroll(&app.rv32().unwrap().pipeline(), 20));
-    app.run.pipeline_view_mut().gantt_scroll = app.run.pipeline_view_mut().gantt_max_scroll_cache.get();
+    app.run.pipeline_view_mut().gantt_scroll =
+        app.run.pipeline_view_mut().gantt_max_scroll_cache.get();
 
     // Bottom-anchored: wheel-up digs into scrollback but clamps at the oldest row.
     handle_mouse(
@@ -705,7 +710,9 @@ fn cache_view_hscroll_drag_uses_hovered_panel_max_scroll() {
         offset: 0,
         max,
     };
-    app.cache.hscroll_bars.set([Some(bar(10, 10)), Some(bar(80, 40))]);
+    app.cache
+        .hscroll_bars
+        .set([Some(bar(10, 10)), Some(bar(80, 40))]);
 
     let area = Rect::new(0, 0, 160, 40);
 
@@ -858,8 +865,15 @@ fn tlb_entries_scrollbar_click_jumps_and_drag_follows() {
     let (grab, jumped) = bar.begin_drag(15);
     assert!(app.tlb.entries_sb_drag.is_some());
     assert_eq!(app.tlb.entries_scroll, jumped);
-    let thumb = SbGeom { offset: jumped, ..bar }.thumb();
-    assert!((thumb.0..thumb.0 + thumb.1).contains(&15), "thumb under cursor");
+    let thumb = SbGeom {
+        offset: jumped,
+        ..bar
+    }
+    .thumb();
+    assert!(
+        (thumb.0..thumb.0 + thumb.1).contains(&15),
+        "thumb under cursor"
+    );
 
     // Dragging keeps the grabbed thumb cell glued to the cursor (clamped at max).
     handle_mouse(

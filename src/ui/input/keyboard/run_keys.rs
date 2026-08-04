@@ -93,7 +93,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
             cycle_memory_region(app);
             true
         }
-        KeyCode::Char('P') if app.run_sidebar_shows_registers() && app.visible_register_bank() == 0 => {
+        KeyCode::Char('P')
+            if app.run_sidebar_shows_registers() && app.visible_register_bank() == 0 =>
+        {
             let idx = app.run.reg_cursor;
             if idx >= 1 {
                 let reg = (idx - 1) as u8;

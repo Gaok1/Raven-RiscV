@@ -293,4 +293,3 @@ fn state_color(app: &App) -> Color {
         crate::ui::app::HartLifecycle::Faulted => theme::DANGER,
     }
 }
-

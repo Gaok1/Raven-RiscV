@@ -212,7 +212,9 @@ impl SbGeom {
         let viewport = self.effective_viewport() as f64;
         let pos = (self.offset as f64).min(self.positions().saturating_sub(1) as f64);
         let t_start = (pos * track / self.scale()).round().clamp(0.0, track - 1.0);
-        let t_end = ((pos + viewport) * track / self.scale()).round().clamp(0.0, track);
+        let t_end = ((pos + viewport) * track / self.scale())
+            .round()
+            .clamp(0.0, track);
         let t_len = (t_end - t_start).max(1.0);
         (self.start + 1 + t_start as u16, t_len as u16)
     }
@@ -303,7 +305,10 @@ mod tests {
         // offset stays inside `[0, max]` — the thumb clamps at the ends).
         for delta in 1..=8u16 {
             let dragged = g.drag(t_start + 1 + delta, grab);
-            let moved = SbGeom { offset: dragged, ..g };
+            let moved = SbGeom {
+                offset: dragged,
+                ..g
+            };
             assert_eq!(moved.thumb().0, t_start + delta, "delta {delta}");
         }
     }
@@ -324,7 +329,6 @@ mod tests {
         assert_eq!(tiny.begin_drag(11).1, 0);
         assert_eq!(tiny.drag(11, 0), 0);
     }
-
 
     #[test]
     fn window_clamps_scroll_to_last_full_page() {

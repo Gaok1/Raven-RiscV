@@ -5,8 +5,8 @@ use crate::falcon::encoder::encode;
 use crate::falcon::exec;
 use crate::falcon::instruction::Instruction;
 use crate::falcon::memory::Bus;
-use crate::falcon::program::{load_bytes, load_words, zero_bytes};
 use crate::falcon::pipeline::FuState;
+use crate::falcon::program::{load_bytes, load_words, zero_bytes};
 
 fn slow_level(line_size: usize, size: usize, hit_latency: u64) -> CacheConfig {
     CacheConfig {
@@ -266,7 +266,10 @@ fn gantt_keeps_effective_ex_cell_when_fu_bank_mirrors_serial_ex() {
         pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
         if state.gantt.iter().any(|row| {
             row.disasm.starts_with("addi")
-                && row.cells.iter().any(|cell| matches!(cell, GanttCell::InFu(FuKind::Alu)))
+                && row
+                    .cells
+                    .iter()
+                    .any(|cell| matches!(cell, GanttCell::InFu(FuKind::Alu)))
         }) {
             break;
         }

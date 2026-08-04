@@ -252,7 +252,9 @@ pub(super) fn translation_active(app: &App) -> bool {
 
 fn btn_style(active: bool, hovered: bool) -> Style {
     if active || hovered {
-        Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme::TEXT)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme::IDLE)
     }
@@ -306,7 +308,10 @@ mod tests {
         crate::ui::input::handle_key(&mut app, KeyEvent::from(KeyCode::Char('s')))
             .expect("capture snapshot");
         assert_eq!(app.cache.session_history.len(), 1);
-        assert!(app.cache.session_history[0].tlb.is_some(), "vm on ⇒ tlb snapshot");
+        assert!(
+            app.cache.session_history[0].tlb.is_some(),
+            "vm on ⇒ tlb snapshot"
+        );
         app.cache.viewing_snapshot = Some(0);
         render_all_subtabs(&mut app, "vm on + snapshot");
 

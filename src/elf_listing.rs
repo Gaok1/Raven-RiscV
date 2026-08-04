@@ -6,8 +6,8 @@
 //! right instead of two that could drift.
 
 use crate::falcon;
-use crate::falcon::program::elf::ElfSection;
 use crate::falcon::pipeline::sim::reg_name;
+use crate::falcon::program::elf::ElfSection;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 

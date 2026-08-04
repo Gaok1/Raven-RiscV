@@ -1,6 +1,7 @@
 use super::Tab;
 
-/// Pages in the Docs tab. Tab key cycles through them.
+/// Pages in the Docs tab. Which of them the tab shows depends on the loaded
+/// architecture — see `docs::visible_pages`, which the Tab key walks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DocsPage {
     InstrRef,
@@ -10,14 +11,6 @@ pub(crate) enum DocsPage {
 }
 
 impl DocsPage {
-    pub(crate) fn next(self) -> Self {
-        match self {
-            Self::InstrRef => Self::Syscalls,
-            Self::Syscalls => Self::MemoryMap,
-            Self::MemoryMap => Self::FcacheRef,
-            Self::FcacheRef => Self::InstrRef,
-        }
-    }
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::InstrRef => "Instr Ref",
@@ -69,14 +62,16 @@ pub(crate) struct DocsState {
     pub(crate) search_open: bool,
     pub(crate) search_query: String,
     pub(crate) hover_page: Option<DocsPage>,
-    /// Bitmask of visible type categories (see docs::ALL_MASK / TY_* constants).
+    /// Bitmask of visible instruction types. Which bit means which type comes
+    /// from the loaded architecture — see `docs::filter_items`.
     pub(crate) type_filter: u16,
-    /// Cursor position in the filter bar: 0 = "All", 1–12 = individual types.
+    /// Cursor position in the filter bar: 0 = "All", then one per type.
     pub(crate) filter_cursor: usize,
     // ── Render-side position tracking (set by render, read by mouse handler) ──
     /// Y row of the page tab bar (relative to terminal origin).
     pub(crate) tab_bar_y: std::cell::Cell<u16>,
-    /// (x_start, x_end) for each of the 4 page tabs, relative to terminal origin.
+    /// (x_start, x_end) per page tab, relative to terminal origin. Only the
+    /// first `visible_pages(app).len()` entries are drawn and hit-tested.
     pub(crate) tab_bar_xs: std::cell::Cell<[(u16, u16); 4]>,
     /// Y row of the filter bar (InstrRef page only).
     pub(crate) filter_bar_y: std::cell::Cell<u16>,

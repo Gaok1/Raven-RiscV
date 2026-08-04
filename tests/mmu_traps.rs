@@ -57,7 +57,12 @@ fn u_mode_load_to_unmapped_page_traps_to_mtvec() {
     cpu.mtvec = 0x3000;
 
     // Hand-craft a U-mode load: lw x5, 0(x6) with x6 = 0x5000 (unmapped).
-    let load = encode(Instruction::Lw { rd: 5, rs1: 6, imm: 0 }).unwrap();
+    let load = encode(Instruction::Lw {
+        rd: 5,
+        rs1: 6,
+        imm: 0,
+    })
+    .unwrap();
     // The fault is on the load itself, not on the fetch; put the load in a
     // mapped page so fetch succeeds. Map VA 0 → PA 0 with RX+U.
     let _ = install_one_page(&mut mem, 0, 0, 0x2 | 0x8 | 0x10);
@@ -97,7 +102,12 @@ fn u_mode_store_to_read_only_page_faults() {
     write_instr(&mut mem, 0x3000, encode(Instruction::Halt).unwrap());
     cpu.mtvec = 0x3000;
 
-    let store = encode(Instruction::Sw { rs2: 5, rs1: 6, imm: 0 }).unwrap();
+    let store = encode(Instruction::Sw {
+        rs2: 5,
+        rs1: 6,
+        imm: 0,
+    })
+    .unwrap();
     write_instr(&mut mem, 0, store);
 
     cpu.write(5, 0xCAFE_BABE);
@@ -161,11 +171,36 @@ fn satp_bare_with_vm_on_is_identity_equivalent_to_vm_off() {
         mem.mmu_mut().enabled = vm_on;
         // Tiny program: x5 = 1 + 2 + 3 + 4 + 5, then halt.
         let prog = [
-            encode(Instruction::Addi { rd: 5, rs1: 0, imm: 1 }).unwrap(),
-            encode(Instruction::Addi { rd: 5, rs1: 5, imm: 2 }).unwrap(),
-            encode(Instruction::Addi { rd: 5, rs1: 5, imm: 3 }).unwrap(),
-            encode(Instruction::Addi { rd: 5, rs1: 5, imm: 4 }).unwrap(),
-            encode(Instruction::Addi { rd: 5, rs1: 5, imm: 5 }).unwrap(),
+            encode(Instruction::Addi {
+                rd: 5,
+                rs1: 0,
+                imm: 1,
+            })
+            .unwrap(),
+            encode(Instruction::Addi {
+                rd: 5,
+                rs1: 5,
+                imm: 2,
+            })
+            .unwrap(),
+            encode(Instruction::Addi {
+                rd: 5,
+                rs1: 5,
+                imm: 3,
+            })
+            .unwrap(),
+            encode(Instruction::Addi {
+                rd: 5,
+                rs1: 5,
+                imm: 4,
+            })
+            .unwrap(),
+            encode(Instruction::Addi {
+                rd: 5,
+                rs1: 5,
+                imm: 5,
+            })
+            .unwrap(),
             encode(Instruction::Halt).unwrap(),
         ];
         for (i, w) in prog.iter().enumerate() {
@@ -203,7 +238,12 @@ fn u_mode_fault_with_medeleg_vectors_to_stvec_in_supervisor() {
     write_instr(&mut mem, 0x3000, encode(Instruction::Halt).unwrap());
 
     // U-mode load from an unmapped page.
-    let load = encode(Instruction::Lw { rd: 5, rs1: 6, imm: 0 }).unwrap();
+    let load = encode(Instruction::Lw {
+        rd: 5,
+        rs1: 6,
+        imm: 0,
+    })
+    .unwrap();
     write_instr(&mut mem, 0, load);
     cpu.write(6, 0x5000);
     cpu.pc = 0;
@@ -237,7 +277,12 @@ fn u_mode_fault_without_medeleg_still_traps_to_machine() {
     cpu.mtvec = 0x7000;
     write_instr(&mut mem, 0x7000, encode(Instruction::Halt).unwrap());
 
-    let load = encode(Instruction::Lw { rd: 5, rs1: 6, imm: 0 }).unwrap();
+    let load = encode(Instruction::Lw {
+        rd: 5,
+        rs1: 6,
+        imm: 0,
+    })
+    .unwrap();
     write_instr(&mut mem, 0, load);
     cpu.write(6, 0x5000);
     cpu.pc = 0;
@@ -246,7 +291,11 @@ fn u_mode_fault_without_medeleg_still_traps_to_machine() {
 
     step(&mut cpu, &mut mem, &mut console).unwrap();
     assert_eq!(cpu.pc, 0x7000, "non-delegated trap vectors through mtvec");
-    assert_eq!(cpu.priv_mode, PrivMode::M, "non-delegated trap enters M-mode");
+    assert_eq!(
+        cpu.priv_mode,
+        PrivMode::M,
+        "non-delegated trap enters M-mode"
+    );
     assert_eq!(cpu.mcause, 13);
     assert_eq!(cpu.scause, 0, "scause untouched on machine path");
 }
@@ -313,7 +362,16 @@ fn demand_paging_end_to_end() {
 
     // U-mode program at VA 0: lw x5, 0(x6) with x6 = 0x6000 (initially unmapped),
     // then halt once the retry succeeds.
-    write_instr(&mut mem, 0, encode(Instruction::Lw { rd: 5, rs1: 6, imm: 0 }).unwrap());
+    write_instr(
+        &mut mem,
+        0,
+        encode(Instruction::Lw {
+            rd: 5,
+            rs1: 6,
+            imm: 0,
+        })
+        .unwrap(),
+    );
     write_instr(&mut mem, 4, encode(Instruction::Halt).unwrap());
 
     // The data the handler will map at PA 0x8000 (leaf table sits at 0x2000, so
@@ -330,11 +388,34 @@ fn demand_paging_end_to_end() {
     let pte = ((0x8000u32 >> 12) << 10) | 0x2 | 0x10 | 0x1; // R + U + V
     // x7 = leaf_slot, x8 = pte, sw x8, 0(x7); sfence.vma; sret
     let handler = [
-        encode(Instruction::Lui { rd: 7, imm: (leaf_slot & 0xFFFF_F000) as i32 }).unwrap(),
-        encode(Instruction::Addi { rd: 7, rs1: 7, imm: (leaf_slot & 0xFFF) as i32 }).unwrap(),
-        encode(Instruction::Lui { rd: 8, imm: (pte & 0xFFFF_F000) as i32 }).unwrap(),
-        encode(Instruction::Addi { rd: 8, rs1: 8, imm: (pte & 0xFFF) as i32 }).unwrap(),
-        encode(Instruction::Sw { rs2: 8, rs1: 7, imm: 0 }).unwrap(),
+        encode(Instruction::Lui {
+            rd: 7,
+            imm: (leaf_slot & 0xFFFF_F000) as i32,
+        })
+        .unwrap(),
+        encode(Instruction::Addi {
+            rd: 7,
+            rs1: 7,
+            imm: (leaf_slot & 0xFFF) as i32,
+        })
+        .unwrap(),
+        encode(Instruction::Lui {
+            rd: 8,
+            imm: (pte & 0xFFFF_F000) as i32,
+        })
+        .unwrap(),
+        encode(Instruction::Addi {
+            rd: 8,
+            rs1: 8,
+            imm: (pte & 0xFFF) as i32,
+        })
+        .unwrap(),
+        encode(Instruction::Sw {
+            rs2: 8,
+            rs1: 7,
+            imm: 0,
+        })
+        .unwrap(),
         encode(Instruction::SfenceVma { rs1: 0, rs2: 0 }).unwrap(),
         encode(Instruction::Sret).unwrap(),
     ];

@@ -8,18 +8,19 @@ use crate::ui::pipeline::PipelineSubtab;
 use crate::ui::theme;
 use crate::ui::view::components::{SpanRow, dense_action, dense_value};
 use crate::ui::view::style;
-use raven_riscv_engine::capability::PipelineInspect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
     widgets::Paragraph,
 };
+use raven_engine::capability::PipelineInspect;
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
     app.run.pipeline_view().gantt_area_rect.set((0, 0, 0, 0));
     if !matches!(app.run.pipeline_view().subtab, PipelineSubtab::Config) {
-        app.run.pipeline_view()
+        app.run
+            .pipeline_view()
             .config_row_rects
             .set([(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS]);
     }
@@ -57,9 +58,7 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
     }
 
     match app.run.pipeline_view().subtab {
-        PipelineSubtab::Main => {
-            main_view::render_pipeline_main(f, layout[1], app, pipeline)
-        }
+        PipelineSubtab::Main => main_view::render_pipeline_main(f, layout[1], app, pipeline),
         PipelineSubtab::Config => config_view::render_pipeline_config(f, layout[1], app),
     }
 }
@@ -142,7 +141,12 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineIns
     row.gap(3);
     let start = row.cursor();
     row.push(Span::styled("speed ", Style::default().fg(theme::IDLE)));
-    row.push(dense_value(p.speed.label(), p.hover_speed, true, theme::TEXT));
+    row.push(dense_value(
+        p.speed.label(),
+        p.hover_speed,
+        true,
+        theme::TEXT,
+    ));
     row.record_hitbox(start, &p.btn_speed_rect);
 
     row.gap(3);
@@ -163,17 +167,29 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineIns
 
     row.gap(3);
     let start = row.cursor();
-    row.push(dense_action("results", theme::ACCENT, p.hover_export_results));
+    row.push(dense_action(
+        "results",
+        theme::ACCENT,
+        p.hover_export_results,
+    ));
     row.record_hitbox(start, &p.btn_export_results_rect);
 
     if matches!(p.subtab, PipelineSubtab::Config) {
         row.gap(3);
         let start = row.cursor();
-        row.push(dense_action("import cfg", theme::METRIC_CYC, p.hover_import_cfg));
+        row.push(dense_action(
+            "import cfg",
+            theme::METRIC_CYC,
+            p.hover_import_cfg,
+        ));
         row.record_hitbox(start, &p.btn_import_cfg_rect);
         row.gap(3);
         let start = row.cursor();
-        row.push(dense_action("export cfg", theme::METRIC_CYC, p.hover_export_cfg));
+        row.push(dense_action(
+            "export cfg",
+            theme::METRIC_CYC,
+            p.hover_export_cfg,
+        ));
         row.record_hitbox(start, &p.btn_export_cfg_rect);
     } else {
         p.btn_import_cfg_rect.set((0, 0, 0));
@@ -230,7 +246,9 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineIns
     } else {
         spans.push(Span::styled(
             "   s=step · p=run · r=reset · f=speed",
-            Style::default().fg(theme::LABEL).add_modifier(Modifier::DIM),
+            Style::default()
+                .fg(theme::LABEL)
+                .add_modifier(Modifier::DIM),
         ));
     }
     let line2 = Line::from(spans);
@@ -253,3 +271,4 @@ fn subtab_style(active: bool, hovered: bool) -> Style {
         Style::default().fg(theme::IDLE)
     }
 }
+

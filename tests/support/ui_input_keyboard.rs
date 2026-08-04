@@ -104,7 +104,10 @@ fn run_pause_and_space_toggle_continuous_execution_on_run_tab() {
     )
     .expect("run key handled");
     assert_eq!(outcome, KeyOutcome::Handled);
-    assert!(app.session.is_running, "p should start continuous execution");
+    assert!(
+        app.session.is_running,
+        "p should start continuous execution"
+    );
 
     let outcome = handle_key(
         &mut app,
@@ -691,7 +694,10 @@ fn pipeline_snapshot_and_exports_use_pipeline_clock_model() {
     let mut app = App::new(None);
     app.set_cache_enabled(true);
     app.set_pipeline_enabled(true);
-    app.rv32_mut().unwrap().mem_mut_unjournaled().instruction_count = 41;
+    app.rv32_mut()
+        .unwrap()
+        .mem_mut_unjournaled()
+        .instruction_count = 41;
     app.rv32_mut().unwrap().mem_mut_unjournaled().extra_cycles = 99;
     app.rv32_mut().unwrap().pipeline_mut().cycle_count = 12;
     app.rv32_mut().unwrap().pipeline_mut().instr_committed = 3;

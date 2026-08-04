@@ -1132,13 +1132,13 @@
 
         <div class="qs-option">
           <h3>Embeddable SDK</h3>
-          <p>The <code>raven-riscv-engine</code> crate runs the assembler and simulator headless, so you can embed them in tests, autograders, and other Rust tools.</p>
+          <p>The <code>raven-engine</code> crate runs the assembler and simulator headless, so you can embed them in tests, autograders, and other Rust tools.</p>
           <div class="code-pane">
             <div class="code-header">
               <span class="code-filename">grader.rs</span>
               <span class="code-lang">Rust</span>
             </div>
-            <pre class="hlcode"><span class="hl-instr">use</span> raven_riscv_engine::Falcon;
+            <pre class="hlcode"><span class="hl-instr">use</span> raven_engine::Falcon;
 
 <span class="hl-instr">let</span> result = Falcon::new()
     .asm(<span class="hl-str">".text\n li a0, 42\n li a7, 93\n ecall\n"</span>)
@@ -1150,8 +1150,8 @@
 <span class="hl-comment">// result.stdout(), result.pc(), result.read_word(addr)…</span></pre>
           </div>
           <p style="margin-top:14px;margin-bottom:0">
-            <a href="https://crates.io/crates/raven-riscv-engine" target="_blank" rel="noopener" class="btn btn-ghost">crates.io</a>
-            <a href="https://docs.rs/raven-riscv-engine" target="_blank" rel="noopener" class="btn btn-ghost">docs.rs</a>
+            <a href="https://crates.io/crates/raven-engine" target="_blank" rel="noopener" class="btn btn-ghost">crates.io</a>
+            <a href="https://docs.rs/raven-engine" target="_blank" rel="noopener" class="btn btn-ghost">docs.rs</a>
           </p>
         </div>
       </div>
@@ -1287,8 +1287,8 @@
           <div class="fl-group">
             <h4>Developers</h4>
             <ul>
-              <li><a href="https://crates.io/crates/raven-riscv-engine" target="_blank" rel="noopener">Engine crate (SDK)</a></li>
-              <li><a href="https://docs.rs/raven-riscv-engine" target="_blank" rel="noopener">SDK docs (docs.rs)</a></li>
+              <li><a href="https://crates.io/crates/raven-engine" target="_blank" rel="noopener">Engine crate (SDK)</a></li>
+              <li><a href="https://docs.rs/raven-engine" target="_blank" rel="noopener">SDK docs (docs.rs)</a></li>
               <li><a href="https://github.com/Gaok1/Raven-RiscV/tree/main/rust-to-raven" target="_blank" rel="noopener">Rust no_std template</a></li>
               <li><a href="https://github.com/Gaok1/Raven-RiscV/blob/main/docs/pt-BR/README.md" target="_blank" rel="noopener">Tutorial (PT-BR)</a></li>
             </ul>

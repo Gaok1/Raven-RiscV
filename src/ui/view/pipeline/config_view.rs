@@ -26,8 +26,13 @@ const CONFIG_LABEL_W: usize = 18;
 const LATENCY_LABEL_W: usize = 8;
 
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
-    // The tab is offered only to a backend that has a datapath to retune.
     let Some(p) = app.pipeline_config() else {
+        f.render_widget(
+            Paragraph::new("This backend exposes a fixed teaching pipeline; it has no tunable datapath settings.")
+                .alignment(Alignment::Center)
+                .style(style::label()),
+            area,
+        );
         return;
     };
     let view = app.run.pipeline_view();
@@ -108,7 +113,11 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
                 s,
                 hovered,
                 true,
-                if highlight { theme::LABEL_Y } else { theme::TEXT },
+                if highlight {
+                    theme::LABEL_Y
+                } else {
+                    theme::TEXT
+                },
             ),
         };
         let line_spans = vec![

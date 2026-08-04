@@ -255,7 +255,10 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
             theme::LABEL,
         ),
         Span::raw("  "),
-        bool_value(app.session.trace_syscalls, app.settings.hover_trace_syscalls),
+        bool_value(
+            app.session.trace_syscalls,
+            app.settings.hover_trace_syscalls,
+        ),
         Span::raw("  "),
         Span::styled(
             "[?]",

@@ -251,7 +251,8 @@ fn pipeline_tab_single_step_skips_consecutive_icache_stalls() {
     );
 
     app.single_step();
-    let advanced_or_committed = app.native().pipeline().stages[crate::ui::pipeline::Stage::EX as usize]
+    let advanced_or_committed = app.native().pipeline().stages
+        [crate::ui::pipeline::Stage::EX as usize]
         .as_ref()
         .is_some_and(|slot| !slot.is_bubble && slot.disasm == "addi a0, zero, 1")
         || app.native().pipeline().stages[crate::ui::pipeline::Stage::MEM as usize]
@@ -377,8 +378,14 @@ fn stepback_reverts_pipeline_cycle_state() {
         app.can_stepback_now(),
         "pipeline mode must be reversible now"
     );
-    assert!(app.native().pipeline().cycle_count > cyc0, "the clock advanced");
-    assert!(app.native().cpu().x[10] >= 1, "first instruction took effect");
+    assert!(
+        app.native().pipeline().cycle_count > cyc0,
+        "the clock advanced"
+    );
+    assert!(
+        app.native().cpu().x[10] >= 1,
+        "first instruction took effect"
+    );
 
     // Drain the journal one cycle at a time; the clock must move strictly
     // backward and never get stuck.
@@ -396,7 +403,11 @@ fn stepback_reverts_pipeline_cycle_state() {
     // Back to the exact pre-run state — CPU and pipeline both.
     assert_eq!(app.native().cpu().x, x0, "registers round-tripped");
     assert_eq!(app.native().cpu().pc, pc0, "PC round-tripped");
-    assert_eq!(app.native().pipeline().cycle_count, cyc0, "clock round-tripped");
+    assert_eq!(
+        app.native().pipeline().cycle_count,
+        cyc0,
+        "clock round-tripped"
+    );
     assert_eq!(
         app.native().pipeline().fetch_pc,
         fetch0,
@@ -930,7 +941,12 @@ fn pipeline_linux_exit_in_run_tab_is_terminal_not_resumable() {
     }
 
     let exit_pc = app.native().cpu().pc;
-    assert_eq!(app.native().cpu().exit_code, Some(7), "{}", console_tail(&app));
+    assert_eq!(
+        app.native().cpu().exit_code,
+        Some(7),
+        "{}",
+        console_tail(&app)
+    );
     assert_eq!(app.core_status(app.selected_core), HartLifecycle::Exited);
 
     app.resume_selected_hart();
@@ -1271,7 +1287,10 @@ fn focused_secondary_pipeline_unimp_then_ebreak_can_resume_with_step() {
     }
 
     assert_eq!(
-        app.native().mem().peek32(app.session.base_pc + 28).unwrap_or(0),
+        app.native()
+            .mem()
+            .peek32(app.session.base_pc + 28)
+            .unwrap_or(0),
         0xC000_1073
     );
     assert_eq!(
@@ -1507,7 +1526,10 @@ fn rust_to_raven_debug_elf_single_core_pipeline_does_not_panic() {
     app.load_binary(&rust_to_raven_elf_bytes());
 
     for _ in 0..10_000 {
-        if app.session.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
+        if app.session.faulted
+            || app.native().pipeline().faulted
+            || app.native().cpu().exit_code.is_some()
+        {
             break;
         }
         app.single_step();
@@ -1594,7 +1616,12 @@ fn rust_to_raven_debug_elf_runs_multihart_sequential_without_fault() {
     }
 
     assert!(!app.session.faulted, "{}", console_tail(&app));
-    assert_eq!(app.native().cpu().exit_code, Some(0), "{}", console_tail(&app));
+    assert_eq!(
+        app.native().cpu().exit_code,
+        Some(0),
+        "{}",
+        console_tail(&app)
+    );
 }
 
 #[test]
@@ -1626,7 +1653,10 @@ fn pipeline_ecall_return_updates_a0_before_next_consumer() {
     );
 
     for _ in 0..200 {
-        if app.session.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
+        if app.session.faulted
+            || app.native().pipeline().faulted
+            || app.native().cpu().exit_code.is_some()
+        {
             break;
         }
         app.single_step();
@@ -1634,7 +1664,12 @@ fn pipeline_ecall_return_updates_a0_before_next_consumer() {
 
     assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
-    assert_eq!(app.native().cpu().exit_code, Some(0), "{}", trace_tail(&app));
+    assert_eq!(
+        app.native().cpu().exit_code,
+        Some(0),
+        "{}",
+        trace_tail(&app)
+    );
 }
 
 #[test]
@@ -1903,7 +1938,10 @@ fn pipeline_ret_sees_loaded_ra_with_stack_adjust_between() {
     );
 
     for _ in 0..160 {
-        if app.session.faulted || app.native().pipeline().faulted || app.native().cpu().exit_code.is_some() {
+        if app.session.faulted
+            || app.native().pipeline().faulted
+            || app.native().cpu().exit_code.is_some()
+        {
             break;
         }
         app.single_step();
@@ -1911,7 +1949,12 @@ fn pipeline_ret_sees_loaded_ra_with_stack_adjust_between() {
 
     assert!(!app.session.faulted, "{}", console_tail(&app));
     assert!(!app.native().pipeline().faulted, "{}", console_tail(&app));
-    assert_eq!(app.native().cpu().exit_code, Some(7), "{}", trace_tail(&app));
+    assert_eq!(
+        app.native().cpu().exit_code,
+        Some(7),
+        "{}",
+        trace_tail(&app)
+    );
 }
 
 #[test]
@@ -1976,7 +2019,8 @@ fn rust_to_raven_debug_elf_pipeline_matches_sequential_until_exit() {
             && seq.native().cpu().local_exit == pipe.native().cpu().local_exit
             && seq.native().cpu().ebreak_hit == pipe.native().cpu().ebreak_hit
             && seq.native().cpu().exit_code == pipe.native().cpu().exit_code;
-        let same_mem_stats = seq.native().mem().instruction_count == pipe.native().mem().instruction_count;
+        let same_mem_stats =
+            seq.native().mem().instruction_count == pipe.native().mem().instruction_count;
 
         assert!(
             same_core && same_mem_stats,
@@ -2015,7 +2059,7 @@ mod run_edit {
     use super::super::{App, FormatMode, RunEditTarget};
     use super::load_program;
     use crate::falcon::machine::types::MemWidth;
-    use raven_riscv_engine::capability::RegisterId;
+    use raven_engine::capability::RegisterId;
 
     /// A minimal loaded program so the machine has a CPU + memory to edit.
     fn loaded_app() -> App {
@@ -2091,9 +2135,7 @@ mod run_edit {
             let line = source
                 .lines()
                 .map(str::trim)
-                .find(|line| {
-                    !line.is_empty() && !line.starts_with('.') && !line.ends_with(':')
-                })
+                .find(|line| !line.is_empty() && !line.starts_with('.') && !line.ends_with(':'))
                 .expect("every backend ships a default program with an instruction");
             app.begin_run_edit(RunEditTarget::InstrField {
                 addr,
@@ -2185,10 +2227,16 @@ mod run_edit {
         });
         app.run.run_edit_buf = "cafebabe".to_string();
         app.commit_run_edit();
-        assert_eq!(app.native().mem().effective_read32(addr).unwrap(), 0xcafe_babe);
+        assert_eq!(
+            app.native().mem().effective_read32(addr).unwrap(),
+            0xcafe_babe
+        );
 
         app.stepback_one();
-        assert_eq!(app.native().mem().effective_read32(addr).unwrap_or(0), before);
+        assert_eq!(
+            app.native().mem().effective_read32(addr).unwrap_or(0),
+            before
+        );
     }
 
     #[test]
@@ -2277,7 +2325,7 @@ fn multi_file_workspace_assembles_across_tabs_and_maps_lines() {
 }
 
 #[test]
-fn toy16_is_a_runtime_app_backend_with_cache_and_capability_gated_tabs() {
+fn toy16_is_a_runtime_app_backend_with_cache_and_pipeline_tabs() {
     let mut app = App::new_with_architecture(
         Some(64 * 1024),
         crate::falcon::jit::BackendKind::None,
@@ -2288,23 +2336,68 @@ fn toy16_is_a_runtime_app_backend_with_cache_and_capability_gated_tabs() {
     assert!(app.rv32().is_none(), "toy16 must not carry an RV32 runtime");
     assert!(app.tab_visible(Tab::Cache));
     assert!(!app.tab_visible(Tab::Tlb));
-    assert!(!app.tab_visible(Tab::Pipeline));
+    assert!(app.tab_visible(Tab::Pipeline));
 
-    for _ in 0..5 {
+    for _ in 0..100 {
+        if !app.session.is_running
+            && matches!(
+                app.machine_snapshot().state,
+                raven_engine::MachineState::Halted
+            )
+        {
+            break;
+        }
         app.single_step();
     }
     let snapshot = app.machine_snapshot();
-    assert_eq!(snapshot.registers[2].value, 42);
-    assert_eq!(snapshot.stdout, b"42\n");
+    assert_eq!(snapshot.stdout, b"Hello, World!\n");
+    assert!(console_tail(&app).contains("Hello, World!"));
     let caches = app.cache_hierarchy().unwrap();
     assert!(
         caches
-            .cache(0, raven_riscv_engine::capability::CacheRole::Instruction)
+            .cache(0, raven_engine::capability::CacheRole::Instruction)
             .unwrap()
             .stats
             .total_accesses()
             > 0
     );
+}
+
+#[test]
+fn teaching_pipeline_tab_advances_one_clock_for_each_backend() {
+    for (id, stages) in [("sap", 3), ("toy16", 5)] {
+        let mut app =
+            App::new_with_architecture(Some(64 * 1024), crate::falcon::jit::BackendKind::None, id)
+                .unwrap();
+        app.set_pipeline_enabled(true);
+        app.tab = Tab::Pipeline;
+
+        app.single_step();
+
+        let pipeline = app.pipeline().unwrap();
+        assert_eq!(pipeline.stage_count(), stages, "{id}");
+        assert_eq!(pipeline.stats().cycles, 1, "{id}");
+        assert_eq!(pipeline.stats().committed, 0, "{id}");
+        assert!(pipeline.stage(0).unwrap().slot.is_some(), "{id}");
+    }
+}
+
+#[test]
+fn portable_backends_forward_stdout_to_the_console() {
+    for id in ["sap", "toy16"] {
+        let mut app =
+            App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap();
+        for _ in 0..100 {
+            if matches!(
+                app.machine_snapshot().state,
+                raven_engine::MachineState::Halted
+            ) {
+                break;
+            }
+            app.single_step();
+        }
+        assert!(console_tail(&app).contains("Hello, World!"), "{id}");
+    }
 }
 
 /// The Run status line, the run toolbar and the Cache tab all show "Cycles /
@@ -2395,10 +2488,7 @@ fn every_control_is_safe_on_a_backend_without_the_rv32_runtime() {
             ] {
                 let _ = crate::ui::input::handle_key(
                     &mut app,
-                    crossterm::event::KeyEvent::new(
-                        code,
-                        crossterm::event::KeyModifiers::NONE,
-                    ),
+                    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
                 );
             }
 
@@ -2419,7 +2509,10 @@ fn every_control_is_safe_on_a_backend_without_the_rv32_runtime() {
 #[test]
 fn every_backend_builds_and_reports_through_the_same_path() {
     for (id, source) in [
-        ("riscv32", ".data\nv: .word 1\n.text\n    li a0, 1\n    halt\n"),
+        (
+            "riscv32",
+            ".data\nv: .word 1\n.text\n    li a0, 1\n    halt\n",
+        ),
         ("toy16", "li r0, 1\nprint r0\nhalt"),
     ] {
         let mut app =
@@ -2428,7 +2521,11 @@ fn every_backend_builds_and_reports_through_the_same_path() {
         app.editor.buf.lines = source.lines().map(str::to_string).collect();
         app.assemble_and_load();
 
-        assert_eq!(app.editor.last_compile_ok, Some(true), "{id} failed to build");
+        assert_eq!(
+            app.editor.last_compile_ok,
+            Some(true),
+            "{id} failed to build"
+        );
         let stats = app.editor.last_build_stats.as_ref().unwrap();
         assert!(stats.instruction_count > 0, "{id} reported no instructions");
         assert!(

@@ -5,11 +5,11 @@
 //! defined once — by the engine's registry — instead of being restated at every
 //! call site.
 
-use raven_riscv_engine::{Architecture, ArchitectureRegistry};
+use raven_engine::{Architecture, ArchitectureRegistry};
 use std::sync::Arc;
 
 /// The backend used when the user does not ask for one.
-pub const DEFAULT_ID: &str = raven_riscv_engine::architectures::riscv32::ID;
+pub const DEFAULT_ID: &str = raven_engine::architectures::riscv32::ID;
 
 /// The registry of built-in backends.
 pub fn registry() -> &'static ArchitectureRegistry {

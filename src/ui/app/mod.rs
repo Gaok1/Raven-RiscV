@@ -12,9 +12,9 @@ mod settings_state;
 mod tlb_state;
 
 use self::cpi::classify_cpi_cycles;
-use self::program::Diagnostics;
 pub(crate) use self::cpi::{classify_cpi_for_display, cpi_class_label};
 use self::formatting::{classify_mem_access, word_at};
+use self::program::Diagnostics;
 
 // Re-export pub(crate) items from submodules so they are accessible as
 // `crate::ui::app::X` from other modules in the crate.
@@ -49,7 +49,7 @@ use super::{
     input::{handle_key, handle_mouse},
     view::ui,
 };
-use raven_riscv_engine::capability::{
+use raven_engine::capability::{
     AddressTranslation, CacheHierarchy, InstructionCodec, MemoryInspect, PipelineInspect,
     RegisterBank, RegisterEntry, RegisterFile, RegisterId,
 };
@@ -57,10 +57,10 @@ use raven_riscv_engine::capability::{
 /// Register age meaning "not changed recently", so the sidebar draws it plain.
 pub(crate) const NO_REG_AGE: u8 = 255;
 
+use crate::falcon;
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::machine::parse::{CellFormat, parse_cell};
 use crate::falcon::machine::types::MemWidth;
-use crate::falcon;
 use crate::ui::platform::Clipboard;
 use crossterm::{
     event::{
@@ -85,7 +85,7 @@ const DEFAULT_MEM_SIZE: usize = 16 * 1024 * 1024;
 
 // ── CPI (Cycles Per Instruction) configuration ───────────────────────────────
 
-pub use raven_riscv_engine::falcon::pipeline::PipelineTiming as CpiConfig;
+pub use raven_engine::falcon::pipeline::PipelineTiming as CpiConfig;
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub(crate) enum Tab {
@@ -96,7 +96,6 @@ pub(crate) enum Tab {
     Pipeline,
     Docs,
     Settings,
-    Activity,
 }
 
 impl Tab {
@@ -109,7 +108,6 @@ impl Tab {
             Tab::Pipeline,
             Tab::Docs,
             Tab::Settings,
-            Tab::Activity,
         ]
     }
 
@@ -122,7 +120,6 @@ impl Tab {
             Tab::Pipeline => "Pipeline",
             Tab::Docs => "Docs",
             Tab::Settings => "Settings",
-            Tab::Activity => "Activity",
         }
     }
 
@@ -135,7 +132,7 @@ impl Tab {
 /// journaling gateway, which is what makes step-back a property of the whole
 /// machine rather than of any one part.
 pub(crate) type FalconRuntime =
-    falcon::machine::Machine<raven_riscv_engine::falcon::pipeline::PipelineSimState>;
+    falcon::machine::Machine<raven_engine::falcon::pipeline::PipelineSimState>;
 
 const NOT_RV32: &str = "the native execution paths run only while RV32 is loaded";
 
@@ -145,17 +142,15 @@ const NOT_RV32: &str = "the native execution paths run only while RV32 is loaded
 /// borrow the runtime and another `App` field at once — the pipeline hands its
 /// tick the console, a background hart its cache — which a `&mut self` method
 /// would collapse into one borrow of everything.
-fn rv32_runtime(machine: &dyn raven_riscv_engine::Machine) -> Option<&FalconRuntime> {
+fn rv32_runtime(machine: &dyn raven_engine::Machine) -> Option<&FalconRuntime> {
     (machine as &dyn std::any::Any)
-        .downcast_ref::<raven_riscv_engine::architectures::riscv32::RiscV32Machine>()
+        .downcast_ref::<raven_engine::architectures::riscv32::RiscV32Machine>()
         .map(|rv32| rv32.falcon())
 }
 
-fn rv32_runtime_mut(
-    machine: &mut dyn raven_riscv_engine::Machine,
-) -> Option<&mut FalconRuntime> {
+fn rv32_runtime_mut(machine: &mut dyn raven_engine::Machine) -> Option<&mut FalconRuntime> {
     (machine as &mut dyn std::any::Any)
-        .downcast_mut::<raven_riscv_engine::architectures::riscv32::RiscV32Machine>()
+        .downcast_mut::<raven_engine::architectures::riscv32::RiscV32Machine>()
         .map(|rv32| rv32.falcon_mut())
 }
 
@@ -200,7 +195,7 @@ impl ExecutionScope {
 // ── Top-level app ──────────────────────────────────────────────────────────────
 
 pub struct App {
-    pub(crate) architecture: Arc<dyn raven_riscv_engine::Architecture>,
+    pub(crate) architecture: Arc<dyn raven_engine::Architecture>,
     /// The active backend, whichever architecture is loaded. There is exactly
     /// one, and every pane reads it through the capability accessors below.
     ///
@@ -208,7 +203,7 @@ pub struct App {
     /// JIT and the step-back journal — is reached with [`App::rv32`], because
     /// stepping *that* is the one thing the trait does not describe; see
     /// [`App::rv32`] for where the host still drives a backend by hand.
-    pub(crate) machine: Box<dyn raven_riscv_engine::Machine>,
+    pub(crate) machine: Box<dyn raven_engine::Machine>,
     pub(super) tab: Tab,
     pub(super) mode: EditorMode,
 
@@ -262,9 +257,6 @@ pub struct App {
 
     // Interactive guided tutorial ([?] button)
     pub tutorial: TutorialState,
-
-    // Guided learning activity presets (Activity tab)
-    pub(crate) activity: crate::guided_learning::GuidedLearningState,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -549,7 +541,6 @@ impl App {
             splash_start: Some(Instant::now()),
             path_input: PathInput::new(),
             tutorial: TutorialState::default(),
-            activity: crate::guided_learning::GuidedLearningState::default(),
             settings: SettingsState::default(),
             max_cores: 4,
             selected_core: 0,
@@ -558,12 +549,28 @@ impl App {
             harts: Vec::new(),
         };
         app.console.trace_syscalls = app.session.trace_syscalls;
+        app.sync_docs_to_architecture();
         app.assemble_and_load();
         app.rebuild_harts();
         if initial_jit_kind != crate::falcon::jit::BackendKind::None {
             app.set_jit_mode(initial_jit_kind);
         }
         app
+    }
+
+    /// Point the Docs tab at the architecture that is loaded now.
+    ///
+    /// The page list and the meaning of every filter bit come from the ISA, so
+    /// a switch can leave the tab on a page this backend does not have or with
+    /// a filter mask that selects the wrong types.
+    fn sync_docs_to_architecture(&mut self) {
+        let pages = crate::ui::view::docs::visible_pages(self);
+        if !pages.contains(&self.docs.page) {
+            self.docs.page = pages.first().copied().unwrap_or(DocsPage::InstrRef);
+            self.docs.scroll = 0;
+        }
+        self.docs.type_filter = crate::ui::view::docs::all_mask(self);
+        self.docs.filter_cursor = 0;
     }
 
     pub fn new_with_architecture(
@@ -588,7 +595,7 @@ impl App {
     /// not cover — multi-hart scheduling, JIT backend selection, breakpoints
     /// and step-back. RV32 is the only backend with any of it, so it is the
     /// only one the host steps by hand; every other backend answers `None` and
-    /// is driven through [`raven_riscv_engine::Machine::step`].
+    /// is driven through [`raven_engine::Machine::step`].
     ///
     /// Reading state through here rather than through a capability is a bug:
     /// it is how an architecture's name gets back into the view layer.
@@ -639,6 +646,7 @@ impl App {
             .create_machine(memory_size)
             .map_err(|e| e.to_string())?;
         self.session.is_running = false;
+        self.session.mem_size = memory_size;
         self.architecture = architecture;
         self.machine = machine;
         if self.rv32().is_none() && self.architecture.descriptor().capabilities.cache {
@@ -656,11 +664,12 @@ impl App {
             self.editor.buf.cursor_col = 0;
         }
         self.ensure_visible_tab();
+        self.sync_docs_to_architecture();
         self.assemble_and_load();
         Ok(())
     }
 
-    pub(crate) fn machine_snapshot(&self) -> raven_riscv_engine::MachineSnapshot {
+    pub(crate) fn machine_snapshot(&self) -> raven_engine::MachineSnapshot {
         self.machine.snapshot()
     }
 
@@ -706,21 +715,19 @@ impl App {
     /// Pipeline tab either — hence the `Option` and not a panic.
     pub(crate) fn pipeline_config(
         &self,
-    ) -> Option<&raven_riscv_engine::falcon::pipeline::PipelineSimState> {
+    ) -> Option<&raven_engine::falcon::pipeline::PipelineSimState> {
         self.rv32().map(FalconRuntime::pipeline)
     }
 
     pub(crate) fn pipeline_config_mut(
         &mut self,
-    ) -> Option<&mut raven_riscv_engine::falcon::pipeline::PipelineSimState> {
+    ) -> Option<&mut raven_engine::falcon::pipeline::PipelineSimState> {
         self.rv32_mut().map(FalconRuntime::pipeline_mut)
     }
 
     /// What the pipeline is doing right now — enabled, sequential, halted,
     /// faulted — for the keys and panes that only need to know that much.
-    pub(crate) fn pipeline_status(
-        &self,
-    ) -> Option<raven_riscv_engine::capability::PipelineStatus> {
+    pub(crate) fn pipeline_status(&self) -> Option<raven_engine::capability::PipelineStatus> {
         self.pipeline().map(|pipeline| pipeline.status())
     }
 
@@ -791,26 +798,39 @@ impl App {
         self.registers().map_or(0, |file| file.program_counter())
     }
 
+    /// The bytes at `address`, enough of them for the backend's codec to decode
+    /// whatever starts there.
+    ///
+    /// How many that is belongs to the ISA — a fixed guess truncated x86-64's
+    /// ten-byte `movabs`, which made every listing walk it one byte at a time.
+    pub(crate) fn instruction_bytes_at(&self, address: u64) -> Vec<u8> {
+        let Some((code, memory)) = self.code().zip(self.memory()) else {
+            return Vec::new();
+        };
+        memory.peek(address, code.max_instruction_bytes())
+    }
+
     /// The instruction at `address` as assembly text, through the backend's own
     /// disassembler. `None` when the bytes do not decode.
     pub(crate) fn disassemble_at(&self, address: u64) -> Option<String> {
-        let (code, memory) = (self.code()?, self.memory()?);
-        code.disassemble(address, &memory.peek(address, 8))
+        let code = self.code()?;
+        code.disassemble(address, &self.instruction_bytes_at(address))
     }
 
     /// How many bytes the instruction at `address` occupies, so a listing walks
     /// a variable-width ISA correctly without knowing it is variable-width.
     pub(crate) fn instruction_width_at(&self, address: u64) -> usize {
-        let Some((code, memory)) = self.code().zip(self.memory()) else {
+        let Some(code) = self.code() else {
             return 4;
         };
-        code.instruction_width(address, &memory.peek(address, 8))
+        code.instruction_width(address, &self.instruction_bytes_at(address))
             .max(1)
     }
 
     /// The banks this backend declares, empty when it has no register file.
     pub(crate) fn register_banks(&self) -> Vec<RegisterBank> {
-        self.registers().map_or_else(Vec::new, |file| file.banks().to_vec())
+        self.registers()
+            .map_or_else(Vec::new, |file| file.banks().to_vec())
     }
 
     /// First address shown at the top of the memory view, given the panel's
@@ -824,8 +844,8 @@ impl App {
     pub(crate) fn visible_memory_base_addr(&self, lines_override: Option<u32>) -> u32 {
         let bytes = self.run.mem_view_bytes.max(1);
         let lines = lines_override.unwrap_or(0);
-        let follows_access = self.run.show_dyn
-            && matches!(self.session.dyn_mem_access, Some((_, _, true)));
+        let follows_access =
+            self.run.show_dyn && matches!(self.session.dyn_mem_access, Some((_, _, true)));
         let center = matches!(
             self.run.mem_region,
             MemRegion::Stack | MemRegion::Access | MemRegion::Heap
@@ -848,7 +868,7 @@ impl App {
         self.registers()
             .and_then(|file| file.banks().get(id.bank))
             .is_some_and(|bank| {
-                bank.format == raven_riscv_engine::capability::RegisterFormat::Float
+                bank.format == raven_engine::capability::RegisterFormat::Float
             })
     }
 
@@ -910,7 +930,7 @@ impl App {
 
     /// Assemble the workspace for export ("save binary"), at the same base
     /// address the running program was built with.
-    pub(crate) fn export_program_image(&self) -> Result<raven_riscv_engine::ProgramImage, String> {
+    pub(crate) fn export_program_image(&self) -> Result<raven_engine::ProgramImage, String> {
         self.architecture
             .assembler()
             .assemble(&self.combined_source().0, u64::from(self.session.base_pc))
@@ -952,9 +972,9 @@ impl App {
         }
         if matches!(
             self.machine.snapshot().state,
-            raven_riscv_engine::MachineState::Halted
-                | raven_riscv_engine::MachineState::Exited(_)
-                | raven_riscv_engine::MachineState::Faulted
+            raven_engine::MachineState::Halted
+                | raven_engine::MachineState::Exited(_)
+                | raven_engine::MachineState::Faulted
         ) {
             self.machine.reset();
         }
@@ -962,10 +982,15 @@ impl App {
     }
 
     fn machine_step(&mut self) {
+        if matches!(self.tab, Tab::Pipeline) && self.pipeline().is_some() {
+            self.machine_cycle();
+            return;
+        }
         let machine = &mut self.machine;
-        let pc = machine.snapshot().pc;
+        let before = machine.snapshot();
+        let pc = before.pc;
         match machine.step() {
-            Ok(raven_riscv_engine::StepOutcome::Stepped) => {
+            Ok(raven_engine::StepOutcome::Stepped) => {
                 *self.session.exec_counts.entry(pc as u32).or_insert(0) += 1;
             }
             Ok(_) => {
@@ -977,26 +1002,48 @@ impl App {
                 self.console.push_error(error.to_string());
             }
         }
-    }
-
-    /// Load `text` into the editor and assemble + load the program.
-    /// Used by guided-learning presets (outside `ui/`).
-    pub(crate) fn load_editor_text(&mut self, text: &str) {
-        self.editor.buf.lines = text.lines().map(|s| s.to_string()).collect();
-        if self.editor.buf.lines.is_empty() {
-            self.editor.buf.lines.push(String::new());
+        let after = machine.snapshot();
+        if let Some(output) = after.stdout.get(before.stdout.len()..) {
+            for chunk in String::from_utf8_lossy(output).split_inclusive('\n') {
+                self.console
+                    .append_str(chunk.strip_suffix('\n').unwrap_or(chunk));
+                if chunk.ends_with('\n') {
+                    self.console.newline();
+                }
+            }
         }
-        self.editor.buf.cursor_row = 0;
-        self.editor.buf.cursor_col = 0;
-        self.assemble_and_load();
     }
 
-    /// Switch to the given tab (used by guided-learning presets).
-    pub(crate) fn navigate_to_tab(&mut self, tab: Tab) {
-        self.tab = tab;
+    fn machine_cycle(&mut self) {
+        let machine = &mut self.machine;
+        let before = machine.snapshot();
+        match machine.cycle() {
+            Ok(result) => {
+                if let Some(address) = result.retired_address {
+                    *self.session.exec_counts.entry(address as u32).or_insert(0) += 1;
+                }
+                if result.outcome != raven_engine::StepOutcome::Stepped {
+                    self.session.is_running = false;
+                }
+            }
+            Err(error) => {
+                self.session.is_running = false;
+                self.console.push_error(error.to_string());
+            }
+        }
+        let after = machine.snapshot();
+        if let Some(output) = after.stdout.get(before.stdout.len()..) {
+            for chunk in String::from_utf8_lossy(output).split_inclusive('\n') {
+                self.console
+                    .append_str(chunk.strip_suffix('\n').unwrap_or(chunk));
+                if chunk.ends_with('\n') {
+                    self.console.newline();
+                }
+            }
+        }
     }
 
-    /// Reset the pipeline to the current CPU PC (used after loading a preset).
+    /// Reset the pipeline to the current CPU PC.
     pub(crate) fn pipeline_reset_to_current_pc(&mut self) {
         let __rpc = self.program_counter() as u32;
         self.reset_pipeline_stages(__rpc);
@@ -1256,7 +1303,7 @@ impl App {
     /// machine code.
     ///
     /// ELF keeps a path of its own — it carries a symbol table and a section
-    /// list a [`ProgramImage`](raven_riscv_engine::ProgramImage) cannot express
+    /// list a [`ProgramImage`](raven_engine::ProgramImage) cannot express
     /// — and is offered only by backends that declare ELF support. Everything
     /// else is decoded into an image and takes the shared load path, so a
     /// container opens the same way here as it does in the CLI.
@@ -1293,16 +1340,17 @@ impl App {
     fn load_elf_binary(&mut self, bytes: &[u8]) {
         self.reset_screen_device();
         self.reset_native_runtime();
-        let info =
-            match falcon::program::load_elf(bytes, &mut self.native_mut().mem_mut_unjournaled().ram)
-            {
-                Ok(info) => info,
-                Err(e) => {
-                    self.console.push_error(e.to_string());
-                    self.session.faulted = true;
-                    return;
-                }
-            };
+        let info = match falcon::program::load_elf(
+            bytes,
+            &mut self.native_mut().mem_mut_unjournaled().ram,
+        ) {
+            Ok(info) => info,
+            Err(e) => {
+                self.console.push_error(e.to_string());
+                self.session.faulted = true;
+                return;
+            }
+        };
 
         self.native_mut().cpu_mut_unjournaled().pc = info.entry;
         self.session.prev_pc = info.entry;
@@ -2119,14 +2167,24 @@ impl App {
             if self.session.is_running {
                 match self.session.speed {
                     RunSpeed::X1 | RunSpeed::X2 => {
-                        let divisor = if matches!(self.session.speed, RunSpeed::X2) { 2 } else { 1 };
-                        if self.session.last_step_time.elapsed() >= self.session.step_interval / divisor {
+                        let divisor = if matches!(self.session.speed, RunSpeed::X2) {
+                            2
+                        } else {
+                            1
+                        };
+                        if self.session.last_step_time.elapsed()
+                            >= self.session.step_interval / divisor
+                        {
                             self.machine_step();
                             self.session.last_step_time = Instant::now();
                         }
                     }
                     RunSpeed::X4 | RunSpeed::X8 => {
-                        let steps = if matches!(self.session.speed, RunSpeed::X4) { 4 } else { 8 };
+                        let steps = if matches!(self.session.speed, RunSpeed::X4) {
+                            4
+                        } else {
+                            8
+                        };
                         for _ in 0..steps {
                             if !self.session.is_running {
                                 break;
@@ -2136,7 +2194,8 @@ impl App {
                     }
                     RunSpeed::Instant => {
                         let start = Instant::now();
-                        while self.session.is_running && start.elapsed() < Duration::from_millis(8) {
+                        while self.session.is_running && start.elapsed() < Duration::from_millis(8)
+                        {
                             self.machine_step();
                         }
                     }
@@ -2183,19 +2242,24 @@ impl App {
             if use_pipeline_speed {
                 match self.run.pipeline_view().speed {
                     PipelineSpeed::Slow => {
-                        if self.run.pipeline_view().last_tick.elapsed() >= Duration::from_millis(600) {
+                        if self.run.pipeline_view().last_tick.elapsed()
+                            >= Duration::from_millis(600)
+                        {
                             self.single_step();
                             self.run.pipeline_view_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Normal => {
-                        if self.run.pipeline_view().last_tick.elapsed() >= Duration::from_millis(300) {
+                        if self.run.pipeline_view().last_tick.elapsed()
+                            >= Duration::from_millis(300)
+                        {
                             self.single_step();
                             self.run.pipeline_view_mut().last_tick = Instant::now();
                         }
                     }
                     PipelineSpeed::Fast => {
-                        if self.run.pipeline_view().last_tick.elapsed() >= Duration::from_millis(80) {
+                        if self.run.pipeline_view().last_tick.elapsed() >= Duration::from_millis(80)
+                        {
                             self.single_step();
                             self.run.pipeline_view_mut().last_tick = Instant::now();
                         }
@@ -2363,10 +2427,7 @@ impl App {
     /// reversible step, pipeline cycle, or GO burst — no separate mode check is
     /// needed here.
     pub(crate) fn can_stepback_now(&self) -> bool {
-        !self.session.is_running
-            && self
-                .rv32()
-                .is_some_and(FalconRuntime::can_stepback)
+        !self.session.is_running && self.rv32().is_some_and(FalconRuntime::can_stepback)
     }
 
     /// Undo the most recent journaled change — one instruction, one edit, or the
@@ -2507,7 +2568,9 @@ impl App {
                     .map_err(|e| e.message())
                     .and_then(|value| self.write_instr_word(addr, value, width))
             }
-            RunEditTarget::InstrField { addr, field } => self.commit_instruction_field(addr, field, &buf),
+            RunEditTarget::InstrField { addr, field } => {
+                self.commit_instruction_field(addr, field, &buf)
+            }
         };
 
         match result {
@@ -2534,9 +2597,12 @@ impl App {
     /// Read the text of a register edit as the value that register holds: a
     /// float bank takes a decimal, every other bank the Run tab's own format.
     fn parse_register_value(&self, id: RegisterId, text: &str) -> Result<u64, String> {
-        let is_float = self.registers().and_then(|file| file.banks().get(id.bank)).is_some_and(
-            |bank| bank.format == raven_riscv_engine::capability::RegisterFormat::Float,
-        );
+        let is_float = self
+            .registers()
+            .and_then(|file| file.banks().get(id.bank))
+            .is_some_and(|bank| {
+                bank.format == raven_engine::capability::RegisterFormat::Float
+            });
         if is_float {
             return text
                 .trim()
@@ -2604,7 +2670,9 @@ impl App {
             ));
         }
         if !instr_edit::field_available(current, field) {
-            return Err(format!("{field:?} is not a field of this instruction format"));
+            return Err(format!(
+                "{field:?} is not a field of this instruction format"
+            ));
         }
         let value = instr_edit::parse_field_value(field, buf)?;
         let word = instr_edit::splice_field(current, detect_format(current), field, value)?;
@@ -2666,7 +2734,7 @@ impl App {
                     .registers()
                     .and_then(|file| file.banks().get(id.bank))
                     .is_some_and(|bank| {
-                        bank.format == raven_riscv_engine::capability::RegisterFormat::Float
+                        bank.format == raven_engine::capability::RegisterFormat::Float
                     });
                 if is_float {
                     format!("{}", f32::from_bits(value as u32))
@@ -2674,7 +2742,9 @@ impl App {
                     plain_word(value as u32)
                 }
             }
-            RunEditTarget::Mem { addr, width } => plain_word(peek(addr, width.bytes() as usize) as u32),
+            RunEditTarget::Mem { addr, width } => {
+                plain_word(peek(addr, width.bytes() as usize) as u32)
+            }
             // Seeded from the same read the details panel renders, at whatever
             // width this backend's instructions occupy.
             RunEditTarget::Instr { addr } => {
@@ -2759,7 +2829,11 @@ impl App {
         } else if breakpoint_hit {
             HartLifecycle::Paused
         } else if self.harts[core_idx].cpu.ebreak_hit {
-            if self.session.halt_pcs.contains(&self.harts[core_idx].prev_pc) {
+            if self
+                .session
+                .halt_pcs
+                .contains(&self.harts[core_idx].prev_pc)
+            {
                 HartLifecycle::Exited
             } else {
                 HartLifecycle::Paused
@@ -2894,9 +2968,13 @@ impl App {
         let commit = rv32_runtime_mut(&mut *self.machine)
             .expect(NOT_RV32)
             .step_pipeline(
-            |pipe, cpu, mem| raven_riscv_engine::falcon::pipeline::sim::pipeline_tick(pipe, cpu, mem, &cpi, console),
-            |commit| commit.is_some(),
-        );
+                |pipe, cpu, mem| {
+                    raven_engine::falcon::pipeline::sim::pipeline_tick(
+                        pipe, cpu, mem, &cpi, console,
+                    )
+                },
+                |commit| commit.is_some(),
+            );
 
         let committed = if let Some(info) = commit {
             *self.session.exec_counts.entry(info.pc).or_insert(0) += 1;
@@ -2957,7 +3035,8 @@ impl App {
         // borrow checker's disjoint-field rules.
         let exec_regions = self.session.exec_regions.clone();
         let mem_size = self.session.mem_size;
-        let pipeline_enabled = self.native().pipeline().enabled || self.native().pipeline().sequential_mode;
+        let pipeline_enabled =
+            self.native().pipeline().enabled || self.native().pipeline().sequential_mode;
         // CpiConfig is ~80 bytes; cheap to clone once per round.
         let cpi = self.session.cpi_config.clone();
 
@@ -3005,7 +3084,10 @@ impl App {
                         backend,
                     )
                 };
-                let bp_hit = self.session.breakpoints.contains(&self.harts[core_idx].cpu.pc);
+                let bp_hit = self
+                    .session
+                    .breakpoints
+                    .contains(&self.harts[core_idx].cpu.pc);
                 let _ = faulted; // lifecycle determined inside finalize_bg_hart via hart.faulted
                 self.finalize_bg_hart(core_idx, bp_hit);
             }
@@ -3175,7 +3257,8 @@ impl App {
             // Safety limit to prevent infinite loop on stall/halt/fault
             for _ in 0..200 {
                 let committed = self.pipeline_step();
-                if committed || self.native().pipeline().halted || self.native().pipeline().faulted {
+                if committed || self.native().pipeline().halted || self.native().pipeline().faulted
+                {
                     break;
                 }
             }
@@ -3228,7 +3311,8 @@ impl App {
             }
 
             let word = self.native().mem().peek32(step_pc).unwrap_or(0);
-            let cpi_cycles = classify_cpi_cycles(word, self.native().cpu(), &self.session.cpi_config);
+            let cpi_cycles =
+                classify_cpi_cycles(word, self.native().cpu(), &self.session.cpi_config);
             let mem_access = if go_mode {
                 None
             } else {

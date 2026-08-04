@@ -129,7 +129,7 @@ pub(crate) fn badge(text: impl Into<String>, kind: Badge) -> Span<'static> {
 pub(crate) fn toggle(active: bool, hovered: bool, active_color: Color) -> Style {
     // Hover-first precedence (hover feedback wins over the active colour), same
     // as the value chips. The state core lives in `controls::control_style`.
-    use super::components::controls::{control_style, ControlState};
+    use super::components::controls::{ControlState, control_style};
     let state = if hovered {
         ControlState::Hovered
     } else if active {

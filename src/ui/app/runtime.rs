@@ -2,8 +2,8 @@ use super::*;
 
 impl App {
     fn copy_pipeline_config_to_hart(
-        src: &raven_riscv_engine::falcon::pipeline::PipelineSimState,
-        dst: &mut raven_riscv_engine::falcon::pipeline::PipelineSimState,
+        src: &raven_engine::falcon::pipeline::PipelineSimState,
+        dst: &mut raven_engine::falcon::pipeline::PipelineSimState,
     ) {
         dst.enabled = src.enabled;
         dst.sequential_mode = src.sequential_mode;
@@ -15,13 +15,41 @@ impl App {
         dst.fu_capacity = src.fu_capacity;
     }
 
+    fn generic_pipeline_snapshot(&self, scope: &str) -> Option<PipelineResultsSnapshot> {
+        let stats = self.pipeline()?.stats();
+        Some(PipelineResultsSnapshot {
+            scope: scope.into(),
+            committed: stats.committed,
+            cycles: stats.cycles,
+            stalls: stats.stalls,
+            flushes: stats.flushes,
+            cpi: stats.cpi(),
+            branches: stats.branches,
+            raw_stalls: stats.raw_stalls,
+            load_use_stalls: stats.load_use_stalls,
+            branch_stalls: stats.branch_stalls,
+            fu_stalls: stats.functional_unit_stalls,
+            mem_stalls: stats.memory_stalls,
+            bypass: "none".into(),
+            mode: "in-order".into(),
+            branch_resolve: "commit".into(),
+            branch_predict: "not-taken".into(),
+        })
+    }
+
     /// Timing summed across every hart, or `None` when the active backend is
     /// not clocking a pipeline at all — which is how a backend with no pipeline
     /// capability answers, so callers fall back to cache timing without asking
     /// which architecture is running.
     pub(crate) fn aggregate_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.pipeline().is_some_and(|pipeline| pipeline.status().enabled) {
+        if !self
+            .pipeline()
+            .is_some_and(|pipeline| pipeline.status().enabled)
+        {
             return None;
+        }
+        if self.rv32().is_none() {
+            return self.generic_pipeline_snapshot("selected");
         }
 
         let mut saw_pipeline = false;
@@ -32,7 +60,7 @@ impl App {
         let mut branches = 0u64;
         let mut stall_by_type = [0u64; crate::ui::pipeline::HazardType::STALL_TYPE_COUNT];
 
-        let mut accumulate = |pipe: &raven_riscv_engine::falcon::pipeline::PipelineSimState| {
+        let mut accumulate = |pipe: &raven_engine::falcon::pipeline::PipelineSimState| {
             saw_pipeline = true;
             cycles = cycles.max(pipe.cycle_count);
             committed = committed.saturating_add(pipe.instr_committed);
@@ -99,8 +127,14 @@ impl App {
     }
 
     pub(crate) fn selected_pipeline_snapshot(&self) -> Option<PipelineResultsSnapshot> {
-        if !self.pipeline().is_some_and(|pipeline| pipeline.status().enabled) {
+        if !self
+            .pipeline()
+            .is_some_and(|pipeline| pipeline.status().enabled)
+        {
             return None;
+        }
+        if self.rv32().is_none() {
+            return self.generic_pipeline_snapshot("selected");
         }
 
         let pipe = &self.native().pipeline();
@@ -149,7 +183,6 @@ impl App {
             Tab::Cache => capabilities.cache && self.session.cache_enabled,
             Tab::Tlb => capabilities.virtual_memory,
             Tab::Pipeline => capabilities.pipeline,
-            Tab::Activity => capabilities.guided_learning,
             _ => true,
         }
     }
@@ -183,6 +216,8 @@ impl App {
     pub(in crate::ui) fn reset_pipeline_stages(&mut self, pc: u32) {
         if let Some(rv32) = self.rv32_mut() {
             rv32.pipeline_mut().reset_stages(pc);
+        } else if let Some(pipeline) = self.machine.pipeline_control() {
+            pipeline.reset(u64::from(pc));
         }
         self.run.pipeline_view.reset_for_program();
     }
@@ -192,6 +227,8 @@ impl App {
     pub(in crate::ui) fn redirect_pipeline_pc(&mut self, pc: u32) {
         if let Some(rv32) = self.rv32_mut() {
             rv32.pipeline_mut().redirect_pc(pc);
+        } else if let Some(pipeline) = self.machine.pipeline_control() {
+            pipeline.redirect(u64::from(pc));
         }
         self.run.pipeline_view.status_msg = None;
         self.run.pipeline_view.status_error = None;
@@ -202,6 +239,12 @@ impl App {
             pipeline.enabled = enabled;
             pipeline.sequential_mode = !enabled;
             self.reconfigure_pipeline_model();
+        } else {
+            let pc = self.program_counter();
+            if let Some(pipeline) = self.machine.pipeline_control() {
+                pipeline.set_enabled(enabled);
+                pipeline.reset(pc);
+            }
         }
         self.ensure_visible_tab();
     }
@@ -312,10 +355,9 @@ impl App {
                 #[cfg(feature = "jit")]
                 {
                     match self.rv32() {
-                        Some(runtime) => crate::falcon::jit::make_full_backend(
-                            runtime.cpu(),
-                            runtime.mem(),
-                        ),
+                        Some(runtime) => {
+                            crate::falcon::jit::make_full_backend(runtime.cpu(), runtime.mem())
+                        }
                         None => make_backend(BackendKind::None).unwrap(),
                     }
                 }
@@ -418,7 +460,7 @@ impl App {
 
     pub(super) fn sync_selected_core_to_runtime(&mut self) {
         let selected = self.selected_core;
-        let replacement = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
+        let replacement = raven_engine::falcon::pipeline::PipelineSimState::new();
         if let Some(runtime) = self.harts.get_mut(selected) {
             runtime.cpu = rv32_runtime(&*self.machine).expect(NOT_RV32).cpu().clone();
             runtime.prev_x = self.session.prev_x;
@@ -467,7 +509,7 @@ impl App {
             let mut pipeline = runtime
                 .pipeline
                 .take()
-                .unwrap_or_else(raven_riscv_engine::falcon::pipeline::PipelineSimState::new);
+                .unwrap_or_else(raven_engine::falcon::pipeline::PipelineSimState::new);
             if let Some(model) = self.rv32() {
                 Self::copy_pipeline_config_to_hart(model.pipeline(), &mut pipeline);
             }

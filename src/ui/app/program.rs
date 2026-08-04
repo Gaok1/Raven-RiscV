@@ -29,7 +29,7 @@
 
 use super::{App, BuildStats, MemRegion, NOT_RV32, rv32_runtime_mut};
 use crate::falcon::{CacheController, Cpu};
-use raven_riscv_engine::{ProgramImage, SourceMap};
+use raven_engine::{ProgramImage, SourceMap};
 use std::collections::{HashMap, HashSet};
 
 /// Whether an assemble error should pull the editor to the offending file.
@@ -253,7 +253,10 @@ impl App {
         }
         let scheme = self.active_scheme();
         let root_pa = scheme.root_pa(self.session.mem_size as u32);
-        let window = (self.session.base_pc.min(self.session.data_base), self.session.heap_start);
+        let window = (
+            self.session.base_pc.min(self.session.data_base),
+            self.session.heap_start,
+        );
         crate::falcon::mmu::Mmu::install_map_scheme(
             &mut rv32_runtime_mut(&mut *self.machine)
                 .expect(NOT_RV32)
@@ -342,4 +345,3 @@ fn instruction_words(image: &ProgramImage) -> Vec<u32> {
         })
         .collect()
 }
-

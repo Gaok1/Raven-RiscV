@@ -9,6 +9,7 @@ use super::components::{ControlState, SbGeom, Toolbar, vertical_scrollbar};
 use super::{App, Editor};
 use crate::ui::app::FileTabId;
 use crate::ui::theme;
+use raven_engine::capability::BitRole;
 
 /// The editor's file tab strip: one chip per file, then `[+]` (new file) and
 /// `[✕]` (delete active file, confirmed by a second click). Single source of
@@ -426,8 +427,10 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         rows.push(row_line);
     }
 
-    let mut block =
-        panel::panel_frame(PanelKind::Custom(Color::DarkGray)).title("Editor (Risc-v ASM)");
+    let mut block = panel::panel_frame(PanelKind::Custom(Color::DarkGray)).title(format!(
+        "Editor ({} ASM)",
+        app.architecture.descriptor().display_name
+    ));
     if let Some(ok) = app.editor.last_compile_ok {
         let (txt, color) = if ok {
             ("[OK]", Color::Green)
@@ -729,10 +732,7 @@ fn highlight_directive_rest<'a>(directive: &str, rest: &'a str) -> Vec<Span<'a>>
     }
 }
 
-fn highlight_line<'a>(
-    s: &'a str,
-    assembler: &dyn raven_riscv_engine::Assembler,
-) -> Vec<Span<'a>> {
+fn highlight_line<'a>(s: &'a str, assembler: &dyn raven_engine::Assembler) -> Vec<Span<'a>> {
     use Color::*;
     if s.is_empty() {
         return vec![Span::raw("")];
@@ -889,7 +889,7 @@ fn highlight_line<'a>(
     out
 }
 
-fn color_operand(tok: &str, assembler: &dyn raven_riscv_engine::Assembler) -> Span<'static> {
+fn color_operand(tok: &str, assembler: &dyn raven_engine::Assembler) -> Span<'static> {
     use Color::*;
     let is_imm = tok.starts_with("0x")
         || tok.starts_with("0X")
@@ -1014,7 +1014,7 @@ fn strip_comments(line: &str) -> &str {
 
 fn ghost_spans_for_line(
     line: &str,
-    assembler: &dyn raven_riscv_engine::Assembler,
+    assembler: &dyn raven_engine::Assembler,
 ) -> Option<Vec<Span<'static>>> {
     let mut code = strip_comments(line).trim();
     if code.is_empty() || code.starts_with('.') {
@@ -1052,7 +1052,12 @@ fn ghost_spans_for_line(
         return None;
     }
 
-    Some(build_ghost_variants_spans(mnemonic, operand_count, &variants))
+    Some(build_ghost_variants_spans(
+        mnemonic,
+        operand_count,
+        &variants,
+        assembler,
+    ))
 }
 
 fn truncate_spans_to_width(spans: Vec<Span<'static>>, max_chars: usize) -> Vec<Span<'static>> {
@@ -1081,6 +1086,7 @@ fn build_ghost_variants_spans(
     mnemonic_raw: &str,
     ops_len: usize,
     variants: &[Vec<&'static str>],
+    assembler: &dyn raven_engine::Assembler,
 ) -> Vec<Span<'static>> {
     let base = Style::default()
         .fg(Color::DarkGray)
@@ -1122,21 +1128,36 @@ fn build_ghost_variants_spans(
             if oi > 0 {
                 out.push(Span::styled(", ".to_string(), base));
             }
-            out.extend(style_ghost_operand_expr(expr, base, next_idx == Some(oi)));
+            out.extend(style_ghost_operand_expr(
+                expr,
+                base,
+                next_idx == Some(oi),
+                assembler,
+            ));
         }
     }
 
     out
 }
 
-fn style_ghost_operand_expr(expr: &str, base: Style, is_next: bool) -> Vec<Span<'static>> {
-    fn token_style(tok: &str, base: Style, is_next: bool) -> Style {
+fn style_ghost_operand_expr(
+    expr: &str,
+    base: Style,
+    is_next: bool,
+    assembler: &dyn raven_engine::Assembler,
+) -> Vec<Span<'static>> {
+    fn token_style(
+        tok: &str,
+        base: Style,
+        is_next: bool,
+        assembler: &dyn raven_engine::Assembler,
+    ) -> Style {
         let mut style = match tok {
             "rd" => base.fg(Color::Yellow).add_modifier(Modifier::BOLD),
             "rs1" | "rs2" | "rs" => base.fg(Color::Cyan),
             "imm" | "imm12" | "imm20" | "shamt" | "hi" | "lo" => base.fg(Color::LightGreen),
             "label" => base.fg(Color::Magenta),
-            _ if is_reg_token(tok) => base.fg(Color::LightBlue),
+            _ if assembler.is_register(tok) => base.fg(Color::LightBlue),
             _ => base,
         };
 
@@ -1152,7 +1173,7 @@ fn style_ghost_operand_expr(expr: &str, base: Style, is_next: bool) -> Vec<Span<
         if token.is_empty() {
             return;
         }
-        let style = token_style(token, base, is_next);
+        let style = token_style(token, base, is_next, assembler);
         out.push(Span::styled(std::mem::take(token), style));
     };
 
@@ -1168,90 +1189,37 @@ fn style_ghost_operand_expr(expr: &str, base: Style, is_next: bool) -> Vec<Span<
     out
 }
 
+/// The one-line encoding strip under the editor.
+///
+/// The bit groups, their names and their colours all come from the backend's
+/// declared layout, so an 8-bit SAP instruction and a 32-bit RV32 one render
+/// through the same code. When a backend declares no layout the strip still
+/// shows the raw encoding rather than inventing field boundaries.
 fn render_encoding_bar(f: &mut Frame, area: Rect, app: &App) {
     let bg = Color::Rgb(20, 20, 45);
-    let cursor_row = app.editor.buf.cursor_row;
-
-    let line = if let Some(&addr) = app.editor.line_to_addr.get(&cursor_row) {
-        if let Some(word) = app
-            .memory()
-            .map(|memory| memory.peek_word(u64::from(addr), 4) as u32)
-        {
-            // Format as: 0x00b50533  funct7   rs2   rs1 f3  rd     opcode
-            //             (hex)      [31:25] [24:20][19:15][14:12][11:7] [6:0]
-            let f7 = (word >> 25) & 0x7F;
-            let rs2 = (word >> 20) & 0x1F;
-            let rs1 = (word >> 15) & 0x1F;
-            let f3 = (word >> 12) & 0x7;
-            let rd = (word >> 7) & 0x1F;
-            let opc = word & 0x7F;
-            Line::from(vec![
-                Span::styled(
-                    " ENC ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Rgb(80, 80, 160)),
-                ),
-                Span::styled(
-                    format!(" 0x{word:08x}  "),
-                    Style::default().fg(Color::Rgb(200, 200, 100)).bg(bg),
-                ),
-                Span::styled(
-                    format!("{f7:07b} "),
-                    Style::default().fg(Color::Rgb(120, 160, 255)).bg(bg),
-                ),
-                Span::styled(
-                    format!("{rs2:05b} "),
-                    Style::default().fg(Color::Green).bg(bg),
-                ),
-                Span::styled(
-                    format!("{rs1:05b} "),
-                    Style::default().fg(Color::Green).bg(bg),
-                ),
-                Span::styled(
-                    format!("{f3:03b} "),
-                    Style::default().fg(Color::Cyan).bg(bg),
-                ),
-                Span::styled(
-                    format!("{rd:05b} "),
-                    Style::default().fg(Color::Magenta).bg(bg),
-                ),
-                Span::styled(
-                    format!("{opc:07b}"),
-                    Style::default().fg(Color::Rgb(180, 120, 60)).bg(bg),
-                ),
-                Span::styled(
-                    "  [funct7|rs2|rs1|f3|rd|opcode]",
-                    Style::default().fg(Color::DarkGray).bg(bg),
-                ),
-            ])
-        } else {
-            Line::from(vec![
-                Span::styled(
-                    " ENC ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Rgb(80, 80, 160)),
-                ),
-                Span::styled(
-                    " (no instruction at this line)",
-                    Style::default().fg(Color::DarkGray).bg(bg),
-                ),
-            ])
-        }
-    } else {
+    let tag = Span::styled(
+        " ENC ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Rgb(80, 80, 160)),
+    );
+    let note = |text: &'static str| {
         Line::from(vec![
-            Span::styled(
-                " ENC ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Rgb(80, 80, 160)),
-            ),
-            Span::styled(
-                " (assemble first — or not an instruction line)",
-                Style::default().fg(Color::DarkGray).bg(bg),
-            ),
+            tag.clone(),
+            Span::styled(text, Style::default().fg(Color::DarkGray).bg(bg)),
         ])
+    };
+
+    let cursor_row = app.editor.buf.cursor_row;
+    let line = match app.editor.line_to_addr.get(&cursor_row) {
+        None => note(" (assemble first — or not an instruction line)"),
+        Some(&addr) => match encoding_spans(app, u64::from(addr), bg) {
+            None => note(" (no instruction at this line)"),
+            Some(mut spans) => {
+                spans.insert(0, tag);
+                Line::from(spans)
+            }
+        },
     };
 
     f.render_widget(
@@ -1260,49 +1228,70 @@ fn render_encoding_bar(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn is_reg_token(tok: &str) -> bool {
-    let t = tok.to_ascii_lowercase();
-    if let Some(n) = t.strip_prefix('x') {
-        if let Ok(v) = n.parse::<u8>() {
-            return v < 32;
-        }
+/// The encoding at `address` as `0x…` followed by one bit group per declared
+/// field, then the field names in the same order.
+fn encoding_spans(app: &App, address: u64, bg: Color) -> Option<Vec<Span<'static>>> {
+    let info = app
+        .code()?
+        .inspect(address, &app.instruction_bytes_at(address))?;
+
+    let digits = (usize::from(info.encoding_bits) + 3) / 4;
+    let mut spans = vec![Span::styled(
+        format!(" 0x{:0digits$x}  ", info.encoding, digits = digits),
+        Style::default().fg(Color::Rgb(200, 200, 100)).bg(bg),
+    )];
+
+    if !info.layout_is_complete() {
+        spans.push(Span::styled(
+            format!(
+                "{:0bits$b}",
+                info.encoding,
+                bits = usize::from(info.encoding_bits)
+            ),
+            Style::default().fg(Color::Gray).bg(bg),
+        ));
+        return Some(spans);
     }
-    matches!(
-        t.as_str(),
-        "zero"
-            | "ra"
-            | "sp"
-            | "gp"
-            | "tp"
-            | "s0"
-            | "fp"
-            | "s1"
-            | "s2"
-            | "s3"
-            | "s4"
-            | "s5"
-            | "s6"
-            | "s7"
-            | "s8"
-            | "s9"
-            | "s10"
-            | "s11"
-            | "t0"
-            | "t1"
-            | "t2"
-            | "t3"
-            | "t4"
-            | "t5"
-            | "t6"
-            | "a0"
-            | "a1"
-            | "a2"
-            | "a3"
-            | "a4"
-            | "a5"
-            | "a6"
-            | "a7"
-    )
+
+    let mut remaining = u32::from(info.encoding_bits);
+    for field in &info.layout {
+        let width = u32::from(field.width);
+        remaining -= width;
+        // Widened so the shift is exact: a field as wide as the whole word —
+        // x86-64 declares its encoding as one 64-bit run — has no `1 << width`
+        // inside a `u64`, and the masked shift would produce a mask of 0.
+        let mask = ((1u128 << width) - 1) as u64;
+        let value = (info.encoding >> remaining) & mask;
+        spans.push(Span::styled(
+            format!("{value:0width$b} ", width = width as usize),
+            Style::default().fg(bit_role_color(field.role)).bg(bg),
+        ));
+    }
+
+    let names = info
+        .layout
+        .iter()
+        .map(|field| field.label.as_str())
+        .collect::<Vec<_>>()
+        .join("|");
+    spans.push(Span::styled(
+        format!(" [{names}]"),
+        Style::default().fg(Color::DarkGray).bg(bg),
+    ));
+    Some(spans)
+}
+
+/// Same role-to-hue mapping the Run tab's field map uses, so a field keeps its
+/// colour when the user moves between the two panes.
+fn bit_role_color(role: BitRole) -> Color {
+    match role {
+        BitRole::Opcode => Color::Cyan,
+        BitRole::Destination => Color::LightGreen,
+        BitRole::Source => Color::LightMagenta,
+        BitRole::Immediate => Color::Blue,
+        BitRole::Function => Color::Yellow,
+        BitRole::Other => Color::DarkGray,
+    }
 }
 
 #[cfg(test)]
@@ -1324,5 +1313,66 @@ mod ghost_tests {
         assert!(ghost("sap", "lda").unwrap().contains("address"));
         assert!(ghost("sap", "lw").is_none());
         assert!(ghost("toy16", "lda").is_none());
+    }
+}
+
+#[cfg(test)]
+mod encoding_bar_tests {
+    use super::*;
+
+    /// The strip's text for the first line of `id`'s own sample program.
+    fn strip(id: &str) -> String {
+        let app =
+            App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap();
+        let address = app
+            .editor
+            .line_to_addr
+            .values()
+            .min()
+            .copied()
+            .unwrap_or_else(|| panic!("{id}: sample program produced no instruction line"));
+        encoding_spans(&app, u64::from(address), Color::Reset)
+            .unwrap_or_else(|| panic!("{id}: no encoding at 0x{address:X}"))
+            .into_iter()
+            .map(|span| span.content.into_owned())
+            .collect()
+    }
+
+    /// The strip is the ISA's own encoding, not RV32's. Splitting every word
+    /// into `funct7|rs2|rs1|f3|rd|opcode` — the old behaviour — named fields
+    /// SAP and Toy16 do not have and padded their encodings out to 32 bits.
+    #[test]
+    fn each_backend_shows_its_own_field_names() {
+        for (id, own_field, foreign_field) in [
+            ("riscv32", "opcode", "—"),
+            ("toy16", "rd", "funct7"),
+            ("sap", "opcode", "funct7"),
+            ("x86_64", "encoding", "funct7"),
+        ] {
+            let strip = strip(id);
+            assert!(strip.contains(own_field), "{id}: no {own_field} in {strip}");
+            assert!(
+                !strip.contains(foreign_field),
+                "{id}: borrowed {foreign_field} from another ISA in {strip}"
+            );
+        }
+    }
+
+    /// The bit groups cover the instruction's real width — 8 bits for SAP, 16
+    /// for Toy16, 32 for RV32 — because they come from the declared layout.
+    #[test]
+    fn bit_groups_cover_the_isa_instruction_width() {
+        for (id, bits) in [("riscv32", 32), ("toy16", 16), ("sap", 8), ("x86_64", 64)] {
+            let strip = strip(id);
+            let hex_end = strip
+                .find("  ")
+                .expect("hex prefix is followed by two spaces");
+            let counted: usize = strip[hex_end..]
+                .chars()
+                .take_while(|c| matches!(c, '0' | '1' | ' '))
+                .filter(|c| matches!(c, '0' | '1'))
+                .count();
+            assert_eq!(counted, bits, "{id}: {strip}");
+        }
     }
 }

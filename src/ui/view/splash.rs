@@ -21,6 +21,7 @@ use ratatui::{
     prelude::*,
     widgets::{Block, Paragraph},
 };
+use raven_engine::ArchitectureDescriptor;
 use std::time::Instant;
 
 /// Length of the animated part; after this the splash holds on its final
@@ -41,11 +42,16 @@ const PROMPT_T0: f64 = SPLASH_SECS - 0.15;
 
 // ── Entry points ──────────────────────────────────────────────────────────────
 
-pub fn render_splash(f: &mut Frame, started: Instant, mem_size: usize) {
-    render_splash_frame(f, started.elapsed().as_secs_f64(), mem_size);
+pub fn render_splash(
+    f: &mut Frame,
+    started: Instant,
+    arch: &ArchitectureDescriptor,
+    mem_size: usize,
+) {
+    render_splash_frame(f, started.elapsed().as_secs_f64(), arch, mem_size);
 }
 
-fn render_splash_frame(f: &mut Frame, t: f64, mem_size: usize) {
+fn render_splash_frame(f: &mut Frame, t: f64, arch: &ArchitectureDescriptor, mem_size: usize) {
     let area = f.area();
     f.render_widget(Block::default().style(Style::default().bg(theme::BG)), area);
     if area.width < 8 || area.height < 4 {
@@ -54,9 +60,9 @@ fn render_splash_frame(f: &mut Frame, t: f64, mem_size: usize) {
 
     let mut cv = Canvas::new(area.width as usize, area.height as usize);
     if area.width >= 72 && area.height >= 23 {
-        draw_full(&mut cv, t, mem_size);
+        draw_full(&mut cv, t, arch, mem_size);
     } else {
-        draw_compact(&mut cv, t, mem_size);
+        draw_compact(&mut cv, t, arch, mem_size);
     }
     cv.flush(f, area);
 }
@@ -170,6 +176,9 @@ fn hash(x: u64, y: u64) -> u64 {
 }
 
 fn format_mem(bytes: usize) -> String {
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
     let kb = bytes / 1024;
     if kb >= 1024 && kb % 1024 == 0 {
         format!("{} MB", kb / 1024)
@@ -205,19 +214,24 @@ const DIE_H: usize = 12;
 const LOG_LINES: usize = 6;
 const TOTAL_H: usize = DIE_H + 1 + LOG_LINES + 1 + 1;
 
-fn draw_full(cv: &mut Canvas, t: f64, mem_size: usize) {
+fn draw_full(cv: &mut Canvas, t: f64, arch: &ArchitectureDescriptor, mem_size: usize) {
     let (w, h) = (cv.w, cv.h);
     let die_x = (w.saturating_sub(DIE_W) / 2) as i64;
     let die_y = (h.saturating_sub(TOTAL_H) / 2) as i64;
 
     draw_fabric(cv, t, die_x, die_y);
     draw_pins(cv, t, die_x, die_y);
-    draw_die(cv, t, die_x, die_y);
+    draw_die(cv, t, die_x, die_y, arch);
     draw_logo(cv, t, die_x + 3, die_y + 2);
-    draw_subtitle(cv, t, die_x, die_y + 8, mem_size);
-    draw_stages(cv, t, die_x, die_y + 9);
-    draw_log(cv, t, die_x, die_y + DIE_H as i64 + 1);
-    draw_bar(cv, t, die_x, die_y + DIE_H as i64 + 1 + LOG_LINES as i64 + 1);
+    draw_subtitle(cv, t, die_x, die_y + 8, arch, mem_size);
+    draw_stages(cv, t, die_x, die_y + 9, arch);
+    draw_log(cv, t, die_x, die_y + DIE_H as i64 + 1, arch, mem_size);
+    draw_bar(
+        cv,
+        t,
+        die_x,
+        die_y + DIE_H as i64 + 1 + LOG_LINES as i64 + 1,
+    );
     let prompt_y = (die_y + TOTAL_H as i64 + 1).min(h as i64 - 1);
     draw_prompt(cv, t, die_x, prompt_y);
     draw_surge(cv, t, die_y + DIE_H as i64 / 2);
@@ -277,7 +291,11 @@ fn draw_fabric(cv: &mut Canvas, t: f64, die_x: i64, die_y: i64) {
     if p <= 0.0 {
         return;
     }
-    let flash = if t >= FLASH.0 && t <= FLASH.1 { 0.35 } else { 0.0 };
+    let flash = if t >= FLASH.0 && t <= FLASH.1 {
+        0.35
+    } else {
+        0.0
+    };
     let (cx, cy) = (die_x + DIE_W as i64 / 2, die_y + DIE_H as i64 / 2);
     let max_r = (cv.w as f64 / 2.0).hypot(cv.h as f64 / 2.0);
     let r = p * max_r;
@@ -349,7 +367,10 @@ fn draw_pins(cv: &mut Canvas, t: f64, die_x: i64, die_y: i64) {
     for (k, row) in (1..DIE_H as i64 - 1).step_by(2).enumerate() {
         let y = die_y + row;
         let left: Vec<_> = (0..die_x).map(|x| (x, y)).collect();
-        let right: Vec<_> = (die_x + DIE_W as i64..cv.w as i64).rev().map(|x| (x, y)).collect();
+        let right: Vec<_> = (die_x + DIE_W as i64..cv.w as i64)
+            .rev()
+            .map(|x| (x, y))
+            .collect();
         pin(cv, left, '─', k as u64);
         pin(cv, right, '─', k as u64 + 3);
     }
@@ -362,7 +383,7 @@ fn draw_pins(cv: &mut Canvas, t: f64, die_x: i64, die_y: i64) {
 }
 
 /// The core's outline draws itself clockwise from the top-left corner.
-fn draw_die(cv: &mut Canvas, t: f64, die_x: i64, die_y: i64) {
+fn draw_die(cv: &mut Canvas, t: f64, die_x: i64, die_y: i64, arch: &ArchitectureDescriptor) {
     // Interior is always kept dark so fabric/pins never bleed through.
     for y in 0..DIE_H as i64 {
         for x in 0..DIE_W as i64 {
@@ -403,13 +424,15 @@ fn draw_die(cv: &mut Canvas, t: f64, die_x: i64, die_y: i64) {
             die_x + 3,
             die_y,
             title,
-            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
         );
-        let tag = " RISC-V ";
+        let tag = format!(" {} ", arch.display_name.to_uppercase());
         cv.text(
             die_x + wi - 3 - tag.len() as i64,
             die_y,
-            tag,
+            &tag,
             Style::default().fg(theme::METRIC_CYC),
         );
         let status = if t >= BAR.1 {
@@ -419,7 +442,11 @@ fn draw_die(cv: &mut Canvas, t: f64, die_x: i64, die_y: i64) {
         } else {
             " APPLYING POWER "
         };
-        let color = if t >= BAR.1 { theme::RUNNING } else { theme::PAUSED };
+        let color = if t >= BAR.1 {
+            theme::RUNNING
+        } else {
+            theme::PAUSED
+        };
         cv.text(
             die_x + (wi - status.len() as i64) / 2,
             die_y + hi - 1,
@@ -446,8 +473,7 @@ fn draw_logo(cv: &mut Canvas, t: f64, x0: i64, y0: i64) {
                 }
                 for half in 0..2i64 {
                     let gx = (li * (LETTER_W + LETTER_GAP) + cx * 2) as i64 + half;
-                    let jitter =
-                        (hash(gx as u64, ry as u64) % 100) as f64 / 100.0 * 0.10;
+                    let jitter = (hash(gx as u64, ry as u64) % 100) as f64 / 100.0 * 0.10;
                     let ignite = LOGO.0 + (gx as f64 / LOGO_W as f64) * sweep + jitter;
                     let age = t - ignite;
                     if age < 0.0 {
@@ -489,18 +515,31 @@ fn draw_logo(cv: &mut Canvas, t: f64, x0: i64, y0: i64) {
         for k in 0..5u64 {
             let hv = hash(k, (t * 24.0) as u64);
             // Clamp to the die interior so sparks never land on the border.
-            let sx = (x0 + wave_x + (hv % 9) as i64 - 4)
-                .clamp(x0 - 2, x0 + LOGO_W as i64 + 1);
+            let sx = (x0 + wave_x + (hv % 9) as i64 - 4).clamp(x0 - 2, x0 + LOGO_W as i64 + 1);
             let sy = y0 - 1 + (hv >> 4) as i64 % (LOGO_ROWS as i64 + 2);
             let c = ['·', '✦', '✧', '*'][(hv >> 9) as usize % 4];
-            cv.put(sx, sy, c, Style::default().fg(ramp(0.9 + 0.1 * (k as f64 / 5.0))));
+            cv.put(
+                sx,
+                sy,
+                c,
+                Style::default().fg(ramp(0.9 + 0.1 * (k as f64 / 5.0))),
+            );
         }
     }
 }
 
-fn draw_subtitle(cv: &mut Canvas, t: f64, die_x: i64, y: i64, mem_size: usize) {
+fn draw_subtitle(
+    cv: &mut Canvas,
+    t: f64,
+    die_x: i64,
+    y: i64,
+    arch: &ArchitectureDescriptor,
+    mem_size: usize,
+) {
     let text = format!(
-        "R I S C - V   ·   R V 3 2 I M F   ·   {}",
+        "{}   ·   {}-BIT   ·   {}",
+        arch.display_name.to_uppercase(),
+        arch.address_bits,
         format_mem(mem_size)
     );
     let p = phase(t, SUBTITLE);
@@ -520,35 +559,45 @@ fn draw_subtitle(cv: &mut Canvas, t: f64, die_x: i64, y: i64, mem_size: usize) {
 }
 
 /// The five pipeline stage chips pop online one by one, then a pulse laps them.
-fn draw_stages(cv: &mut Canvas, t: f64, die_x: i64, y: i64) {
+fn draw_stages(cv: &mut Canvas, t: f64, die_x: i64, y: i64, arch: &ArchitectureDescriptor) {
     // The chips live inside the die — nothing to show before its frame closes.
     if t < FRAME.1 {
         return;
     }
-    const CHIPS: [&str; 5] = ["[IF]", "[ID]", "[EX]", "[MEM]", "[WB]"];
-    let total_w: usize = CHIPS.iter().map(|c| c.len()).sum::<usize>() + 4; // '─' joints
+    let chips: &[&str] = if arch.capabilities.pipeline {
+        &["[IF]", "[ID]", "[EX]", "[MEM]", "[WB]"]
+    } else {
+        &["[FETCH]", "[DECODE]", "[EXEC]"]
+    };
+    let total_w: usize = chips.iter().map(|c| c.len()).sum::<usize>() + chips.len() - 1;
     let mut x = die_x + (DIE_W as i64 - total_w as i64) / 2;
-    let lap = ((t - STAGES_T0) * 4.0) as usize % 5;
-    for (i, chip) in CHIPS.iter().enumerate() {
+    let lap = ((t - STAGES_T0) * 4.0) as usize % chips.len();
+    for (i, chip) in chips.iter().enumerate() {
         let on = t >= STAGES_T0 + i as f64 * 0.16;
         let fresh = on && t < STAGES_T0 + i as f64 * 0.16 + 0.14;
-        let all_on = t >= STAGES_T0 + 5.0 * 0.16;
+        let all_on = t >= STAGES_T0 + chips.len() as f64 * 0.16;
         let style = if fresh || (all_on && lap == i) {
             Style::default().fg(ramp(1.0)).add_modifier(Modifier::BOLD)
         } else if on {
-            Style::default().fg(theme::RUNNING).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme::RUNNING)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme::BORDER)
         };
         cv.text(x, y, chip, style);
         x += chip.len() as i64;
-        if i < 4 {
+        if i + 1 < chips.len() {
             let joint_on = t >= STAGES_T0 + (i + 1) as f64 * 0.16;
             cv.put(
                 x,
                 y,
                 '─',
-                Style::default().fg(if joint_on { theme::RUNNING } else { theme::BORDER }),
+                Style::default().fg(if joint_on {
+                    theme::RUNNING
+                } else {
+                    theme::BORDER
+                }),
             );
             x += 1;
         }
@@ -556,23 +605,65 @@ fn draw_stages(cv: &mut Canvas, t: f64, die_x: i64, y: i64) {
 }
 
 /// POST log: each line types itself, then its status word stamps in colour.
-fn draw_log(cv: &mut Canvas, t: f64, die_x: i64, y0: i64) {
-    const LOG: [(&str, &str, &str); LOG_LINES] = [
-        ("[0.000s] ", "power rails ............ ", "1.2V OK"),
-        ("[0.412s] ", "clock tree ............. ", "LOCKED"),
-        ("[0.973s] ", "register file x32 ...... ", "ONLINE"),
-        ("[1.508s] ", "L1 i-cache / d-cache ... ", "WARM"),
-        ("[2.144s] ", "MMU / Sv32 / TLB ....... ", "READY"),
-        ("[2.700s] ", "pipeline IF -> WB ...... ", "PRIMED"),
+fn draw_log(
+    cv: &mut Canvas,
+    t: f64,
+    die_x: i64,
+    y0: i64,
+    arch: &ArchitectureDescriptor,
+    mem_size: usize,
+) {
+    let caps = arch.capabilities;
+    let log = [
+        (
+            "[0.000s] ",
+            "power rails ............ ".to_string(),
+            "1.2V OK",
+        ),
+        (
+            "[0.412s] ",
+            "clock tree ............. ".to_string(),
+            "LOCKED",
+        ),
+        (
+            "[0.973s] ",
+            format!("address bus {:>2}-bit ...... ", arch.address_bits),
+            "ONLINE",
+        ),
+        (
+            "[1.508s] ",
+            format!("memory {:>7} ........ ", format_mem(mem_size)),
+            "READY",
+        ),
+        (
+            "[2.144s] ",
+            if caps.virtual_memory {
+                "MMU / address translation  ".to_string()
+            } else if caps.cache {
+                "cache hierarchy .......... ".to_string()
+            } else {
+                "memory interface ......... ".to_string()
+            },
+            if caps.cache { "WARM" } else { "READY" },
+        ),
+        (
+            "[2.700s] ",
+            if caps.pipeline {
+                "pipeline IF -> WB ........ ".to_string()
+            } else {
+                "control unit ............. ".to_string()
+            },
+            if caps.pipeline { "PRIMED" } else { "READY" },
+        ),
     ];
-    let width = LOG
+    let width = log
         .iter()
         .map(|(a, b, c)| a.len() + b.len() + c.len())
         .max()
         .unwrap_or(0);
     let x0 = die_x + (DIE_W as i64 - width as i64) / 2;
 
-    for (i, (ts, label, status)) in LOG.iter().enumerate() {
+    for (i, (ts, label, status)) in log.iter().enumerate() {
         let start = LOG_T0 + i as f64 * 0.34;
         if t < start {
             break;
@@ -619,20 +710,37 @@ fn draw_bar(cv: &mut Canvas, t: f64, die_x: i64, y: i64) {
     cv.put(die_x, y, '▐', Style::default().fg(theme::BORDER));
     for i in 0..inner {
         let (c, s) = if i < filled {
-            ('█', Style::default().fg(ramp(0.30 + 0.62 * (i as f64 / inner as f64))))
+            (
+                '█',
+                Style::default().fg(ramp(0.30 + 0.62 * (i as f64 / inner as f64))),
+            )
         } else {
             ('·', Style::default().fg(theme::BORDER))
         };
         cv.put(die_x + 1 + i as i64, y, c, s);
     }
-    cv.put(die_x + 1 + inner as i64, y, '▌', Style::default().fg(theme::BORDER));
+    cv.put(
+        die_x + 1 + inner as i64,
+        y,
+        '▌',
+        Style::default().fg(theme::BORDER),
+    );
 
     if p >= 1.0 {
         let label = " CORE ONLINE ";
         let style = Style::default()
-            .fg(if t >= FLASH.0 && t < FLASH.1 { ramp(1.0) } else { theme::RUNNING })
+            .fg(if t >= FLASH.0 && t < FLASH.1 {
+                ramp(1.0)
+            } else {
+                theme::RUNNING
+            })
             .add_modifier(Modifier::BOLD);
-        cv.text(die_x + (DIE_W as i64 - label.len() as i64) / 2, y, label, style);
+        cv.text(
+            die_x + (DIE_W as i64 - label.len() as i64) / 2,
+            y,
+            label,
+            style,
+        );
     } else {
         let pct = format!(" {:>3}% ", (p * 100.0).floor() as u32);
         cv.text(
@@ -646,7 +754,7 @@ fn draw_bar(cv: &mut Canvas, t: f64, die_x: i64, y: i64) {
 
 // ── Compact fallback for small terminals ─────────────────────────────────────
 
-fn draw_compact(cv: &mut Canvas, t: f64, mem_size: usize) {
+fn draw_compact(cv: &mut Canvas, t: f64, arch: &ArchitectureDescriptor, mem_size: usize) {
     let word = "R A V E N";
     let cy = cv.h as i64 / 2 - 1;
     let x0 = (cv.w as i64 - word.len() as i64) / 2;
@@ -664,7 +772,12 @@ fn draw_compact(cv: &mut Canvas, t: f64, mem_size: usize) {
             Style::default().fg(ramp(heat)).add_modifier(Modifier::BOLD),
         );
     }
-    let sub = format!("RISC-V · RV32IMF · {}", format_mem(mem_size));
+    let sub = format!(
+        "{} · {}-BIT · {}",
+        arch.display_name.to_uppercase(),
+        arch.address_bits,
+        format_mem(mem_size)
+    );
     if t > 2.2 {
         cv.text(
             (cv.w as i64 - sub.chars().count() as i64) / 2,
@@ -680,7 +793,10 @@ fn draw_compact(cv: &mut Canvas, t: f64, mem_size: usize) {
     let filled = (p * bw as f64) as usize;
     for i in 0..bw {
         let (c, s) = if i < filled {
-            ('█', Style::default().fg(ramp(0.3 + 0.6 * (i as f64 / bw as f64))))
+            (
+                '█',
+                Style::default().fg(ramp(0.3 + 0.6 * (i as f64 / bw as f64))),
+            )
         } else {
             ('·', Style::default().fg(theme::BORDER))
         };
@@ -693,7 +809,9 @@ fn draw_compact(cv: &mut Canvas, t: f64, mem_size: usize) {
             (cv.w as i64 - prompt.len() as i64) / 2,
             cy + 6,
             prompt,
-            Style::default().fg(ramp(breath)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(ramp(breath))
+                .add_modifier(Modifier::BOLD),
         );
     }
 }
@@ -705,11 +823,23 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
 
-    fn render_at(t: f64, w: u16, h: u16) -> ratatui::buffer::Buffer {
+    fn render_arch(id: &str, t: f64, w: u16, h: u16) -> ratatui::buffer::Buffer {
+        let architecture = crate::arch::lookup(id).unwrap();
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render_splash_frame(f, t, 16 * 1024 * 1024))
-            .unwrap();
+        term.draw(|f| {
+            render_splash_frame(
+                f,
+                t,
+                architecture.descriptor(),
+                architecture.descriptor().default_memory_size,
+            )
+        })
+        .unwrap();
         term.backend().buffer().clone()
+    }
+
+    fn render_at(t: f64, w: u16, h: u16) -> ratatui::buffer::Buffer {
+        render_arch("riscv32", t, w, h)
     }
 
     fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
@@ -728,8 +858,10 @@ mod tests {
     #[ignore]
     fn splash_dump_frames() {
         for &t in &[0.4, 1.0, 1.6, 2.3, 3.0, 3.7, 4.3, 5.0] {
-            println!("
-======== t = {t:.1}s ========");
+            println!(
+                "
+======== t = {t:.1}s ========"
+            );
             println!("{}", buffer_text(&render_at(t, 96, 26)));
         }
     }
@@ -746,16 +878,34 @@ mod tests {
     #[test]
     fn splash_finale_reports_core_online() {
         let text = buffer_text(&render_at(5.0, 100, 30));
-        assert!(text.contains("CORE ONLINE"), "finale should read CORE ONLINE");
-        assert!(text.contains("RAVEN CORE"), "die should be titled RAVEN CORE");
+        assert!(
+            text.contains("CORE ONLINE"),
+            "finale should read CORE ONLINE"
+        );
+        assert!(
+            text.contains("RAVEN CORE"),
+            "die should be titled RAVEN CORE"
+        );
         assert!(text.contains("[IF]"), "stage chips should be online");
         assert!(text.contains("PRIMED"), "POST log should be complete");
     }
 
     #[test]
+    fn splash_identifies_every_architecture() {
+        for id in crate::arch::registry().ids() {
+            let architecture = crate::arch::lookup(id).unwrap();
+            let text = buffer_text(&render_arch(id, 5.0, 100, 30));
+            assert!(text.contains(&architecture.descriptor().display_name.to_uppercase()));
+        }
+    }
+
+    #[test]
     fn splash_holds_with_a_key_prompt_after_the_animation() {
         let text = buffer_text(&render_at(6.0, 100, 30));
-        assert!(text.contains("PRESS ANY KEY"), "prompt should breathe on hold");
+        assert!(
+            text.contains("PRESS ANY KEY"),
+            "prompt should breathe on hold"
+        );
         let compact = buffer_text(&render_at(6.0, 60, 18));
         assert!(compact.contains("PRESS ANY KEY"), "compact prompt too");
     }

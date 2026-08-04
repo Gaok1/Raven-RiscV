@@ -43,7 +43,11 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
 
     // ── Quick controls (row 0) ───────────────────────────────────────────────
     let mode_label = format!("< {} >", app.vm_mode().as_str());
-    let tlb_label = if app.session.tlb_enabled { "[on]" } else { "[off]" };
+    let tlb_label = if app.session.tlb_enabled {
+        "[on]"
+    } else {
+        "[off]"
+    };
     let row_y = inner.y;
     let mut x = inner.x + 1;
     x += "Mode ".len() as u16;
@@ -88,7 +92,11 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
         PrivMode::M => theme::LABEL_Y,
         PrivMode::S | PrivMode::U => theme::RUNNING,
     };
-    let active_color = if active { theme::RUNNING } else { theme::DANGER };
+    let active_color = if active {
+        theme::RUNNING
+    } else {
+        theme::DANGER
+    };
 
     let satp_mode_label = match satp_mode {
         SatpMode::Bare => "Bare (translation off)",
@@ -104,9 +112,8 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
     // Key/value readout via the toolkit's `kv_styled` (it owns the line and the
     // key–value separator; we own the span styling).
     let key = |s: &'static str| Span::styled(s, style::label());
-    let val = |s: String, c: Color| {
-        Span::styled(s, Style::default().fg(c).add_modifier(Modifier::BOLD))
-    };
+    let val =
+        |s: String, c: Color| Span::styled(s, Style::default().fg(c).add_modifier(Modifier::BOLD));
 
     let mut lines: Vec<Line<'static>> = vec![quick_line, Line::raw("")];
     lines.extend(kv_styled(vec![
@@ -151,7 +158,9 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             " VM is ON but no translation is happening yet.",
-            Style::default().fg(theme::DANGER).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::DANGER)
+                .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::raw(""));
         if priv_mode == PrivMode::M && !mmu.force_translate {
@@ -195,8 +204,5 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
 
-    f.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        inner,
-    );
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }

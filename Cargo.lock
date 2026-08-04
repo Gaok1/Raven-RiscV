@@ -1709,7 +1709,7 @@ dependencies = [
  "getrandom 0.3.4",
  "minifb",
  "ratatui",
- "raven-riscv-engine",
+ "raven-engine",
  "rfd",
  "signal-hook",
  "thiserror",
@@ -1718,7 +1718,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "raven-riscv-engine"
+name = "raven-engine"
 version = "0.1.1"
 dependencies = [
  "dynasm",

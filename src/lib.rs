@@ -1,9 +1,8 @@
-pub mod elf_listing;
 pub mod arch;
 pub mod cli;
-pub use raven_riscv_engine::architectures::riscv32;
+pub mod elf_listing;
+pub use raven_engine::architectures::riscv32;
 /// The RV32 simulator internals the TUI drives directly.
-pub use raven_riscv_engine::falcon;
-pub use raven_riscv_engine::{Architecture, ArchitectureRegistry, Assembler, Engine, Machine};
-pub mod guided_learning;
+pub use raven_engine::falcon;
+pub use raven_engine::{Architecture, ArchitectureRegistry, Assembler, Engine, Machine};
 pub mod ui;

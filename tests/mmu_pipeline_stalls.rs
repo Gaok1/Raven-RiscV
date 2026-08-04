@@ -2,10 +2,10 @@
 // TLB miss penalty in its returned latency so the pipeline simulator can stall
 // `if_stall_cycles` / `mem_stall_cycles` for the right number of cycles.
 
+use raven::falcon::cache::ReplacementPolicy;
 use raven::falcon::cache::{CacheConfig, CacheController};
 use raven::falcon::memory::Bus;
 use raven::falcon::mmu::{PrivMode, TlbConfig};
-use raven::falcon::cache::ReplacementPolicy;
 
 const RAM_SIZE: usize = 1 << 20;
 
@@ -129,9 +129,7 @@ fn alternating_two_pages_force_repeated_tlb_misses() {
     // for vpn0=2.
     let vpn0_b = (0x10_2000u32 >> 12) & 0x3FF;
     let pte0_b = ((0x9_0000u32 >> 12) << 10) | 0x2 | 0x4 | 0x10 | 0x1;
-    mem.ram_mut()
-        .store32(0x2000 + vpn0_b * 4, pte0_b)
-        .unwrap();
+    mem.ram_mut().store32(0x2000 + vpn0_b * 4, pte0_b).unwrap();
     mem.set_satp(satp_a);
 
     mem.tlb_flush();

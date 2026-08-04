@@ -5,9 +5,9 @@ use super::{App, FormatMode};
 /// the dirty line rather than the stale word still in RAM.
 pub(super) fn format_memory_value(app: &App, addr: u32) -> String {
     let bytes = app.run.mem_view_bytes;
-    let word = app
-        .memory()
-        .map_or(0, |memory| memory.peek_word(u64::from(addr), bytes as usize));
+    let word = app.memory().map_or(0, |memory| {
+        memory.peek_word(u64::from(addr), bytes as usize)
+    });
     match bytes {
         4 => format_u32_value(word as u32, app.run.fmt_mode, app.run.show_signed),
         2 => format_u16_value(word as u16, app.run.fmt_mode, app.run.show_signed),

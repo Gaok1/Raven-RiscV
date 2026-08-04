@@ -155,7 +155,10 @@ fn render_screen_canvas(f: &mut Frame, area: Rect, screen: &crate::ui::screen::S
     // preserving aspect, nearest neighbor.
     let (sw, sh) = (screen.width as u64, screen.height as u64);
     let (aw, ah) = (inner.width as u64, (inner.height as u64) * 2);
-    let num = sw.max(1).div_ceil(aw.max(1)).max(sh.max(1).div_ceil(ah.max(1)));
+    let num = sw
+        .max(1)
+        .div_ceil(aw.max(1))
+        .max(sh.max(1).div_ceil(ah.max(1)));
     let step = num.max(1); // guest pixels per cell-pixel
     let out_w = (sw / step).max(1).min(aw) as u16;
     let out_h_px = (sh / step).max(1).min(ah);
@@ -290,6 +293,11 @@ mod tests {
 
     fn app(id: &str) -> App {
         App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap()
+    }
+
+    #[test]
+    fn zz_dump_current_run_tab() {
+        println!("{}", screen(&app("riscv32"), 160, 44));
     }
 
     /// The Run tab is one view now, so every architecture gets the same panes —

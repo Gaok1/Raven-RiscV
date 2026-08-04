@@ -1,11 +1,11 @@
 use crate::falcon;
 use crate::ui::app::{EncFormat, InstrFieldKind, RunEditTarget, cpi_class_label, detect_format};
-use raven_riscv_engine::capability::{BitRole, InstructionInfo};
 use crate::ui::theme;
 use crate::ui::view::style;
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, Wrap};
+use raven_engine::capability::{BitRole, InstructionInfo};
 
 use super::App;
 use super::memory::exec_address_in_range;
@@ -58,9 +58,8 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
 /// the codec decide how many it actually needs, so a variable-width ISA works
 /// here without this pane knowing it is variable-width.
 fn inspect_at(app: &App, addr: u32) -> Option<InstructionInfo> {
-    let (code, memory) = (app.code()?, app.memory()?);
-    let bytes = memory.peek(u64::from(addr), 8);
-    code.inspect(u64::from(addr), &bytes)
+    app.code()?
+        .inspect(u64::from(addr), &app.instruction_bytes_at(u64::from(addr)))
 }
 
 /// The field of `addr` the inline editor is currently open on, if any.
@@ -161,7 +160,12 @@ fn compute_jump_target(word: u32, addr: u32, app: &App) -> Option<(bool, u32, Op
         Ok(Jalr { rs1, imm, .. }) => (true, cpu.x[rs1 as usize].wrapping_add(imm as u32) & !1),
         _ => return None,
     };
-    let label = app.session.labels.get(&target).and_then(|v| v.first()).cloned();
+    let label = app
+        .session
+        .labels
+        .get(&target)
+        .and_then(|v| v.first())
+        .cloned();
     Some((taken, target, label))
 }
 
@@ -297,7 +301,9 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
             // bits rather than being padded out to RV32's word.
             let info = inspect_at(app, ctx.addr);
             let bits = info.as_ref().map_or(32, |info| info.encoding_bits);
-            let encoding = info.as_ref().map_or(u64::from(ctx.word), |info| info.encoding);
+            let encoding = info
+                .as_ref()
+                .map_or(u64::from(ctx.word), |info| info.encoding);
             let hex_width = usize::from(bits).div_ceil(4);
             let bin_width = usize::from(bits);
 
@@ -611,7 +617,7 @@ fn render_decoded(
     // RV32's rows carry inline editing, which is bit-splicing this ISA's
     // encoding and so cannot be shared. Every other backend renders the fields
     // its own decoder reported — same panel, same layout, no editing.
-    let hits = if app.architecture_id() == raven_riscv_engine::architectures::riscv32::ID {
+    let hits = if app.architecture_id() == raven_engine::architectures::riscv32::ID {
         let mut rows = DecodedRows {
             lines: &mut lines,
             hits: Vec::new(),
@@ -650,7 +656,11 @@ fn push_decoded_fields(lines: &mut Vec<Line<'static>>, app: &App, addr: u32) {
     };
     let hex_width = usize::from(info.encoding_bits).div_ceil(4);
     let bin_width = usize::from(info.encoding_bits);
-    lines.push(kv("word", format!("0x{:0hex_width$X}", info.encoding), Color::White));
+    lines.push(kv(
+        "word",
+        format!("0x{:0hex_width$X}", info.encoding),
+        Color::White,
+    ));
     lines.push(kv(
         "bits",
         format!("{:0bin_width$b}", info.encoding),
@@ -704,7 +714,8 @@ impl DecodedRows<'_> {
                 ),
             ]));
         } else {
-            self.hits.push((field, self.lines.len(), val.chars().count()));
+            self.hits
+                .push((field, self.lines.len(), val.chars().count()));
             self.lines.push(kv(key, val, color));
         }
     }
@@ -764,7 +775,11 @@ fn push_fields(
             if opcode == 0x03 {
                 if let Some(cpu) = cpu {
                     let ea = cpu.x[rs1 as usize].wrapping_add(imm as u32);
-                    rows.plain("\u{2192} addr", format!("0x{ea:08x}"), Color::Rgb(255, 180, 80));
+                    rows.plain(
+                        "\u{2192} addr",
+                        format!("0x{ea:08x}"),
+                        Color::Rgb(255, 180, 80),
+                    );
                 }
             }
         }
@@ -782,7 +797,11 @@ fn push_fields(
             // Feature 5: effective address for stores
             if let Some(cpu) = cpu {
                 let ea = cpu.x[rs1 as usize].wrapping_add(imm as u32);
-                rows.plain("\u{2192} addr", format!("0x{ea:08x}"), Color::Rgb(255, 180, 80));
+                rows.plain(
+                    "\u{2192} addr",
+                    format!("0x{ea:08x}"),
+                    Color::Rgb(255, 180, 80),
+                );
             }
         }
         EncFormat::B => {

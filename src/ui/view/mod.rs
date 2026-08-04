@@ -23,8 +23,6 @@ mod splash;
 pub(crate) mod style;
 pub(crate) mod tlb;
 
-use crate::guided_learning::view::render_guided_learning;
-
 use cache::render_cache;
 use docs::render_docs;
 pub(crate) use editor::build_file_tab_bar;
@@ -40,7 +38,12 @@ pub(crate) const HELP_BTN_W: u16 = 5;
 
 pub fn ui(f: &mut Frame, app: &App) {
     if let Some(started) = app.splash_start {
-        render_splash(f, started, app.session.mem_size);
+        render_splash(
+            f,
+            started,
+            app.architecture.descriptor(),
+            app.session.mem_size,
+        );
         return;
     }
 
@@ -124,7 +127,6 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Pipeline => render_pipeline(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
         Tab::Settings => render_settings(f, chunks[1], app),
-        Tab::Activity => render_guided_learning(f, chunks[1], app),
     }
 
     let footer_line = match app.tab {
@@ -221,15 +223,6 @@ pub fn ui(f: &mut Frame, app: &App) {
                     ("Ctrl+r", "Results"),
                     ("[?]", "Help"),
                 ])
-            }
-        }
-        Tab::Activity => {
-            if let Some(ref err) = app.activity.status_err {
-                Line::from(Span::styled(format!("✗  {err}"), style::danger()))
-            } else if let Some(ref ok) = app.activity.status_msg {
-                Line::from(Span::styled(format!("✓  {ok}"), style::success()))
-            } else {
-                style::hint_bar(&[("↑/↓", "Selecionar"), ("Enter", "Aplicar preset")])
             }
         }
     };
@@ -729,17 +722,6 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
                 "Translation active?",
                 "needs VM on AND satp=Sv32 AND priv∈{S,U}; otherwise identity",
             ),
-        ]],
-        Tab::Activity => vec![vec![
-            ("[↑/↓]", "navigate preset list"),
-            ("[Enter]", "apply selected preset (loads config + program)"),
-            ("", ""),
-            ("D1", "Pipeline Hazards — view: Run tab"),
-            ("D2", "Load-use / Flush — view: Pipeline tab"),
-            ("D3", "Cache & AMAT — view: Cache tab"),
-            ("D4", "Instruction Encoding — view: Run tab"),
-            ("D5", "Multi-core — view: Run tab"),
-            ("D6", "Pipeline Speedup — view: Run tab"),
         ]],
     }
 }

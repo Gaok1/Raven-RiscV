@@ -159,13 +159,7 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
     if app.help_open {
         let pages_count: usize = match app.tab {
             Tab::Run => 2,
-            Tab::Editor
-            | Tab::Cache
-            | Tab::Tlb
-            | Tab::Pipeline
-            | Tab::Docs
-            | Tab::Settings
-            | Tab::Activity => 1,
+            Tab::Editor | Tab::Cache | Tab::Tlb | Tab::Pipeline | Tab::Docs | Tab::Settings => 1,
         };
         match key.code {
             KeyCode::Esc => {
@@ -207,9 +201,7 @@ pub(super) fn handle_post_find_intercepts(app: &mut App, key: KeyEvent) -> Optio
                 KeyCode::Right => screen.push_key(screen::KEY_RIGHT),
                 KeyCode::Enter => screen.push_key(screen::KEY_ENTER),
                 KeyCode::Backspace => screen.push_key(screen::KEY_BACKSPACE),
-                KeyCode::Char(c) if c.is_ascii() => {
-                    screen.push_key(c.to_ascii_lowercase() as u32)
-                }
+                KeyCode::Char(c) if c.is_ascii() => screen.push_key(c.to_ascii_lowercase() as u32),
                 _ => {}
             }
             return Some(false);
@@ -379,7 +371,9 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
         }
     }
 
-    if app.mode == EditorMode::Command && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('h')) {
+    if app.mode == EditorMode::Command
+        && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('h'))
+    {
         if !matches!(app.tab, Tab::Docs) && !crate::ui::tutorial::get_steps(app.tab).is_empty() {
             crate::ui::tutorial::start_tutorial(app);
         } else {

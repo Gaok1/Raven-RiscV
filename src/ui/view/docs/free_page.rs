@@ -18,7 +18,6 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App, lines: Vec<Line<'stat
         f,
         tab_area,
         app,
-        2,
         format!("  [{}] L=lang  ↑/↓=scroll", app.docs.lang.label()),
     );
 

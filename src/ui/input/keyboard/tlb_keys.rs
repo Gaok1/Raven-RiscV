@@ -55,7 +55,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Enter
-            if in_stats(app) && !app.cache.session_history.is_empty() && !app.session.is_running =>
+            if in_stats(app)
+                && !app.cache.session_history.is_empty()
+                && !app.session.is_running =>
         {
             let idx = app
                 .cache
@@ -95,14 +97,16 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                         app.tlb.vm_settings_scroll.saturating_add(1).min(max);
                 }
                 VmSubtab::Tlb => {
-                    let total = app.rv32().map_or(0, |rv32| rv32.mem().mmu().tlb.entries.len());
+                    let total = app
+                        .rv32()
+                        .map_or(0, |rv32| rv32.mem().mmu().tlb.entries.len());
                     let next = app.tlb.entries_scroll.saturating_add(1);
                     app.tlb.entries_scroll = next.min(total.saturating_sub(1));
                 }
                 VmSubtab::Stats => {
                     if !app.cache.session_history.is_empty() {
-                        app.cache.history_scroll = (app.cache.history_scroll + 1)
-                            .min(app.cache.session_history.len() - 1);
+                        app.cache.history_scroll =
+                            (app.cache.history_scroll + 1).min(app.cache.session_history.len() - 1);
                     }
                 }
                 VmSubtab::Overview => {}
@@ -134,7 +138,11 @@ fn next_subtab(cur: VmSubtab, forward: bool) -> VmSubtab {
     let seq = VmSubtab::ALL;
     let i = seq.iter().position(|&s| s == cur).unwrap_or(0);
     let n = seq.len();
-    seq[if forward { (i + 1) % n } else { (i + n - 1) % n }]
+    seq[if forward {
+        (i + 1) % n
+    } else {
+        (i + n - 1) % n
+    }]
 }
 
 /// Apply a navigation target, snapshotting the pending TLB config when entering
@@ -182,7 +190,11 @@ fn move_vm_edit(app: &mut App, forward: bool) {
     let order = vm_numeric_field_order(app);
     let i = order.iter().position(|&f| f == cur).unwrap_or(0);
     let n = order.len();
-    let next = order[if forward { (i + 1) % n } else { (i + n - 1) % n }];
+    let next = order[if forward {
+        (i + 1) % n
+    } else {
+        (i + n - 1) % n
+    }];
     app.tlb.vm_edit_field = Some(next);
     app.tlb.vm_edit_buf = app.vm_field_value_str(next);
 }

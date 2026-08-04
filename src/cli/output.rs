@@ -6,7 +6,7 @@ use crate::falcon::cache::Cache;
 use crate::falcon::memory::Bus;
 use crate::falcon::{CacheController, Cpu};
 use crate::ui::pipeline::{HazardType, Stage, TraceKind};
-use raven_riscv_engine::{Machine, MachineSnapshot, StepOutcome};
+use raven_engine::{Machine, MachineSnapshot, StepOutcome};
 
 // ── JSON output ───────────────────────────────────────────────────────────────
 
@@ -354,7 +354,7 @@ pub(super) fn format_machine_json(architecture: &str, snapshot: &MachineSnapshot
 }
 
 pub(super) fn reg_name_cli(r: u8) -> &'static str {
-    raven_riscv_engine::falcon::pipeline::sim::reg_name(r)
+    raven_engine::falcon::pipeline::sim::reg_name(r)
 }
 
 pub(super) fn hazard_type_label(hazard: HazardType) -> &'static str {
@@ -370,8 +370,8 @@ pub(super) fn hazard_type_label(hazard: HazardType) -> &'static str {
 }
 
 pub(super) fn snapshot_pipeline_trace_step(
-    state: &raven_riscv_engine::falcon::pipeline::PipelineSimState,
-    commit: Option<&raven_riscv_engine::falcon::pipeline::sim::CommitInfo>,
+    state: &raven_engine::falcon::pipeline::PipelineSimState,
+    commit: Option<&raven_engine::falcon::pipeline::sim::CommitInfo>,
 ) -> PipelineTraceStep {
     let mut stages = Vec::with_capacity(5);
     for (idx, stage) in Stage::all().iter().enumerate() {

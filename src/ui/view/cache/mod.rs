@@ -209,19 +209,28 @@ pub(crate) fn build_cache_scope_bar(app: &App) -> Toolbar<CacheScopeBtn> {
     bar.value(
         CacheScopeBtn::I,
         "i-cache",
-        ControlState::chip(matches!(app.cache.scope, CacheScope::ICache), hov(CacheHoverTarget::ScopeI)),
+        ControlState::chip(
+            matches!(app.cache.scope, CacheScope::ICache),
+            hov(CacheHoverTarget::ScopeI),
+        ),
         theme::ACCENT,
     )
     .value(
         CacheScopeBtn::D,
         "d-cache",
-        ControlState::chip(matches!(app.cache.scope, CacheScope::DCache), hov(CacheHoverTarget::ScopeD)),
+        ControlState::chip(
+            matches!(app.cache.scope, CacheScope::DCache),
+            hov(CacheHoverTarget::ScopeD),
+        ),
         theme::ACCENT,
     )
     .value(
         CacheScopeBtn::Both,
         "both",
-        ControlState::chip(matches!(app.cache.scope, CacheScope::Both), hov(CacheHoverTarget::ScopeBoth)),
+        ControlState::chip(
+            matches!(app.cache.scope, CacheScope::Both),
+            hov(CacheHoverTarget::ScopeBoth),
+        ),
         theme::ACCENT,
     );
     bar
@@ -247,10 +256,7 @@ fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
             style::metric(style::Metric::Cycles),
         ),
         Span::raw("  "),
-        Span::styled(
-            format!("CPI:{cpi:.2}"),
-            style::metric(style::Metric::Cpi),
-        ),
+        Span::styled(format!("CPI:{cpi:.2}"), style::metric(style::Metric::Cpi)),
         Span::raw("  "),
         Span::styled(format!("Instrs:{instr}"), style::label()),
     ]);
@@ -283,9 +289,24 @@ pub(crate) fn build_cache_subtab_bar(app: &App) -> Toolbar<CacheSubtab> {
         ControlState::chip(app.cache.subtab == sub, app.cache.hover == Some(t))
     };
     let mut bar = Toolbar::new();
-    bar.value(CacheSubtab::Stats, "stats", st(CacheSubtab::Stats, CacheHoverTarget::SubtabStats), theme::ACCENT)
-        .value(CacheSubtab::View, "view", st(CacheSubtab::View, CacheHoverTarget::SubtabView), theme::ACCENT)
-        .value(CacheSubtab::Config, "settings", st(CacheSubtab::Config, CacheHoverTarget::SubtabConfig), theme::ACCENT);
+    bar.value(
+        CacheSubtab::Stats,
+        "stats",
+        st(CacheSubtab::Stats, CacheHoverTarget::SubtabStats),
+        theme::ACCENT,
+    )
+    .value(
+        CacheSubtab::View,
+        "view",
+        st(CacheSubtab::View, CacheHoverTarget::SubtabView),
+        theme::ACCENT,
+    )
+    .value(
+        CacheSubtab::Config,
+        "settings",
+        st(CacheSubtab::Config, CacheHoverTarget::SubtabConfig),
+        theme::ACCENT,
+    );
     bar
 }
 
@@ -342,7 +363,6 @@ pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
-
 
 #[cfg(test)]
 mod tests {

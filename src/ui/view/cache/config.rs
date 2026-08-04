@@ -32,7 +32,12 @@ pub(crate) fn build_cache_preset_bar(app: &App, icache: bool) -> Toolbar<usize> 
     };
     let mut bar = Toolbar::with_gap(1);
     for (i, lbl) in ["small", "medium", "large"].iter().enumerate() {
-        bar.action(i, lbl, ControlState::chip(false, hovered == Some(i)), theme::ACCENT);
+        bar.action(
+            i,
+            lbl,
+            ControlState::chip(false, hovered == Some(i)),
+            theme::ACCENT,
+        );
     }
     bar
 }
@@ -52,7 +57,12 @@ pub(crate) fn build_cache_unified_preset_bar(app: &App) -> Toolbar<usize> {
     ];
     let mut bar = Toolbar::with_gap(1);
     for (i, lbl) in labels.iter().enumerate() {
-        bar.action(i, lbl, ControlState::chip(false, hovered == Some(i)), theme::ACCENT);
+        bar.action(
+            i,
+            lbl,
+            ControlState::chip(false, hovered == Some(i)),
+            theme::ACCENT,
+        );
     }
     bar
 }
@@ -63,13 +73,19 @@ pub(crate) fn build_cache_apply_bar(app: &App) -> Toolbar<CacheApplyBtn> {
     bar.action(
         CacheApplyBtn::Apply,
         "apply + reset stats",
-        ControlState::chip(false, matches!(app.cache.hover, Some(CacheHoverTarget::Apply))),
+        ControlState::chip(
+            false,
+            matches!(app.cache.hover, Some(CacheHoverTarget::Apply)),
+        ),
         theme::RUNNING,
     )
     .action(
         CacheApplyBtn::ApplyKeep,
         "apply keep history",
-        ControlState::chip(false, matches!(app.cache.hover, Some(CacheHoverTarget::ApplyKeep))),
+        ControlState::chip(
+            false,
+            matches!(app.cache.hover, Some(CacheHoverTarget::ApplyKeep)),
+        ),
         theme::ACCENT,
     );
     bar

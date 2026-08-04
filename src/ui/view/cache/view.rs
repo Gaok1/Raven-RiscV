@@ -18,10 +18,6 @@ use ratatui::{
 };
 use unicode_truncate::UnicodeTruncateStr;
 
-use raven_riscv_engine::capability::{
-    CacheHierarchy, CacheLevelConfig as CacheConfig, CacheLineView,
-    CacheReplacementPolicy as ReplacementPolicy, CacheRole, CacheSetView,
-};
 use crate::ui::app::{
     App, CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope,
 };
@@ -29,6 +25,10 @@ use crate::ui::theme;
 use crate::ui::view::components::SbGeom;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::style;
+use raven_engine::capability::{
+    CacheHierarchy, CacheLevelConfig as CacheConfig, CacheLineView,
+    CacheReplacementPolicy as ReplacementPolicy, CacheRole, CacheSetView,
+};
 
 const DIRTY_COLOR: Color = theme::DIRTY;
 fn addr_mode_hint(addr_mode: CacheAddrMode, cfgs: &[&CacheConfig]) -> String {
@@ -1140,10 +1140,7 @@ fn build_cell(
             let base = (line.tag << (cfg.offset_bits() + cfg.index_bits()))
                 | ((set_idx as u64) << cfg.offset_bits());
             let width = cfg.address_bits.div_ceil(4);
-            spans.push(Span::styled(
-                format!("0x{base:0width$X}"),
-                addr_style,
-            ));
+            spans.push(Span::styled(format!("0x{base:0width$X}"), addr_style));
         }
         CacheAddrMode::Breakdown => {
             let off_hex_w = (cfg.offset_bits().saturating_add(3) / 4).max(1);

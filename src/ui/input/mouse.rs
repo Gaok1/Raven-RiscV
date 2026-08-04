@@ -122,7 +122,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             },
             Tab::Pipeline => {
                 // Bottom-anchored scroll: wheel-up moves into scrollback.
-                if point_in_rect(me.column, me.row, app.run.pipeline_view().gantt_area_rect.get()) {
+                if point_in_rect(
+                    me.column,
+                    me.row,
+                    app.run.pipeline_view().gantt_area_rect.get(),
+                ) {
                     let max = app.run.pipeline_view().gantt_max_scroll_cache.get();
                     app.run.pipeline_view_mut().gantt_scroll =
                         (app.run.pipeline_view_mut().gantt_scroll + 1).min(max);
@@ -150,7 +154,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     VmSubtab::Overview => {}
                 }
             }
-            Tab::Settings | Tab::Activity => {}
+            Tab::Settings => {}
         },
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.buf.move_down(),
@@ -186,7 +190,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
             },
             Tab::Pipeline => {
                 // Bottom-anchored scroll: wheel-down moves back toward follow (0).
-                if point_in_rect(me.column, me.row, app.run.pipeline_view().gantt_area_rect.get()) {
+                if point_in_rect(
+                    me.column,
+                    me.row,
+                    app.run.pipeline_view().gantt_area_rect.get(),
+                ) {
                     app.run.pipeline_view_mut().gantt_scroll =
                         app.run.pipeline_view_mut().gantt_scroll.saturating_sub(1);
                 }
@@ -209,8 +217,9 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                             app.tlb.vm_settings_scroll.saturating_add(1).min(max);
                     }
                     VmSubtab::Tlb => {
-                        let total =
-                            app.rv32().map_or(0, |rv32| rv32.mem().mmu().tlb.entries.len());
+                        let total = app
+                            .rv32()
+                            .map_or(0, |rv32| rv32.mem().mmu().tlb.entries.len());
                         let next = app.tlb.entries_scroll.saturating_add(1);
                         app.tlb.entries_scroll = next.min(total.saturating_sub(1));
                     }
@@ -223,7 +232,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                     VmSubtab::Overview => {}
                 }
             }
-            Tab::Settings | Tab::Activity => {}
+            Tab::Settings => {}
         },
         MouseEventKind::ScrollLeft => {
             if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {
@@ -999,7 +1008,7 @@ fn drag_docs_scrollbar(app: &mut App, me: MouseEvent) {
 
 /// Handle left-click on the Docs tab: page tabs and filter bar.
 fn handle_docs_click(app: &mut App, me: MouseEvent) {
-    use crate::ui::view::docs::{ALL_MASK, FILTER_ITEMS};
+    use crate::ui::view::docs::{all_mask, filter_items, visible_pages};
 
     let col = me.column;
     let row = me.row;
@@ -1008,13 +1017,8 @@ fn handle_docs_click(app: &mut App, me: MouseEvent) {
     let tab_bar_y = app.docs.tab_bar_y.get();
     if row == tab_bar_y {
         let xs = app.docs.tab_bar_xs.get();
-        let pages = [
-            DocsPage::InstrRef,
-            DocsPage::Syscalls,
-            DocsPage::MemoryMap,
-            DocsPage::FcacheRef,
-        ];
-        for (i, &(x_start, x_end)) in xs.iter().enumerate() {
+        let pages = visible_pages(app);
+        for (i, &(x_start, x_end)) in xs.iter().take(pages.len()).enumerate() {
             if col >= x_start && col < x_end {
                 if app.docs.page != pages[i] {
                     app.docs.page = pages[i];
@@ -1030,18 +1034,19 @@ fn handle_docs_click(app: &mut App, me: MouseEvent) {
         let filter_y = app.docs.filter_bar_y.get();
         if row == filter_y {
             // Compute cumulative x-ranges for each filter item
+            let all_mask = all_mask(app);
             let mut x: u16 = 0;
-            for (idx, &(label, bit, _)) in FILTER_ITEMS.iter().enumerate() {
+            for (idx, &(label, bit, _)) in filter_items(app).iter().enumerate() {
                 let w = (label.chars().count() + 3) as u16; // " ●Label " = label + 3
                 let x_end = x + w;
                 if col >= x && col < x_end {
                     app.docs.filter_cursor = idx;
                     if idx == 0 {
                         // "All" toggle
-                        if app.docs.type_filter == ALL_MASK {
+                        if app.docs.type_filter == all_mask {
                             app.docs.type_filter = 0;
                         } else {
-                            app.docs.type_filter = ALL_MASK;
+                            app.docs.type_filter = all_mask;
                         }
                     } else {
                         app.docs.type_filter ^= bit;
@@ -1071,8 +1076,7 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
             }
             let q = app.docs.search_query.clone();
             let f = app.docs.type_filter;
-            let w = docs_area.width;
-            docs_body_line_count(w, &q, f).saturating_sub(viewport_h)
+            docs_body_line_count(app, &q, f).saturating_sub(viewport_h)
         }
         p => {
             // header(2) consumed by render_free_page
@@ -2848,7 +2852,10 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
     }
     let (st_y, st_x0, st_x1) = app.run.pipeline_view().btn_state_rect.get();
     if me.row == st_y && me.column >= st_x0 && me.column < st_x1 {
-        if app.pipeline_status().is_some_and(|status| status.enabled && !status.faulted) {
+        if app
+            .pipeline_status()
+            .is_some_and(|status| status.enabled && !status.faulted)
+        {
             if app.pipeline_status().is_some_and(|status| status.halted) {
                 app.restart_simulation();
                 if app.can_start_run() {
@@ -2891,22 +2898,10 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                     return;
                 };
                 match i {
-                    0 => {
-                        pipeline.bypass.ex_to_ex =
-                            !pipeline.bypass.ex_to_ex
-                    }
-                    1 => {
-                        pipeline.bypass.mem_to_ex =
-                            !pipeline.bypass.mem_to_ex
-                    }
-                    2 => {
-                        pipeline.bypass.wb_to_id =
-                            !pipeline.bypass.wb_to_id
-                    }
-                    3 => {
-                        pipeline.bypass.store_to_load =
-                            !pipeline.bypass.store_to_load
-                    }
+                    0 => pipeline.bypass.ex_to_ex = !pipeline.bypass.ex_to_ex,
+                    1 => pipeline.bypass.mem_to_ex = !pipeline.bypass.mem_to_ex,
+                    2 => pipeline.bypass.wb_to_id = !pipeline.bypass.wb_to_id,
+                    3 => pipeline.bypass.store_to_load = !pipeline.bypass.store_to_load,
                     4 => {
                         pipeline.mode = match pipeline.mode {
                             PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
@@ -2914,12 +2909,11 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                         }
                     }
                     5 => {
-                        pipeline.branch_resolve =
-                            match pipeline.branch_resolve {
-                                BranchResolve::Id => BranchResolve::Ex,
-                                BranchResolve::Ex => BranchResolve::Mem,
-                                BranchResolve::Mem => BranchResolve::Id,
-                            }
+                        pipeline.branch_resolve = match pipeline.branch_resolve {
+                            BranchResolve::Id => BranchResolve::Ex,
+                            BranchResolve::Ex => BranchResolve::Mem,
+                            BranchResolve::Mem => BranchResolve::Id,
+                        }
                     }
                     6 => {
                         let next = match pipeline.predict {
@@ -2932,57 +2926,51 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                     }
                     7 => {
                         let idx = crate::ui::pipeline::FuKind::Alu.index();
-                        pipeline.fu_capacity[idx] =
-                            if pipeline.fu_capacity[idx] >= 8 {
-                                1
-                            } else {
-                                pipeline.fu_capacity[idx] + 1
-                            };
+                        pipeline.fu_capacity[idx] = if pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            pipeline.fu_capacity[idx] + 1
+                        };
                     }
                     8 => {
                         let idx = crate::ui::pipeline::FuKind::Mul.index();
-                        pipeline.fu_capacity[idx] =
-                            if pipeline.fu_capacity[idx] >= 8 {
-                                1
-                            } else {
-                                pipeline.fu_capacity[idx] + 1
-                            };
+                        pipeline.fu_capacity[idx] = if pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            pipeline.fu_capacity[idx] + 1
+                        };
                     }
                     9 => {
                         let idx = crate::ui::pipeline::FuKind::Div.index();
-                        pipeline.fu_capacity[idx] =
-                            if pipeline.fu_capacity[idx] >= 8 {
-                                1
-                            } else {
-                                pipeline.fu_capacity[idx] + 1
-                            };
+                        pipeline.fu_capacity[idx] = if pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            pipeline.fu_capacity[idx] + 1
+                        };
                     }
                     10 => {
                         let idx = crate::ui::pipeline::FuKind::Fpu.index();
-                        pipeline.fu_capacity[idx] =
-                            if pipeline.fu_capacity[idx] >= 8 {
-                                1
-                            } else {
-                                pipeline.fu_capacity[idx] + 1
-                            };
+                        pipeline.fu_capacity[idx] = if pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            pipeline.fu_capacity[idx] + 1
+                        };
                     }
                     11 => {
                         let idx = crate::ui::pipeline::FuKind::Lsu.index();
-                        pipeline.fu_capacity[idx] =
-                            if pipeline.fu_capacity[idx] >= 8 {
-                                1
-                            } else {
-                                pipeline.fu_capacity[idx] + 1
-                            };
+                        pipeline.fu_capacity[idx] = if pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            pipeline.fu_capacity[idx] + 1
+                        };
                     }
                     12 => {
                         let idx = crate::ui::pipeline::FuKind::Sys.index();
-                        pipeline.fu_capacity[idx] =
-                            if pipeline.fu_capacity[idx] >= 8 {
-                                1
-                            } else {
-                                pipeline.fu_capacity[idx] + 1
-                            };
+                        pipeline.fu_capacity[idx] = if pipeline.fu_capacity[idx] >= 8 {
+                            1
+                        } else {
+                            pipeline.fu_capacity[idx] + 1
+                        };
                     }
                     _ => {}
                 }

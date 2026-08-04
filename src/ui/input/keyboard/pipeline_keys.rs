@@ -45,7 +45,10 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         }
         KeyCode::Char('s') => {
             app.run.pipeline_view_mut().clear_hover_state();
-            if app.pipeline_status().is_some_and(|status| (status.enabled || status.sequential) && !status.faulted) {
+            if app
+                .pipeline_status()
+                .is_some_and(|status| (status.enabled || status.sequential) && !status.faulted)
+            {
                 app.single_step();
             }
             true
@@ -57,7 +60,10 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            if app.pipeline_status().is_some_and(|status| (status.enabled || status.sequential) && !status.faulted) {
+            if app
+                .pipeline_status()
+                .is_some_and(|status| (status.enabled || status.sequential) && !status.faulted)
+            {
                 if app.pipeline_status().is_some_and(|status| status.halted) {
                     app.restart_simulation();
                     if app.can_start_run() {
@@ -173,7 +179,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            app.run.pipeline_view_mut().config_cursor = app.run.pipeline_view_mut().config_cursor.saturating_sub(1);
+            app.run.pipeline_view_mut().config_cursor =
+                app.run.pipeline_view_mut().config_cursor.saturating_sub(1);
             true
         }
         KeyCode::Down
@@ -183,8 +190,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            app.run.pipeline_view_mut().config_cursor =
-                (app.run.pipeline_view_mut().config_cursor + 1).min(PipelineBypassConfig::CONFIG_ROWS - 1);
+            app.run.pipeline_view_mut().config_cursor = (app.run.pipeline_view_mut().config_cursor
+                + 1)
+            .min(PipelineBypassConfig::CONFIG_ROWS - 1);
             true
         }
         // Gantt scroll is bottom-anchored: 0 = follow the newest row, so Up
@@ -197,7 +205,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         {
             app.run.pipeline_view_mut().clear_hover_state();
             let max = app.run.pipeline_view().gantt_max_scroll_cache.get();
-            app.run.pipeline_view_mut().gantt_scroll = (app.run.pipeline_view_mut().gantt_scroll + 1).min(max);
+            app.run.pipeline_view_mut().gantt_scroll =
+                (app.run.pipeline_view_mut().gantt_scroll + 1).min(max);
             true
         }
         KeyCode::Down
@@ -207,7 +216,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            app.run.pipeline_view_mut().gantt_scroll = app.run.pipeline_view_mut().gantt_scroll.saturating_sub(1);
+            app.run.pipeline_view_mut().gantt_scroll =
+                app.run.pipeline_view_mut().gantt_scroll.saturating_sub(1);
             true
         }
         KeyCode::PageUp
@@ -217,9 +227,19 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            let page = app.run.pipeline_view().gantt_visible_rows_cache.get().max(1);
+            let page = app
+                .run
+                .pipeline_view()
+                .gantt_visible_rows_cache
+                .get()
+                .max(1);
             let max = app.run.pipeline_view().gantt_max_scroll_cache.get();
-            app.run.pipeline_view_mut().gantt_scroll = app.run.pipeline_view_mut().gantt_scroll.saturating_add(page).min(max);
+            app.run.pipeline_view_mut().gantt_scroll = app
+                .run
+                .pipeline_view_mut()
+                .gantt_scroll
+                .saturating_add(page)
+                .min(max);
             true
         }
         KeyCode::PageDown
@@ -229,8 +249,17 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            let page = app.run.pipeline_view().gantt_visible_rows_cache.get().max(1);
-            app.run.pipeline_view_mut().gantt_scroll = app.run.pipeline_view_mut().gantt_scroll.saturating_sub(page);
+            let page = app
+                .run
+                .pipeline_view()
+                .gantt_visible_rows_cache
+                .get()
+                .max(1);
+            app.run.pipeline_view_mut().gantt_scroll = app
+                .run
+                .pipeline_view_mut()
+                .gantt_scroll
+                .saturating_sub(page);
             true
         }
         KeyCode::End | KeyCode::Char('G')

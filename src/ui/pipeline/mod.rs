@@ -1,8 +1,8 @@
 //! TUI-only pipeline presentation and interaction state.
 
-pub use raven_riscv_engine::falcon::pipeline::*;
+pub use raven_engine::falcon::pipeline::*;
 pub mod sim {
-    pub use raven_riscv_engine::falcon::pipeline::sim::*;
+    pub use raven_engine::falcon::pipeline::sim::*;
 }
 
 use std::cell::Cell;
@@ -327,36 +327,66 @@ pub struct PipelineViewState {
 impl PipelineViewState {
     pub fn new() -> Self {
         Self {
-            speed: PipelineSpeed::Normal, last_tick: Instant::now(), subtab: PipelineSubtab::Main,
-            config_cursor: 0, gantt_scroll: 0, gantt_visible_rows_cache: Cell::new(0),
-            gantt_max_scroll_cache: Cell::new(0), hover_subtab_main: false,
-            hover_subtab_config: false, hover_core: false, hover_reset: false, hover_speed: false,
-            hover_state: false, hover_export_results: false, hover_import_cfg: false,
-            hover_export_cfg: false, status_msg: None, status_error: None, hover_config_row: None,
+            speed: PipelineSpeed::Normal,
+            last_tick: Instant::now(),
+            subtab: PipelineSubtab::Main,
+            config_cursor: 0,
+            gantt_scroll: 0,
+            gantt_visible_rows_cache: Cell::new(0),
+            gantt_max_scroll_cache: Cell::new(0),
+            hover_subtab_main: false,
+            hover_subtab_config: false,
+            hover_core: false,
+            hover_reset: false,
+            hover_speed: false,
+            hover_state: false,
+            hover_export_results: false,
+            hover_import_cfg: false,
+            hover_export_cfg: false,
+            status_msg: None,
+            status_error: None,
+            hover_config_row: None,
             config_row_rects: Cell::new([(0, 0, 0); PipelineBypassConfig::CONFIG_ROWS]),
-            btn_subtab_main_rect: Cell::new((0, 0, 0)), btn_subtab_config_rect: Cell::new((0, 0, 0)),
-            btn_core_rect: Cell::new((0, 0, 0)), btn_reset_rect: Cell::new((0, 0, 0)),
-            btn_speed_rect: Cell::new((0, 0, 0)), btn_state_rect: Cell::new((0, 0, 0)),
-            btn_export_results_rect: Cell::new((0, 0, 0)), btn_import_cfg_rect: Cell::new((0, 0, 0)),
-            btn_export_cfg_rect: Cell::new((0, 0, 0)), gantt_area_rect: Cell::new((0, 0, 0, 0)),
+            btn_subtab_main_rect: Cell::new((0, 0, 0)),
+            btn_subtab_config_rect: Cell::new((0, 0, 0)),
+            btn_core_rect: Cell::new((0, 0, 0)),
+            btn_reset_rect: Cell::new((0, 0, 0)),
+            btn_speed_rect: Cell::new((0, 0, 0)),
+            btn_state_rect: Cell::new((0, 0, 0)),
+            btn_export_results_rect: Cell::new((0, 0, 0)),
+            btn_import_cfg_rect: Cell::new((0, 0, 0)),
+            btn_export_cfg_rect: Cell::new((0, 0, 0)),
+            gantt_area_rect: Cell::new((0, 0, 0, 0)),
         }
     }
 
     pub fn clear_hover_state(&mut self) {
-        self.hover_subtab_main = false; self.hover_subtab_config = false; self.hover_core = false;
-        self.hover_reset = false; self.hover_speed = false; self.hover_state = false;
-        self.hover_export_results = false; self.hover_import_cfg = false; self.hover_export_cfg = false;
+        self.hover_subtab_main = false;
+        self.hover_subtab_config = false;
+        self.hover_core = false;
+        self.hover_reset = false;
+        self.hover_speed = false;
+        self.hover_state = false;
+        self.hover_export_results = false;
+        self.hover_import_cfg = false;
+        self.hover_export_cfg = false;
         self.hover_config_row = None;
     }
 
     pub fn reset_for_program(&mut self) {
-        self.gantt_scroll = 0; self.gantt_visible_rows_cache.set(0); self.gantt_max_scroll_cache.set(0);
-        self.last_tick = Instant::now(); self.status_msg = None; self.status_error = None;
+        self.gantt_scroll = 0;
+        self.gantt_visible_rows_cache.set(0);
+        self.gantt_max_scroll_cache.set(0);
+        self.last_tick = Instant::now();
+        self.status_msg = None;
+        self.status_error = None;
     }
 }
 
 impl Default for PipelineViewState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -365,8 +395,8 @@ mod tests;
 
 #[cfg(test)]
 mod boundary_tests {
-    use raven_riscv_engine::falcon::machine::JournaledPipeline;
     use super::{PipelineSimState, PipelineSpeed, PipelineViewState};
+    use raven_engine::falcon::machine::JournaledPipeline;
 
     #[test]
     fn restore_does_not_touch_visual_state() {

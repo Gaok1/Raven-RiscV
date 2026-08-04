@@ -73,10 +73,19 @@ pub(crate) fn field_available(word: u32, field: InstrFieldKind) -> bool {
     let i_shift = format == EncFormat::I && matches!((word >> 12) & 0x7, 0x1 | 0x5);
     match field {
         Word | Asm | Bin | Opcode => true,
-        Rd => matches!(format, EncFormat::R | EncFormat::I | EncFormat::U | EncFormat::J),
-        Rs1 => matches!(format, EncFormat::R | EncFormat::I | EncFormat::S | EncFormat::B),
+        Rd => matches!(
+            format,
+            EncFormat::R | EncFormat::I | EncFormat::U | EncFormat::J
+        ),
+        Rs1 => matches!(
+            format,
+            EncFormat::R | EncFormat::I | EncFormat::S | EncFormat::B
+        ),
         Rs2 => matches!(format, EncFormat::R | EncFormat::S | EncFormat::B),
-        Funct3 => matches!(format, EncFormat::R | EncFormat::I | EncFormat::S | EncFormat::B),
+        Funct3 => matches!(
+            format,
+            EncFormat::R | EncFormat::I | EncFormat::S | EncFormat::B
+        ),
         Imm => !matches!(format, EncFormat::R),
         Funct7 => format == EncFormat::R || i_shift,
         Shamt => i_shift,

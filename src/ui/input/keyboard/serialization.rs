@@ -135,7 +135,7 @@ pub(super) fn serialize_rcfg(
 }
 
 pub(super) fn serialize_pcfg(
-    pipeline: &raven_riscv_engine::falcon::pipeline::PipelineSimState,
+    pipeline: &raven_engine::falcon::pipeline::PipelineSimState,
     speed: crate::ui::pipeline::PipelineSpeed,
 ) -> String {
     crate::ui::pipeline::serialize_pipeline_config(
@@ -254,7 +254,7 @@ pub(super) fn parse_config_v3(text: &str) -> Result<ConfigV3, String> {
 pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
     // A backend with no datapath model has no pipeline settings to record; the
     // defaults round-trip to the same "off" state on load.
-    let no_pipeline = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
+    let no_pipeline = raven_engine::falcon::pipeline::PipelineSimState::new();
     let pipeline_config = app.pipeline_config().unwrap_or(&no_pipeline);
     let mut sim = serialize_rcfg(
         &app.session.cpi_config,
@@ -801,25 +801,6 @@ fn capture_pipeline_snapshot(app: &App) -> Option<PipelineResultsSnapshot> {
     app.aggregate_pipeline_snapshot()
 }
 
-// ── pub(crate) helpers used by the guided-learning module ────────────────────
-
-/// Apply a raw .rcfg text to the app (parse + apply, no file I/O).
-pub(crate) fn apply_rcfg_text(app: &mut App, text: &str) -> Result<(), String> {
-    let cfg = parse_rcfg(text)?;
-    apply_rcfg(app, cfg);
-    Ok(())
-}
-
-/// Apply a raw .pcfg text to the app (parse + apply, no file I/O).
-pub(crate) fn apply_pcfg_text(app: &mut App, text: &str) -> Result<(), String> {
-    let cfg = parse_pcfg(text)?;
-    if let Some(pipeline) = app.pipeline_config_mut() {
-        cfg.apply_to_state(pipeline);
-    }
-    app.run.pipeline_view_mut().speed = cfg.speed;
-    Ok(())
-}
-
 /// Rebuild the live hierarchy's extra levels from `app.cache.extra_pending`.
 /// A backend whose cache the host cannot reshape keeps only the pending list,
 /// which is what the Cache tab shows.
@@ -834,24 +815,6 @@ fn install_extra_cache_levels(app: &mut App) {
     if let Some(runtime) = app.rv32_mut() {
         runtime.mem_mut_unjournaled().extra_levels = levels;
     }
-}
-
-/// Apply a raw .fcache text to the app (parse + apply, no file I/O).
-pub(crate) fn apply_fcache_text(app: &mut App, text: &str) -> Result<(), String> {
-    let (icfg, dcfg, extra, tlb) = parse_cache_configs(text)?;
-    app.cache.pending_icache = icfg;
-    app.cache.pending_dcache = dcfg;
-    let n_extra = extra.len();
-    app.cache.extra_pending = extra;
-    install_extra_cache_levels(app);
-    if app.cache.selected_level > n_extra {
-        app.cache.selected_level = n_extra;
-    }
-    app.tlb.pending = tlb.clone();
-    if let Some(runtime) = app.rv32_mut() {
-        runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
-    }
-    Ok(())
 }
 
 pub(crate) fn do_export_config(app: &mut App) {

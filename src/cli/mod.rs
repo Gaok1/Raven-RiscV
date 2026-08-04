@@ -13,9 +13,9 @@ use crate::falcon::jit::{self, BackendKind, ExecCtx, ExecOutcome, ExecutionBacke
 use crate::falcon::program::{load_bytes, load_elf};
 use crate::falcon::registers::HartStartRequest;
 use crate::falcon::{CacheController, Cpu};
-use raven_riscv_engine::falcon::pipeline::sim::pipeline_tick;
 use crate::ui::pipeline::{PipelineConfig, parse_pipeline_config, serialize_pipeline_config};
 use crate::ui::{Console, CpiConfig};
+use raven_engine::falcon::pipeline::sim::pipeline_tick;
 use std::collections::HashMap;
 
 const DEFAULT_MAX_CORES: usize = 1;
@@ -413,7 +413,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// Run a backend that plugs in through the [`Machine`](raven_riscv_engine::Machine)
+/// Run a backend that plugs in through the [`Machine`](raven_engine::Machine)
 /// trait, i.e. anything other than RV32.
 fn run_portable(args: RunArgs) -> Result<(), String> {
     let architecture = crate::arch::lookup(&args.architecture)?;
@@ -480,11 +480,11 @@ fn reject_rv32_only_options(args: &RunArgs) -> Result<(), String> {
 /// does for RV32.
 fn read_portable_image(
     file: &str,
-    assembler: &dyn raven_riscv_engine::Assembler,
-) -> Result<raven_riscv_engine::ProgramImage, String> {
+    assembler: &dyn raven_engine::Assembler,
+) -> Result<raven_engine::ProgramImage, String> {
     let bytes = std::fs::read(file).map_err(|e| format!("cannot read '{}': {e}", file))?;
     if is_falc(&bytes) {
-        return raven_riscv_engine::ProgramImage::from_falc(&bytes).map_err(|e| e.to_string());
+        return raven_engine::ProgramImage::from_falc(&bytes).map_err(|e| e.to_string());
     }
     let source = std::str::from_utf8(&bytes)
         .map_err(|_| format!("'{}' is neither UTF-8 source nor FALC", file))?;
@@ -1020,7 +1020,7 @@ fn run_headless_pipeline(
     max_cycles: u64,
     capture_trace: bool,
 ) -> Result<(PipelineReport, Vec<PipelineTraceStep>), String> {
-    let mut state = raven_riscv_engine::falcon::pipeline::PipelineSimState::new();
+    let mut state = raven_engine::falcon::pipeline::PipelineSimState::new();
     pcfg.apply_to_state(&mut state);
     state.reset_stages(cpu.pc);
     let mut trace_steps = Vec::new();

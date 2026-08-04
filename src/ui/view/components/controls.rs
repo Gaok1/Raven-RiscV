@@ -68,7 +68,9 @@ pub(crate) fn control_style(
     normal_color: Color,
 ) -> Style {
     match state {
-        ControlState::Hovered => Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        ControlState::Hovered => Style::default()
+            .fg(theme::TEXT)
+            .add_modifier(Modifier::BOLD),
         ControlState::Selected => Style::default()
             .fg(active_color)
             .add_modifier(Modifier::BOLD),
@@ -117,7 +119,9 @@ pub(crate) fn edit_value(
     match editing {
         Some(buf) => Span::styled(
             format!("{buf}█"),
-            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
         ),
         None => dense_value(display, hovered, true, color),
     }

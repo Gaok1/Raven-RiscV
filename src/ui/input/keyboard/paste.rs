@@ -81,7 +81,7 @@ pub(super) fn clamp_docs_scroll(app: &mut App) {
             DocsPage::InstrRef => {
                 let vp = viewport_h.saturating_sub(6);
                 let q = app.docs.search_query.clone();
-                docs_body_line_count(80, &q, app.docs.type_filter).saturating_sub(vp)
+                docs_body_line_count(app, &q, app.docs.type_filter).saturating_sub(vp)
             }
             p => {
                 free_page_line_count(p, app.docs.lang).saturating_sub(viewport_h.saturating_sub(2))

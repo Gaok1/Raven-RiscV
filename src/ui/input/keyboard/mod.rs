@@ -13,17 +13,17 @@ mod serialization;
 mod tlb_keys;
 
 pub(crate) use self::paste::paste_from_terminal;
-pub(crate) use self::tlb_keys::select as tlb_select;
 #[cfg(test)]
 use self::paste::{paste_imem_search, paste_mem_search};
-pub(crate) use self::serialization::{
-    apply_fcache_text, apply_pcfg_text, apply_rcfg_text, do_export_config, do_export_results,
-    do_import_config, open_path_input, split_config_v3, wrap_config_v3,
-};
 #[cfg(test)]
 use self::serialization::{
     apply_imem_search, capture_snapshot, serialize_results_csv, serialize_results_rstats,
 };
+pub(crate) use self::serialization::{
+    do_export_config, do_export_results, do_import_config, open_path_input, split_config_v3,
+    wrap_config_v3,
+};
+pub(crate) use self::tlb_keys::select as tlb_select;
 
 use crate::ui::app::{App, EditorMode, Tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -124,7 +124,6 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
         Tab::Pipeline => pipeline_keys::handle(app, key),
         Tab::Docs => docs_keys::handle(app, key),
         Tab::Settings => config_keys::handle(app, key),
-        Tab::Activity => crate::guided_learning::keys::handle(app, key.code),
     }
 }
 

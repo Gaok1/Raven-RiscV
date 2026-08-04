@@ -7,11 +7,11 @@ use ratatui::{
 
 use crate::ui::app::{App, CacheScope};
 use crate::ui::theme;
-use raven_riscv_engine::capability::CacheRole;
 use crate::ui::view::components::overlay::{self, OverlayStyle};
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
 use crate::ui::view::components::{SbGeom, vertical_scrollbar};
 use crate::ui::view::style;
+use raven_engine::capability::CacheRole;
 
 // Note: Reset/Pause/Scope controls are in the shared controls bar (mod.rs).
 // Run Controls widget is rendered at the cache tab level (always visible).
@@ -149,7 +149,11 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
             };
             spans.push(Span::raw(" + "));
             spans.push(Span::styled(
-                format!("{} svc: {}", caches.level_name(level), cache.stats.total_cycles),
+                format!(
+                    "{} svc: {}",
+                    caches.level_name(level),
+                    cache.stats.total_cycles
+                ),
                 Style::default().fg(theme::CACHE_L2),
             ));
         }
@@ -714,11 +718,10 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     }
     let x_mid = (x_min + x_max) / 2.0;
 
-    let level_name = app
-        .cache_hierarchy()
-        .map_or_else(|| format!("L{}", extra_idx + 2), |caches| {
-            caches.level_name(extra_idx + 1)
-        });
+    let level_name = app.cache_hierarchy().map_or_else(
+        || format!("L{}", extra_idx + 2),
+        |caches| caches.level_name(extra_idx + 1),
+    );
     let datasets = vec![
         Dataset::default()
             .name(level_name)

@@ -119,9 +119,15 @@ impl DataTable {
             let header_cells: Vec<Cell<'static>> = self
                 .cols
                 .iter()
-                .map(|c| Cell::from(c.align.apply(Line::from(Span::styled(c.header, style::label())))))
+                .map(|c| {
+                    Cell::from(
+                        c.align
+                            .apply(Line::from(Span::styled(c.header, style::label()))),
+                    )
+                })
                 .collect();
-            table = table.header(Row::new(header_cells).style(style::label().add_modifier(Modifier::BOLD)));
+            table = table
+                .header(Row::new(header_cells).style(style::label().add_modifier(Modifier::BOLD)));
         }
         if let Some(block) = self.block {
             table = table.block(block);

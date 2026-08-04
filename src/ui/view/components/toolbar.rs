@@ -24,7 +24,7 @@
 use ratatui::prelude::*;
 
 use crate::ui::theme;
-use crate::ui::view::components::controls::{control_style, ControlState};
+use crate::ui::view::components::controls::{ControlState, control_style};
 
 /// Default columns of blank space rendered between adjacent cells.
 const GAP: u16 = 3;
@@ -162,7 +162,10 @@ impl<Id: Copy> Toolbar<Id> {
                 spans.push(Span::raw(" ".repeat(self.gap as usize)));
             }
             if let Some(label) = &cell.label {
-                spans.push(Span::styled(label.clone(), Style::default().fg(theme::IDLE)));
+                spans.push(Span::styled(
+                    label.clone(),
+                    Style::default().fg(theme::IDLE),
+                ));
                 spans.push(Span::raw(" "));
             }
             spans.push(cell.value.clone());

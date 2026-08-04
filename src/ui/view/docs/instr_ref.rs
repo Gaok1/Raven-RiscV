@@ -1,4 +1,6 @@
-use super::chrome::{render_filter_bar, render_page_tabs, render_tab_hint, separator_line};
+use super::chrome::{
+    filter_items, render_filter_bar, render_page_tabs, render_tab_hint, separator_line,
+};
 use crate::ui::theme;
 use crate::ui::view::App;
 use crate::ui::view::components::{
@@ -7,841 +9,57 @@ use crate::ui::view::components::{
 use crate::ui::view::style;
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
+use raven_engine::InstructionDoc;
 
-const TY_W: usize = 8;
+/// Narrowest Type column, wide enough for `[Branch]`. An architecture whose
+/// type names are longer widens it — the column used to be fixed at this, so
+/// `[Directive]` pushed every column after it out of line.
+const TY_W_MIN: usize = 8;
 const MNE_W: usize = 13;
 const OPS_W: usize = 21;
 const EXP_W: usize = 26;
 
-#[derive(Clone, Copy)]
-struct DocRow {
-    ty: &'static str,
-    mnemonic: &'static str,
-    operands: &'static str,
-    desc: &'static str,
-    expands: &'static str,
+/// The filter bit the active architecture assigns to `kind`.
+fn ty_bit(app: &App, kind: &str) -> u16 {
+    filter_items(app)
+        .iter()
+        .find(|(label, ..)| *label == kind)
+        .map_or(0, |(_, bit, _)| *bit)
 }
 
-macro_rules! row {
-    ($ty:expr, $mne:expr, $ops:expr, $desc:expr) => {
-        DocRow {
-            ty: $ty,
-            mnemonic: $mne,
-            operands: $ops,
-            desc: $desc,
-            expands: "",
-        }
-    };
-    ($ty:expr, $mne:expr, $ops:expr, $desc:expr, $exp:expr) => {
-        DocRow {
-            ty: $ty,
-            mnemonic: $mne,
-            operands: $ops,
-            desc: $desc,
-            expands: $exp,
-        }
-    };
+fn ty_color(app: &App, kind: &str) -> Color {
+    filter_items(app)
+        .iter()
+        .find(|(label, ..)| *label == kind)
+        .map_or(Color::White, |(.., color)| *color)
 }
 
-const DOCS: &[DocRow] = &[
-    row!("R", "add", "rd, rs1, rs2", "rd = rs1 + rs2"),
-    row!("R", "sub", "rd, rs1, rs2", "rd = rs1 - rs2"),
-    row!("R", "and", "rd, rs1, rs2", "rd = rs1 & rs2"),
-    row!("R", "or", "rd, rs1, rs2", "rd = rs1 | rs2"),
-    row!("R", "xor", "rd, rs1, rs2", "rd = rs1 ^ rs2"),
-    row!("R", "sll", "rd, rs1, rs2", "rd = rs1 << (rs2 & 31)"),
-    row!("R", "srl", "rd, rs1, rs2", "rd = logical rs1 >> (rs2 & 31)"),
-    row!(
-        "R",
-        "sra",
-        "rd, rs1, rs2",
-        "rd = arithmetic rs1 >> (rs2 & 31)"
-    ),
-    row!(
-        "R",
-        "slt",
-        "rd, rs1, rs2",
-        "rd = 1 if rs1 < rs2 (signed) else 0"
-    ),
-    row!(
-        "R",
-        "sltu",
-        "rd, rs1, rs2",
-        "rd = 1 if rs1 < rs2 (unsigned) else 0"
-    ),
-    row!("M", "mul", "rd, rs1, rs2", "rd = (rs1 * rs2) low 32 bits"),
-    row!(
-        "M",
-        "mulh",
-        "rd, rs1, rs2",
-        "rd = (rs1 * rs2) high 32 bits signed"
-    ),
-    row!(
-        "M",
-        "mulhsu",
-        "rd, rs1, rs2",
-        "rd = (signed rs1 * unsigned rs2) high 32 bits"
-    ),
-    row!(
-        "M",
-        "mulhu",
-        "rd, rs1, rs2",
-        "rd = (rs1 * rs2) high 32 bits unsigned"
-    ),
-    row!(
-        "M",
-        "div",
-        "rd, rs1, rs2",
-        "rd = rs1 / rs2 (signed integer division)"
-    ),
-    row!("M", "divu", "rd, rs1, rs2", "rd = rs1 / rs2 (unsigned)"),
-    row!(
-        "M",
-        "rem",
-        "rd, rs1, rs2",
-        "rd = rs1 % rs2 (signed remainder)"
-    ),
-    row!("M", "remu", "rd, rs1, rs2", "rd = rs1 % rs2 (unsigned)"),
-    row!(
-        "I",
-        "addi",
-        "rd, rs1, imm",
-        "rd = rs1 + imm (12-bit signed)"
-    ),
-    row!("I", "xori", "rd, rs1, imm", "rd = rs1 ^ imm"),
-    row!("I", "ori", "rd, rs1, imm", "rd = rs1 | imm"),
-    row!("I", "andi", "rd, rs1, imm", "rd = rs1 & imm"),
-    row!(
-        "I",
-        "slti",
-        "rd, rs1, imm",
-        "rd = 1 if rs1 < imm (signed) else 0"
-    ),
-    row!(
-        "I",
-        "sltiu",
-        "rd, rs1, imm",
-        "rd = 1 if rs1 < imm (unsigned) else 0"
-    ),
-    row!(
-        "I",
-        "slli",
-        "rd, rs1, shamt",
-        "rd = rs1 << shamt  (shamt 0..31)"
-    ),
-    row!("I", "srli", "rd, rs1, shamt", "rd = logical rs1 >> shamt"),
-    row!(
-        "I",
-        "srai",
-        "rd, rs1, shamt",
-        "rd = arithmetic rs1 >> shamt"
-    ),
-    row!(
-        "Load",
-        "lb",
-        "rd, imm(rs1)",
-        "Load 1 byte signed from mem[rs1+imm]"
-    ),
-    row!(
-        "Load",
-        "lh",
-        "rd, imm(rs1)",
-        "Load 2 bytes signed from mem[rs1+imm]"
-    ),
-    row!(
-        "Load",
-        "lw",
-        "rd, imm(rs1)",
-        "Load 4 bytes from mem[rs1+imm]"
-    ),
-    row!(
-        "Load",
-        "lbu",
-        "rd, imm(rs1)",
-        "Load 1 byte unsigned from mem[rs1+imm]"
-    ),
-    row!(
-        "Load",
-        "lhu",
-        "rd, imm(rs1)",
-        "Load 2 bytes unsigned from mem[rs1+imm]"
-    ),
-    row!(
-        "Store",
-        "sb",
-        "rs2, imm(rs1)",
-        "Store low 1 byte of rs2 to mem[rs1+imm]"
-    ),
-    row!(
-        "Store",
-        "sh",
-        "rs2, imm(rs1)",
-        "Store low 2 bytes of rs2 to mem[rs1+imm]"
-    ),
-    row!(
-        "Store",
-        "sw",
-        "rs2, imm(rs1)",
-        "Store 4 bytes of rs2 to mem[rs1+imm]"
-    ),
-    row!("Branch", "beq", "rs1, rs2, label", "Branch if rs1 == rs2"),
-    row!("Branch", "bne", "rs1, rs2, label", "Branch if rs1 != rs2"),
-    row!(
-        "Branch",
-        "blt",
-        "rs1, rs2, label",
-        "Branch if rs1 < rs2 (signed)"
-    ),
-    row!(
-        "Branch",
-        "bge",
-        "rs1, rs2, label",
-        "Branch if rs1 >= rs2 (signed)"
-    ),
-    row!(
-        "Branch",
-        "bltu",
-        "rs1, rs2, label",
-        "Branch if rs1 < rs2 (unsigned)"
-    ),
-    row!(
-        "Branch",
-        "bgeu",
-        "rs1, rs2, label",
-        "Branch if rs1 >= rs2 (unsigned)"
-    ),
-    row!(
-        "U",
-        "lui",
-        "rd, imm20",
-        "rd = imm20 << 12  (loads upper 20 bits)"
-    ),
-    row!("U", "auipc", "rd, imm20", "rd = PC + (imm20 << 12)"),
-    row!(
-        "Jump",
-        "jal",
-        "label | rd, label",
-        "Jump and link; rd defaults to ra"
-    ),
-    row!(
-        "Jump",
-        "jalr",
-        "rd, rs1, imm",
-        "Jump to rs1+imm & ~1; rd = return addr"
-    ),
-    row!(
-        "SYS",
-        "ecall",
-        "",
-        "System call — a7 selects service, a0 = arg/result"
-    ),
-    row!(
-        "SYS",
-        "ebreak",
-        "",
-        "Pause execution (debug breakpoint; resumable)"
-    ),
-    row!(
-        "SYS",
-        "halt",
-        "",
-        "End-of-hart stop; distinct from ebreak and not resumable"
-    ),
-    row!(
-        "SYS",
-        "fence",
-        "",
-        "Memory barrier across memory and device accesses"
-    ),
-    row!(
-        "SYS",
-        "fence.i",
-        "",
-        "Instruction-stream synchronization barrier"
-    ),
-    row!(
-        "Atomic",
-        "lr.w",
-        "rd, (rs1)",
-        "Load-reserved word from mem[rs1] into rd"
-    ),
-    row!(
-        "Atomic",
-        "sc.w",
-        "rd, rs2, (rs1)",
-        "Store-conditional rs2 to mem[rs1]; rd=0 success, 1 failure"
-    ),
-    row!(
-        "Atomic",
-        "amoswap.w",
-        "rd, rs2, (rs1)",
-        "Atomically swap mem[rs1] with rs2; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amoadd.w",
-        "rd, rs2, (rs1)",
-        "Atomically add rs2 to mem[rs1]; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amoxor.w",
-        "rd, rs2, (rs1)",
-        "Atomically XOR rs2 with mem[rs1]; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amoand.w",
-        "rd, rs2, (rs1)",
-        "Atomically AND rs2 with mem[rs1]; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amoor.w",
-        "rd, rs2, (rs1)",
-        "Atomically OR rs2 with mem[rs1]; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amomax.w",
-        "rd, rs2, (rs1)",
-        "Atomically signed-max mem[rs1] with rs2; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amomin.w",
-        "rd, rs2, (rs1)",
-        "Atomically signed-min mem[rs1] with rs2; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amomaxu.w",
-        "rd, rs2, (rs1)",
-        "Atomically unsigned-max mem[rs1] with rs2; rd gets old value"
-    ),
-    row!(
-        "Atomic",
-        "amominu.w",
-        "rd, rs2, (rs1)",
-        "Atomically unsigned-min mem[rs1] with rs2; rd gets old value"
-    ),
-    row!("Pseudo", "nop", "", "No operation", "addi x0, x0, 0"),
-    row!("Pseudo", "mv", "rd, rs", "rd = rs", "addi rd, rs, 0"),
-    row!(
-        "Pseudo",
-        "li",
-        "rd, imm12",
-        "Load 12-bit immediate into rd",
-        "addi rd, x0, imm"
-    ),
-    row!(
-        "Pseudo",
-        "subi",
-        "rd, rs1, imm",
-        "rd = rs1 - imm",
-        "addi rd, rs1, -imm"
-    ),
-    row!("Pseudo", "neg", "rd, rs", "rd = -rs", "sub rd, x0, rs"),
-    row!(
-        "Pseudo",
-        "not",
-        "rd, rs",
-        "rd = ~rs  (bitwise NOT)",
-        "xori rd, rs, -1"
-    ),
-    row!(
-        "Pseudo",
-        "seqz",
-        "rd, rs",
-        "rd = 1 if rs == 0 else 0",
-        "sltiu rd, rs, 1"
-    ),
-    row!(
-        "Pseudo",
-        "snez",
-        "rd, rs",
-        "rd = 1 if rs != 0 else 0",
-        "sltu rd, x0, rs"
-    ),
-    row!(
-        "Pseudo",
-        "sltz",
-        "rd, rs",
-        "rd = 1 if rs < 0 else 0",
-        "slt rd, rs, x0"
-    ),
-    row!(
-        "Pseudo",
-        "sgtz",
-        "rd, rs",
-        "rd = 1 if rs > 0 else 0",
-        "slt rd, x0, rs"
-    ),
-    row!(
-        "Pseudo",
-        "la",
-        "rd, label",
-        "Load address of label into rd",
-        "lui rd, hi; addi rd, rd, lo"
-    ),
-    row!(
-        "Pseudo",
-        "j",
-        "label",
-        "Unconditional jump to label",
-        "jal x0, label"
-    ),
-    row!(
-        "Pseudo",
-        "call",
-        "label",
-        "Call subroutine at label",
-        "jal ra, label"
-    ),
-    row!(
-        "Pseudo",
-        "jr",
-        "rs",
-        "Jump register (indirect)",
-        "jalr x0, rs, 0"
-    ),
-    row!(
-        "Pseudo",
-        "ret",
-        "",
-        "Return from subroutine",
-        "jalr x0, ra, 0"
-    ),
-    row!(
-        "Pseudo",
-        "push",
-        "rs",
-        "sp -= 4; store rs at 0(sp)",
-        "addi sp,sp,-4; sw rs,0(sp)"
-    ),
-    row!(
-        "Pseudo",
-        "pop",
-        "rd",
-        "load rd from 0(sp); sp += 4",
-        "lw rd,0(sp); addi sp,sp,4"
-    ),
-    row!(
-        "Pseudo",
-        "bez/beqz",
-        "rs, label",
-        "Branch if rs == 0",
-        "beq rs, x0, label"
-    ),
-    row!(
-        "Pseudo",
-        "bnez",
-        "rs, label",
-        "Branch if rs != 0",
-        "bne rs, x0, label"
-    ),
-    row!(
-        "Pseudo",
-        "bltz",
-        "rs, label",
-        "Branch if rs < 0",
-        "blt rs, x0, label"
-    ),
-    row!(
-        "Pseudo",
-        "bgez",
-        "rs, label",
-        "Branch if rs >= 0",
-        "bge rs, x0, label"
-    ),
-    row!(
-        "Pseudo",
-        "blez",
-        "rs, label",
-        "Branch if rs <= 0",
-        "bge x0, rs, label"
-    ),
-    row!(
-        "Pseudo",
-        "bgtz",
-        "rs, label",
-        "Branch if rs > 0",
-        "blt x0, rs, label"
-    ),
-    row!(
-        "Pseudo",
-        "bgt",
-        "rs1, rs2, label",
-        "Branch if rs1 > rs2 (signed)",
-        "blt rs2, rs1, label"
-    ),
-    row!(
-        "Pseudo",
-        "ble",
-        "rs1, rs2, label",
-        "Branch if rs1 <= rs2 (signed)",
-        "bge rs2, rs1, label"
-    ),
-    row!(
-        "Pseudo",
-        "bgtu",
-        "rs1, rs2, label",
-        "Branch if rs1 > rs2 (unsigned)",
-        "bltu rs2, rs1, label"
-    ),
-    row!(
-        "Pseudo",
-        "bleu",
-        "rs1, rs2, label",
-        "Branch if rs1 <= rs2 (unsigned)",
-        "bgeu rs2, rs1, label"
-    ),
-    row!(
-        "Pseudo",
-        "print",
-        "rd",
-        "Print integer in rd (a7=1000)",
-        "addi a7,x0,1000; mv a0,rd; ecall"
-    ),
-    row!(
-        "Pseudo",
-        "print_str",
-        "label",
-        "Print NUL string at label",
-        "strlen loop; write(a0=1,a1=buf,a2=len) [syscall 64]"
-    ),
-    row!(
-        "Pseudo",
-        "print_str_ln",
-        "label",
-        "Print NUL string + newline",
-        "strlen loop; write buf; write '\\n' via stack [syscall 64]"
-    ),
-    row!(
-        "Pseudo",
-        "read",
-        "label",
-        "Read up to 256 bytes from stdin",
-        "read(a0=0,a1=buf,a2=256) [syscall 63]"
-    ),
-    row!(
-        "Pseudo",
-        "read_byte",
-        "label",
-        "Read decimal → store 1 byte (RAVEN)",
-        "addi a7,x0,1010; la a0,label; ecall"
-    ),
-    row!(
-        "Pseudo",
-        "read_half",
-        "label",
-        "Read decimal → store 2 bytes (RAVEN)",
-        "addi a7,x0,1011; la a0,label; ecall"
-    ),
-    row!(
-        "Pseudo",
-        "read_word",
-        "label",
-        "Read decimal → store 4 bytes (RAVEN)",
-        "addi a7,x0,1012; la a0,label; ecall"
-    ),
-    row!(
-        "Pseudo",
-        "random",
-        "rd",
-        "rd = random 32-bit word (getrandom)",
-        "getrandom syscall via stack (4 bytes)"
-    ),
-    row!(
-        "Pseudo",
-        "random_bytes",
-        "label, n",
-        "Fill n random bytes at label",
-        "getrandom(label, n, 0) syscall"
-    ),
-    row!(
-        "F",
-        "flw",
-        "frd, imm(rs1)",
-        "Load f32 from mem[rs1+imm] into frd"
-    ),
-    row!(
-        "F",
-        "fsw",
-        "frs2, imm(rs1)",
-        "Store f32 in frs2 to mem[rs1+imm]"
-    ),
-    row!(
-        "F",
-        "fadd.s",
-        "frd, frs1, frs2",
-        "frd = frs1 + frs2 (single precision)"
-    ),
-    row!("F", "fsub.s", "frd, frs1, frs2", "frd = frs1 - frs2"),
-    row!("F", "fmul.s", "frd, frs1, frs2", "frd = frs1 * frs2"),
-    row!("F", "fdiv.s", "frd, frs1, frs2", "frd = frs1 / frs2"),
-    row!("F", "fsqrt.s", "frd, frs1", "frd = sqrt(frs1)"),
-    row!(
-        "F",
-        "fmin.s",
-        "frd, frs1, frs2",
-        "frd = min(frs1, frs2)  (IEEE 754)"
-    ),
-    row!(
-        "F",
-        "fmax.s",
-        "frd, frs1, frs2",
-        "frd = max(frs1, frs2)  (IEEE 754)"
-    ),
-    row!(
-        "F",
-        "fmadd.s",
-        "frd, frs1, frs2, frs3",
-        "frd = frs1*frs2 + frs3  (fused)"
-    ),
-    row!(
-        "F",
-        "fmsub.s",
-        "frd, frs1, frs2, frs3",
-        "frd = frs1*frs2 - frs3  (fused)"
-    ),
-    row!(
-        "F",
-        "fnmadd.s",
-        "frd, frs1, frs2, frs3",
-        "frd = -(frs1*frs2) - frs3  (fused)"
-    ),
-    row!(
-        "F",
-        "fnmsub.s",
-        "frd, frs1, frs2, frs3",
-        "frd = -(frs1*frs2) + frs3  (fused)"
-    ),
-    row!(
-        "F",
-        "fsgnj.s",
-        "frd, frs1, frs2",
-        "frd = |frs1| with sign of frs2"
-    ),
-    row!(
-        "F",
-        "fsgnjn.s",
-        "frd, frs1, frs2",
-        "frd = |frs1| with negated sign of frs2"
-    ),
-    row!(
-        "F",
-        "fsgnjx.s",
-        "frd, frs1, frs2",
-        "frd = |frs1| with XOR of signs"
-    ),
-    row!(
-        "F",
-        "feq.s",
-        "rd, frs1, frs2",
-        "rd = 1 if frs1 == frs2 (ordered) else 0"
-    ),
-    row!(
-        "F",
-        "flt.s",
-        "rd, frs1, frs2",
-        "rd = 1 if frs1 < frs2  (ordered) else 0"
-    ),
-    row!(
-        "F",
-        "fle.s",
-        "rd, frs1, frs2",
-        "rd = 1 if frs1 <= frs2 (ordered) else 0"
-    ),
-    row!(
-        "F",
-        "fclass.s",
-        "rd, frs1",
-        "Classify frs1 → bitmask in rd (see ISA)"
-    ),
-    row!(
-        "F",
-        "fcvt.w.s",
-        "rd, frs1[, rm]",
-        "Convert f32 → i32; rm = rounding mode"
-    ),
-    row!(
-        "F",
-        "fcvt.wu.s",
-        "rd, frs1[, rm]",
-        "Convert f32 → u32; rm = rounding mode"
-    ),
-    row!("F", "fcvt.s.w", "frd, rs1", "Convert i32 → f32"),
-    row!("F", "fcvt.s.wu", "frd, rs1", "Convert u32 → f32"),
-    row!(
-        "F",
-        "fmv.x.w",
-        "rd, frs1",
-        "Copy float bits → int register (no conversion)"
-    ),
-    row!(
-        "F",
-        "fmv.w.x",
-        "frd, rs1",
-        "Copy int bits → float register (no conversion)"
-    ),
-    row!(
-        "F",
-        "fmv.s",
-        "frd, frs",
-        "Copy float register",
-        "fsgnj.s frd, frs, frs"
-    ),
-    row!(
-        "F",
-        "fneg.s",
-        "frd, frs",
-        "Negate: frd = -frs",
-        "fsgnjn.s frd, frs, frs"
-    ),
-    row!(
-        "F",
-        "fabs.s",
-        "frd, frs",
-        "Absolute value: frd = |frs|",
-        "fsgnjx.s frd, frs, frs"
-    ),
-    row!("Dir", ".data", "", "Switch to initialized data section"),
-    row!("Dir", ".text", "", "Switch to code section"),
-    row!(
-        "Dir",
-        ".bss",
-        "",
-        "Switch to BSS (zero-initialized) section"
-    ),
-    row!(
-        "Dir",
-        ".section",
-        "name",
-        "Switch to named section (.text or .data)"
-    ),
-    row!("Dir", ".byte", "val[,...]", "Emit 1-byte integer value(s)"),
-    row!(
-        "Dir",
-        ".half",
-        "val[,...]",
-        "Emit 2-byte value(s) little-endian"
-    ),
-    row!(
-        "Dir",
-        ".word",
-        "val[,...]",
-        "Emit 4-byte value(s) little-endian"
-    ),
-    row!(
-        "Dir",
-        ".dword",
-        "val[,...]",
-        "Emit 8-byte value(s) little-endian"
-    ),
-    row!(
-        "Dir",
-        ".float",
-        "val[,...]",
-        "Emit IEEE 754 f32 value(s) (4 bytes each)"
-    ),
-    row!(
-        "Dir",
-        ".ascii",
-        "\"str\"",
-        "Emit string bytes (no NUL terminator)"
-    ),
-    row!(
-        "Dir",
-        ".asciz",
-        "\"str\"",
-        "Emit string bytes + NUL terminator"
-    ),
-    row!("Dir", ".string", "\"str\"", "Alias of .asciz"),
-    row!("Dir", ".space", "n", "Reserve n zero bytes"),
-    row!("Dir", ".align", "n", "Align PC to 2^n byte boundary"),
-    row!("Dir", ".globl", "sym", "Mark symbol as global / exported"),
-    row!(
-        "Dir",
-        ".equ",
-        "sym, val",
-        "Define symbolic constant (equate)"
-    ),
-];
-
-fn ty_bit(ty: &str) -> u16 {
-    match ty {
-        "R" => 1 << 0,
-        "M" => 1 << 1,
-        "I" => 1 << 2,
-        "Load" => 1 << 3,
-        "Store" => 1 << 4,
-        "Branch" => 1 << 5,
-        "U" => 1 << 6,
-        "Jump" => 1 << 7,
-        "SYS" => 1 << 8,
-        "Atomic" => 1 << 9,
-        "Pseudo" => 1 << 10,
-        "F" => 1 << 11,
-        "Dir" => 1 << 12,
-        _ => 0,
-    }
-}
-
-fn ty_color(ty: &str) -> Color {
-    match ty {
-        "R" => Color::Yellow,
-        "M" => Color::LightRed,
-        "I" => Color::Green,
-        "Load" => Color::Cyan,
-        "Store" => Color::LightBlue,
-        "Branch" => Color::Magenta,
-        "U" => Color::LightYellow,
-        "Jump" => Color::LightCyan,
-        "SYS" => Color::Red,
-        "Atomic" => Color::LightRed,
-        "Pseudo" => Color::LightMagenta,
-        "F" => Color::LightGreen,
-        "Dir" => Color::Gray,
-        _ => Color::White,
-    }
-}
-
-fn filtered_rows(query: &str, type_filter: u16) -> Vec<&'static DocRow> {
+fn filtered_rows(app: &App, query: &str, type_filter: u16) -> Vec<&'static InstructionDoc> {
     let q = query.to_lowercase();
-    DOCS.iter()
-        .filter(|r| (type_filter & ty_bit(r.ty)) != 0)
-        .filter(|r| {
+    app.architecture
+        .assembler()
+        .documented_instructions()
+        .iter()
+        .filter(|row| (type_filter & ty_bit(app, row.kind)) != 0)
+        .filter(|row| {
             q.is_empty()
-                || r.mnemonic.to_lowercase().contains(&q)
-                || r.operands.to_lowercase().contains(&q)
-                || r.desc.to_lowercase().contains(&q)
-                || r.expands.to_lowercase().contains(&q)
-                || r.ty.to_lowercase().contains(&q)
+                || row.mnemonic.to_lowercase().contains(&q)
+                || row.operands.to_lowercase().contains(&q)
+                || row.summary.to_lowercase().contains(&q)
+                || row.expands_to.to_lowercase().contains(&q)
+                || row.kind.to_lowercase().contains(&q)
         })
         .collect()
 }
 
-pub(crate) fn docs_body_line_count(_width: u16, query: &str, type_filter: u16) -> usize {
+pub(crate) fn docs_body_line_count(app: &App, query: &str, type_filter: u16) -> usize {
     if type_filter == 0 {
         return 0;
     }
-    filtered_rows(query, type_filter).len()
+    filtered_rows(app, query, type_filter).len()
 }
 
-fn is_register_token(token: &str) -> bool {
-    if let Some(n) = token.strip_prefix('x') {
-        if let Ok(v) = n.parse::<u8>() {
-            return v <= 31;
-        }
-    }
-    matches!(token, "ra" | "sp")
-        || (token.starts_with('a') && token[1..].parse::<u8>().is_ok_and(|v| v <= 7))
-        || (token.starts_with('t') && token[1..].parse::<u8>().is_ok_and(|v| v <= 6))
-        || (token.starts_with('s') && token[1..].parse::<u8>().is_ok_and(|v| v <= 11))
-}
-
-fn style_for_token(token: &str) -> Option<Style> {
+fn style_for_token(token: &str, assembler: &dyn raven_engine::Assembler) -> Option<Style> {
     match token {
         "rd" | "rd2" => Some(
             Style::default()
@@ -857,12 +75,12 @@ fn style_for_token(token: &str) -> Option<Style> {
         "label" => Some(Style::default().fg(Color::Magenta)),
         "rm" => Some(Style::default().fg(Color::LightYellow)),
         "sym" => Some(Style::default().fg(Color::LightBlue)),
-        _ if is_register_token(token) => Some(Style::default().fg(Color::LightBlue)),
+        _ if assembler.is_register(token) => Some(Style::default().fg(Color::LightBlue)),
         _ => None,
     }
 }
 
-fn color_text(s: &str) -> Vec<Span<'static>> {
+fn color_text(s: &str, assembler: &dyn raven_engine::Assembler) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut token = String::new();
     let mut sep = String::new();
@@ -877,7 +95,7 @@ fn color_text(s: &str) -> Vec<Span<'static>> {
             return;
         }
         let t = std::mem::take(token);
-        if let Some(style) = style_for_token(&t) {
+        if let Some(style) = style_for_token(&t, assembler) {
             spans.push(Span::styled(t, style));
         } else {
             spans.push(Span::raw(t));
@@ -915,7 +133,20 @@ fn pad_or_truncate(s: &str, width: usize) -> String {
 
 /// Everything except the flexible Description column: the 4 fixed columns plus
 /// the 4 single-space gaps between the 5 columns.
-const NON_DESC_W: usize = TY_W + 1 + MNE_W + 1 + OPS_W + 1 + 1 + EXP_W;
+/// The Type column for `app`: whatever its longest `[kind]` badge needs.
+fn ty_w(app: &App) -> usize {
+    filter_items(app)
+        .iter()
+        .skip(1)
+        .map(|(label, ..)| label.chars().count() + 2)
+        .max()
+        .unwrap_or(0)
+        .max(TY_W_MIN)
+}
+
+fn non_desc_w(ty_w: usize) -> usize {
+    ty_w + 1 + MNE_W + 1 + OPS_W + 1 + 1 + EXP_W
+}
 /// Smallest Description width before the table scrolls horizontally.
 const DESC_MIN: usize = 20;
 
@@ -923,20 +154,21 @@ const DESC_MIN: usize = 20;
 /// table's full natural width. Description flexes to fill spare room; once the
 /// terminal is narrower than the natural minimum the table keeps all columns and
 /// scrolls horizontally instead of hiding any (`natural_w > content_w`).
-fn col_dims(content_w: usize) -> (usize, usize) {
-    if content_w > NON_DESC_W + DESC_MIN {
-        (content_w - NON_DESC_W, content_w)
+fn col_dims(content_w: usize, ty_w: usize) -> (usize, usize) {
+    let fixed = non_desc_w(ty_w);
+    if content_w > fixed + DESC_MIN {
+        (content_w - fixed, content_w)
     } else {
-        (DESC_MIN, NON_DESC_W + DESC_MIN)
+        (DESC_MIN, fixed + DESC_MIN)
     }
 }
 
-fn render_col_header(desc_w: usize) -> Line<'static> {
+fn render_col_header(desc_w: usize, ty_w: usize) -> Line<'static> {
     let h = Style::default()
         .fg(Color::DarkGray)
         .add_modifier(Modifier::BOLD);
     Line::from(vec![
-        Span::styled(format!("{:<8}", "Type"), h),
+        Span::styled(format!("{:<ty_w$}", "Type"), h),
         Span::raw(" "),
         Span::styled(format!("{:<13}", "Mnemonic"), h),
         Span::raw(" "),
@@ -948,9 +180,9 @@ fn render_col_header(desc_w: usize) -> Line<'static> {
     ])
 }
 
-fn render_doc_row(row: &DocRow, desc_w: usize) -> Line<'static> {
-    let color = ty_color(row.ty);
-    let badge = format!("{:>8}", format!("[{}]", row.ty));
+fn render_doc_row(app: &App, row: &InstructionDoc, desc_w: usize, ty_w: usize) -> Line<'static> {
+    let color = ty_color(app, row.kind);
+    let badge = format!("{:>ty_w$}", format!("[{}]", row.kind));
 
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
@@ -968,26 +200,75 @@ fn render_doc_row(row: &DocRow, desc_w: usize) -> Line<'static> {
     ];
 
     let ops_len = row.operands.chars().count();
-    let mut ops_spans = color_text(row.operands);
+    let mut ops_spans = color_text(row.operands, app.architecture.assembler());
     if ops_len < OPS_W {
         ops_spans.push(Span::raw(" ".repeat(OPS_W - ops_len)));
     }
     spans.extend(ops_spans);
     spans.push(Span::raw(" "));
 
-    spans.push(Span::raw(pad_or_truncate(row.desc, desc_w)));
+    spans.push(Span::raw(pad_or_truncate(row.summary, desc_w)));
     spans.push(Span::raw(" "));
 
-    if row.expands.is_empty() {
+    if row.expands_to.is_empty() {
         spans.push(Span::raw(" ".repeat(EXP_W)));
     } else {
-        let exp_text = format!("→ {}", row.expands);
+        let exp_text = format!("→ {}", row.expands_to);
         spans.push(Span::styled(
             pad_or_truncate(&exp_text, EXP_W),
             Style::default().fg(Color::Rgb(100, 100, 120)),
         ));
     }
 
+    Line::from(spans)
+}
+
+/// What the operand placeholders in the table mean, listing only the ones this
+/// architecture actually writes.
+///
+/// The legend was a fixed line naming RV32's `rd`, `frd` and `rs1/rs2`, which
+/// explained nothing on a machine whose operands are an address and a
+/// character.
+fn operand_legend(app: &App) -> Line<'static> {
+    /// (what to print, the tokens that make it apply, what it means)
+    const ENTRIES: &[(&str, &[&str], &str)] = &[
+        ("rd", &["rd", "rd2"], "dst"),
+        ("rs1/rs2", &["rs", "rs1", "rs2", "rs3", "rt"], "src"),
+        ("frd", &["frd", "frd2"], "float dst"),
+        ("frs1/frs2", &["frs", "frs1", "frs2", "frs3"], "float src"),
+        (
+            "imm",
+            &["imm", "imm12", "imm20", "shamt", "hi", "lo", "n"],
+            "immediate",
+        ),
+        ("label", &["label"], "symbol"),
+        ("address", &["address", "addr"], "memory address"),
+        ("char", &["char", "ascii"], "character"),
+    ];
+
+    let assembler = app.architecture.assembler();
+    let written: Vec<&str> = assembler
+        .documented_instructions()
+        .iter()
+        .flat_map(|row| {
+            row.operands
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        })
+        .filter(|token| !token.is_empty())
+        .collect();
+
+    let mut spans = Vec::new();
+    for (display, tokens, meaning) in ENTRIES {
+        if !tokens.iter().any(|token| written.contains(token)) {
+            continue;
+        }
+        let style = tokens
+            .iter()
+            .find_map(|token| style_for_token(token, assembler))
+            .unwrap_or_default();
+        spans.push(Span::styled((*display).to_string(), style));
+        spans.push(Span::styled(format!("={meaning}  "), style::label()));
+    }
     Line::from(spans)
 }
 
@@ -1023,25 +304,9 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     };
     let tab_hint = format!("{search_hint}{filter_hint}  ↑/↓=scroll");
     render_page_tabs(f, tab_area, app);
-    render_tab_hint(f, tab_area, app, 3, tab_hint);
+    render_tab_hint(f, tab_area, app, tab_hint);
 
-    let meta_lines = vec![
-        Line::from(vec![
-            Span::styled("rd", Style::default().fg(Color::Yellow).bold()),
-            Span::styled("=dst  ", style::label()),
-            Span::styled("rs1/rs2", Style::default().fg(Color::Cyan)),
-            Span::styled("=src  ", style::label()),
-            Span::styled("frd", Style::default().fg(Color::Yellow)),
-            Span::styled("=float dst  ", style::label()),
-            Span::styled("frs1/frs2", Style::default().fg(Color::LightYellow)),
-            Span::styled("=float src  ", style::label()),
-            Span::styled("imm", Style::default().fg(Color::LightGreen)),
-            Span::styled("=immediate  ", style::label()),
-            Span::styled("label", Style::default().fg(Color::Magenta)),
-            Span::styled("=symbol", style::label()),
-        ]),
-        separator_line(area.width),
-    ];
+    let meta_lines = vec![operand_legend(app), separator_line(area.width)];
     f.render_widget(Paragraph::new(meta_lines), meta_area);
 
     if app.docs.search_open {
@@ -1087,26 +352,28 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
         } else {
             ""
         };
-        filtered_rows(q, app.docs.type_filter)
+        filtered_rows(app, q, app.docs.type_filter)
     };
 
     // Decide which bars are needed. Vertical: rows overflow the body height
     // (header + separator = 2 rows, minus a horizontal bar if present). Reserve
     // a right column for it. Horizontal: the table keeps every column and scrolls
     // when its natural width exceeds the space (no column hiding).
-    let h_bar_est = u16::from(col_dims(table_area.width as usize).1 > table_area.width as usize);
+    let ty_w = ty_w(app);
+    let h_bar_est =
+        u16::from(col_dims(table_area.width as usize, ty_w).1 > table_area.width as usize);
     let body_h = table_area.height.saturating_sub(2 + h_bar_est) as usize;
     let needs_v = body_h > 0 && rows.len() > body_h;
     let content_w = (table_area.width as usize).saturating_sub(usize::from(needs_v));
-    let (desc_w, natural_w) = col_dims(content_w);
+    let (desc_w, natural_w) = col_dims(content_w, ty_w);
     let needs_h = natural_w > content_w;
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),          // column header
-            Constraint::Length(1),          // separator
-            Constraint::Min(0),             // data rows
+            Constraint::Length(1),              // column header
+            Constraint::Length(1),              // separator
+            Constraint::Min(0),                 // data rows
             Constraint::Length(needs_h.into()), // horizontal scrollbar
         ])
         .split(table_area);
@@ -1123,7 +390,7 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     // Header + separator scroll horizontally in lock-step with the rows.
     let text_rect = |a: Rect| Rect::new(a.x, a.y, content_w_u16, a.height);
     f.render_widget(
-        Paragraph::new(render_col_header(desc_w)).scroll((0, h_off)),
+        Paragraph::new(render_col_header(desc_w, ty_w)).scroll((0, h_off)),
         text_rect(header_area),
     );
     f.render_widget(
@@ -1147,9 +414,12 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     let (start, end) = visible_window(rows.len(), viewport_h, app.docs.scroll);
     let lines: Vec<Line<'static>> = rows[start..end]
         .iter()
-        .map(|r| render_doc_row(r, desc_w))
+        .map(|r| render_doc_row(app, r, desc_w, ty_w))
         .collect();
-    f.render_widget(Paragraph::new(lines).scroll((0, h_off)), text_rect(data_area));
+    f.render_widget(
+        Paragraph::new(lines).scroll((0, h_off)),
+        text_rect(data_area),
+    );
 
     // Vertical scrollbar in the reserved right column; register its track for
     // mouse drag (or clear it when absent).
@@ -1185,5 +455,97 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
         }));
     } else {
         app.docs.sb_h.set(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::app::DocsPage;
+    use crate::ui::view::docs::{all_mask, visible_pages};
+
+    fn app(id: &str) -> App {
+        App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap()
+    }
+
+    /// The reference lists the loaded ISA's instructions. It used to hold one
+    /// hard-coded RISC-V table, so every other backend was told to write
+    /// `addi`.
+    #[test]
+    fn every_architecture_documents_its_own_instructions() {
+        for (id, own, foreign) in [
+            ("riscv32", "addi", "putc"),
+            ("toy16", "putc", "addi"),
+            ("sap", "lda", "addi"),
+            ("x86_64", "syscall", "addi"),
+        ] {
+            let app = app(id);
+            let rows = filtered_rows(&app, "", all_mask(&app));
+            assert!(
+                rows.iter().any(|row| row.mnemonic == own),
+                "{id} does not document {own}"
+            );
+            assert!(
+                !rows.iter().any(|row| row.mnemonic == foreign),
+                "{id} documents {foreign}, which belongs to another ISA"
+            );
+        }
+    }
+
+    /// Every documented mnemonic must be one the assembler really takes —
+    /// which is the point of the reference living next to the assembler. RV32
+    /// is exempt: it documents pseudo-instructions and directives its
+    /// `instruction_forms` table does not list.
+    #[test]
+    fn documented_mnemonics_are_ones_the_assembler_accepts() {
+        for id in crate::arch::registry().ids() {
+            if id == "riscv32" {
+                continue;
+            }
+            let assembler = crate::arch::lookup(id).unwrap().assembler();
+            for row in assembler.documented_instructions() {
+                assert!(
+                    !assembler.instruction_forms(row.mnemonic).is_empty(),
+                    "{id}: {} is documented but the assembler has no form for it",
+                    row.mnemonic
+                );
+            }
+        }
+    }
+
+    /// A page is offered only when the architecture has the thing it explains,
+    /// so SAP no longer gets RV32's syscall table or memory map.
+    #[test]
+    fn pages_follow_what_the_architecture_supports() {
+        let rv32 = visible_pages(&app("riscv32"));
+        assert!(rv32.contains(&DocsPage::Syscalls));
+        assert!(rv32.contains(&DocsPage::MemoryMap));
+
+        for id in ["toy16", "sap"] {
+            let pages = visible_pages(&app(id));
+            assert!(pages.contains(&DocsPage::InstrRef), "{id}");
+            assert!(!pages.contains(&DocsPage::Syscalls), "{id}");
+            assert!(!pages.contains(&DocsPage::MemoryMap), "{id}");
+        }
+
+        // x86-64 has syscalls but no cache and no paging, so it gets a
+        // different set again — which is the whole point of gating per page.
+        let x86 = visible_pages(&app("x86_64"));
+        assert!(x86.contains(&DocsPage::Syscalls));
+        assert!(!x86.contains(&DocsPage::FcacheRef));
+        assert!(!x86.contains(&DocsPage::MemoryMap));
+    }
+
+    /// Switching architecture must leave the tab on a page that is drawn and a
+    /// filter mask whose bits mean what this ISA says they mean.
+    #[test]
+    fn switching_architecture_leaves_the_tab_consistent() {
+        let mut app = app("riscv32");
+        app.docs.page = DocsPage::Syscalls;
+        app.activate_architecture("sap", true).unwrap();
+
+        assert!(visible_pages(&app).contains(&app.docs.page));
+        assert_eq!(app.docs.type_filter, all_mask(&app));
+        assert!(!filtered_rows(&app, "", app.docs.type_filter).is_empty());
     }
 }

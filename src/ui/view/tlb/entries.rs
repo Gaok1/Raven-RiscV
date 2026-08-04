@@ -27,7 +27,12 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
     // Reserve a right column for the scrollbar when the list overflows.
     let needs_sb = total > visible;
     let table_area = if needs_sb {
-        Rect::new(inner.x, inner.y, inner.width.saturating_sub(1), inner.height)
+        Rect::new(
+            inner.x,
+            inner.y,
+            inner.width.saturating_sub(1),
+            inner.height,
+        )
     } else {
         inner
     };
@@ -93,7 +98,8 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
                 )),
                 perms,
                 Line::from(Span::styled(
-                    e.address_space.map_or_else(|| "—".into(), |id| id.to_string()),
+                    e.address_space
+                        .map_or_else(|| "—".into(), |id| id.to_string()),
                     style::label(),
                 )),
                 Line::from(mark(e.global, "G")),
@@ -123,7 +129,12 @@ pub(super) fn render_entries(f: &mut Frame, area: Rect, app: &App) {
     // Register the bar's track for mouse click-to-jump + drag (cleared by the
     // tab root each frame, so it only hits while actually rendered).
     if needs_sb {
-        let sb_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1));
+        let sb_area = Rect::new(
+            inner.x,
+            inner.y + 1,
+            inner.width,
+            inner.height.saturating_sub(1),
+        );
         vertical_scrollbar(f, sb_area, total, visible, scroll);
         app.tlb.entries_sb.set(Some(SbGeom {
             start: sb_area.y,

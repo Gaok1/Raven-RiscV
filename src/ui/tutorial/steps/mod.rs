@@ -16,6 +16,6 @@ pub fn get_steps(tab: Tab) -> &'static [TutorialStep] {
         Tab::Cache => cache::STEPS,
         Tab::Pipeline => pipeline::STEPS,
         Tab::Tlb => tlb::STEPS,
-        Tab::Docs | Tab::Settings | Tab::Activity => &[],
+        Tab::Docs | Tab::Settings => &[],
     }
 }
