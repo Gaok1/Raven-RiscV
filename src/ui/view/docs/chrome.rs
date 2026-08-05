@@ -1,6 +1,8 @@
 use crate::ui::app::DocsPage;
 use crate::ui::theme;
 use crate::ui::view::App;
+use crate::ui::view::components::toolbar::pill;
+use crate::ui::view::components::{ControlState, Toolbar};
 use crate::ui::view::style;
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
@@ -54,37 +56,39 @@ pub(crate) fn all_mask(app: &App) -> u16 {
     filter_items(app).iter().map(|(_, bit, _)| bit).sum()
 }
 
+/// The instruction-type filter row as a [`Toolbar`] keyed by item index — the
+/// single source of truth for rendering it and for mapping a click column back
+/// to a filter.
+///
+/// The two used to be separate: the renderer emitted `" ●{label} "` while the
+/// mouse router guessed the same width back with `label.len() + 3`. Any change
+/// to the chip — including giving it the surface that says it is clickable —
+/// slid the click targets out from under the words.
+pub(crate) fn build_docs_filter_bar(app: &App) -> Toolbar<usize> {
+    let all_mask = all_mask(app);
+    let mut bar = Toolbar::with_gap(1);
+    for (idx, &(label, bit, color)) in filter_items(app).iter().enumerate() {
+        let active = if idx == 0 {
+            app.docs.type_filter == all_mask
+        } else {
+            (app.docs.type_filter & bit) != 0
+        };
+        // The bullet keeps carrying the checked state — a filter row is a set of
+        // checkboxes, and the surface only says "clickable".
+        let text = format!("{} {label}", if active { "●" } else { "○" });
+        let state = ControlState::chip(active, idx == app.docs.filter_cursor);
+        bar.span(idx, None, pill(&text, state, color), true);
+    }
+    bar
+}
+
 pub(super) fn render_filter_bar(f: &mut Frame, area: Rect, app: &App) {
     app.docs.filter_bar_y.set(area.y);
-
-    let items = filter_items(app);
-    let all_mask = all_mask(app);
-    let type_filter = app.docs.type_filter;
-    let cursor = app.docs.filter_cursor;
-    let mut spans: Vec<Span<'static>> = Vec::new();
-
-    for (idx, &(label, bit, color)) in items.iter().enumerate() {
-        let is_cursor = idx == cursor;
-        let is_active = if idx == 0 {
-            type_filter == all_mask
-        } else {
-            (type_filter & bit) != 0
-        };
-
-        let bullet = if is_active { "●" } else { "○" };
-        let text = format!(" {bullet}{label} ");
-
-        let fg = if is_active { color } else { theme::LABEL };
-        let mut style = Style::default().fg(fg);
-        if is_cursor {
-            style = style
-                .bg(Color::Rgb(50, 50, 80))
-                .add_modifier(Modifier::BOLD);
-        }
-        spans.push(Span::styled(text, style));
-    }
-
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    app.docs.filter_bar_x.set(area.x);
+    f.render_widget(
+        Paragraph::new(Line::from(build_docs_filter_bar(app).spans())),
+        area,
+    );
 }
 
 /// The Docs pages the active architecture has something to say on.
@@ -144,25 +148,37 @@ pub(super) fn render_page_tabs(f: &mut Frame, area: Rect, app: &App) {
         }
         cursor_x += label_w;
         spans.push(Span::styled(label, style));
-        underline_spans.push(Span::styled(
-            if active {
-                let left = (label_w.saturating_sub(text_w) / 2) as usize;
-                let right = label_w as usize - left - text_w as usize;
+        // One continuous rule whose heavy segment marks the active page —
+        // the same shape as the main tab bar. It used to be a short dash
+        // floating under the active label with blank gaps either side, which
+        // read as a different kind of control from the row above it.
+        underline_spans.push(if active {
+            let left = (label_w.saturating_sub(text_w) / 2) as usize;
+            let right = label_w as usize - left - text_w as usize;
+            Span::styled(
                 format!(
                     "{}{}{}",
-                    " ".repeat(left),
-                    "─".repeat(text_w as usize),
-                    " ".repeat(right)
-                )
-            } else {
-                " ".repeat(label_w as usize)
-            },
-            Style::default().fg(theme::ACCENT),
-        ));
+                    "─".repeat(left),
+                    "━".repeat(text_w as usize),
+                    "─".repeat(right)
+                ),
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(
+                "─".repeat(label_w as usize),
+                Style::default().fg(theme::BORDER),
+            )
+        });
 
         if i + 1 < pages.len() {
             spans.push(Span::raw("  "));
-            underline_spans.push(Span::raw("  "));
+            underline_spans.push(Span::styled(
+                "──",
+                Style::default().fg(theme::BORDER),
+            ));
             cursor_x += 2;
         }
     }
@@ -170,6 +186,13 @@ pub(super) fn render_page_tabs(f: &mut Frame, area: Rect, app: &App) {
 
     let mut lines = vec![Line::from(spans)];
     if area.height > 1 {
+        // Carry the rule to the right edge so it frames the page, not just the
+        // tabs.
+        let used = cursor_x.saturating_sub(area.x);
+        underline_spans.push(Span::styled(
+            "─".repeat(area.width.saturating_sub(used) as usize),
+            Style::default().fg(theme::BORDER),
+        ));
         lines.push(Line::from(underline_spans));
     }
     f.render_widget(Paragraph::new(lines), area);

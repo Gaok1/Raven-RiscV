@@ -7,7 +7,7 @@ mod find_replace;
 mod insert_mode;
 mod intercepts;
 mod paste;
-mod pipeline_keys;
+pub(crate) mod pipeline_keys;
 mod run_keys;
 mod serialization;
 mod tlb_keys;

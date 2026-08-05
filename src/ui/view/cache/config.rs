@@ -91,6 +91,23 @@ pub(crate) fn build_cache_apply_bar(app: &App) -> Toolbar<CacheApplyBtn> {
     bar
 }
 
+/// Columns a cache-config column actually needs — the longest row is
+/// `replacement   LRU (Least Recently Used)`.
+const CONTENT_W: u16 = 52;
+
+/// Centre the settings block inside its panel. The fields only need about a
+/// third of a full-width panel, and pinned to the left edge they left the rest
+/// of the box empty, which reads as a half-drawn panel rather than a form.
+fn centred(inner: Rect) -> Rect {
+    let w = CONTENT_W.min(inner.width);
+    Rect::new(
+        inner.x + (inner.width - w) / 2,
+        inner.y,
+        w,
+        inner.height,
+    )
+}
+
 pub(super) fn render_config(f: &mut Frame, area: Rect, app: &App) {
     app.cache.config_hitboxes_i.set([(0, 0, 0); 11]);
     app.cache.config_hitboxes_d.set([(0, 0, 0); 11]);
@@ -145,7 +162,7 @@ fn render_cache_config_panel(f: &mut Frame, area: Rect, app: &App, icache: bool)
         _ => None,
     };
 
-    let inner = render_panel(f, area, panel::panel(label, PanelKind::Accent));
+    let inner = centred(render_panel(f, area, panel::panel(label, PanelKind::Accent)));
 
     if inner.height == 0 {
         return;
@@ -290,141 +307,161 @@ fn render_fields(
             )
         };
 
-    // Sets row: show computed value or the specific validation error
+    // Sets row: show computed value or the specific validation error.
+    //
+    // Derived, so it is a readout rather than a field — and a readout needs the
+    // leading space that the editable rows get for free from their pill, or it
+    // sits one column to the left of every value above and below it.
     let sets_item = match &validation {
         Ok(()) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", style::label()),
+            Span::styled("  sets           ", style::label()),
             Span::styled(
-                format!("{}", pending.num_sets()),
+                format!(" {}", pending.num_sets()),
                 Style::default().fg(theme::BORDER),
             ),
         ])),
         Err(msg) => ListItem::new(Line::from(vec![
-            Span::styled("  Sets:          ", style::label()),
-            Span::styled(format!("✗ {msg}"), style::danger()),
+            Span::styled("  sets           ", style::label()),
+            Span::styled(format!(" ✗ {msg}"), style::danger()),
         ])),
     };
 
     let items: Vec<ListItem> = vec![
         field_item(
             ConfigField::Size,
-            "  Size:          ",
+            "  size           ",
             format!("{} B{}", pending.size, mark(size_ok)),
             pending.size == current.size,
         ),
         field_item(
             ConfigField::LineSize,
-            "  Line Size:     ",
+            "  line size      ",
             format!("{} B{}", pending.line_size, mark(line_ok)),
             pending.line_size == current.line_size,
         ),
         field_item(
             ConfigField::Associativity,
-            "  Associativity: ",
+            "  associativity  ",
             format!("{}-way{}", pending.associativity, mark(assoc_ok)),
             pending.associativity == current.associativity,
         ),
         sets_item,
         field_item(
             ConfigField::Replacement,
-            "  Replacement:   ",
+            "  replacement    ",
             replacement_label(pending.replacement).to_string(),
             pending.replacement == current.replacement,
         ),
         field_item(
             ConfigField::WritePolicy,
-            "  Write Policy:  ",
+            "  write policy   ",
             write_policy_label(pending.write_policy).to_string(),
             pending.write_policy == current.write_policy,
         ),
         field_item(
             ConfigField::WriteAlloc,
-            "  Write Alloc:   ",
+            "  write alloc    ",
             write_alloc_label(pending.write_alloc).to_string(),
             pending.write_alloc == current.write_alloc,
         ),
         field_item(
             ConfigField::HitLatency,
-            "  Hit Latency:   ",
+            "  hit latency    ",
             format!("{} cyc", pending.hit_latency),
             pending.hit_latency == current.hit_latency,
         ),
         field_item(
             ConfigField::MissPenalty,
-            "  Miss Penalty:  ",
+            "  miss penalty   ",
             format!("{} cyc", pending.miss_penalty),
             pending.miss_penalty == current.miss_penalty,
         ),
         field_item(
             ConfigField::AssocPenalty,
-            "  Assoc Penalty: ",
+            "  assoc penalty  ",
             format!("{} cyc/way", pending.assoc_penalty),
             pending.assoc_penalty == current.assoc_penalty,
         ),
         field_item(
             ConfigField::TransferWidth,
-            "  Transfer Width:",
+            "  transfer width ",
             format!("{} B", pending.transfer_width),
             pending.transfer_width == current.transfer_width,
         ),
         if is_last_level {
             ListItem::new(Line::from(vec![
-                Span::styled("  Inclusion:      ", Style::default().fg(theme::BORDER)),
-                Span::styled("N/A (last level)", Style::default().fg(theme::BORDER)),
+                Span::styled("  inclusion      ", Style::default().fg(theme::BORDER)),
+                Span::styled(" n/a (last level)", Style::default().fg(theme::BORDER)),
             ]))
         } else {
             field_item(
                 ConfigField::Inclusion,
-                "  Inclusion:      ",
+                "  inclusion      ",
                 inclusion_label(pending.inclusion).to_string(),
                 pending.inclusion == current.inclusion,
             )
         },
         ListItem::new(Line::raw("")),
-        ListItem::new(Line::from(Span::styled(
-            if active.is_some() {
-                "  Enter=confirm  Esc=cancel  <- ->=cycle  Tab/↑↓=move"
-            } else {
-                "  Click/edit  ◄►=cycle  Ctrl+e=export  Ctrl+l=import"
-            },
-            style::label(),
-        ))),
+        // Only while a field is actually open for editing. The idle row used to
+        // list `Ctrl+e=export Ctrl+l=import`, which the footer already carries —
+        // and keys belong there, written `[ctrl+e]`, not here.
+        ListItem::new(if active.is_some() {
+            let mut line = style::hint_bar(&[
+                ("enter", "confirm"),
+                ("esc", "cancel"),
+                ("←/→", "cycle"),
+                ("tab", "next field"),
+            ]);
+            line.spans.insert(0, Span::raw("  "));
+            line
+        } else {
+            Line::raw("")
+        }),
     ];
 
     f.render_widget(List::new(items), area);
 }
 
+/// A labelled hairline heading a strip inside the settings panel.
+///
+/// These strips used to be `Borders::TOP` blocks, whose rule ran the full width
+/// of the panel and butted straight into the `│` on both sides — reading as a
+/// broken frame rather than as a divider. `section_rule` is what the toolkit
+/// provides for dividing a panel, and it leaves the edges alone.
+fn strip_rule(name: &str, area: Rect) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ")];
+    spans.extend(panel::section_rule(name, area.width.saturating_sub(3)).spans);
+    Line::from(spans)
+}
+
 fn render_presets(f: &mut Frame, area: Rect, app: &App, icache: bool) {
-    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
-    let origin = (inner.y, inner.x + 9);
+    let origin = (area.y + 1, area.x + 1);
     if icache {
         app.cache.config_preset_origin_i.set(origin);
     } else {
         app.cache.config_preset_origin_d.set(origin);
     }
-    let mut spans = vec![
-        Span::raw(" "),
-        Span::styled("presets", style::idle()),
-        Span::raw(" "),
-    ];
+    let mut spans = vec![Span::raw(" ")];
     spans.extend(build_cache_preset_bar(app, icache).spans());
-    f.render_widget(Paragraph::new(Line::from(spans)), inner);
+    f.render_widget(
+        Paragraph::new(vec![strip_rule("PRESETS", area), Line::from(spans)]),
+        area,
+    );
 }
 
 fn render_unified_presets(f: &mut Frame, area: Rect, app: &App, _extra_idx: usize) {
-    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
-    app.cache.config_preset_origin_u.set((inner.y, inner.x + 9));
-    let mut spans = vec![
-        Span::raw(" "),
-        Span::styled("presets", style::idle()),
-        Span::raw(" "),
-    ];
+    app.cache
+        .config_preset_origin_u
+        .set((area.y + 1, area.x + 1));
+    let mut spans = vec![Span::raw(" ")];
     spans.extend(build_cache_unified_preset_bar(app).spans());
-    f.render_widget(Paragraph::new(Line::from(spans)), inner);
+    f.render_widget(
+        Paragraph::new(vec![strip_rule("PRESETS", area), Line::from(spans)]),
+        area,
+    );
 }
 
 fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
-    let inner = render_panel(f, area, panel::handle_bar(theme::BORDER));
     let line = if let Some(ref err) = app.cache.config_error {
         app.cache.config_apply_origin.set((0, 0));
         Line::from(Span::styled(format!(" ✗ {err}"), style::danger()))
@@ -432,12 +469,15 @@ fn render_apply_row(f: &mut Frame, area: Rect, app: &App) {
         app.cache.config_apply_origin.set((0, 0));
         Line::from(Span::styled(format!(" ✓ {status}"), style::success()))
     } else {
-        app.cache.config_apply_origin.set((inner.y, inner.x + 1));
+        app.cache.config_apply_origin.set((area.y + 1, area.x + 1));
         let mut spans = vec![Span::raw(" ")];
         spans.extend(build_cache_apply_bar(app).spans());
         Line::from(spans)
     };
-    f.render_widget(Paragraph::new(line), inner);
+    f.render_widget(
+        Paragraph::new(vec![strip_rule("APPLY", area), line]),
+        area,
+    );
 }
 
 pub fn replacement_label(r: ReplacementPolicy) -> &'static str {

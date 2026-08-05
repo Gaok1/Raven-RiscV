@@ -100,7 +100,7 @@ impl RunSpeed {
     }
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub(crate) enum RunButton {
     Core,
     View,
@@ -109,10 +109,20 @@ pub(crate) enum RunButton {
     Sign,
     Bytes,
     Region,
+    /// Run/pause as one toggle. The Cache and Virtual Memory tabs still show the
+    /// execution controls this way; the Run tab splits it into [`RunButton::Run`]
+    /// and [`RunButton::Pause`] so each control says what it does rather than
+    /// what it currently is.
     State,
     Speed,
     ExecCount,
     InstrType,
+    /// Transport: start running. Inert while already running.
+    Run,
+    /// Transport: stop at the current instruction. Inert while already paused.
+    Pause,
+    /// Transport: advance one instruction. Inert while running.
+    Step,
     Stepback,
     Reset,
 }
@@ -321,6 +331,13 @@ pub(crate) struct RunView {
     /// `Some(grab)` while the bar's thumb is being dragged; `grab` is the
     /// thumb cell the cursor holds (see `SbGeom::begin_drag`).
     pub(crate) regs_sb_drag: Option<u16>,
+    /// Vertical scrollbar of the sidebar RAM view — same contract as
+    /// [`Self::regs_sb`], but its offset is in rows of `mem_view_bytes`.
+    pub(crate) mem_sb: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
+    pub(crate) mem_sb_drag: Option<u16>,
+    /// Vertical scrollbar of the Instruction Memory list, in visual rows.
+    pub(crate) imem_sb: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
+    pub(crate) imem_sb_drag: Option<u16>,
     /// Mouse hover row in the register sidebar (visual row, 0-based within the
     /// inner area).
     pub(crate) hover_reg_row: Option<usize>,

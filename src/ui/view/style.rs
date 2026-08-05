@@ -95,6 +95,41 @@ pub(crate) fn metric_span(
     Span::styled(format!("{}{}", label.into(), val), metric(k))
 }
 
+// ── Readouts ──────────────────────────────────────────────────────────────────
+
+/// A `label value` readout: dim label, lit bold value.
+///
+/// This is the third member of the affordance rule — the shape for a number you
+/// can **read but not click**, as against [`button_span`] (a surface, so it is
+/// clickable) and a `[key]` (a keystroke, footer only). Writing it as one flat
+/// `"Hits: 0  Misses: 0"` string in a single colour, as the cache panels did,
+/// buries the four numbers that matter in the twenty words that name them.
+pub(crate) fn readout(
+    label: &str,
+    value: impl std::fmt::Display,
+    color: Color,
+) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(label.to_string(), idle()),
+        Span::styled(
+            format!(" {value}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ]
+}
+
+/// [`readout`]s joined by the standard four-column gap, ready for a `Line`.
+pub(crate) fn readout_row(items: Vec<Vec<Span<'static>>>) -> Line<'static> {
+    let mut spans = vec![Span::raw(" ")];
+    for (i, item) in items.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("    "));
+        }
+        spans.extend(item);
+    }
+    Line::from(spans)
+}
+
 // ── Badges / pills (filled chip, dark text) ───────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -142,12 +177,51 @@ pub(crate) fn toggle(active: bool, hovered: bool, active_color: Color) -> Style 
 
 // ── Key hints / legend bars ───────────────────────────────────────────────────
 
-/// `[key] desc` as two spans: accent key + muted description.
+/// `[key] desc` — dim brackets, accent key, muted description.
+///
+/// **The bracket means "keyboard key", and nothing else in the whole UI.** It
+/// used to also wrap the instruction class (`[I]`), a panel-title hint
+/// (`[P]=pin`) and the help button (`[?]`), which is exactly why the help button
+/// was impossible to pick out of the chrome. Pass the bare key — `"ctrl+f"`, not
+/// `"[Ctrl+f]"`; the brackets are drawn here so they are dim everywhere.
+///
+/// The other two members of the rule: a clickable button gets a solid background
+/// ([`button`]), and bare coloured text is data.
 pub(crate) fn key_hint(key_label: &str, desc: &str) -> Vec<Span<'static>> {
     vec![
+        Span::styled("[", Style::default().fg(theme::BORDER)),
         Span::styled(key_label.to_string(), key()),
+        Span::styled("]", Style::default().fg(theme::BORDER)),
         Span::styled(format!(" {desc}"), label()),
     ]
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+
+/// A clickable button: the **only** thing in the UI with a filled background at
+/// rest, which is what makes it unmistakably a click target rather than data.
+///
+/// Hovered or open, it inverts to the accent; at rest it is a raised surface
+/// with accent text. Label it with a word, not a glyph — ` ? Help ` reads as a
+/// button, `[?]` reads as a footnote marker.
+pub(crate) fn button(active: bool, hovered: bool) -> Style {
+    if active || hovered {
+        Style::default()
+            .fg(Color::Black)
+            .bg(theme::ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(theme::ACCENT)
+            .bg(theme::BG_RAISED)
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
+/// [`button`] applied to `text`, padded with one space each side so the filled
+/// surface reads as a pill instead of a highlight on the word.
+pub(crate) fn button_span(text: &str, active: bool, hovered: bool) -> Span<'static> {
+    Span::styled(format!(" {text} "), button(active, hovered))
 }
 
 /// A footer/legend line built from `(key, desc)` pairs, separated by spacing.

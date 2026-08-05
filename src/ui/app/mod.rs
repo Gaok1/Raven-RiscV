@@ -35,7 +35,7 @@ pub(crate) use self::run_state::{
     RunEditTarget, RunSession, RunSpeed, RunView,
 };
 pub(crate) use self::settings_state::{
-    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
+    RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
     SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
     SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState,
@@ -400,6 +400,10 @@ impl App {
                 regs_scroll: 0,
                 regs_sb: std::cell::Cell::new(None),
                 regs_sb_drag: None,
+                mem_sb: std::cell::Cell::new(None),
+                mem_sb_drag: None,
+                imem_sb: std::cell::Cell::new(None),
+                imem_sb_drag: None,
                 run_edit: None,
                 run_edit_buf: String::new(),
                 run_edit_error: None,
@@ -465,6 +469,7 @@ impl App {
                 tab_bar_y: std::cell::Cell::new(0),
                 tab_bar_xs: std::cell::Cell::new([(0, 0); 4]),
                 filter_bar_y: std::cell::Cell::new(0),
+                filter_bar_x: std::cell::Cell::new(0),
                 sb_v: std::cell::Cell::new(None),
                 sb_h: std::cell::Cell::new(None),
                 sb_drag: SbDrag::None,

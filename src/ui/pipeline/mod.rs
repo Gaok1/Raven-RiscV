@@ -290,12 +290,26 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
     })
 }
 
+/// Per-instruction-class cycle costs, appended to the Pipeline settings page.
+///
+/// They used to live on the Settings tab under `CYCLES PER INSTRUCTION`, two
+/// tabs away from the datapath they parameterise — and the Pipeline page could
+/// only show them read-only, under a note telling the reader where to go and
+/// change them. They are pipeline settings, so they live with the pipeline.
+pub const CPI_ROWS: usize = 11;
+
+/// Rows the Pipeline settings page navigates: the datapath config, then [`CPI_ROWS`].
+pub const PIPELINE_CONFIG_ROWS: usize = PipelineBypassConfig::CONFIG_ROWS + CPI_ROWS;
+
 /// Non-reversible state owned exclusively by the TUI.
 pub struct PipelineViewState {
     pub speed: PipelineSpeed,
     pub last_tick: Instant,
     pub subtab: PipelineSubtab,
     pub config_cursor: usize,
+    /// Digits typed into the open CPI field, if one is open. A cycle count runs
+    /// to 20+, so these are typed rather than cycled like the datapath toggles.
+    pub cpi_edit: Option<String>,
     pub gantt_scroll: usize,
     pub gantt_visible_rows_cache: Cell<usize>,
     pub gantt_max_scroll_cache: Cell<usize>,
@@ -311,7 +325,7 @@ pub struct PipelineViewState {
     pub status_msg: Option<String>,
     pub status_error: Option<String>,
     pub hover_config_row: Option<usize>,
-    pub config_row_rects: Cell<[(u16, u16, u16); PipelineBypassConfig::CONFIG_ROWS]>,
+    pub config_row_rects: Cell<[(u16, u16, u16); PIPELINE_CONFIG_ROWS]>,
     pub btn_subtab_main_rect: Cell<(u16, u16, u16)>,
     pub btn_subtab_config_rect: Cell<(u16, u16, u16)>,
     pub btn_core_rect: Cell<(u16, u16, u16)>,
@@ -346,7 +360,8 @@ impl PipelineViewState {
             status_msg: None,
             status_error: None,
             hover_config_row: None,
-            config_row_rects: Cell::new([(0, 0, 0); PipelineBypassConfig::CONFIG_ROWS]),
+            cpi_edit: None,
+            config_row_rects: Cell::new([(0, 0, 0); PIPELINE_CONFIG_ROWS]),
             btn_subtab_main_rect: Cell::new((0, 0, 0)),
             btn_subtab_config_rect: Cell::new((0, 0, 0)),
             btn_core_rect: Cell::new((0, 0, 0)),

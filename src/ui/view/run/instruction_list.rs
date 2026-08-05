@@ -6,6 +6,7 @@ use super::App;
 use super::memory::{exec_address_in_range, imem_address_in_range};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::{SbGeom, vertical_scrollbar};
 use crate::ui::view::style;
 
 pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
@@ -25,10 +26,38 @@ pub(super) fn render_instruction_memory(f: &mut Frame, area: Rect, app: &App) {
 
     // Tell scroll/hover handlers the actual inner height each frame
     app.run.imem_inner_height.set(list_area.height as usize);
-    let items = instruction_items(list_area, app);
+
+    // One column reserved for the scrollbar, so the PC row's background — and
+    // the hover highlight — stop before the track instead of showing through it
+    // (see `sidebar::render_register_view`).
+    let body = Rect::new(
+        list_area.x,
+        list_area.y,
+        list_area.width.saturating_sub(1),
+        list_area.height,
+    );
+    let items = instruction_items(body, app);
 
     f.render_widget(block, area);
-    f.render_widget(List::new(items), list_area);
+    f.render_widget(List::new(items), body);
+
+    // How far through the program this window sits, in the same visual rows
+    // `imem_scroll` counts — labels and block comments included, so the thumb
+    // tracks what is on screen rather than an address arithmetic of its own.
+    let total = app.imem_total_visual_rows();
+    let viewport = list_area.height as usize;
+    let offset = app.run.imem_scroll.min(total.saturating_sub(viewport));
+    vertical_scrollbar(f, list_area, total, viewport, offset);
+    app.run.imem_sb.set((total > viewport && viewport > 0).then(|| SbGeom {
+        start: list_area.y,
+        len: list_area.height,
+        cross: list_area.x + list_area.width.saturating_sub(1),
+        content: total,
+        viewport,
+        offset,
+        max: total - viewport,
+    }));
+
     render_instruction_drag_arrow(f, area, app);
 
     if let Some(bar) = search_area {
@@ -64,8 +93,8 @@ fn render_imem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" Label: ", Style::default().fg(theme::ACCENT).bg(bg).bold()),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         result_span,
-        Span::styled("  Ctrl+v=paste", style::idle().bg(bg)),
-        Span::styled("  Esc=close", style::idle().bg(bg)),
+        Span::styled("  [ctrl+v] paste", style::idle().bg(bg)),
+        Span::styled("  [esc] close", style::idle().bg(bg)),
     ]);
 
     f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
@@ -84,7 +113,7 @@ fn instruction_block(app: &App) -> Block<'static> {
     } else {
         theme::BORDER
     };
-    panel::panel_frame(PanelKind::Custom(border)).title("Instruction Memory")
+    panel::panel_state("Instruction Memory", "pc", PanelKind::Custom(border))
 }
 
 fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -224,14 +253,20 @@ fn branch_outcome(word: u32, addr: u32, cpu: &crate::falcon::Cpu) -> Option<(boo
 /// class stays one colour down a listing.
 fn type_badge(app: &App, addr: u32) -> (String, Color) {
     let Some(class) = instruction_class(app, addr) else {
-        return ("[??]".to_string(), Color::DarkGray);
+        return ("? ".to_string(), Color::DarkGray);
     };
     // Short classes are shown whole; longer ones are initialled so the badge
     // never crowds out the disassembly.
+    //
+    // No brackets: the class is data, and the bracket is reserved for keyboard
+    // keys. Colour already does the work brackets were doing — it separates the
+    // badge from the disassembly *and* groups the classes by family, which the
+    // brackets never did. Padded to two columns so the addresses stay aligned
+    // whether the class is one letter or two.
     let text = if class.len() <= 2 {
-        format!("[{class}]")
+        format!("{class:<2}")
     } else {
-        format!("[{}]", class.chars().next().unwrap_or('?'))
+        format!("{:<2}", class.chars().next().unwrap_or('?'))
     };
     (text, class_color(class))
 }
@@ -282,15 +317,21 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     // Collect non-selected harts that are currently at this address.
     let peer_ids = app.peer_hart_ids_at(addr);
 
-    let marker = if is_pc && is_bp {
-        "●▶"
-    } else if is_pc {
-        " ▶"
-    } else if is_bp {
-        "● "
-    } else {
-        "  "
-    };
+    // A gutter, not an inline glyph: the PC bar sits in its own two columns at
+    // the far left, so the disassembly below it stays aligned instead of being
+    // shoved one column right on whichever row happens to be current.
+    let marker: Vec<Span<'static>> = vec![
+        if is_pc {
+            Span::styled("▌", Style::default().fg(theme::ACCENT).bold())
+        } else {
+            Span::raw(" ")
+        },
+        if is_bp {
+            Span::styled("●", Style::default().fg(theme::DANGER).bold())
+        } else {
+            Span::raw(" ")
+        },
+    ];
 
     // Through the backend's disassembler; undecodable bytes show as raw hex
     // rather than an invented mnemonic.
@@ -300,18 +341,22 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
 
     let exec_count = app.session.exec_counts.get(&addr).copied().unwrap_or(0);
 
+    // A tinted row rather than black-on-yellow. The old highlight was the
+    // loudest thing on the screen and stole the amber that mnemonics and the
+    // paused state use, so "which line is current" and "this is a warning" read
+    // as the same signal.
     let (line_bg, line_fg) = if is_pc {
-        (Some(Color::Yellow), Some(Color::Black))
+        (Some(theme::SEL_ROW_BG), None)
     } else if is_bp {
-        (None, Some(Color::Red))
+        (None, Some(theme::DANGER))
     } else {
         (None, None)
     };
 
-    let addr_part = format!("{marker}0x{addr:08x}:  {disasm}");
+    let addr_part = format!("0x{addr:08x}:  {disasm}");
 
     // Build span list
-    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut spans: Vec<Span<'static>> = marker;
 
     // Type badge (before main text) — shown only if enabled
     if app.run.show_instr_type {
@@ -369,10 +414,11 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         }
     }
 
-    // Peer-hart PC markers: show [Hn] for each non-selected hart at this address
+    // Peer-hart PC markers: which other harts sit at this address. Bare and
+    // coloured — it is data, and the bracket means a key.
     for id in &peer_ids {
         spans.push(Span::styled(
-            format!(" [H{id}]"),
+            format!(" h{id}"),
             Style::default().fg(Color::Cyan),
         ));
     }
@@ -394,27 +440,27 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
     ListItem::new(line).style(style)
 }
 
+/// The resize grip on this pane's right edge — only while hovered, since it is
+/// drawn over the border itself. See `run::render_sidebar_drag_arrow`.
 fn render_instruction_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
-    let style = if app.run.hover_imem_bar {
-        Style::default().fg(theme::HOVER_BG)
-    } else {
-        Style::default()
-    };
-    let arrow_area = Rect::new(
+    if !app.run.hover_imem_bar {
+        return;
+    }
+    let grip = Rect::new(
         area.x + area.width.saturating_sub(1),
         area.y + area.height / 2,
         1,
         1,
     );
-    f.render_widget(Paragraph::new(">").style(style), arrow_area);
+    f.render_widget(
+        Paragraph::new("┃").style(Style::default().fg(theme::ACCENT)),
+        grip,
+    );
 }
 
 /// Render the execution trace panel (last N executed instructions).
 pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
-    let block = panel::panel_frame(PanelKind::Plain).title(Span::styled(
-        "Trace (last executed)",
-        Style::default().fg(theme::ACCENT),
-    ));
+    let block = panel::panel_state("Trace", "last executed", PanelKind::Plain);
     let inner = render_panel(f, area, block);
 
     let visible = inner.height as usize;

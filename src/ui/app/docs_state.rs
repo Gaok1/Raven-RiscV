@@ -75,6 +75,9 @@ pub(crate) struct DocsState {
     pub(crate) tab_bar_xs: std::cell::Cell<[(u16, u16); 4]>,
     /// Y row of the filter bar (InstrRef page only).
     pub(crate) filter_bar_y: std::cell::Cell<u16>,
+    /// First column the filter bar renders at — the origin its `Toolbar` hit-test
+    /// measures from.
+    pub(crate) filter_bar_x: std::cell::Cell<u16>,
     /// Vertical/horizontal scrollbar geometry for mouse drag, set by render
     /// each frame. `None` when that bar isn't shown.
     pub(crate) sb_v: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,

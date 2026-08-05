@@ -49,29 +49,54 @@ fn primary_row_count(app: &App) -> usize {
 }
 
 fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
-    // Feature 8: show last write PC in title
-    let cursor_info = match cursor_register(app).and_then(|id| app.register_last_write(id)) {
-        Some(pc) => format!("  [last write @ 0x{pc:08x}]"),
-        None => String::new(),
-    };
-
-    // The bank the [Tab] key moves to, named by the backend rather than
-    // assumed to be "float".
-    let banks = app.register_banks();
-    let next_bank = (banks.len() > 1)
-        .then(|| banks[(app.visible_register_bank() + 1) % banks.len()].label)
-        .unwrap_or("");
-    let block = panel::panel_frame(PanelKind::Plain).title(if app.run.show_dyn {
-        format!("Registers [Dyn]{cursor_info}")
-    } else if next_bank.is_empty() {
-        format!("Registers  [P]=pin{cursor_info}")
+    // The title's right slot says what the table is *showing*: every bank the
+    // backend offers, with the visible one lit. The `[P]=pin` / `[Tab]=Float`
+    // key hints that used to live here moved to the footer, so a bracket now
+    // only ever means a key — and the alternative banks are still advertised,
+    // because they are data rather than a hint.
+    let mut state: Vec<Span<'static>> = Vec::new();
+    if app.run.show_dyn {
+        state.push(Span::styled("dyn", style::value().bold()));
     } else {
-        format!("Registers  [P]=pin  [Tab]={next_bank}{cursor_info}")
-    });
+        let visible = app.visible_register_bank();
+        for (i, bank) in app.register_banks().iter().enumerate() {
+            if i > 0 {
+                state.push(Span::styled(" · ", style::idle()));
+            }
+            state.push(if i == visible {
+                Span::styled(bank.label.to_string(), style::value().bold())
+            } else {
+                Span::styled(bank.label.to_string(), style::idle())
+            });
+        }
+    }
+    if let Some(pc) = cursor_register(app).and_then(|id| app.register_last_write(id)) {
+        state.push(Span::styled(
+            format!("  last write 0x{pc:08x}"),
+            style::label(),
+        ));
+    }
+    let block = panel::panel_state_spans("Registers", state, PanelKind::Plain);
     let inner = block.inner(area);
-    let rows = build_register_rows(inner, app);
-    let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]).block(block);
-    f.render_widget(table, area);
+    f.render_widget(block, area);
+
+    // The rows stop one column short of the scrollbar track.
+    //
+    // They used to fill the panel, and a selected or hovered row carries a
+    // background — which ratatui's `Scrollbar` does not overwrite, since it only
+    // paints a foreground glyph. So the highlight showed *through* the bar on
+    // whichever row was lit, and the bar looked like it changed colour at
+    // random. Reserving the column is what `vertical_scrollbar` asks callers to
+    // do for exactly this reason.
+    let body = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width.saturating_sub(1),
+        inner.height,
+    );
+    let rows = build_register_rows(body, app);
+    let table = Table::new(rows, [Constraint::Length(16), Constraint::Min(0)]);
+    f.render_widget(table, body);
 
     // Draggable scrollbar over the regular (non-pinned) section; window math
     // mirrors `build_register_rows`.
@@ -165,22 +190,29 @@ fn build_register_rows(inner: Rect, app: &App) -> Vec<Row<'static>> {
         };
         let marker = if is_pinned { "◉ " } else { "  " };
         let full_label = format!("{marker}{label}");
-        let base_style = age_style(age);
-        let row_style = if is_cursor {
-            base_style.bg(theme::SEL_ROW_BG)
-        } else if is_hover {
-            base_style.bg(theme::HOVER_ROW_BG)
-        } else {
-            base_style
+        let bg = |style: Style| {
+            if is_cursor {
+                style.bg(theme::SEL_ROW_BG)
+            } else if is_hover {
+                style.bg(theme::HOVER_ROW_BG)
+            } else {
+                style
+            }
         };
+        // The name stays legible even when its value is dimmed as an untouched
+        // zero — the row is still there to be found by name.
+        let row_style = bg(age_style(age));
         let target = app.register_edit_target(index);
-        let (val, value_style) = match edit_overlay(app, target) {
+        let (val, val_style) = match edit_overlay(app, target) {
             Some(overlay) => (overlay, edit_value_style()),
-            None => (val, row_style),
+            None => {
+                let style = bg(value_style(age, &val));
+                (val, style)
+            }
         };
         rows.push(Row::new(vec![
             Cell::from(full_label).style(row_style),
-            Cell::from(val).style(value_style),
+            Cell::from(val).style(val_style),
         ]));
     }
 
@@ -229,12 +261,39 @@ fn entry_value(app: &App, entry: &RegisterEntry) -> String {
     })
 }
 
-/// `name (alias)` when the ISA has both, otherwise just the name — so RV32
-/// keeps `x10 (a0)` while a toy ISA shows a bare `r2`.
+/// `alias name` when the ISA has both, otherwise just the name — so RV32 shows
+/// `a0    x10` while a toy ISA shows a bare `r2`.
+///
+/// The ABI alias leads because that is the name the code being debugged uses;
+/// `x10 (a0)` made the reader skip past the number to reach the word they were
+/// actually looking for. Padding the alias keeps the numbers in a column.
 fn entry_label(entry: &RegisterEntry) -> String {
     match &entry.alias {
-        Some(alias) => format!("{} ({alias})", entry.name),
+        Some(alias) => format!("{alias:<5} {}", entry.name),
         None => entry.name.clone(),
+    }
+}
+
+/// Whether a rendered value is zero, in whichever format the sidebar is showing
+/// (`0x00000000`, `0`, `0b0000…`).
+fn renders_as_zero(value: &str) -> bool {
+    let digits = value
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0b");
+    !digits.is_empty() && digits.chars().all(|c| c == '0')
+}
+
+/// The style for a register value, dimming long-untouched zeros.
+///
+/// Thirty rows of `0x00000000` at full brightness drown the handful of values
+/// that actually matter. A register the program has written keeps its colour
+/// even when it wrote a zero — that is a fact about the run, not background.
+fn value_style(age: u8, value: &str) -> Style {
+    if age > 3 && renders_as_zero(value) {
+        style::idle()
+    } else {
+        age_style(age)
     }
 }
 
@@ -287,9 +346,11 @@ fn render_secondary_bank_table(f: &mut Frame, area: Rect, app: &App) {
     };
     let entries = app.visible_register_entries();
     let total = entries.len();
-    let primary = banks.first().map_or("registers", |first| first.label);
-    let block = panel::panel_frame(PanelKind::Plain)
-        .title(format!("{} ({total})  [Tab]={primary}", bank.label));
+    let block = panel::panel_state(
+        bank.label,
+        format!("{total} entries"),
+        PanelKind::Plain,
+    );
     let inner = block.inner(area);
 
     let visible = inner.height.saturating_sub(2) as usize;
@@ -315,8 +376,17 @@ fn render_secondary_bank_table(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let table = Table::new(rows, [Constraint::Length(13), Constraint::Min(0)]).block(block);
-    f.render_widget(table, area);
+    // Same reserved column as the primary table, for the same reason: a row
+    // background must not show through the scrollbar track.
+    f.render_widget(block, area);
+    let body = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width.saturating_sub(1),
+        inner.height,
+    );
+    let table = Table::new(rows, [Constraint::Length(13), Constraint::Min(0)]);
+    f.render_widget(table, body);
 
     // Draggable scrollbar (shares `regs_scroll` with the primary table).
     if total > visible && visible > 0 {
@@ -391,8 +461,34 @@ fn render_memory_view(f: &mut Frame, area: Rect, app: &App) {
         (None, inner)
     };
 
-    let items = memory_items(list_area, app);
-    f.render_widget(List::new(items), list_area);
+    // One column reserved for the bar, so a highlighted row cannot bleed under
+    // it (see `render_register_view`).
+    let body = Rect::new(
+        list_area.x,
+        list_area.y,
+        list_area.width.saturating_sub(1),
+        list_area.height,
+    );
+    let items = memory_items(body, app);
+    f.render_widget(List::new(items), body);
+
+    // Where this window sits in RAM. Counted in rows of `mem_view_bytes`, which
+    // is the unit the wheel and the arrow keys already move in.
+    let bytes = app.run.mem_view_bytes.max(1) as usize;
+    let total = app.session.mem_size / bytes;
+    let viewport = list_area.height as usize;
+    let base = app.visible_memory_base_addr(Some(list_area.height as u32)) as usize;
+    let offset = (base / bytes).min(total.saturating_sub(viewport));
+    vertical_scrollbar(f, list_area, total, viewport, offset);
+    app.run.mem_sb.set((total > viewport && viewport > 0).then(|| SbGeom {
+        start: list_area.y,
+        len: list_area.height,
+        cross: list_area.x + list_area.width.saturating_sub(1),
+        content: total,
+        viewport,
+        offset,
+        max: total - viewport,
+    }));
 
     if let Some(bar) = search_area {
         render_mem_search_bar(f, bar, app);
@@ -420,7 +516,13 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::styled(q.clone(), Style::default().fg(theme::LABEL_Y).bg(bg)),
         valid_span,
-        Span::styled("  Ctrl+v=paste  Esc=close  Enter=ok", style::idle().bg(bg)),
+        // A modal prompt is the one place besides the footer where keys belong:
+        // they are the *current* context and the footer still shows the tab's.
+        // Same bracket notation, so the convention holds.
+        Span::styled(
+            "  [ctrl+v] paste  [esc] close  [enter] ok",
+            style::idle().bg(bg),
+        ),
     ]);
 
     f.render_widget(Paragraph::new(line).style(Style::default().bg(bg)), area);
@@ -438,15 +540,13 @@ fn memory_block(app: &App) -> Block<'static> {
     let base_addr = app.visible_memory_base_addr(None);
     let section = memory_title_section(app, base_addr);
     let accent = memory_accent_color(app, section);
-    let title = Line::from(vec![
-        Span::styled("Memory", style::value().bold()),
-        Span::styled(
-            format!("  0x{base_addr:08x}"),
-            Style::default().fg(accent).bold(),
-        ),
-        Span::styled(format!(" [{}]", section), Style::default().fg(accent)),
-    ]);
-    panel::panel_frame(PanelKind::Custom(accent)).title(title)
+    // Region and address are state, so they belong in the title's right slot —
+    // and the region loses its brackets, which mean "key" everywhere now.
+    panel::panel_state(
+        "Memory",
+        format!("{section}  0x{base_addr:08x}"),
+        PanelKind::Custom(accent),
+    )
 }
 
 fn memory_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -798,7 +898,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
     let inner = render_panel(
         f,
         area,
-        panel::panel_frame(PanelKind::Plain).title("ELF Sections"),
+        panel::panel("ELF Sections", PanelKind::Plain),
     );
 
     let mut items: Vec<ListItem<'static>> = Vec::new();

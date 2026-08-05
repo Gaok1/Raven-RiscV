@@ -6,15 +6,15 @@ use super::panel::{self, PanelKind};
 use crate::ui::app::App;
 use crate::ui::view::style;
 
-const CLEAR_LABEL: &str = "x clear";
+const CLEAR_LABEL: &str = "clear";
+/// ` clear ` — the label plus the one space of padding each side that makes the
+/// filled surface read as a button. See [`style::button_span`].
 const CLEAR_WIDTH: u16 = 7;
 
-fn clear_style(hovered: bool) -> Style {
-    if hovered {
-        style::danger().add_modifier(Modifier::BOLD | Modifier::ITALIC)
-    } else {
-        style::label()
-    }
+/// The clear control is clickable, so it gets a surface — that is the whole
+/// signal the design system uses to say "you can click this".
+fn clear_button(hovered: bool) -> Span<'static> {
+    style::button_span(CLEAR_LABEL, false, hovered)
 }
 
 pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
@@ -41,7 +41,7 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
 
         let clear_x = area.x + area.width.saturating_sub(CLEAR_WIDTH + 2);
         let clear_area = Rect::new(clear_x, area.y, CLEAR_WIDTH, 1);
-        let clear = Paragraph::new(CLEAR_LABEL).style(clear_style(app.run.hover_console_clear));
+        let clear = Paragraph::new(clear_button(app.run.hover_console_clear));
         f.render_widget(clear, clear_area);
         return;
     }
@@ -51,18 +51,14 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
     } else {
         Color::DarkGray
     };
-    // Title with optional waiting flag
-    let mut title_spans: Vec<Span> = vec![Span::raw("Console - Ctrl+Up/Down scroll")];
-    if app.console.reading {
-        title_spans.push(Span::raw("  "));
-        title_spans.push(Span::styled(
-            "waiting input",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    let block = panel::panel_frame(PanelKind::Custom(border)).title(Line::from(title_spans));
+    // The scroll keys used to live in this title. They are in the footer and the
+    // help overlay now; the right-hand slot carries state instead.
+    let state = if app.console.reading {
+        "waiting input"
+    } else {
+        ""
+    };
+    let block = panel::panel_state("Console", state, PanelKind::Custom(border));
 
     let inner = block.inner(area);
     let h = inner.height.saturating_sub(1) as usize;
@@ -107,6 +103,6 @@ pub(crate) fn render_console(f: &mut Frame, area: Rect, app: &App) {
 
     let clear_x = area.x + area.width.saturating_sub(CLEAR_WIDTH + 2);
     let clear_area = Rect::new(clear_x, area.y, CLEAR_WIDTH, 1);
-    let clear = Paragraph::new(CLEAR_LABEL).style(clear_style(app.run.hover_console_clear));
+    let clear = Paragraph::new(clear_button(app.run.hover_console_clear));
     f.render_widget(clear, clear_area);
 }

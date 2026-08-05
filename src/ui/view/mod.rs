@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Paragraph},
 };
 
 pub(super) use super::app::{App, EditorMode, MemRegion, RunButton, Tab};
@@ -25,8 +25,11 @@ pub(crate) mod tlb;
 
 use cache::render_cache;
 use docs::render_docs;
-pub(crate) use editor::build_file_tab_bar;
-use editor::{render_editor, render_editor_status};
+pub(crate) use editor::{
+    EditorActionBtn, build_editor_action_bar, build_file_tab_bar, editor_actions_origin,
+    editor_actions_row, editor_chunks, editor_file_tabs_origin, editor_file_tabs_row,
+};
+use editor::{render_editor, render_editor_header};
 use path_input_overlay::render_path_input;
 use pipeline::render_pipeline;
 use run::render_run;
@@ -34,7 +37,8 @@ use settings::render_settings;
 use splash::render_splash;
 use tlb::render_tlb_tab;
 
-pub(crate) const HELP_BTN_W: u16 = 5;
+/// Width of the ` ? Help ` pill in the top-right of the tab row.
+pub(crate) const HELP_BTN_W: u16 = 8;
 
 pub fn ui(f: &mut Frame, app: &App) {
     if let Some(started) = app.splash_start {
@@ -83,43 +87,20 @@ pub fn ui(f: &mut Frame, app: &App) {
     };
     render_main_tab_bar(f, tabs_area, app, tutorial_targets_tabbar);
 
-    // Help button [?]
-    let help_style = if app.help_open {
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(theme::ACCENT)
-            .bold()
-    } else if app.hover_help {
-        Style::default()
-            .fg(theme::HOVER_FG)
-            .bg(theme::HOVER_BG)
-            .bold()
-    } else {
-        Style::default()
-            .fg(theme::ACCENT)
-            .add_modifier(Modifier::DIM)
-    };
-    let help_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER));
-    let help_para = Paragraph::new(Span::styled("[?]", help_style))
-        .block(help_block)
-        .alignment(Alignment::Center);
-    f.render_widget(help_para, help_btn_area);
+    // The help button. A bordered box holding `[?]` wore the same chrome as the
+    // boxes that hold data, so it read as a footnote marker rather than a
+    // control. It is now the one filled surface on the screen, with the word
+    // spelled out — see `style::button`.
+    f.render_widget(
+        Paragraph::new(style::button_span("? Help", app.help_open, app.hover_help)),
+        help_btn_area,
+    );
 
     match app.tab {
         Tab::Editor => {
-            let editor_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(5),
-                    Constraint::Length(1),
-                    Constraint::Min(3),
-                ])
-                .split(chunks[1]);
-            render_editor_status(f, editor_chunks[0], app);
-            editor::render_file_tabs(f, editor_chunks[1], app);
-            render_editor(f, editor_chunks[2], app);
+            let (header, body) = editor::editor_chunks(chunks[1]);
+            render_editor_header(f, header, app);
+            render_editor(f, body, app);
         }
         Tab::Run => render_run(f, chunks[1], app),
         Tab::Cache => render_cache(f, chunks[1], app),
@@ -136,28 +117,29 @@ pub fn ui(f: &mut Frame, app: &App) {
                 EditorMode::Command => "COMMAND",
             };
             let mut line = style::hint_bar(&[
-                ("Ctrl+o", "Open"),
-                ("Ctrl+s", "Save"),
-                ("Ctrl+z", "Undo"),
-                ("Ctrl+f", "Find"),
-                ("Ctrl+g", "Goto"),
-                ("Ctrl+/", "Comment"),
-                ("[?]", "Help"),
+                ("ctrl+o", "open"),
+                ("ctrl+s", "save"),
+                ("ctrl+z", "undo"),
+                ("ctrl+f", "find"),
+                ("ctrl+g", "goto"),
+                ("ctrl+/", "comment"),
+                ("?", "help"),
             ]);
             line.spans.insert(0, Span::styled("  │  ", style::label()));
             line.spans.insert(0, Span::styled(mode, style::key()));
             line
         }
         Tab::Run => style::hint_bar(&[
-            ("s", "Step"),
-            ("r", "Restart"),
-            ("p/Space", "Run/Pause"),
-            ("f", "Speed"),
-            ("v", "Sidebar"),
-            ("k", "Region"),
-            ("Ctrl+f", "Jump RAM"),
-            ("Ctrl+g", "Label"),
-            ("[?]", "Help"),
+            ("s", "step"),
+            ("r", "restart"),
+            ("p/space", "run/pause"),
+            ("f", "speed"),
+            ("v", "sidebar"),
+            ("k", "region"),
+            ("tab", "bank"),
+            ("ctrl+f", "jump ram"),
+            ("ctrl+g", "label"),
+            ("?", "help"),
         ]),
         Tab::Pipeline => {
             if let Some(ref err) = app.run.pipeline_view().status_error {
@@ -166,15 +148,15 @@ pub fn ui(f: &mut Frame, app: &App) {
                 Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
                 style::hint_bar(&[
-                    ("s", "Step"),
-                    ("p/Space", "Run/Pause"),
-                    ("r", "Reset"),
-                    ("f", "Speed"),
-                    ("Tab", "Subtab"),
-                    ("↑/↓", "Settings"),
-                    ("Ctrl+e/l", "Settings"),
-                    ("Ctrl+r", "Results"),
-                    ("[?]", "Help"),
+                    ("s", "step"),
+                    ("p/space", "run/pause"),
+                    ("r", "reset"),
+                    ("f", "speed"),
+                    ("tab", "subtab"),
+                    ("↑/↓", "settings"),
+                    ("ctrl+e/l", "settings"),
+                    ("ctrl+r", "results"),
+                    ("?", "help"),
                 ])
             }
         }
@@ -185,30 +167,30 @@ pub fn ui(f: &mut Frame, app: &App) {
                 Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
                 style::hint_bar(&[
-                    ("Tab", "Subtabs"),
-                    ("Ctrl+e", "Export config"),
-                    ("Ctrl+l", "Import config"),
-                    ("Ctrl+r", "Results"),
-                    ("[?]", "Help"),
+                    ("tab", "subtabs"),
+                    ("ctrl+e", "export config"),
+                    ("ctrl+l", "import config"),
+                    ("ctrl+r", "results"),
+                    ("?", "help"),
                 ])
             }
         }
         Tab::Docs => style::hint_bar(&[
-            ("Ctrl+f", "Search"),
-            ("←/→", "Filter"),
-            ("Space", "Toggle filter"),
-            ("↑/↓", "Scroll"),
-            ("PgUp/PgDn", "Fast scroll"),
-            ("l", "Language"),
-            ("[?]", "Help"),
+            ("ctrl+f", "search"),
+            ("←/→", "filter"),
+            ("space", "toggle filter"),
+            ("↑/↓", "scroll"),
+            ("pgup/pgdn", "fast scroll"),
+            ("l", "language"),
+            ("?", "help"),
         ]),
         Tab::Settings => style::hint_bar(&[
-            ("↑/↓", "Navigate"),
-            ("Enter", "Edit/Toggle"),
-            ("Esc", "Cancel"),
-            ("Click", "Toggle bool"),
-            ("Tab", "Next field"),
-            ("[?]", "Help"),
+            ("↑/↓", "navigate"),
+            ("enter", "edit/toggle"),
+            ("esc", "cancel"),
+            ("click", "toggle bool"),
+            ("tab", "next field"),
+            ("?", "help"),
         ]),
         Tab::Tlb => {
             if let Some(ref err) = app.tlb.config_error {
@@ -217,11 +199,11 @@ pub fn ui(f: &mut Frame, app: &App) {
                 Line::from(Span::styled(format!("✓  {ok}"), style::success()))
             } else {
                 style::hint_bar(&[
-                    ("Tab", "Subtabs"),
-                    ("Ctrl+e", "Export config"),
-                    ("Ctrl+l", "Import config"),
-                    ("Ctrl+r", "Results"),
-                    ("[?]", "Help"),
+                    ("tab", "subtabs"),
+                    ("ctrl+e", "export config"),
+                    ("ctrl+l", "import config"),
+                    ("ctrl+r", "results"),
+                    ("?", "help"),
                 ])
             }
         }
@@ -271,44 +253,39 @@ fn render_main_tab_bar(f: &mut Frame, area: Rect, app: &App, tutorial_targeted: 
     let mut labels: Vec<Span<'static>> = vec![Span::raw(" ")];
     labels.extend(bar.spans());
 
-    // Underline row, aligned to the bar's own per-cell widths (single source).
-    let mut underlines: Vec<Span<'static>> = vec![Span::raw(" ")];
-    for (i, (tab, start, end)) in bar.cells().enumerate() {
-        if i > 0 {
-            underlines.push(Span::raw("  "));
-        }
-        let cell_w = (end - start) as usize;
-        let text_w = tab.label().chars().count();
-        underlines.push(underline_cell(tab == app.tab, cell_w, text_w));
-    }
-
+    // One rule, with a heavy segment under the active tab, instead of an
+    // underline row *and* a separator row below it. The indicator's columns come
+    // from the bar's own layout, so it cannot drift off the label it marks.
     let sep_style = if tutorial_targeted {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(theme::BORDER)
     };
-    let lines = vec![
-        Line::from(labels),
-        Line::from(underlines),
-        Line::styled("─".repeat(area.width as usize), sep_style),
-    ];
-    f.render_widget(Paragraph::new(lines), area);
-}
+    let width = area.width as usize;
+    let active = bar
+        .cells()
+        .find(|(tab, _, _)| *tab == app.tab)
+        .map(|(_, start, end)| (start as usize + 1, end as usize + 1));
 
-fn underline_cell(active: bool, total_width: usize, line_width: usize) -> Span<'static> {
-    let text = if active && total_width >= line_width {
-        let left = (total_width - line_width) / 2;
-        let right = total_width.saturating_sub(left + line_width);
-        format!(
-            "{}{}{}",
-            " ".repeat(left),
-            "─".repeat(line_width),
-            " ".repeat(right)
-        )
-    } else {
-        " ".repeat(total_width)
+    let rule = match active {
+        // `+1` for the leading space the labels row starts with.
+        Some((start, end)) if end <= width => vec![
+            Span::styled("─".repeat(start), sep_style),
+            Span::styled(
+                "━".repeat(end - start),
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("─".repeat(width - end), sep_style),
+        ],
+        _ => vec![Span::styled("─".repeat(width), sep_style)],
     };
-    Span::styled(text, Style::default().fg(theme::ACCENT))
+
+    f.render_widget(
+        Paragraph::new(vec![Line::from(labels), Line::from(rule)]),
+        area,
+    );
 }
 
 fn render_exit_popup(f: &mut Frame, area: Rect) {
@@ -322,12 +299,21 @@ fn render_exit_popup(f: &mut Frame, area: Rect) {
         Line::raw("Do you wish to exit?"),
         Line::raw("Check your code is saved before exiting."),
         Line::raw(""),
-        Line::from(vec![
-            style::badge("[Exit]", style::Badge::Danger),
-            Span::styled("  Enter/y  ", style::label()),
-            style::badge("[Cancel]", style::Badge::Accent),
-            Span::styled("  Esc", style::label()),
-        ]),
+        // A badge already carries a filled surface, so the brackets around the
+        // word were saying "keyboard key" over something that is plainly a
+        // button. The keys go beside them, written the one way keys are written.
+        Line::from({
+            let mut spans = vec![
+                style::badge(" Exit ", style::Badge::Danger),
+                Span::raw(" "),
+            ];
+            spans.extend(style::key_hint("enter", ""));
+            spans.push(Span::raw("   "));
+            spans.push(style::badge(" Cancel ", style::Badge::Accent));
+            spans.push(Span::raw(" "));
+            spans.extend(style::key_hint("esc", ""));
+            spans
+        }),
     ];
     let para = Paragraph::new(lines).alignment(Alignment::Center);
     f.render_widget(para, inner);
@@ -469,11 +455,13 @@ fn render_help_popup(f: &mut Frame, area: Rect, app: &App) {
 pub(crate) fn help_button_area(area: Rect) -> Rect {
     let chunks = layout::app_frame_chunks(area);
     let tab_row = chunks[0];
+    // Only the row the pill is drawn on: a 3-row hitbox meant hovering the rule
+    // underneath lit the button up.
     Rect::new(
         tab_row.x + tab_row.width.saturating_sub(HELP_BTN_W),
         tab_row.y,
         HELP_BTN_W,
-        tab_row.height,
+        1,
     )
 }
 

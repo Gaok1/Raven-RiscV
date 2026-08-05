@@ -98,7 +98,7 @@ pub(crate) mod toolbar;
 pub(super) use console::render_console;
 pub(crate) use controls::{
     ControlState, SpanRow, bool_value, dense_action, dense_value, edit_value, field_row,
-    label_span, render_exec_controls,
+    label_span,
 };
 pub(crate) use lists::{SbGeom, horizontal_scrollbar, vertical_scrollbar, visible_window};
 pub(crate) use tables::{Align, Col, DataTable, kv_styled};

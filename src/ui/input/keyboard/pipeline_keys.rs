@@ -3,6 +3,37 @@ use crate::ui::pipeline::PipelineBypassConfig;
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Instant;
 
+/// Which CPI field a config row points at, if it is one of theirs.
+pub(crate) fn cpi_field_of(row: usize) -> Option<usize> {
+    row.checked_sub(PipelineBypassConfig::CONFIG_ROWS)
+        .filter(|i| *i < crate::ui::pipeline::CPI_ROWS)
+}
+
+/// Open `row`'s CPI field for typing, seeded with its current value.
+pub(crate) fn open_cpi_edit(app: &mut App, row: usize) {
+    if let Some(i) = cpi_field_of(row) {
+        let current = app.session.cpi_config.get(i).to_string();
+        let view = app.run.pipeline_view_mut();
+        view.config_cursor = row;
+        view.cpi_edit = Some(current);
+    }
+}
+
+/// Parse the open buffer into the field and close the editor. A buffer that is
+/// not a number leaves the value alone rather than zeroing it.
+pub(crate) fn commit_cpi_edit(app: &mut App) {
+    let Some(buf) = app.run.pipeline_view_mut().cpi_edit.take() else {
+        return;
+    };
+    let Some(i) = cpi_field_of(app.run.pipeline_view().config_cursor) else {
+        return;
+    };
+    if let Ok(v) = buf.trim().parse::<u64>() {
+        app.session.cpi_config.set(i, v);
+        app.reconfigure_pipeline_model();
+    }
+}
+
 pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Tab => {
@@ -80,6 +111,32 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             }
             true
         }
+        // A CPI field is open for typing: digits go in, Enter commits, Esc drops
+        // the edit. Checked before the datapath keys below, which is what makes
+        // Enter mean "commit" here and "cycle this toggle" everywhere else.
+        _ if app.run.pipeline_view().cpi_edit.is_some()
+            && matches!(
+                app.run.pipeline_view().subtab,
+                crate::ui::pipeline::PipelineSubtab::Config
+            ) =>
+        {
+            match key.code {
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    if let Some(buf) = app.run.pipeline_view_mut().cpi_edit.as_mut() {
+                        buf.push(c);
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(buf) = app.run.pipeline_view_mut().cpi_edit.as_mut() {
+                        buf.pop();
+                    }
+                }
+                KeyCode::Enter => commit_cpi_edit(app),
+                KeyCode::Esc => app.run.pipeline_view_mut().cpi_edit = None,
+                _ => {}
+            }
+            true
+        }
         KeyCode::Enter
             if matches!(
                 app.run.pipeline_view().subtab,
@@ -89,6 +146,10 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             use crate::ui::pipeline::{BranchPredict, BranchResolve, PipelineMode};
             app.run.pipeline_view_mut().clear_hover_state();
             let cursor = app.run.pipeline_view().config_cursor;
+            if cursor >= PipelineBypassConfig::CONFIG_ROWS {
+                open_cpi_edit(app, cursor);
+                return true;
+            }
             let Some(pipeline) = app.pipeline_config_mut() else {
                 return true;
             };
@@ -192,7 +253,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             app.run.pipeline_view_mut().clear_hover_state();
             app.run.pipeline_view_mut().config_cursor = (app.run.pipeline_view_mut().config_cursor
                 + 1)
-            .min(PipelineBypassConfig::CONFIG_ROWS - 1);
+            .min(crate::ui::pipeline::PIPELINE_CONFIG_ROWS - 1);
             true
         }
         // Gantt scroll is bottom-anchored: 0 = follow the newest row, so Up

@@ -30,6 +30,6 @@ pub(crate) fn render_build_status(f: &mut Frame, area: Rect, app: &App) {
     };
     let status = Paragraph::new(msg)
         .style(style)
-        .block(panel::panel_frame(PanelKind::Custom(build_border)).title("Build status"));
+        .block(panel::panel("Build status", PanelKind::Custom(build_border)));
     f.render_widget(status, area);
 }

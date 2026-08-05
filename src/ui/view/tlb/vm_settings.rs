@@ -55,36 +55,104 @@ impl RowBuilder {
         self.hits.push((hit, x0, self.x));
         self.spans.push(span);
     }
+
+    /// A top-level field label, padded so every value in the panel starts in
+    /// the same column.
+    fn label(&mut self, name: &str, style: Style) {
+        self.styled(&format!("{name:<LABEL_W$}"), style);
+    }
+
+    /// An indented sub-field label, landing on that same value column.
+    fn sub(&mut self, name: &str, style: Style) {
+        self.styled(&format!("  {:<w$}", name, w = LABEL_W - 2), style);
+    }
+
+    /// A value you can only read, aligned with the ones you can click.
+    ///
+    /// A clickable value is a pill and carries a padding column; a plain one
+    /// does not, so writing it bare left every read-only row sitting one column
+    /// to the left of the editable rows above and below it.
+    fn readout(&mut self, s: &str, style: Style) {
+        self.styled(&format!(" {s}"), style);
+    }
+
+    /// A section heading, drawn as the labelled hairline the rest of the app
+    /// uses to divide a panel.
+    fn section(name: &str, width: u16) -> Self {
+        let mut r = Self::new(0);
+        r.spans = panel::section_rule(name, width.saturating_sub(1)).spans;
+        r
+    }
 }
 
-pub(super) fn render_vm_settings(f: &mut Frame, area: Rect, app: &App) {
-    let col_w = area.width.min(66);
-    let col_x = area.x + (area.width.saturating_sub(col_w)) / 2;
-    let col_area = Rect::new(col_x, area.y, col_w, area.height);
+/// Columns reserved for a field label. Every label was padded by hand to its
+/// own guessed width before, so `offset bits` and `L0 index` put their values
+/// one column apart and the panel read as two ragged lists.
+const LABEL_W: usize = 15;
 
-    let block = panel::panel("Virtual Memory Settings", PanelKind::Accent);
-    let inner = block.inner(col_area);
-    f.render_widget(block, col_area);
+/// Minimum width a settings column needs before the two-column split is worth
+/// taking; below it the panel keeps one centred column.
+const COL_W: u16 = 52;
+
+pub(super) fn render_vm_settings(f: &mut Frame, area: Rect, app: &App) {
+    let inner = panel::render_panel(
+        f,
+        area,
+        panel::panel("Virtual Memory Settings", PanelKind::Accent),
+    );
     if inner.height == 0 || inner.width < 4 {
         return;
     }
 
-    let rows = build_rows(app, inner.x + 1);
+    // Two columns when there is room. A single 66-column strip centred in a
+    // 158-column panel left 46 blank columns on each side *and* had to scroll
+    // its own content, which is the shape a settings panel should never be.
+    let split_cols = inner.width >= COL_W * 2;
+    let (left, right) = if split_cols {
+        // Two columns of the width the content needs, centred as a pair — not
+        // stretched to half the panel each, which pushed the right column's
+        // labels away from the values in the left.
+        let pair = (COL_W * 2).min(inner.width);
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(pair / 2),
+                Constraint::Length(pair - pair / 2),
+                Constraint::Min(0),
+            ])
+            .split(inner);
+        (cols[1], Some(cols[2]))
+    } else {
+        let w = inner.width.min(66);
+        (
+            Rect::new(inner.x + (inner.width - w) / 2, inner.y, w, inner.height),
+            None,
+        )
+    };
 
-    // Scroll the (possibly tall) panel.
-    let visible = inner.height as usize;
-    let max_scroll = rows.len().saturating_sub(visible);
-    app.tlb.vm_settings_max_scroll.set(max_scroll);
-    let scroll = app.tlb.vm_settings_scroll.min(max_scroll);
+    // Rows are measured from one column in, and then *drawn* from one column in
+    // too. They used to be measured at `x + 1` but rendered at `x`, so every
+    // hitbox in the panel sat one column right of the control it covered.
+    let indent = |r: Rect| Rect::new(r.x + 1, r.y, r.width.saturating_sub(1), r.height);
+    let (left, right) = (indent(left), right.map(indent));
 
-    // Register hitboxes for the visible rows at their real screen y.
+    // Built once per column origin, because a `RowBuilder` bakes its hitbox
+    // columns in as it measures the spans — asking it for the same rows at a
+    // second origin is how the right column gets clickable controls without a
+    // parallel copy of the layout.
+    let (rows_l, split_at) = build_rows(app, left.x, left.width);
+    let rows_r = right.map(|r| build_rows(app, r.x, r.width).0);
+
     let mut field_hits: Vec<(VmSettingsField, u16, u16, u16)> = Vec::new();
     let mut preset_hits = [(0u16, 0u16, 0u16); 3];
     app.tlb.vm_apply_btn.set((0, 0, 0));
     app.tlb.vm_flush_btn.set((0, 0, 0));
-    let mut lines: Vec<Line> = Vec::with_capacity(visible);
-    for (i, row) in rows.iter().enumerate().skip(scroll).take(visible) {
-        let y = inner.y + (i - scroll) as u16;
+
+    let register = |row: &RowBuilder,
+                        y: u16,
+                        field_hits: &mut Vec<(VmSettingsField, u16, u16, u16)>,
+                        preset_hits: &mut [(u16, u16, u16); 3]| {
         for (hit, x0, x1) in &row.hits {
             match hit {
                 Hit::Field(field) => field_hits.push((*field, y, *x0, *x1)),
@@ -93,15 +161,45 @@ pub(super) fn render_vm_settings(f: &mut Frame, area: Rect, app: &App) {
                 Hit::Flush => app.tlb.vm_flush_btn.set((y, *x0, *x1)),
             }
         }
+    };
+
+    // With two columns nothing overflows, so the scroll offset is only used by
+    // the single-column fallback.
+    let (head, tail): (&[RowBuilder], &[RowBuilder]) = match (&rows_r, split_cols) {
+        (Some(rows_r), true) => (&rows_l[..split_at], &rows_r[split_at..]),
+        _ => (&rows_l[..], &[]),
+    };
+
+    let visible = left.height as usize;
+    let max_scroll = head.len().saturating_sub(visible);
+    app.tlb.vm_settings_max_scroll.set(max_scroll);
+    let scroll = app.tlb.vm_settings_scroll.min(max_scroll);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(visible);
+    for (i, row) in head.iter().enumerate().skip(scroll).take(visible) {
+        let y = left.y + (i - scroll) as u16;
+        register(row, y, &mut field_hits, &mut preset_hits);
         lines.push(Line::from(row.spans.clone()));
     }
+    f.render_widget(Paragraph::new(lines), left);
+
+    if let Some(right) = right {
+        let mut lines: Vec<Line> = Vec::with_capacity(right.height as usize);
+        for (i, row) in tail.iter().take(right.height as usize).enumerate() {
+            register(row, right.y + i as u16, &mut field_hits, &mut preset_hits);
+            lines.push(Line::from(row.spans.clone()));
+        }
+        f.render_widget(Paragraph::new(lines), right);
+    }
+
     *app.tlb.vm_field_hitboxes.borrow_mut() = field_hits;
     app.tlb.preset_btns.set(preset_hits);
-
-    f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
+/// Builds every settings row at origin `x0`, and returns the index the second
+/// column starts at — the read-only Root PT / window readout, which is where
+/// the editable form ends and the reference numbers begin.
+fn build_rows(app: &App, x0: u16, col_w: u16) -> (Vec<RowBuilder>, usize) {
     let mode = app.vm_mode();
     let custom = matches!(mode, VmMode::Custom);
     let auto = mode.is_auto();
@@ -111,7 +209,6 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
 
     let label = style::label();
     let dim = Style::default().fg(theme::BORDER);
-    let head = Style::default().fg(theme::ACCENT);
 
     // Render a numeric field's value (unified `█` edit cursor when focused).
     let num_val = |field: VmSettingsField, value: String| -> Span<'static> {
@@ -128,7 +225,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     // ── Mode + TLB ───────────────────────────────────────────────────────────
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("Mode         ", label);
+        r.label("mode", label);
         r.hit(
             Hit::Field(VmSettingsField::Mode),
             dense_value(
@@ -142,7 +239,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("TLB cache    ", label);
+        r.label("tlb cache", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbEnabled),
             bool_value(app.session.tlb_enabled, hov(VmSettingsField::TlbEnabled)),
@@ -153,16 +250,14 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     rows.push(blank());
 
     // ── Paging scheme ──────────────────────────────────────────────────────
-    {
-        let mut r = RowBuilder::new(x0);
-        let title = if custom {
-            "Paging scheme (editable)"
+    rows.push(RowBuilder::section(
+        if custom {
+            "PAGING SCHEME · editable"
         } else {
-            "Paging scheme (preset)"
-        };
-        r.styled(title, head);
-        rows.push(r);
-    }
+            "PAGING SCHEME · preset"
+        },
+        col_w,
+    ));
     let scheme = if custom {
         app.tlb.pending_scheme.clone()
     } else {
@@ -170,39 +265,41 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     };
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  offset bits  ", label);
+        r.sub("offset bits", label);
         if custom {
             r.hit(
                 Hit::Field(VmSettingsField::OffsetBits),
                 num_val(VmSettingsField::OffsetBits, scheme.offset_bits.to_string()),
             );
         } else {
-            r.styled(&scheme.offset_bits.to_string(), dim);
+            r.readout(&scheme.offset_bits.to_string(), dim);
         }
         rows.push(r);
     }
     for (i, &bits) in scheme.level_bits.iter().enumerate() {
         let mut r = RowBuilder::new(x0);
-        r.styled(&format!("  L{i} index    "), label);
+        r.sub(&format!("L{i} index"), label);
         let field = VmSettingsField::LevelBits(i);
         if custom {
             r.hit(Hit::Field(field), num_val(field, bits.to_string()));
         } else {
-            r.styled(&bits.to_string(), dim);
+            r.readout(&bits.to_string(), dim);
         }
         rows.push(r);
     }
     if custom {
         let mut r = RowBuilder::new(x0);
-        r.styled("  levels       ", label);
+        r.sub("levels", label);
+        // Words, not `[+]`/`[-]`: a bracket is how this UI writes a keyboard
+        // key, and a button says what it does.
         r.hit(
             Hit::Field(VmSettingsField::AddLevel),
-            dense_action("[+]", theme::RUNNING, hov(VmSettingsField::AddLevel)),
+            dense_action("add", theme::RUNNING, hov(VmSettingsField::AddLevel)),
         );
         r.raw(" ");
         r.hit(
             Hit::Field(VmSettingsField::RemoveLevel),
-            dense_action("[-]", theme::DANGER, hov(VmSettingsField::RemoveLevel)),
+            dense_action("remove", theme::DANGER, hov(VmSettingsField::RemoveLevel)),
         );
         rows.push(r);
     }
@@ -232,21 +329,19 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     rows.push(blank());
 
     // ── Page map ──────────────────────────────────────────────────────────
-    {
-        let mut r = RowBuilder::new(x0);
-        let t = if auto {
-            "Page map (auto-installed)"
+    rows.push(RowBuilder::section(
+        if auto {
+            "PAGE MAP · auto-installed"
         } else {
-            "Page map (manual mode: program-driven)"
-        };
-        r.styled(t, head);
-        rows.push(r);
-    }
+            "PAGE MAP · program-driven"
+        },
+        col_w,
+    ));
     let spec = app.tlb.pending_map;
     let is_offset = matches!(spec.kind, MapKind::Offset(_));
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  kind        ", label);
+        r.sub("kind", label);
         let kind_label = if is_offset { "offset" } else { "identity" };
         r.hit(
             Hit::Field(VmSettingsField::Kind),
@@ -256,7 +351,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  offset MiB  ", label);
+        r.sub("offset MiB", label);
         if is_offset {
             let v = match spec.kind {
                 MapKind::Offset(v) => v,
@@ -267,13 +362,13 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
                 num_val(VmSettingsField::Offset, v.to_string()),
             );
         } else {
-            r.styled("—", dim);
+            r.readout("—", dim);
         }
         rows.push(r);
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  perms       ", label);
+        r.sub("perms", label);
         let perms = [
             (VmSettingsField::PermR, spec.perms.r, "R"),
             (VmSettingsField::PermW, spec.perms.w, "W"),
@@ -291,7 +386,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  global G    ", label);
+        r.sub("global G", label);
         r.hit(
             Hit::Field(VmSettingsField::Global),
             bool_value(spec.global, hov(VmSettingsField::Global)),
@@ -300,7 +395,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  ASID        ", label);
+        r.sub("ASID", label);
         r.hit(
             Hit::Field(VmSettingsField::Asid),
             num_val(VmSettingsField::Asid, spec.asid.to_string()),
@@ -308,7 +403,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         rows.push(r);
     }
 
-    rows.push(blank());
+    let split_at = rows.len();
 
     // ── Root PT + window (read-only) ─────────────────────────────────────────
     {
@@ -316,27 +411,23 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         let win_lo = app.session.base_pc.min(app.session.data_base);
         let win_hi = app.session.heap_start;
         let mut r = RowBuilder::new(x0);
-        r.styled("Root PT @ ", label);
-        r.styled(&format!("0x{root_pa:08x}"), style::value());
+        r.label("root table", label);
+        r.readout(&format!("0x{root_pa:08x}"), style::value());
         rows.push(r);
         let mut r2 = RowBuilder::new(x0);
-        r2.styled("Window    ", label);
-        r2.styled(&format!("0x{win_lo:08x}–0x{win_hi:08x}"), style::value());
+        r2.label("window", label);
+        r2.readout(&format!("0x{win_lo:08x}–0x{win_hi:08x}"), style::value());
         rows.push(r2);
     }
 
     rows.push(blank());
 
     // ── TLB geometry ─────────────────────────────────────────────────────────
-    {
-        let mut r = RowBuilder::new(x0);
-        r.styled("TLB geometry", head);
-        rows.push(r);
-    }
+    rows.push(RowBuilder::section("TLB GEOMETRY", col_w));
     let p = &app.tlb.pending;
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  entries     ", label);
+        r.sub("entries", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbEntries),
             num_val(VmSettingsField::TlbEntries, p.entry_count.to_string()),
@@ -345,7 +436,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  assoc       ", label);
+        r.sub("assoc", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbAssoc),
             num_val(
@@ -357,7 +448,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  replacement ", label);
+        r.sub("replacement", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbReplacement),
             dense_value(
@@ -371,7 +462,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  hit cyc     ", label);
+        r.sub("hit cycles", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbHitLat),
             num_val(VmSettingsField::TlbHitLat, p.hit_latency.to_string()),
@@ -380,7 +471,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  miss cyc    ", label);
+        r.sub("miss cycles", label);
         r.hit(
             Hit::Field(VmSettingsField::TlbMissLat),
             num_val(VmSettingsField::TlbMissLat, p.miss_penalty.to_string()),
@@ -389,7 +480,7 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
     }
     {
         let mut r = RowBuilder::new(x0);
-        r.styled("  presets     ", label);
+        r.sub("presets", label);
         let hov_preset =
             |i: usize| matches!(&app.tlb.hover, Some(TlbHoverTarget::Preset(p)) if *p == i);
         for (i, label) in ["small 16", "med 32", "large 64"].iter().enumerate() {
@@ -433,18 +524,15 @@ fn build_rows(app: &App, x0: u16) -> Vec<RowBuilder> {
         r.styled(status, Style::default().fg(theme::LABEL_Y));
         rows.push(r);
     }
-    {
+    // Only while a field is open. The idle copy explained how to click, which is
+    // what the button surfaces are for; the keys are in the footer.
+    if app.tlb.vm_edit_field.is_some() {
         let mut r = RowBuilder::new(x0);
-        let hint = if app.tlb.vm_edit_field.is_some() {
-            "Enter=confirm  Esc=cancel  Tab/↑↓=next field"
-        } else {
-            "Click to edit/toggle · apply commits the pending values"
-        };
-        r.styled(hint, style::idle());
+        r.styled("[enter] confirm  [esc] cancel  [tab] next field", style::idle());
         rows.push(r);
     }
 
-    rows
+    (rows, split_at)
 }
 
 fn blank() -> RowBuilder {

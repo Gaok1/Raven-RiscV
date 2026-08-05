@@ -3,8 +3,8 @@ use ratatui::{Frame, prelude::*, widgets::Paragraph};
 
 use crate::ui::app::{App, CacheHoverTarget, CacheScope, CacheSubtab, RunButton};
 use crate::ui::theme;
-use crate::ui::view::components::panel::{self, PanelKind, render_panel};
-use crate::ui::view::components::{ControlState, Toolbar};
+use crate::ui::view::components::panel::{PanelKind, render_panel};
+use crate::ui::view::components::{ControlState, SpanRow, Toolbar};
 use crate::ui::view::style;
 
 pub(crate) mod config;
@@ -21,7 +21,11 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
 
     // When cache is disabled, show a notice and skip all cache-specific content.
     if !app.session.cache_enabled {
-        let inner = render_panel(f, area, panel::panel_frame(PanelKind::Plain));
+        let inner = render_panel(
+            f,
+            area,
+            crate::ui::view::components::panel::panel_frame(PanelKind::Plain),
+        );
         let lines = vec![
             Line::raw(""),
             Line::from(Span::styled(
@@ -38,34 +42,31 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Layout: level selector (1) | subtab header (3) | exec controls (4) | content (min) | shared controls bar (3)
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // level selector bar
-            Constraint::Length(4), // subtab header
-            Constraint::Length(4), // exec controls (Speed / State / Cycles)
-            Constraint::Min(0),    // content
-            Constraint::Length(3), // shared controls bar (Reset / Export / Compare / Scope)
-        ])
+        .constraints([Constraint::Length(CACHE_HEADER_H), Constraint::Min(0)])
         .split(area);
 
-    render_level_selector(f, layout[0], app);
-    render_subtab_header(f, layout[1], app);
-    render_cache_exec_controls(f, layout[2], app);
+    render_cache_header(f, layout[0], app);
 
     match app.cache.subtab {
-        CacheSubtab::Stats => stats::render_stats(f, layout[3], app),
-        CacheSubtab::View => view::render_view(f, layout[3], app),
-        CacheSubtab::Config => config::render_config(f, layout[3], app),
+        CacheSubtab::Stats => stats::render_stats(f, layout[1], app),
+        CacheSubtab::View => view::render_view(f, layout[1], app),
+        CacheSubtab::Config => config::render_config(f, layout[1], app),
     }
-
-    render_controls_bar(f, layout[4], app);
 
     if app.cache.viewing_snapshot.is_some() {
         stats::render_snapshot_popup(f, area, app);
     }
 }
+
+/// Rows the borderless Cache header occupies — two rows of controls with a
+/// blank between them. Mouse hit-testing splits the tab with the same constant,
+/// so the two cannot drift.
+///
+/// The gap earns its row: stacked directly, the two rows of pills read as one
+/// dense block instead of as "what am I looking at" over "what is it doing".
+pub(crate) const CACHE_HEADER_H: u16 = 3;
 
 /// A button in the cache level selector bar.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -236,49 +237,123 @@ pub(crate) fn build_cache_scope_bar(app: &App) -> Toolbar<CacheScopeBtn> {
     bar
 }
 
-fn render_cache_exec_controls(f: &mut Frame, area: Rect, app: &App) {
-    let totals = app.execution_totals();
-    let (total, cpi, instr) = (totals.cycles, totals.cpi(), totals.instructions);
+/// The Cache tab's whole chrome, in two borderless lines.
+///
+/// It used to be four nested boxes — a level strip, a `Cache Simulation` panel
+/// whose entire content was one row of subtabs, an `Execution` panel, and an
+/// untitled panel at the bottom holding the action group — which spent **12 of
+/// 44 rows** drawing borders around four single lines of controls, and filled
+/// the slack with key legends (`r=reset  f=speed  …`, `+/= add level`, `Tab to
+/// switch`) that the footer and the help overlay already carry.
+///
+/// ```text
+///  Cache   stats  view  settings  │  level  l1  add   L1 Split I/D  │  scope  i-cache …
+///  speed 1x   state pause   reset  │  results               cyc 0   CPI 0.00   instr 0
+/// ```
+///
+/// Line 1 answers *what am I looking at*, line 2 *what is it doing* — with the
+/// metrics parked against the right edge so they stop sliding as the controls to
+/// their left change width. Every group is a [`Toolbar`], so the columns the
+/// mouse tests are the columns that were drawn.
+fn render_cache_header(f: &mut Frame, area: Rect, app: &App) {
+    let sep = || Span::styled("│", Style::default().fg(theme::BORDER));
 
-    let mut spans = build_cache_exec_bar(app).spans();
-    spans.push(Span::styled(
-        if matches!(app.cache.subtab, crate::ui::app::CacheSubtab::Stats) {
-            "   r=reset  f=speed  p=pause  s=capture  ↑↓=history  D=del"
+    // ── Line 1: identity · subtabs · level · scope ──
+    let mut row = SpanRow::new(area.x, area.y);
+    row.push(Span::styled(" Cache ", style::title()));
+    row.gap(2);
+
+    app.cache.subtab_header_origin.set((area.y, row.cursor()));
+    for span in build_cache_subtab_bar(app).spans() {
+        row.push(span);
+    }
+
+    row.gap(3);
+    row.push(sep());
+    row.gap(3);
+    row.push(Span::styled("level", style::idle()));
+    row.push(Span::raw(" "));
+    app.cache.level_origin.set((area.y, row.cursor()));
+    for span in build_cache_level_bar(app).spans() {
+        row.push(span);
+    }
+    row.gap(3);
+    row.push(Span::styled(
+        if app.cache.selected_level == 0 {
+            "L1 Split I/D".to_string()
         } else {
-            "   r=reset  f=speed  p=pause  s=step"
+            format!("L{} Unified", app.cache.selected_level + 1)
         },
         style::label(),
     ));
-    let line1 = Line::from(spans);
-    let line2 = Line::from(vec![
-        Span::styled(
-            format!(" Cycles:{total}"),
-            style::metric(style::Metric::Cycles),
-        ),
-        Span::raw("  "),
-        Span::styled(format!("CPI:{cpi:.2}"), style::metric(style::Metric::Cpi)),
-        Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), style::label()),
-    ]);
 
-    let inner = render_panel(f, area, panel::panel("Execution", PanelKind::Plain));
-    app.cache.exec_origin.set((inner.y, inner.x));
-    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
-}
+    // Scope only means something while the split L1 is selected; the unified
+    // upper levels have no I/D to choose between.
+    if app.cache.selected_level == 0 {
+        row.gap(3);
+        row.push(sep());
+        row.gap(3);
+        // `scope`, not `view` — the subtab beside it is already called *view*,
+        // and one word cannot label both "which pane" and "which cache".
+        row.push(Span::styled("scope", style::idle()));
+        row.push(Span::raw(" "));
+        app.cache.ctrl_scope_origin.set((area.y, row.cursor()));
+        for span in build_cache_scope_bar(app).spans() {
+            row.push(span);
+        }
+    } else {
+        app.cache.ctrl_scope_origin.set((0, 0));
+    }
+    let line1 = row.into_line();
 
-fn render_level_selector(f: &mut Frame, area: Rect, app: &App) {
-    // The bar starts right after the dim `level ` label.
-    app.cache
-        .level_origin
-        .set((area.y, area.x + "level ".len() as u16));
-
-    let mut spans = vec![Span::styled("level", style::idle()), Span::raw(" ")];
-    spans.extend(build_cache_level_bar(app).spans());
-    if app.cache_is_configurable() {
-        spans.push(Span::styled("   +/= add level  -/_ remove", style::label()));
+    // ── Line 2: transport · actions · metrics ──
+    let y2 = area.y + 2;
+    let mut row = SpanRow::new(area.x, y2);
+    row.gap(1);
+    app.cache.exec_origin.set((y2, row.cursor()));
+    for span in build_cache_exec_bar(app).spans() {
+        row.push(span);
     }
 
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    let actions = build_cache_ctrl_bar(app);
+    if actions.width() > 0 {
+        row.gap(3);
+        row.push(sep());
+        row.gap(3);
+        app.cache.ctrl_origin.set((y2, row.cursor()));
+        for span in actions.spans() {
+            row.push(span);
+        }
+    } else {
+        app.cache.ctrl_origin.set((0, 0));
+    }
+
+    let totals = app.execution_totals();
+    let metrics = vec![
+        style::metric_span("cyc ", totals.cycles, style::Metric::Cycles),
+        Span::raw("   "),
+        style::metric_span("CPI ", format!("{:.2}", totals.cpi()), style::Metric::Cpi),
+        Span::raw("   "),
+        Span::styled("instr", style::idle()),
+        Span::styled(format!(" {}", totals.instructions), style::value()),
+        Span::raw(" "),
+    ];
+    let metrics_w: u16 = metrics.iter().map(|s| s.width() as u16).sum();
+    let right_edge = area.x + area.width;
+    row.gap(
+        right_edge
+            .saturating_sub(metrics_w)
+            .saturating_sub(row.cursor())
+            .max(3),
+    );
+    for span in metrics {
+        row.push(span);
+    }
+
+    f.render_widget(
+        Paragraph::new(vec![line1, Line::raw(""), row.into_line()]),
+        area,
+    );
 }
 
 /// The Cache subtab bar — `[stats] [view] [settings]` — as a [`Toolbar`] keyed by
@@ -308,60 +383,6 @@ pub(crate) fn build_cache_subtab_bar(app: &App) -> Toolbar<CacheSubtab> {
         theme::ACCENT,
     );
     bar
-}
-
-fn render_subtab_header(f: &mut Frame, area: Rect, app: &App) {
-    let level_label = if app.cache.selected_level == 0 {
-        "L1 Split I/D".to_string()
-    } else {
-        format!("L{} Unified", app.cache.selected_level + 1)
-    };
-
-    let block = panel::panel(
-        format!("Cache Simulation — {level_label}"),
-        PanelKind::Accent,
-    );
-    let inner = block.inner(area);
-    app.cache.subtab_header_origin.set((inner.y, inner.x + 1));
-
-    let mut spans = vec![Span::raw(" ")];
-    spans.extend(build_cache_subtab_bar(app).spans());
-    let line1 = Line::from(spans);
-    let line2 = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("Tab to switch", style::label()),
-    ]);
-
-    f.render_widget(block, area);
-    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
-}
-
-/// Shared controls bar — visible on every Cache subtab.
-pub(super) fn render_controls_bar(f: &mut Frame, area: Rect, app: &App) {
-    let show_scope = app.cache.selected_level == 0;
-    let block = panel::panel_frame(PanelKind::Plain);
-    let inner = block.inner(area);
-
-    let actions = build_cache_ctrl_bar(app);
-    app.cache.ctrl_origin.set((inner.y, inner.x + 1));
-
-    let mut spans = vec![Span::raw(" ")];
-    spans.extend(actions.spans());
-
-    if show_scope {
-        // `view ` label + the scope bar, placed right after the action group.
-        let scope_x = inner.x + 1 + actions.width() + 3 + "view ".len() as u16;
-        app.cache.ctrl_scope_origin.set((inner.y, scope_x));
-        spans.push(Span::raw("   "));
-        spans.push(Span::styled("view", style::idle()));
-        spans.push(Span::raw(" "));
-        spans.extend(build_cache_scope_bar(app).spans());
-    } else {
-        app.cache.ctrl_scope_origin.set((0, 0));
-    }
-
-    f.render_widget(block, area);
-    f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 #[cfg(test)]
@@ -404,7 +425,7 @@ mod tests {
                 continue;
             }
             let screen = screen(&app, 160, 40);
-            for text in ["I-Cache", "D-Cache", "Program total"] {
+            for text in ["I-Cache", "D-Cache", "program total"] {
                 assert!(screen.contains(text), "{id} is missing {text}:\n{screen}");
             }
         }

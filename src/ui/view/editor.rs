@@ -5,11 +5,100 @@ use std::cmp::min;
 use std::collections::HashSet;
 
 use super::components::panel::{self, PanelKind};
-use super::components::{ControlState, SbGeom, Toolbar, vertical_scrollbar};
+use super::components::{ControlState, SbGeom, SpanRow, Toolbar, vertical_scrollbar};
+use super::style;
 use super::{App, Editor};
 use crate::ui::app::FileTabId;
 use crate::ui::theme;
 use raven_engine::capability::BitRole;
+
+/// A control in the editor's action row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditorActionBtn {
+    ImportBin,
+    ImportCode,
+    ExportBin,
+    ExportCode,
+    Run,
+    Format,
+}
+
+/// Rows the borderless Editor header occupies — the file tabs, a blank, then
+/// the action bar. See [`crate::ui::view::cache::CACHE_HEADER_H`] on the gap.
+pub(crate) const EDITOR_HEADER_H: u16 = 3;
+
+/// Columns ` Editor ` claims before the file tabs begin.
+const TITLE_W: u16 = 10;
+
+/// Split the Editor tab into (header, body). One model for the renderer and the
+/// mouse, which used to carry identical `Length(5), Length(1), Min(3)` chunk
+/// lists in two files.
+pub(crate) fn editor_chunks(area: Rect) -> (Rect, Rect) {
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(EDITOR_HEADER_H), Constraint::Min(3)])
+        .split(area);
+    (parts[0], parts[1])
+}
+
+/// Row the file-tab strip renders on.
+pub(crate) fn editor_file_tabs_row(area: Rect) -> u16 {
+    area.y
+}
+
+/// First column the file-tab strip renders at.
+pub(crate) fn editor_file_tabs_origin(area: Rect) -> u16 {
+    area.x + TITLE_W
+}
+
+/// Row the action bar renders on, given the editor header area.
+pub(crate) fn editor_actions_row(area: Rect) -> u16 {
+    area.y + 2
+}
+
+/// First column the action bar renders at.
+pub(crate) fn editor_actions_origin(area: Rect) -> u16 {
+    area.x + 1
+}
+
+/// The editor's action row as a [`Toolbar`] — the single source of truth for
+/// rendering it and for mapping a click column back to a button.
+///
+/// The two used to be separate calculations: the renderer walked `x +=
+/// btn.len()` down one function while `mouse::handle_editor_actions_click`
+/// walked the same sums down another, and any change to a label had to be made
+/// in both or the click targets slid out from under the words.
+///
+/// The labels also lost their brackets. `[BIN]` had a filled background *and*
+/// brackets, saying "clickable" twice while the bracket was supposed to mean a
+/// keyboard key everywhere else.
+pub(crate) fn build_editor_action_bar(
+    hovered: Option<EditorActionBtn>,
+) -> Toolbar<EditorActionBtn> {
+    let state = |btn: EditorActionBtn| ControlState::chip(false, hovered == Some(btn));
+    let mut bar = Toolbar::with_gap(1);
+    bar.text(vec![Span::styled("import", crate::ui::view::style::label())])
+        .action(EditorActionBtn::ImportBin, "bin", state(EditorActionBtn::ImportBin), theme::TEXT)
+        .action(
+            EditorActionBtn::ImportCode,
+            "code",
+            state(EditorActionBtn::ImportCode),
+            theme::TEXT,
+        )
+        .separator()
+        .text(vec![Span::styled("export", crate::ui::view::style::label())])
+        .action(EditorActionBtn::ExportBin, "bin", state(EditorActionBtn::ExportBin), theme::TEXT)
+        .action(
+            EditorActionBtn::ExportCode,
+            "code",
+            state(EditorActionBtn::ExportCode),
+            theme::TEXT,
+        )
+        .separator()
+        .action(EditorActionBtn::Run, "▶ run", state(EditorActionBtn::Run), theme::RUNNING)
+        .action(EditorActionBtn::Format, "format", state(EditorActionBtn::Format), theme::TEXT);
+    bar
+}
 
 /// The editor's file tab strip: one chip per file, then `[+]` (new file) and
 /// `[✕]` (delete active file, confirmed by a second click). Single source of
@@ -28,9 +117,12 @@ pub(crate) fn build_file_tab_bar(app: &App) -> Toolbar<FileTabId> {
             theme::ACCENT,
         );
     }
+    // Bare glyphs: `action` already gives them the button surface, so the
+    // brackets were saying "clickable" a second time in the notation the design
+    // system reserves for keyboard keys.
     bar.action(
         FileTabId::New,
-        "[+]",
+        "+",
         if hover == Some(FileTabId::New) {
             ControlState::Hovered
         } else {
@@ -45,7 +137,7 @@ pub(crate) fn build_file_tab_bar(app: &App) -> Toolbar<FileTabId> {
             .is_some_and(|t| t.elapsed().as_secs() < 3);
         bar.action(
             FileTabId::Delete,
-            if armed { "[✕ delete?]" } else { "[✕]" },
+            if armed { "✕ delete?" } else { "✕" },
             if hover == Some(FileTabId::Delete) {
                 ControlState::Hovered
             } else {
@@ -57,150 +149,93 @@ pub(crate) fn build_file_tab_bar(app: &App) -> Toolbar<FileTabId> {
     bar
 }
 
-pub(super) fn render_file_tabs(f: &mut Frame, area: Rect, app: &App) {
-    let bar = build_file_tab_bar(app);
-    let mut spans = vec![Span::raw(" ")];
-    spans.extend(bar.spans());
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+/// The Editor tab's chrome, in two borderless lines.
+///
+/// ```text
+///  Editor   main.s  +                                  ln 1  col 1  addr hints
+///  import bin code │ export bin code │ ▶ run  format    ✓ Assembled 22 instructions…
+/// ```
+///
+/// It was an `Editor Control` box of five rows — two of them border — holding a
+/// `Build status:` line, a `Build size:` line that repeated the instruction and
+/// byte counts the status line had just given, and the action bar; with the file
+/// tabs on a sixth row below it. Line 1 is now *which file, where the cursor is*
+/// and line 2 *what you can do, and how the last build went*.
+pub(super) fn render_editor_header(f: &mut Frame, area: Rect, app: &App) {
+    // ── Line 1: identity · files · cursor ──
+    let mut row = SpanRow::new(area.x, area.y);
+    row.push(Span::styled(" Editor ", style::title()));
+    row.gap(editor_file_tabs_origin(area).saturating_sub(row.cursor()));
+    for span in build_file_tab_bar(app).spans() {
+        row.push(span);
+    }
+
+    let mut tail = style::readout("ln", app.editor.buf.cursor_row + 1, theme::TEXT);
+    tail.push(Span::raw("   "));
+    tail.extend(style::readout(
+        "col",
+        app.editor.buf.cursor_col + 1,
+        theme::TEXT,
+    ));
+    if app.editor.show_addr_hints {
+        // A flag that is on, said as a word. `[addr]` spelled it with the
+        // bracket this UI reserves for a keyboard key.
+        tail.push(Span::raw("   "));
+        tail.push(Span::styled("addr hints", style::label()));
+    }
+    tail.push(Span::raw(" "));
+    push_right(&mut row, tail, area);
+    let line1 = row.into_line();
+
+    // ── Line 2: actions · build result ──
+    let actions_y = editor_actions_row(area);
+    let hovered: Option<EditorActionBtn> = (app.mouse_y == actions_y)
+        .then(|| build_editor_action_bar(None).hit(app.mouse_x, editor_actions_origin(area)))
+        .flatten();
+
+    let mut row = SpanRow::new(area.x, actions_y);
+    row.gap(editor_actions_origin(area).saturating_sub(area.x));
+    for span in build_editor_action_bar(hovered).spans() {
+        row.push(span);
+    }
+
+    let build = if app.editor.last_ok_elf_bytes.is_some() {
+        vec![Span::styled(
+            "ELF binary — read-only",
+            Style::default().fg(theme::PAUSED),
+        )]
+    } else if let Some(msg) = &app.editor.last_assemble_msg {
+        let ok = app.editor.last_compile_ok == Some(true);
+        vec![Span::styled(
+            format!("{} {msg}", if ok { "✓" } else { "✗" }),
+            if ok { style::success() } else { style::danger() },
+        )]
+    } else {
+        vec![Span::styled("not assembled", style::label())]
+    };
+    let mut tail = build;
+    tail.push(Span::raw(" "));
+    push_right(&mut row, tail, area);
+
+    f.render_widget(
+        Paragraph::new(vec![line1, Line::raw(""), row.into_line()]),
+        area,
+    );
 }
 
-pub(super) fn render_editor_status(f: &mut Frame, area: Rect, app: &App) {
-    let compile_span = if app.editor.last_ok_elf_bytes.is_some() {
-        Span::styled(
-            "ELF binary (read-only)",
-            Style::default().fg(Color::Rgb(220, 170, 55)),
-        )
-    } else if let Some(msg) = &app.editor.last_assemble_msg {
-        let color = if app.editor.last_compile_ok == Some(true) {
-            Color::Green
-        } else {
-            Color::Red
-        };
-        // Editor: only colored text, neutral background
-        Span::styled(msg.clone(), Style::default().fg(color))
-    } else {
-        Span::raw("Not compiled")
-    };
-    let ln = app.editor.buf.cursor_row + 1;
-    let col = app.editor.buf.cursor_col + 1;
-    let hints_label = if app.editor.show_addr_hints {
-        " [addr]"
-    } else {
-        ""
-    };
-    let build = Line::from(vec![
-        Span::raw("Build status: "),
-        compile_span,
-        Span::styled(
-            format!("  Ln {ln}, Col {col}{hints_label}"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]);
-    let stats = if let Some(stats) = app.editor.last_build_stats {
-        Line::from(vec![
-            Span::raw("Build size: "),
-            Span::styled(
-                format!(
-                    "{} instructions, {} data bytes",
-                    stats.instruction_count, stats.data_bytes
-                ),
-                Style::default().fg(Color::Cyan),
-            ),
-        ])
-    } else {
-        Line::from(vec![
-            Span::raw("Build size: "),
-            Span::styled("n/a", Style::default().fg(Color::DarkGray)),
-        ])
-    };
-
-    // Actions with clickable buttons (hover highlights via mouse coords)
-    let inner_x = area.x + 1;
-    let actions_y = area.y + 1 + 2;
-    let mut x = inner_x;
-    let import_label = "Import: ";
-    let export_label = "Export: ";
-    let gap = "   ";
-    let btn_ibin = "[BIN]";
-    let btn_icode = "[CODE]";
-    let btn_ebin = "[BIN]";
-    let btn_ecode = "[CODE]";
-
-    let style_btn = |start: u16, txt: &str| {
-        let w = txt.len() as u16;
-        let hovered = app.mouse_y == actions_y && app.mouse_x >= start && app.mouse_x < start + w;
-        if hovered {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::LightCyan)
-                .add_modifier(Modifier::ITALIC)
-        } else {
-            Style::default().fg(Color::Black).bg(Color::DarkGray)
-        }
-    };
-
-    let btn_run = "[▶ RUN]";
-    let btn_fmt = "[FORMAT]";
-
-    let mut actions_spans: Vec<Span> = Vec::new();
-    actions_spans.push(Span::raw(import_label));
-    x += import_label.len() as u16;
-    actions_spans.push(Span::styled(btn_ibin, style_btn(x, btn_ibin)));
-    x += btn_ibin.len() as u16;
-    actions_spans.push(Span::raw(" "));
-    x += 1;
-    actions_spans.push(Span::styled(btn_icode, style_btn(x, btn_icode)));
-    x += btn_icode.len() as u16;
-    actions_spans.push(Span::raw(gap));
-    x += gap.len() as u16;
-    actions_spans.push(Span::raw(export_label));
-    x += export_label.len() as u16;
-    actions_spans.push(Span::styled(btn_ebin, style_btn(x, btn_ebin)));
-    x += btn_ebin.len() as u16;
-    actions_spans.push(Span::raw(" "));
-    x += 1;
-    actions_spans.push(Span::styled(btn_ecode, style_btn(x, btn_ecode)));
-    x += btn_ecode.len() as u16;
-    actions_spans.push(Span::raw(gap));
-    x += gap.len() as u16;
-    // RUN button — green tint when hoverable
-    let run_hovered = app.mouse_y == actions_y
-        && app.mouse_x >= x
-        && app.mouse_x < x + btn_run.chars().count() as u16;
-    actions_spans.push(Span::styled(
-        btn_run,
-        if run_hovered {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::LightGreen)
-                .add_modifier(Modifier::BOLD | Modifier::ITALIC)
-        } else {
-            Style::default().fg(Color::Black).bg(Color::Green)
-        },
-    ));
-    x += btn_run.chars().count() as u16;
-    actions_spans.push(Span::raw(" "));
-    x += 1;
-    // FORMAT button
-    let fmt_hovered =
-        app.mouse_y == actions_y && app.mouse_x >= x && app.mouse_x < x + btn_fmt.len() as u16;
-    actions_spans.push(Span::styled(
-        btn_fmt,
-        if fmt_hovered {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::LightCyan)
-                .add_modifier(Modifier::ITALIC)
-        } else {
-            Style::default().fg(Color::Black).bg(Color::DarkGray)
-        },
-    ));
-
-    let actions = Line::from(actions_spans);
-
-    let para = Paragraph::new(vec![build, stats, actions])
-        .block(panel::panel_frame(PanelKind::Custom(Color::DarkGray)).title("Editor Control"));
-    f.render_widget(para, area);
+/// Push `tail` so it ends against the right edge of `area`, keeping at least a
+/// three-column gap from whatever the row already holds.
+fn push_right(row: &mut SpanRow, tail: Vec<Span<'static>>, area: Rect) {
+    let w: u16 = tail.iter().map(|s| s.width() as u16).sum();
+    row.gap(
+        (area.x + area.width)
+            .saturating_sub(w)
+            .saturating_sub(row.cursor())
+            .max(3),
+    );
+    for span in tail {
+        row.push(span);
+    }
 }
 
 pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
@@ -427,19 +462,31 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         rows.push(row_line);
     }
 
-    let mut block = panel::panel_frame(PanelKind::Custom(Color::DarkGray)).title(format!(
-        "Editor ({} ASM)",
-        app.architecture.descriptor().display_name
-    ));
+    // `Source`, not `Editor (RISC-V 32 (RV32IMAF) ASM)`: the header above already
+    // says Editor, and nesting a parenthesis inside a parenthesis inside a title
+    // is not a title.
+    //
+    // Which ISA this is, and whether it assembled, are both *state*, so they
+    // share the right-hand slot the panel keeps for it — the compile flag as a
+    // coloured dot, the same badge shape the run state uses.
+    let mut state = vec![Span::styled(
+        format!("{} asm", app.architecture.descriptor().display_name),
+        style::label(),
+    )];
     if let Some(ok) = app.editor.last_compile_ok {
         let (txt, color) = if ok {
-            ("[OK]", Color::Green)
+            ("● assembled", theme::RUNNING)
         } else {
-            ("[ERROR]", Color::Red)
+            ("● failed", theme::DANGER)
         };
-        let flag = Line::styled(txt, Style::default().fg(color)).right_aligned();
-        block = block.title(flag);
+        state.push(Span::styled("  ", style::label()));
+        state.push(Span::styled(txt, Style::default().fg(color)));
     }
+    let block = panel::panel_state_spans(
+        "Source",
+        state,
+        PanelKind::Custom(Color::DarkGray),
+    );
 
     // Render block border
     f.render_widget(block, area);
@@ -544,7 +591,7 @@ fn render_find_goto_bar(f: &mut Frame, area: Rect, app: &App) {
         let line = Line::from(vec![
             Span::styled(match_info, label_s),
             Span::styled(format!(" {}", app.editor.goto_query), text_s),
-            Span::styled("  Esc=close  Enter=jump", info_s),
+            Span::styled("  [esc] close  [enter] jump", info_s),
         ]);
         f.render_widget(Paragraph::new(line).style(sep), area);
     } else {
@@ -570,7 +617,7 @@ fn render_find_goto_bar(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(" Find: ", label_s),
             Span::styled(app.editor.find_query.clone(), find_text_s),
             Span::styled(status, info_s),
-            Span::styled("  Tab=replace  Esc=close  Enter=next", info_s),
+            Span::styled("  [tab] replace  [esc] close  [enter] next", info_s),
         ]);
 
         f.render_widget(
@@ -585,7 +632,7 @@ fn render_find_goto_bar(f: &mut Frame, area: Rect, app: &App) {
             let rep_line = Line::from(vec![
                 Span::styled(" Repl: ", label_s),
                 Span::styled(app.editor.replace_query.clone(), rep_text_s),
-                Span::styled("  Enter=replace current", info_s),
+                Span::styled("  [enter] replace current", info_s),
             ]);
             f.render_widget(
                 Paragraph::new(rep_line).style(sep),

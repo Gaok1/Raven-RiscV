@@ -9,27 +9,28 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
 use crate::falcon::mmu::{PrivMode, SatpMode};
 use crate::ui::app::{App, TlbHoverTarget};
 use crate::ui::theme;
-use crate::ui::view::components::dense_value;
 use crate::ui::view::components::kv_styled;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::{ControlState, Toolbar};
 use crate::ui::view::style;
 
+/// The overview's two quick controls — VM mode and the TLB toggle.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuickBtn {
+    Mode,
+    Tlb,
+}
+
 pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Virtual Memory Overview",
-            Style::default().fg(theme::LABEL),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    // The tab is already named Virtual Memory, so the panel says what it shows
+    // rather than repeating where it lives.
+    let inner = render_panel(f, area, panel::panel("Overview", PanelKind::Plain));
     if inner.height == 0 {
         return;
     }
@@ -42,46 +43,46 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
     let active = super::translation_active(app);
 
     // ── Quick controls (row 0) ───────────────────────────────────────────────
-    let mode_label = format!("< {} >", app.vm_mode().as_str());
-    let tlb_label = if app.session.tlb_enabled {
-        "[on]"
-    } else {
-        "[off]"
-    };
-    let row_y = inner.y;
-    let mut x = inner.x + 1;
-    x += "Mode ".len() as u16;
-    app.tlb
-        .quick_mode_btn
-        .set((row_y, x, x + mode_label.len() as u16));
-    x += mode_label.len() as u16;
-    x += "     TLB ".len() as u16;
-    app.tlb
-        .quick_tlb_btn
-        .set((row_y, x, x + tlb_label.len() as u16));
-
-    let quick_line = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("Mode ", Style::default().fg(theme::LABEL)),
-        dense_value(
-            &mode_label,
-            matches!(app.tlb.hover, Some(TlbHoverTarget::QuickMode)),
-            true,
-            theme::TEXT,
-        ),
-        Span::raw("     "),
-        Span::styled("TLB ", Style::default().fg(theme::LABEL)),
-        dense_value(
-            tlb_label,
-            matches!(app.tlb.hover, Some(TlbHoverTarget::QuickTlb)),
+    //
+    // Through a `Toolbar`, because the columns were previously counted by hand
+    // as `x += mode_label.len()` while the renderer drew `dense_value`, which
+    // pads a column either side: the mode box came out two columns short and
+    // the TLB box beside it landed two columns to the left of the pill it was
+    // supposed to cover.
+    let mut bar = Toolbar::new();
+    bar.toggle(
+        QuickBtn::Mode,
+        "mode",
+        app.vm_mode().as_str(),
+        ControlState::chip(true, matches!(app.tlb.hover, Some(TlbHoverTarget::QuickMode))),
+        theme::TEXT,
+    )
+    .toggle(
+        QuickBtn::Tlb,
+        "tlb",
+        if app.session.tlb_enabled { "on" } else { "off" },
+        ControlState::chip(
             app.session.tlb_enabled,
-            theme::RUNNING,
+            matches!(app.tlb.hover, Some(TlbHoverTarget::QuickTlb)),
         ),
-        Span::styled(
-            "     (click to change — sv32 is the easy didactic default)",
-            Style::default().fg(theme::IDLE),
-        ),
-    ]);
+        theme::RUNNING,
+    );
+
+    let origin = inner.x + 1;
+    for (id, start, end) in bar.cells() {
+        let cell = match id {
+            QuickBtn::Mode => &app.tlb.quick_mode_btn,
+            QuickBtn::Tlb => &app.tlb.quick_tlb_btn,
+        };
+        cell.set((inner.y, origin + start, origin + end));
+    }
+
+    // No "(click to change — …)" trailing the row: the controls wear a filled
+    // surface now, and that *is* the affordance. Which mode to pick is what the
+    // help overlay is for.
+    let mut quick_spans = vec![Span::raw(" ")];
+    quick_spans.extend(bar.spans());
+    let quick_line = Line::from(quick_spans);
 
     // ── Live state ───────────────────────────────────────────────────────────
     let satp_color = match satp_mode {
@@ -111,33 +112,37 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
 
     // Key/value readout via the toolkit's `kv_styled` (it owns the line and the
     // key–value separator; we own the span styling).
-    let key = |s: &'static str| Span::styled(s, style::label());
+    //
+    // The CSR field names are kept verbatim — `satp.mode` is what the spec calls
+    // it, the same way `imm[11:0]` stays as written. The rest lose their colons
+    // and Title Case: a padded label followed by a lit value is the one shape
+    // this app uses for a readout, and the trailing `:` only made the column
+    // ragged where the label ran long.
+    const KEY_W: usize = 24;
+    let key = |s: &str| Span::styled(format!(" {s:<KEY_W$}"), style::label());
     let val =
         |s: String, c: Color| Span::styled(s, Style::default().fg(c).add_modifier(Modifier::BOLD));
 
     let mut lines: Vec<Line<'static>> = vec![quick_line, Line::raw("")];
     lines.extend(kv_styled(vec![
         (
-            key(" satp.mode:                   "),
+            key("satp.mode"),
             val(satp_mode_label.to_string(), satp_color),
         ),
         (
-            key(" satp.asid:                   "),
+            key("satp.asid"),
             val(format!("{}", mmu.satp.asid()), theme::TEXT),
         ),
         (
-            key(" satp.ppn (root PT @):        "),
-            val(format!("0x{:08x}", root_pt), theme::TEXT),
+            key("satp.ppn — root table"),
+            val(format!("0x{root_pt:08x}"), theme::TEXT),
         ),
-        (
-            key(" Privilege mode:              "),
-            val(priv_label.to_string(), priv_color),
-        ),
+        (key("privilege"), val(priv_label.to_string(), priv_color)),
     ]));
     lines.push(Line::raw(""));
     lines.extend(kv_styled(vec![(
-        key(" Translation active?          "),
-        val(if active { "YES" } else { "no" }.to_string(), active_color),
+        key("translating"),
+        val(if active { "yes" } else { "no" }.to_string(), active_color),
     )]));
 
     if !app.session.vm_enabled() {
@@ -147,7 +152,7 @@ pub(super) fn render_overview(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme::LABEL),
         )));
         lines.push(Line::from(Span::styled(
-            " Click Mode above and pick sv32, then Assemble: the simulator installs",
+            " Set mode to sv32 above, then Assemble: the simulator installs",
             Style::default().fg(theme::LABEL),
         )));
         lines.push(Line::from(Span::styled(

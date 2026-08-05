@@ -5,14 +5,108 @@ use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use std::collections::VecDeque;
 
+/// Row the display toggles render on, asked of the renderer rather than counted
+/// here — the two groups are separated by a blank row, and a literal `+ 1` in
+/// this file would be a third copy of the command bar's layout.
+fn display_row(status: Rect) -> u16 {
+    status.y + crate::ui::view::run::RUN_DISPLAY_ROW
+}
+
+/// Every control the command bar resolves, sweeping both of its rows —
+/// transport on the first, display toggles on the second.
+fn run_bar_hits(app: &App, status: Rect) -> Vec<RunButton> {
+    [status.y, display_row(status)]
+        .into_iter()
+        .flat_map(|row| {
+            (status.x..status.x + status.width)
+                .filter_map(move |col| run_status_hit(app, status, row, col))
+        })
+        .collect()
+}
+
+/// The first column on `row` that resolves to `btn`.
+fn run_bar_col(app: &App, status: Rect, row: u16, btn: RunButton) -> u16 {
+    (status.x..status.x + status.width)
+        .find(|&col| run_status_hit(app, status, row, col) == Some(btn))
+        .expect("control present on that row")
+}
+
+/// Hovering a row in Instruction Memory must highlight *that* row.
+///
+/// The mouse router used to re-derive the Run tab's vertical split with its own
+/// `Constraint::Length(5)` for the command bar. When the bar became three rows
+/// the router kept assuming five, so every hover resolved two rows above the
+/// cursor — and clicking a breakpoint set it on the wrong instruction.
+///
+/// The pane's first content row is the anchor: it must resolve to the first
+/// instruction, and the border row above it to nothing. Rows below are not
+/// checked one-to-one because labels and comments take visual rows of their own
+/// — the bug was the anchor being off, not the mapping within the list.
+#[test]
+fn imem_hover_resolves_the_row_under_the_cursor() {
+    let mut app = App::new(None);
+    app.tab = Tab::Run;
+    let area = Rect::new(0, 0, 160, 40);
+
+    // Anchored on the *renderer's* geometry, not the router's. Asking `run_cols`
+    // where the pane is would make this test self-consistent and blind: both
+    // sides would agree with each other while disagreeing with the screen, which
+    // is exactly the bug.
+    let imem = {
+        use crate::ui::view::run::{run_panel_constraints, run_rows};
+        let body = crate::ui::view::components::layout::app_frame_chunks(area)[1];
+        ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Horizontal)
+            .constraints(run_panel_constraints(&app))
+            .split(run_rows(&app, body)[1])[1]
+    };
+
+    let hover_at = |app: &mut App, row: u16| {
+        handle_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: imem.x + 6,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        );
+        app.run.hover_imem_addr
+    };
+
+    assert_eq!(
+        hover_at(&mut app, imem.y + 1),
+        Some(app.session.base_pc),
+        "the pane's first content row must be the first instruction (pane at y={})",
+        imem.y
+    );
+    assert_eq!(
+        hover_at(&mut app, imem.y),
+        None,
+        "the top border resolved to an instruction"
+    );
+}
+
+/// The router and the renderer must agree on where the Run tab's three strips
+/// are. Both go through `run_rows`; this catches a copy creeping back in.
+#[test]
+fn run_tab_geometry_is_shared_between_render_and_mouse() {
+    let app = App::new(None);
+    let area = Rect::new(0, 0, 160, 40);
+    let body = crate::ui::view::components::layout::app_frame_chunks(area)[1];
+    let rows = crate::ui::view::run::run_rows(&app, body);
+
+    assert_eq!(run_status_area(&app, area), rows[0]);
+    assert_eq!(run_cols(&app, area)[0].y, rows[1].y);
+    assert_eq!(run_cols(&app, area)[0].height, rows[1].height);
+}
+
 #[test]
 fn run_status_hit_accounts_for_core_prefix() {
     let app = App::new(None);
     let status = run_status_area(&app, Rect::new(0, 0, 160, 40));
-
-    let hits: Vec<RunButton> = (status.x..status.x + status.width)
-        .filter_map(|col| run_status_hit(&app, status, col))
-        .collect();
+    let hits = run_bar_hits(&app, status);
 
     assert!(hits.contains(&RunButton::Core));
     assert!(hits.contains(&RunButton::View));
@@ -20,18 +114,52 @@ fn run_status_hit_accounts_for_core_prefix() {
     assert!(hits.contains(&RunButton::Reset));
 }
 
+/// Transport and display live on different rows, and a click must not fall
+/// through from one to the other.
+#[test]
+fn run_status_hit_keeps_transport_and_display_on_their_own_rows() {
+    let app = App::new(None);
+    let status = run_status_area(&app, Rect::new(0, 0, 160, 40));
+
+    let run_col = run_bar_col(&app, status, status.y, RunButton::Run);
+    assert_eq!(
+        run_status_hit(&app, status, display_row(status), run_col),
+        None,
+        "transport leaked onto the display row"
+    );
+
+    let fmt_col = run_bar_col(&app, status, display_row(status), RunButton::Format);
+    assert_ne!(
+        run_status_hit(&app, status, status.y, fmt_col),
+        Some(RunButton::Format),
+        "display leaked onto the transport row"
+    );
+}
+
+/// The blank row between the two groups, and the rule row closing the bar, have
+/// nothing to click.
+#[test]
+fn run_status_hit_finds_nothing_on_the_rule_row() {
+    let app = App::new(None);
+    let status = run_status_area(&app, Rect::new(0, 0, 160, 40));
+
+    for row in [status.y + 1, status.y + status.height - 1] {
+        assert!(
+            (status.x..status.x + status.width)
+                .all(|col| run_status_hit(&app, status, row, col).is_none()),
+            "row {} resolved a control",
+            row - status.y
+        );
+    }
+}
+
 #[test]
 fn run_status_hit_disables_core_selector_in_single_core_mode() {
     let mut app = App::new(None);
     app.max_cores = 1;
     let status = run_status_area(&app, Rect::new(0, 0, 160, 40));
-    let text = run_controls_plain_text(&app);
-    let core_col = text.find("core").expect("core label present") as u16;
 
-    assert!(!matches!(
-        run_status_hit(&app, status, status.x + 1 + core_col),
-        Some(RunButton::Core)
-    ));
+    assert!(!run_bar_hits(&app, status).contains(&RunButton::Core));
 }
 
 #[test]
@@ -39,30 +167,41 @@ fn run_status_hit_accepts_label_portion_of_speed_control() {
     let mut app = App::new(None);
     app.max_cores = 2;
     let status = run_status_area(&app, Rect::new(0, 0, 200, 40));
-    let text = run_controls_plain_text(&app);
-    let speed_col = text.find("speed").expect("speed label present") as u16;
 
-    assert!(matches!(
-        run_status_hit(&app, status, status.x + 1 + speed_col),
+    // The dim `speed` label is part of the control, matching how a user aims at
+    // the word they read rather than at the value alone.
+    let col = run_bar_col(&app, status, display_row(status), RunButton::Speed);
+    let text = run_controls_plain_text(&app);
+    assert!(text.contains("speed"));
+    assert_eq!(
+        run_status_hit(
+            &app,
+            status,
+            display_row(status),
+            col + "speed".len() as u16
+        ),
         Some(RunButton::Speed)
-    ));
+    );
 }
 
+/// The transport verbs go inert rather than disappearing, so the row does not
+/// reflow under the cursor when the machine changes state.
 #[test]
-fn run_status_hit_covers_full_rendered_state_control_width() {
-    let app = App::new(None);
-
+fn run_status_transport_disables_the_verb_the_machine_is_already_doing() {
+    let mut app = App::new(None);
     let status = run_status_area(&app, Rect::new(0, 0, 200, 40));
-    let text = run_controls_plain_text(&app);
-    let state_start = text.find("state ").expect("state label present");
-    let state_tail = &text[state_start..];
-    let state_width = state_tail.find("   ").unwrap_or(state_tail.len());
-    let state_end_col = state_start as u16 + state_width as u16 - 1;
 
-    assert!(matches!(
-        run_status_hit(&app, status, status.x + 1 + state_end_col),
-        Some(RunButton::State)
-    ));
+    // Paused: run and step are live, pause is not.
+    let paused = run_bar_hits(&app, status);
+    assert!(paused.contains(&RunButton::Run));
+    assert!(paused.contains(&RunButton::Step));
+    assert!(!paused.contains(&RunButton::Pause));
+
+    app.toggle_run();
+    let running = run_bar_hits(&app, status);
+    assert!(running.contains(&RunButton::Pause));
+    assert!(!running.contains(&RunButton::Run));
+    assert!(!running.contains(&RunButton::Step));
 }
 
 #[test]
@@ -71,9 +210,7 @@ fn run_status_hit_hides_region_and_bytes_in_dyn_view() {
     app.run.show_dyn = true;
 
     let status = run_status_area(&app, Rect::new(0, 0, 160, 40));
-    let hits: Vec<RunButton> = (status.x..status.x + status.width)
-        .filter_map(|col| run_status_hit(&app, status, col))
-        .collect();
+    let hits = run_bar_hits(&app, status);
 
     assert!(hits.contains(&RunButton::View));
     assert!(!hits.contains(&RunButton::Region));
@@ -88,9 +225,7 @@ fn run_status_hit_shows_region_and_bytes_when_dyn_is_displaying_memory() {
     app.session.dyn_mem_access = Some((0x100, 4, true));
 
     let status = run_status_area(&app, Rect::new(0, 0, 160, 40));
-    let hits: Vec<RunButton> = (status.x..status.x + status.width)
-        .filter_map(|col| run_status_hit(&app, status, col))
-        .collect();
+    let hits = run_bar_hits(&app, status);
 
     assert!(hits.contains(&RunButton::Region));
     assert!(hits.contains(&RunButton::Bytes));
@@ -103,11 +238,7 @@ fn run_status_hit_exposes_stepback_only_when_undoable() {
     let mut app = App::new(None);
     let status = run_status_area(&app, Rect::new(0, 0, 200, 40));
 
-    let hits = |app: &App| -> Vec<RunButton> {
-        (status.x..status.x + status.width)
-            .filter_map(|col| run_status_hit(app, status, col))
-            .collect()
-    };
+    let hits = |app: &App| -> Vec<RunButton> { run_bar_hits(app, status) };
 
     // Fresh: nothing journaled â†’ step-back renders dim and is not clickable,
     // while the rest of the bar still resolves around it.
@@ -128,12 +259,23 @@ fn run_status_hit_exposes_stepback_only_when_undoable() {
 #[test]
 fn cache_exec_hit_exposes_reset_speed_and_state() {
     let app = App::new(None);
-    let status = cache_run_status_area(Rect::new(0, 0, 160, 40));
-    // Place the exec bar at a known origin, as the renderer would.
-    app.cache.exec_origin.set((status.y + 1, status.x));
+    // Place the exec bar at a known origin, as the renderer would. The hit-test
+    // reads that origin — row included — so no layout arithmetic is repeated.
+    let (y, x) = (3u16, 1u16);
+    app.cache.exec_origin.set((y, x));
 
-    let hits: Vec<RunButton> = (status.x..status.x + status.width)
-        .filter_map(|col| cache_exec_hit(&app, status, col))
+    let hits: Vec<RunButton> = (x..x + 80)
+        .filter_map(|column| {
+            cache_exec_row_hit(
+                &app,
+                MouseEvent {
+                    kind: MouseEventKind::Moved,
+                    column,
+                    row: y,
+                    modifiers: KeyModifiers::NONE,
+                },
+            )
+        })
         .collect();
 
     assert!(hits.contains(&RunButton::Reset));
@@ -215,14 +357,23 @@ fn cache_execution_hover_uses_rendered_hitboxes() {
     app.set_cache_enabled(true);
     app.tab = Tab::Cache;
     let area = Rect::new(0, 0, 160, 40);
-    let status = cache_run_status_area(area);
-    let y = status.y + 1;
-    app.cache.exec_origin.set((y, status.x));
+    // Render once so the exec bar records where it actually landed — the hover
+    // path reads that same origin, which is the whole point of the assertion.
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+        area.width,
+        area.height,
+    ))
+    .expect("terminal");
+    app.splash_start = None;
+    terminal
+        .draw(|f| crate::ui::view::ui(f, &app))
+        .expect("render");
+    let (y, x) = app.cache.exec_origin.get();
 
     // Hover the rendered `state` control on the exec bar.
     use crate::ui::view::cache::build_cache_exec_bar;
-    let state_col = (status.x..status.x + status.width)
-        .find(|&c| build_cache_exec_bar(&app).hit(c, status.x) == Some(RunButton::State))
+    let state_col = (x..x + 60)
+        .find(|&c| build_cache_exec_bar(&app).hit(c, x) == Some(RunButton::State))
         .expect("state control present");
 
     handle_mouse(
@@ -307,8 +458,21 @@ fn cache_config_hover_and_click_match_first_row_geometry() {
     app.cache.subtab = CacheSubtab::Config;
 
     let area = Rect::new(0, 0, 160, 40);
-    let row = 13;
-    let col = 10;
+    // Aimed at the rect the renderer recorded for the field, not at a counted
+    // row. `body.y + 10` meant "the chrome above is ten rows tall", which is a
+    // second copy of the layout — it broke when the tab bar lost a row, and
+    // again when the Cache header collapsed from four boxes into two lines.
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+        area.width,
+        area.height,
+    ))
+    .expect("terminal");
+    app.splash_start = None;
+    terminal
+        .draw(|f| crate::ui::view::ui(f, &app))
+        .expect("render");
+    let (row, x0, _) = app.cache.config_hitboxes_i.get()[crate::ui::app::ConfigField::Size as usize];
+    let col = x0 + 2;
 
     handle_mouse(
         &mut app,
@@ -511,7 +675,7 @@ fn pipeline_main_subtab_ignores_stale_config_row_hitboxes() {
     app.tab = Tab::Pipeline;
     app.run.pipeline_view_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
     let original = app.rv32().unwrap().pipeline().bypass.ex_to_ex;
-    let mut rects = [(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS];
+    let mut rects = [(0, 0, 0); crate::ui::pipeline::PIPELINE_CONFIG_ROWS];
     rects[0] = (12, 4, 40);
     app.run.pipeline_view().config_row_rects.set(rects);
 

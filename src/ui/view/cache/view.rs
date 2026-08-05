@@ -4,11 +4,11 @@
 // Layout:
 //   ┌── Area (from mod.rs, already excludes the shared controls bar) ──────────┐
 //   │ ┌─ I-Cache / D-Cache matrix ──────────────────────────────────────────┐  │
-//   │ │ Set | Way 0                           | Way 1                       │  │
-//   │ │   0 | 1 -  0x00001000  DE AD BE EF r:0│ 0 -  (empty)               │  │
-//   │ │   1 | 1 1  0x00002000  01 02 03 04 r:1│ 1 -  0x0000A000  AA BB r:0 │  │
+//   │ │ Set │ Way 0                           │ Way 1                       │  │
+//   │ │   0 │ 1 -  0x00001000  DE AD BE EF r:0│ 0 -  (empty)               │  │
+//   │ │   1 │ 1 1  0x00002000  01 02 03 04 r:1│ 1 -  0x0000A000  AA BB r:0 │  │
 //   │ └─────────────────────────────────────────────────────────────────────┘  │
-//   │  V D=valid/dirty bits  [m:HEX] [g:1B]  r:N recency  ↑↓ ←→ N/M sets     │  ← legend bar
+//   │  V D valid / dirty   cells hex  group 1b  addr base   r:N recency …     │  ← legend bar
 //   └────────────────────────────────────────────────────────────────────────────┘
 
 use ratatui::{
@@ -22,8 +22,8 @@ use crate::ui::app::{
     App, CacheAddrMode, CacheDataFmt, CacheDataGroup, CacheHoverTarget, CacheScope,
 };
 use crate::ui::theme;
-use crate::ui::view::components::SbGeom;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::components::{ControlState, SbGeom, SpanRow, Toolbar};
 use crate::ui::view::style;
 use raven_engine::capability::{
     CacheHierarchy, CacheLevelConfig as CacheConfig, CacheLineView,
@@ -148,44 +148,14 @@ fn render_unified_legend_bar(
     caches: &dyn CacheHierarchy,
     level: usize,
 ) {
-    let cache = caches.cache(level, CacheRole::Unified).unwrap();
-    let cfg = &cache.config;
-    let scroll_hint = vertical_scroll_hint(app);
-    let policy_hint = policy_hint_str(cfg.replacement);
-
-    let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
-        legend_button_styles(app);
-
-    let addr_hint = addr_mode_hint(app.cache.addr_mode, &[cfg]);
-
-    // " V D=valid/dirty bits  " is 23 chars
-    let prefix_len: u16 = 23;
-    let fmt_x0 = area.x + prefix_len;
-    let fmt_x1 = fmt_x0 + fmt_label.len() as u16;
-    let group_x0 = fmt_x1 + 1;
-    let group_x1 = group_x0 + group_label.len() as u16;
-    let tag_x0 = group_x1 + 1;
-    let tag_x1 = tag_x0 + tag_label.len() as u16;
-    app.cache.view_fmt_btn.set((area.y, fmt_x0, fmt_x1));
-    app.cache.view_group_btn.set((area.y, group_x0, group_x1));
-    app.cache.view_tag_btn.set((area.y, tag_x0, tag_x1));
-
-    let line = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("V D", Style::default().fg(theme::LABEL_Y)),
-        Span::styled("=valid/dirty bits  ", style::label()),
-        Span::styled(fmt_label, fmt_style),
-        Span::raw(" "),
-        Span::styled(group_label, group_style),
-        Span::raw(" "),
-        Span::styled(tag_label, tag_style),
-        Span::styled(addr_hint, style::label()),
-        Span::raw("  "),
-        Span::styled(policy_hint, style::label()),
-        Span::raw("  "),
-        Span::styled(scroll_hint, style::label()),
-    ]);
-    f.render_widget(Paragraph::new(line), area);
+    let cfg = &caches.cache(level, CacheRole::Unified).unwrap().config;
+    render_legend(
+        f,
+        area,
+        app,
+        addr_mode_hint(app.cache.addr_mode, &[cfg]),
+        policy_hint_str(cfg.replacement),
+    );
 }
 
 fn render_legend_bar(f: &mut Frame, area: Rect, app: &App, caches: &dyn CacheHierarchy) {
@@ -212,88 +182,110 @@ fn render_legend_bar(f: &mut Frame, area: Rect, app: &App, caches: &dyn CacheHie
         }
     };
 
-    let scroll_hint = vertical_scroll_hint(app);
-
-    let (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) =
-        legend_button_styles(app);
-
     let addr_hint = match scope {
         CacheScope::ICache => addr_mode_hint(app.cache.addr_mode, &[icfg]),
         CacheScope::DCache => addr_mode_hint(app.cache.addr_mode, &[dcfg]),
         CacheScope::Both => addr_mode_hint(app.cache.addr_mode, &[icfg, dcfg]),
     };
-
-    // " V D=valid/dirty bits  " is 23 chars
-    let prefix_len: u16 = 23;
-    let fmt_x0 = area.x + prefix_len;
-    let fmt_x1 = fmt_x0 + fmt_label.len() as u16;
-    let group_x0 = fmt_x1 + 1;
-    let group_x1 = group_x0 + group_label.len() as u16;
-    let tag_x0 = group_x1 + 1;
-    let tag_x1 = tag_x0 + tag_label.len() as u16;
-    app.cache.view_fmt_btn.set((area.y, fmt_x0, fmt_x1));
-    app.cache.view_group_btn.set((area.y, group_x0, group_x1));
-    app.cache.view_tag_btn.set((area.y, tag_x0, tag_x1));
-
-    let line = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("V D", Style::default().fg(theme::LABEL_Y)),
-        Span::styled("=valid/dirty bits  ", style::label()),
-        Span::styled(fmt_label, fmt_style),
-        Span::raw(" "),
-        Span::styled(group_label, group_style),
-        Span::raw(" "),
-        Span::styled(tag_label, tag_style),
-        Span::styled(addr_hint, style::label()),
-        Span::raw("  "),
-        Span::styled(policy_hint, style::label()),
-        Span::raw("  "),
-        Span::styled(scroll_hint, style::label()),
-    ]);
-
-    f.render_widget(Paragraph::new(line), area);
+    render_legend(f, area, app, addr_hint, policy_hint);
 }
 
-/// Returns (fmt_style, group_style, tag_style, fmt_label, group_label, tag_label) for legend bar buttons.
-fn legend_button_styles(app: &App) -> (Style, Style, Style, String, String, String) {
+/// The three display toggles on the matrix legend.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ViewBtn {
+    Fmt,
+    Group,
+    Addr,
+}
+
+/// The legend's toggle group, laid out once for both the spans and the columns
+/// the mouse reads back.
+///
+/// They used to be spelled `[m:HEX] [g:1B] [t:BASE]` — the bracket naming the
+/// *key* that cycles each one, which is the collision the design pass exists to
+/// remove: a bracket means a keyboard key and lives in the footer, a control
+/// wears a surface. And they were placed by a hand-counted `prefix_len = 23`
+/// with `" V D=valid/dirty bits  " is 23 chars` written above it, a second copy
+/// of the layout that any edit to the prefix would have silently invalidated.
+pub(crate) fn build_view_legend_bar(app: &App) -> Toolbar<ViewBtn> {
     use crate::ui::app::CacheDataFmt;
-    let fmt = app.cache.data_fmt;
-    // Include the key hint in the label: "[m:HEX]"
-    let fmt_label = format!("[m:{}]", fmt.label());
-    let is_float = fmt == CacheDataFmt::Float;
-    let group_label = if is_float {
-        "[g:4B]".to_string()
-    } else {
-        format!("[g:{}]", app.cache.data_group.label())
-    };
-    let tag_label = format!("[t:{}]", app.cache.addr_mode.label());
+    let hov = |t: CacheHoverTarget| app.cache.hover == Some(t);
+    let is_float = app.cache.data_fmt == CacheDataFmt::Float;
 
-    let fmt_style = if matches!(app.cache.hover, Some(CacheHoverTarget::ViewFmt)) {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(theme::ACCENT)
-    };
-    let group_style = if is_float {
-        style::idle()
-    } else if matches!(app.cache.hover, Some(CacheHoverTarget::ViewGroup)) {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(theme::CACHE_D)
-    };
-    let tag_style = if matches!(app.cache.hover, Some(CacheHoverTarget::ViewTag)) {
-        Style::default().fg(theme::HOVER_FG).bg(theme::HOVER_BG)
-    } else {
-        Style::default().fg(theme::LABEL_Y)
-    };
-
-    (
-        fmt_style,
-        group_style,
-        tag_style,
-        fmt_label,
-        group_label,
-        tag_label,
+    let mut bar = Toolbar::new();
+    bar.toggle(
+        ViewBtn::Fmt,
+        "cells",
+        &app.cache.data_fmt.label().to_lowercase(),
+        ControlState::chip(true, hov(CacheHoverTarget::ViewFmt)),
+        theme::ACCENT,
     )
+    .toggle(
+        ViewBtn::Group,
+        "group",
+        // Float cells are always four bytes wide, so the grouping control has
+        // nothing to offer — it goes inert rather than disappearing, which
+        // would reflow the two controls after it.
+        &if is_float {
+            "4b".to_string()
+        } else {
+            app.cache.data_group.label().to_lowercase()
+        },
+        if is_float {
+            ControlState::Disabled
+        } else {
+            ControlState::chip(true, hov(CacheHoverTarget::ViewGroup))
+        },
+        theme::CACHE_D,
+    )
+    .toggle(
+        ViewBtn::Addr,
+        "addr",
+        &app.cache.addr_mode.label().to_lowercase(),
+        ControlState::chip(true, hov(CacheHoverTarget::ViewTag)),
+        theme::LABEL_Y,
+    );
+    bar
+}
+
+/// Draw the legend: a dim prefix, the toggle group, then the read-only notes.
+/// Records each toggle's rendered columns so `mouse` can ask where they landed.
+fn render_legend(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    addr_hint: String,
+    policy_hint: String,
+) {
+    let mut row = SpanRow::new(area.x, area.y);
+    row.push(Span::raw(" "));
+    row.push(Span::styled("V D", Style::default().fg(theme::LABEL_Y)));
+    row.push(Span::styled(" valid / dirty", style::label()));
+    row.gap(3);
+
+    let bar = build_view_legend_bar(app);
+    let origin = row.cursor();
+    for (id, start, end) in bar.cells() {
+        let cell = match id {
+            ViewBtn::Fmt => &app.cache.view_fmt_btn,
+            ViewBtn::Group => &app.cache.view_group_btn,
+            ViewBtn::Addr => &app.cache.view_tag_btn,
+        };
+        cell.set((area.y, origin + start, origin + end));
+    }
+    for span in bar.spans() {
+        row.push(span);
+    }
+
+    if !addr_hint.is_empty() {
+        row.push(Span::styled(addr_hint, style::label()));
+    }
+    row.gap(3);
+    row.push(Span::styled(policy_hint, style::label()));
+    row.gap(3);
+    row.push(Span::styled(vertical_scroll_hint(app), style::label()));
+
+    f.render_widget(Paragraph::new(row.into_line()), area);
 }
 
 fn update_vertical_scroll_stats(
@@ -338,8 +330,10 @@ fn vertical_scroll_hint(app: &App) -> String {
     } else {
         app.cache.view_num_sets.get()
     };
+    // Which rows the window is showing, not which keys move it — the arrows
+    // that used to lead this readout are in the footer with the other keys.
     if num_sets == 0 {
-        return "↑↓ ←→  0/0 sets".to_string();
+        return "sets 0/0".to_string();
     }
     let visible_sets = if use_d {
         app.cache.view_visible_sets_d.get()
@@ -356,7 +350,7 @@ fn vertical_scroll_hint(app: &App) -> String {
     };
     let start = scroll + 1;
     let end = (scroll + visible_sets).min(num_sets);
-    format!("↑↓ ←→  sets {start}-{end}/{num_sets}")
+    format!("sets {start}-{end}/{num_sets}")
 }
 
 /// Full policy hint (for single-scope display).
@@ -505,7 +499,7 @@ fn render_extra_cache_matrix(
                 format!("{:^width$}", "Set", width = set_col_w),
                 Style::default().fg(theme::LABEL_Y).bold(),
             ),
-            Span::styled("|", Style::default().fg(theme::BORDER)),
+            Span::styled("│", Style::default().fg(theme::BORDER)),
         ];
         for w in 0..ways {
             spans.push(Span::styled(
@@ -513,7 +507,7 @@ fn render_extra_cache_matrix(
                 Style::default().fg(theme::LABEL_Y).bold(),
             ));
             if w + 1 < ways {
-                spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
+                spans.push(Span::styled("│", Style::default().fg(theme::BORDER)));
             }
         }
         f.render_widget(
@@ -553,7 +547,7 @@ fn render_extra_cache_matrix(
             let byte_offset = sub_row * bytes_per_row;
             let mut spans = vec![
                 set_col,
-                Span::styled("|", Style::default().fg(theme::BORDER)),
+                Span::styled("│", Style::default().fg(theme::BORDER)),
             ];
             for w in 0..ways {
                 let cell = build_cell(
@@ -574,7 +568,7 @@ fn render_extra_cache_matrix(
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
-                    spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
+                    spans.push(Span::styled("│", Style::default().fg(theme::BORDER)));
                 }
             }
             f.render_widget(
@@ -679,7 +673,7 @@ fn render_cache_matrix(
 
     // Column widths
     let set_col_w: usize = 5; // " NNN "
-    let sep_w: usize = 1; // "|"
+    let sep_w: usize = 1; // "│"
 
     // Fixed overhead: V + D + spacing + address block + spacing before data/policy.
     let policy_w = match policy {
@@ -759,7 +753,7 @@ fn render_cache_matrix(
                 format!("{:^width$}", "Set", width = set_col_w),
                 Style::default().fg(theme::LABEL_Y).bold(),
             ),
-            Span::styled("|", Style::default().fg(theme::BORDER)),
+            Span::styled("│", Style::default().fg(theme::BORDER)),
         ];
         for w in 0..ways {
             spans.push(Span::styled(
@@ -767,7 +761,7 @@ fn render_cache_matrix(
                 Style::default().fg(theme::LABEL_Y).bold(),
             ));
             if w + 1 < ways {
-                spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
+                spans.push(Span::styled("│", Style::default().fg(theme::BORDER)));
             }
         }
         f.render_widget(
@@ -807,7 +801,7 @@ fn render_cache_matrix(
             let byte_offset = sub_row * bytes_per_row;
             let mut spans = vec![
                 set_col,
-                Span::styled("|", Style::default().fg(theme::BORDER)),
+                Span::styled("│", Style::default().fg(theme::BORDER)),
             ];
             for w in 0..ways {
                 let cell = build_cell(
@@ -828,7 +822,7 @@ fn render_cache_matrix(
                 );
                 spans.extend(cell);
                 if w + 1 < ways {
-                    spans.push(Span::styled("|", Style::default().fg(theme::BORDER)));
+                    spans.push(Span::styled("│", Style::default().fg(theme::BORDER)));
                 }
             }
             f.render_widget(

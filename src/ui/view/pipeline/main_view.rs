@@ -1,13 +1,14 @@
 use crate::ui::app::App;
 use crate::ui::pipeline::{FuKind, InstrClass, gantt_visible_rows};
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind};
 use crate::ui::view::style;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
 use raven_engine::capability::{
     PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
@@ -241,13 +242,16 @@ fn render_stages(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInspect, fu_i
             title_label = format!("{title_label} {busy}/{cap}");
         }
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .title(Span::styled(
+        // `panel_square` rather than a bare `Block`: it insets the title by a
+        // dash and a space like every other panel in the app, so a stage stops
+        // reading as a different species of box from the ones around it.
+        let block = panel::panel_square(
+            Line::from(Span::styled(
                 title_label,
                 border_style.add_modifier(Modifier::BOLD),
-            ));
+            )),
+            border_style,
+        );
 
         let inner = block.inner(column_area);
         f.render_widget(block, column_area);
@@ -334,7 +338,7 @@ fn stage_slot_lines(
 
         let (disasm_trunc, _) = slot.disassembly.unicode_truncate(w.max(4));
         let mut class_spans = vec![Span::styled(
-            format!("[{}]", class_label(slot.class)),
+            class_label(slot.class).to_string(),
             Style::default()
                 .fg(class_color(slot.class))
                 .add_modifier(Modifier::DIM),
@@ -671,13 +675,13 @@ fn split_fu_activity<'a>(
 // ── Hazard messages ────────────────────────────────────────────────────────────
 
 fn render_hazards(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInspect) {
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            " Hazards / Forwarding ",
-            Style::default().fg(theme::LABEL_Y),
-        ));
+    // Upper case and set on the rule, matching the section headings in the Run
+    // tab's Instruction panel — the app has one way of naming a region inside a
+    // pane, and this is it.
+    let block = panel::handle_bar(theme::BORDER).title(Span::styled(
+        " HAZARDS & FORWARDING ",
+        style::label(),
+    ));
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
@@ -741,7 +745,7 @@ fn render_hazard_row(
     trace: &PipelineTraceView<'_>,
     width: usize,
 ) -> Line<'static> {
-    let badge = format!("[{}]", trace_short_label(trace.kind));
+    let badge = trace_short_label(trace.kind).to_string();
     let route = format!(" {:<10}", trace_stage_summary(pipeline, trace));
     let used = 1 + UnicodeWidthStr::width(badge.as_str()) + UnicodeWidthStr::width(route.as_str());
     let (detail_trunc, _) = trace
@@ -808,15 +812,16 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn PipelineIns
     let preview_cols = ((preview_inner_w.saturating_sub(LABEL_W)) / CELL_W).max(1);
     let visible_cols = preview_cols.min(crate::ui::pipeline::MAX_GANTT_COLS);
 
-    let scroll_hint = if view.gantt_scroll == 0 {
-        format!(" HISTORY  up to {} cycles · following ", visible_cols)
+    // A rounded, titled panel like every other content region, with where the
+    // window sits in the trace as *state* in the right-hand slot. It used to be
+    // a square box that packed the state into the left title and spent it on a
+    // key hint (`End=follow`) — keys live in the footer.
+    let state = if view.gantt_scroll == 0 {
+        format!("last {visible_cols} cycles")
     } else {
-        format!(" HISTORY  scrollback ↑{} · End=follow ", view.gantt_scroll)
+        format!("scrolled back {}", view.gantt_scroll)
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(scroll_hint, Style::default().fg(theme::LABEL)));
+    let block = panel::panel_state("History", state, PanelKind::Plain);
 
     let inner = block.inner(area);
     view.gantt_area_rect

@@ -1,10 +1,9 @@
 use std::cell::Cell;
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, BorderType, Borders, ListItem, Paragraph};
+use ratatui::widgets::ListItem;
 use unicode_width::UnicodeWidthStr;
 
-use crate::ui::app::{App, RunButton};
 use crate::ui::theme;
 
 // ── Interaction state & the label "triangle" ──────────────────────────────────
@@ -76,6 +75,32 @@ pub(crate) fn control_style(
             .add_modifier(Modifier::BOLD),
         ControlState::Disabled => Style::default().fg(theme::BORDER),
         ControlState::Normal => Style::default().fg(normal_color),
+    }
+}
+
+/// The style for a control you can **click**, as opposed to text you can only
+/// read: it carries a filled surface.
+///
+/// That surface is the whole signal. Before this, a toggle and the value it
+/// showed were both just coloured text, so `fmt hex` and `word 0x00000293` were
+/// typographically identical even though one is a control and the other is a
+/// readout — and the help button was lost in the same ambiguity.
+///
+/// A `Disabled` control drops the surface: an inert thing must not advertise
+/// itself as a click target. It keeps its columns, so the row does not reflow
+/// as controls come and go.
+pub(crate) fn control_surface_style(state: ControlState, active_color: Color) -> Style {
+    match state {
+        ControlState::Disabled => Style::default().fg(theme::BORDER),
+        ControlState::Hovered => Style::default()
+            .fg(Color::Black)
+            .bg(active_color)
+            .add_modifier(Modifier::BOLD),
+        ControlState::Selected => Style::default()
+            .fg(active_color)
+            .bg(theme::BG_RAISED)
+            .add_modifier(Modifier::BOLD),
+        ControlState::Normal => Style::default().fg(theme::IDLE).bg(theme::BG_RAISED),
     }
 }
 
@@ -244,101 +269,11 @@ pub(crate) fn dense_value(text: &str, hovered: bool, active: bool, color: Color)
     } else {
         ControlState::Normal
     };
-    Span::styled(text.to_string(), control_style(state, color, theme::IDLE))
-}
-
-/// "Execution" box shared by the Cache and Virtual Memory tabs: speed / state /
-/// reset controls on line 1 (hitboxes recorded into the caller's cells, hover
-/// driven by `app.hover_run_button`) and Cycles / CPI / Instrs on line 2.
-pub(crate) fn render_exec_controls(
-    f: &mut Frame,
-    area: Rect,
-    app: &App,
-    speed_btn: &Cell<(u16, u16, u16)>,
-    state_btn: &Cell<(u16, u16, u16)>,
-    reset_btn: &Cell<(u16, u16, u16)>,
-    hint: &str,
-) {
-    let speed_text = app.session.speed.label();
-
-    let hover_reset = app.hover_run_button == Some(RunButton::Reset);
-    let hover_speed = app.hover_run_button == Some(RunButton::Speed);
-    let hover_state = app.hover_run_button == Some(RunButton::State);
-
-    let (state_text, state_color) = if app.session.is_running {
-        ("run", theme::RUNNING)
-    } else {
-        ("pause", theme::PAUSED)
-    };
-
-    let totals = app.execution_totals();
-    let (total, cpi, instr) = (totals.cycles, totals.cpi(), totals.instructions);
-
-    let mut spans = Vec::new();
-    let inner_for_hits = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .inner(area);
-    let line1_y = inner_for_hits.y;
-    let mut x = inner_for_hits.x;
-    let speed_x0 = x + "speed ".len() as u16;
-    let speed_x1 = speed_x0 + speed_text.len() as u16;
-    x = speed_x1 + 3;
-    let state_x0 = x + "state ".len() as u16;
-    let state_x1 = state_x0 + state_text.len() as u16;
-    x = state_x1 + 3;
-    let reset_x0 = x;
-    let reset_x1 = reset_x0 + "reset".len() as u16;
-    speed_btn.set((line1_y, speed_x0, speed_x1));
-    state_btn.set((line1_y, state_x0, state_x1));
-    reset_btn.set((line1_y, reset_x0, reset_x1));
-
-    push_dense_pair(
-        &mut spans,
-        "speed",
-        speed_text,
-        hover_speed,
-        true,
-        theme::TEXT,
-    );
-    push_dense_pair(
-        &mut spans,
-        "state",
-        state_text,
-        hover_state,
-        true,
-        state_color,
-    );
-    spans.push(Span::raw("   "));
-    spans.push(dense_action("reset", theme::DANGER, hover_reset));
-    spans.push(Span::styled(
-        hint.to_string(),
-        Style::default().fg(theme::LABEL),
-    ));
-    let line1 = Line::from(spans);
-    let line2 = Line::from(vec![
-        Span::styled(
-            format!(" Cycles:{total}"),
-            Style::default().fg(theme::METRIC_CYC),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("CPI:{cpi:.2}"),
-            Style::default().fg(theme::METRIC_CPI),
-        ),
-        Span::raw("  "),
-        Span::styled(format!("Instrs:{instr}"), Style::default().fg(theme::LABEL)),
-    ]);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
-        .border_type(BorderType::Rounded)
-        .title(Span::styled("Execution", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
+    // A surface, because this is a click target — same rule as the toolbar pill.
+    Span::styled(
+        format!(" {text} "),
+        control_surface_style(state, color),
+    )
 }
 
 /// A standalone action word (e.g. `reset`): always lit in `color`, bold-bright
@@ -349,5 +284,8 @@ pub(crate) fn dense_action(text: &str, color: Color, hovered: bool) -> Span<'sta
     } else {
         ControlState::Selected
     };
-    Span::styled(text.to_string(), control_style(state, color, theme::IDLE))
+    Span::styled(
+        format!(" {text} "),
+        control_surface_style(state, color),
+    )
 }

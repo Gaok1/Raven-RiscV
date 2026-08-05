@@ -707,8 +707,10 @@ fn run_status_shows_ebreak_for_paused_core() {
 
     app.single_step();
 
+    // The state is a badge now rather than a `state ebrk` chip — it reports, and
+    // the transport controls beside it act.
     let text = run_controls_plain_text(&app);
-    assert!(text.contains("state ebrk"), "{text}");
+    assert!(text.contains("EBREAK"), "{text}");
 }
 
 #[test]
@@ -719,7 +721,7 @@ fn run_status_shows_halt_for_halted_core() {
     app.single_step();
 
     let text = run_controls_plain_text(&app);
-    assert!(text.contains("state halt"), "{text}");
+    assert!(text.contains("HALTED"), "{text}");
 }
 
 #[test]
@@ -742,7 +744,7 @@ fn run_status_shows_exit_for_global_exit() {
     app.single_step();
 
     let text = run_controls_plain_text(&app);
-    assert!(text.contains("state exit"), "{text}");
+    assert!(text.contains("EXITED"), "{text}");
 }
 
 #[test]
@@ -752,7 +754,7 @@ fn run_status_shows_fault_for_invalid_instruction() {
     app.finalize_selected_core_after_step();
 
     let text = run_controls_plain_text(&app);
-    assert!(text.contains("state fault"), "{text}");
+    assert!(text.contains("FAULTED"), "{text}");
 }
 
 #[test]

@@ -22,26 +22,53 @@ pub(super) fn render_instruction_details(f: &mut Frame, area: Rect, app: &App) {
     let ctx = detail_context(app);
     app.run.details_rendered_addr.set(ctx.addr);
 
-    // Split into 3 sections: header (3 lines + border), field map (4 lines + border), rest
-    let header_h = 5u16;
-    let map_h = 6u16;
+    // One panel with labelled rules, not three nested boxes. `Instruction`,
+    // `Field Map` and `Decoded` were three views of the same instruction, and
+    // boxing each cost six rows of borders in the narrowest column of the tab.
+    let outer = panel::panel_state("Instruction", instruction_title(app, &ctx), PanelKind::Accent);
+    let inner = render_panel(f, area, outer);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    // Set in from the border by a column, like the content of every other panel
+    // in the app — `││ENCODING ─────` had the rule growing straight out of the
+    // frame. The hitboxes are pushed relative to this rect, so insetting it here
+    // moves the render and the hit-test together.
+    let inner = Rect::new(
+        inner.x + 1,
+        inner.y,
+        inner.width.saturating_sub(1),
+        inner.height,
+    );
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(header_h),
-            Constraint::Length(map_h),
-            Constraint::Min(4),
+            Constraint::Length(3), // mnemonic, word, cycles
+            Constraint::Length(1), // ENCODING rule
+            Constraint::Length(5), // bit ruler + the field table's four rows
+            Constraint::Length(1), // DECODED rule
+            Constraint::Min(1),
         ])
-        .split(area);
+        .split(inner);
 
     render_header(f, chunks[0], &ctx, app);
+
+    f.render_widget(
+        Paragraph::new(panel::section_rule("ENCODING", chunks[1].width)),
+        chunks[1],
+    );
     // The bit map comes from the backend's own decoder, so this pane shows a
     // real field map for whichever architecture is loaded.
-    render_field_map(f, chunks[1], inspect_at(app, ctx.addr).as_ref(), app);
+    render_field_map(f, chunks[2], inspect_at(app, ctx.addr).as_ref(), app);
+
+    f.render_widget(
+        Paragraph::new(panel::section_rule("DECODED", chunks[3].width)),
+        chunks[3],
+    );
     render_decoded(
         f,
-        chunks[2],
+        chunks[4],
         ctx.word,
         ctx.format,
         &ctx.disasm,
@@ -222,21 +249,19 @@ fn detail_context(app: &App) -> DetailContext {
 /// reports (`I-type` for RV32, `Load` for toy16), falling back to the raw
 /// address when nothing decodes.
 fn instruction_title(app: &App, ctx: &DetailContext) -> String {
+    // Bare class name, no brackets: the format class is data, and the bracket is
+    // spoken for by keyboard keys.
     match inspect_at(app, ctx.addr) {
-        Some(info) => format!("Instruction  [{}]", info.class),
-        None => "Instruction".to_string(),
+        Some(info) => info.class.to_string(),
+        None => String::new(),
     }
 }
 
 // ── Section 1 : Header ───────────────────────────────────────────────────────
 
-fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
-    let title = instruction_title(app, ctx);
-    let block = panel::panel_frame(PanelKind::Plain)
-        .title(Span::styled(title, style::value()))
-        .title_alignment(Alignment::Left);
-    let inner = render_panel(f, area, block);
-
+/// The header rows. `inner` is already inside the details panel — the caller
+/// owns the frame, so this only lays out content.
+fn render_header(f: &mut Frame, inner: Rect, ctx: &DetailContext, app: &App) {
     let editing = editing_field(app, ctx.addr);
     let origin_span = Span::styled(
         format!(" @ 0x{:08x} ({})", ctx.addr, ctx.origin),
@@ -354,7 +379,7 @@ fn render_header(f: &mut Frame, area: Rect, ctx: &DetailContext, app: &App) {
                 format!("~{base_cycles}"),
                 Style::default().fg(theme::CPI_PANEL).bold(),
             ),
-            Span::styled(format!("  [{}]", cpi_class_label(ctx.word)), style::label()),
+            Span::styled(format!("  {}", cpi_class_label(ctx.word)), style::label()),
         ]));
     } else if let Some(info) = inspect_at(app, ctx.addr) {
         lines.push(Line::from(vec![
@@ -437,8 +462,7 @@ pub(super) struct Seg {
 /// Nothing here knows an instruction is 32 bits wide or that it has an `rs2`:
 /// the segments, their widths and their names all come from the codec, so an
 /// 8-bit SAP instruction renders through the same code as a 32-bit RV32 one.
-fn render_field_map(f: &mut Frame, area: Rect, info: Option<&InstructionInfo>, app: &App) {
-    let inner = render_panel(f, area, panel::panel("Field Map", PanelKind::Plain));
+fn render_field_map(f: &mut Frame, inner: Rect, info: Option<&InstructionInfo>, app: &App) {
     let segs = info.map(layout_segments).unwrap_or_default();
     let Some(info) = info.filter(|_| !segs.is_empty()) else {
         f.render_widget(
@@ -448,11 +472,165 @@ fn render_field_map(f: &mut Frame, area: Rect, info: Option<&InstructionInfo>, a
         return;
     };
 
-    // Each segment's bits row doubles as a click target for editing that
-    // field (the editor itself renders in the header/Decoded sections).
+    // The ruled table needs five rows and its full width; a narrower pane falls
+    // back to the unruled rendering rather than clipping the rules.
+    if table_width(&segs) <= inner.width as usize && inner.height >= 5 {
+        render_field_table(f, inner, info, &segs, app);
+    } else {
+        render_field_map_compact(f, inner, info, &segs, app);
+    }
+}
+
+/// One padding column each side of a field's contents, inside its cell.
+const CELL_PAD: usize = 1;
+
+/// Total columns a ruled field table needs: every cell's contents plus its
+/// padding, plus one column per vertical rule (`n + 1` of them).
+fn table_width(segs: &[Seg]) -> usize {
+    segs.iter()
+        .map(|s| display_width(s) + CELL_PAD * 2)
+        .sum::<usize>()
+        + segs.len()
+        + 1
+}
+
+/// The field map as a ruled table.
+///
+/// ```text
+///  31          20 19   15 14 12 11    7 6        0
+/// ┌──────────────┬───────┬─────┬───────┬─────────┐
+/// │  imm[11:0]   │  rs1  │ fn3 │  rd   │ opcode  │
+/// │ 000000000001 │ 01100 │ 000 │ 01100 │ 0010011 │
+/// └──────────────┴───────┴─────┴───────┴─────────┘
+/// ```
+///
+/// The old rendering padded short field names with `▮` filler to reach the
+/// field's bit width, which meant the boundary between two fields was wherever
+/// the filler happened to stop — invisible, and the one thing a bit-layout
+/// diagram exists to show. Real rules put the boundary where the bits change.
+fn render_field_table(
+    f: &mut Frame,
+    inner: Rect,
+    info: &InstructionInfo,
+    segs: &[Seg],
+    app: &App,
+) {
+    // The bits row is the click target for editing a field; the editor renders
+    // in the header and DECODED sections.
+    let bits_y = inner.y + 3;
+    let mut x = inner.x + 1 + CELL_PAD as u16;
+    for seg in segs {
+        let w = display_width(seg);
+        if let Some(field) = seg_field(&seg.label) {
+            push_hitbox(app, inner, field, bits_y, x, w);
+        }
+        x = x.saturating_add((w + CELL_PAD * 2) as u16 + 1);
+    }
+
+    let bit_str = {
+        let width = usize::from(info.encoding_bits);
+        format!("{:0width$b}", info.encoding)
+    };
+
+    let lines = vec![
+        bit_ruler_line(segs, info.encoding_bits),
+        table_rule(segs, '┌', '┬', '┐'),
+        cell_row(segs, |seg, w| format!("{:^w$}", seg.label, w = w)),
+        bits_row(segs, &bit_str),
+        table_rule(segs, '└', '┴', '┘'),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// A horizontal rule with the given corner and junction glyphs.
+fn table_rule(segs: &[Seg], left: char, mid: char, right: char) -> Line<'static> {
+    let mut text = String::from(left);
+    for (i, seg) in segs.iter().enumerate() {
+        text.push_str(&"─".repeat(display_width(seg) + CELL_PAD * 2));
+        text.push(if i + 1 == segs.len() { right } else { mid });
+    }
+    Line::from(Span::styled(
+        text,
+        Style::default().fg(theme::BORDER),
+    ))
+}
+
+/// A row of cells, each rendered by `content` and coloured by its segment's role.
+fn cell_row(segs: &[Seg], content: impl Fn(&Seg, usize) -> String) -> Line<'static> {
+    let rule = || Span::styled("│", Style::default().fg(theme::BORDER));
+    let mut spans = vec![rule()];
+    for seg in segs {
+        let w = display_width(seg);
+        spans.push(Span::styled(
+            format!(
+                "{pad}{}{pad}",
+                content(seg, w),
+                pad = " ".repeat(CELL_PAD)
+            ),
+            Style::default().fg(seg.color),
+        ));
+        spans.push(rule());
+    }
+    Line::from(spans)
+}
+
+fn bits_row(segs: &[Seg], bit_str: &str) -> Line<'static> {
+    let mut idx = 0usize;
+    let slices: Vec<String> = segs
+        .iter()
+        .map(|seg| {
+            let end = (idx + seg.width as usize).min(bit_str.len());
+            let slice = bit_str[idx.min(end)..end].to_string();
+            idx = end;
+            slice
+        })
+        .collect();
+
+    let rule = || Span::styled("│", Style::default().fg(theme::BORDER));
+    let mut spans = vec![rule()];
+    for (seg, slice) in segs.iter().zip(&slices) {
+        let w = display_width(seg);
+        spans.push(Span::styled(
+            format!("{pad}{slice:^w$}{pad}", pad = " ".repeat(CELL_PAD)),
+            Style::default().fg(seg.color).bold(),
+        ));
+        spans.push(rule());
+    }
+    Line::from(spans)
+}
+
+/// The bit numbers above the table, each pair sitting over its own cell so the
+/// reader can see exactly which bits a field covers.
+fn bit_ruler_line(segs: &[Seg], encoding_bits: u8) -> Line<'static> {
+    let mut text = String::from(" ");
+    let mut bit = i32::from(encoding_bits) - 1;
+    for seg in segs {
+        let w = display_width(seg) + CELL_PAD * 2;
+        let (hi, lo) = (bit, bit - seg.width as i32 + 1);
+        let (hi_s, lo_s) = (hi.to_string(), lo.to_string());
+        if hi != lo && hi_s.len() + lo_s.len() < w {
+            let gap = w - hi_s.len() - lo_s.len();
+            text.push_str(&format!("{hi_s}{}{lo_s}", " ".repeat(gap)));
+        } else {
+            text.push_str(&format!("{hi_s:^w$}"));
+        }
+        text.push(' ');
+        bit = lo - 1;
+    }
+    Line::from(Span::styled(text, Style::default().fg(theme::IDLE)))
+}
+
+/// The unruled fallback for a pane too narrow to hold the table.
+fn render_field_map_compact(
+    f: &mut Frame,
+    inner: Rect,
+    info: &InstructionInfo,
+    segs: &[Seg],
+    app: &App,
+) {
     let bits_y = inner.y + 2;
     let mut x = inner.x;
-    for seg in &segs {
+    for seg in segs {
         let w = display_width(seg);
         if let Some(field) = seg_field(&seg.label) {
             push_hitbox(app, inner, field, bits_y, x, w);
@@ -461,12 +639,9 @@ fn render_field_map(f: &mut Frame, area: Rect, info: Option<&InstructionInfo>, a
     }
 
     let lines = vec![
-        // Row 1 — bit position markers
-        bit_position_line(&segs, info.encoding_bits),
-        // Row 2 — colored label blocks (▮▮… label)
-        label_line(&segs),
-        // Row 3 — actual bit values
-        bits_line(info.encoding, info.encoding_bits, &segs),
+        bit_position_line(segs, info.encoding_bits),
+        label_line(segs),
+        bits_line(info.encoding, info.encoding_bits, segs),
     ];
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
@@ -600,7 +775,7 @@ fn render_decoded(
     app: &App,
     ctx: &DetailContext,
 ) {
-    let inner = render_panel(f, area, panel::panel("Decoded", PanelKind::Plain));
+    let inner = area;
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(c) = comment {
@@ -855,18 +1030,18 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
             (0x6, 0x00) => "rd ← rs1 | rs2",
             (0x4, 0x00) => "rd ← rs1 ^ rs2",
             (0x1, 0x00) => "rd ← rs1 << (rs2 & 31)",
-            (0x5, 0x00) => "rd ← rs1 >> (rs2 & 31)  [logical]",
-            (0x5, 0x20) => "rd ← rs1 >> (rs2 & 31)  [arithmetic]",
-            (0x2, 0x00) => "rd ← (rs1 < rs2) ? 1 : 0  [signed]",
-            (0x3, 0x00) => "rd ← (rs1 < rs2) ? 1 : 0  [unsigned]",
+            (0x5, 0x00) => "rd ← rs1 >> (rs2 & 31)  (logical)",
+            (0x5, 0x20) => "rd ← rs1 >> (rs2 & 31)  (arithmetic)",
+            (0x2, 0x00) => "rd ← (rs1 < rs2) ? 1 : 0  (signed)",
+            (0x3, 0x00) => "rd ← (rs1 < rs2) ? 1 : 0  (unsigned)",
             (0x0, 0x01) => "rd ← rs1 × rs2  [lower 32 bits]",
             (0x1, 0x01) => "rd ← (rs1 × rs2) >> 32  [signed×signed]",
             (0x2, 0x01) => "rd ← (rs1 × rs2) >> 32  [signed×unsigned]",
             (0x3, 0x01) => "rd ← (rs1 × rs2) >> 32  [unsigned×unsigned]",
-            (0x4, 0x01) => "rd ← rs1 ÷ rs2  [signed]",
-            (0x5, 0x01) => "rd ← rs1 ÷ rs2  [unsigned]",
-            (0x6, 0x01) => "rd ← rs1 mod rs2  [signed]",
-            (0x7, 0x01) => "rd ← rs1 mod rs2  [unsigned]",
+            (0x4, 0x01) => "rd ← rs1 ÷ rs2  (signed)",
+            (0x5, 0x01) => "rd ← rs1 ÷ rs2  (unsigned)",
+            (0x6, 0x01) => "rd ← rs1 mod rs2  (signed)",
+            (0x7, 0x01) => "rd ← rs1 mod rs2  (unsigned)",
             _ => "R-type ALU operation",
         },
         0x13 => match funct3 {
@@ -874,11 +1049,11 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
             0x7 => "rd ← rs1 & imm",
             0x6 => "rd ← rs1 | imm",
             0x4 => "rd ← rs1 ^ imm",
-            0x2 => "rd ← (rs1 < imm) ? 1 : 0  [signed]",
-            0x3 => "rd ← (rs1 < imm) ? 1 : 0  [unsigned]",
+            0x2 => "rd ← (rs1 < imm) ? 1 : 0  (signed)",
+            0x3 => "rd ← (rs1 < imm) ? 1 : 0  (unsigned)",
             0x1 => "rd ← rs1 << shamt",
-            0x5 if funct7 == 0 => "rd ← rs1 >> shamt  [logical]",
-            0x5 => "rd ← rs1 >> shamt  [arithmetic]",
+            0x5 if funct7 == 0 => "rd ← rs1 >> shamt  (logical)",
+            0x5 => "rd ← rs1 >> shamt  (arithmetic)",
             _ => "I-type ALU immediate",
         },
         0x03 => match funct3 {
@@ -898,10 +1073,10 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
         0x63 => match funct3 {
             0x0 => "if rs1 == rs2  → PC += offset",
             0x1 => "if rs1 != rs2  → PC += offset",
-            0x4 => "if rs1 <  rs2  → PC += offset  [signed]",
-            0x5 => "if rs1 >= rs2  → PC += offset  [signed]",
-            0x6 => "if rs1 <  rs2  → PC += offset  [unsigned]",
-            0x7 => "if rs1 >= rs2  → PC += offset  [unsigned]",
+            0x4 => "if rs1 <  rs2  → PC += offset  (signed)",
+            0x5 => "if rs1 >= rs2  → PC += offset  (signed)",
+            0x6 => "if rs1 <  rs2  → PC += offset  (unsigned)",
+            0x7 => "if rs1 >= rs2  → PC += offset  (unsigned)",
             _ => "Conditional branch",
         },
         0x37 => "rd ← imm << 12  (upper 20 bits immediate)",

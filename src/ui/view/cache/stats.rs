@@ -103,42 +103,25 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
     let i_cyc = role_cycles(CacheRole::Instruction);
     let d_cyc = role_cycles(CacheRole::Data);
 
-    let mut spans = vec![
-        Span::styled(
-            if app.aggregate_pipeline_snapshot().is_some() {
-                " Program total (pipeline aggregate) \u{2014} "
-            } else {
-                " Program total \u{2014} "
-            },
-            style::label(),
-        ),
-        Span::styled(
-            format!("Cycles: {total}"),
-            style::metric(style::Metric::Cycles),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("Cycles/Instr: {cpi:.2}"),
-            style::metric(style::Metric::Cpi),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            format!("Instrs/Cycle: {ipc:.2}"),
-            style::metric(style::Metric::Ipc),
-        ),
-        Span::raw("  "),
-        Span::styled(format!("Instructions: {instr}"), style::label()),
-        Span::raw("  "),
-        Span::styled(
-            format!("I-Cache svc: {i_cyc}"),
-            Style::default().fg(theme::CACHE_I),
-        ),
-        Span::raw(" + "),
-        Span::styled(
-            format!("D-Cache svc: {d_cyc}"),
-            Style::default().fg(theme::CACHE_D),
-        ),
-    ];
+    let mut spans = vec![Span::styled(
+        if app.aggregate_pipeline_snapshot().is_some() {
+            " program total (pipeline aggregate)"
+        } else {
+            " program total"
+        },
+        style::label(),
+    )];
+    for item in [
+        style::readout("cyc", total, theme::METRIC_CYC),
+        style::readout("CPI", format!("{cpi:.2}"), theme::METRIC_CPI),
+        style::readout("IPC", format!("{ipc:.2}"), theme::METRIC_IPC),
+        style::readout("instr", instr, theme::TEXT),
+        style::readout("I-cache svc", i_cyc, theme::CACHE_I),
+        style::readout("D-cache svc", d_cyc, theme::CACHE_D),
+    ] {
+        spans.push(Span::raw("    "));
+        spans.extend(item);
+    }
 
     // Every level past L1, named by the hierarchy rather than a table here, so
     // a backend with three levels shows three.
@@ -147,14 +130,11 @@ fn render_program_summary(f: &mut Frame, area: Rect, app: &App) {
             let Some(cache) = caches.cache(level, CacheRole::Unified) else {
                 continue;
             };
-            spans.push(Span::raw(" + "));
-            spans.push(Span::styled(
-                format!(
-                    "{} svc: {}",
-                    caches.level_name(level),
-                    cache.stats.total_cycles
-                ),
-                Style::default().fg(theme::CACHE_L2),
+            spans.push(Span::raw("    "));
+            spans.extend(style::readout(
+                &format!("{} svc", caches.level_name(level)),
+                cache.stats.total_cycles,
+                theme::CACHE_L2,
             ));
         }
     }
@@ -226,78 +206,13 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
         return;
     }
 
-    let hits = stats.hits;
-    let misses = stats.misses;
     let total = stats.total_accesses();
     let miss_rate = if total == 0 { 0.0 } else { 100.0 - hit_rate };
-    let mpki = stats.mpki(instructions);
-
-    // Line 2: hits / misses / miss rate / MPKI
-    let line2 = format!(
-        "Hits: {hits}  Misses: {misses}  Miss Rate: {miss_rate:.1}%  Misses per 1K Instrs: {mpki:.1}"
-    );
-    f.render_widget(
-        Paragraph::new(Span::styled(line2, Style::default().fg(Color::Gray))),
-        Rect::new(inner.x, inner.y + 1, inner.width, 1),
-    );
-
-    if inner.height < 3 {
-        return;
-    }
-
-    // Line 3: accesses / evictions / writebacks / line fills
-    let wb_part = if icache {
-        String::new()
-    } else {
-        format!("  Writebacks: {}", stats.writebacks)
-    };
     let fills = if cfg.enabled && cfg.line_size > 0 {
         stats.bytes_loaded / cfg.line_size as u64
     } else {
         0
     };
-    let line3 = format!(
-        "Accesses: {total}  Evictions: {}{wb_part}  Line Fills: {fills}",
-        stats.evictions
-    );
-    f.render_widget(
-        Paragraph::new(Span::styled(line3, style::label())),
-        Rect::new(inner.x, inner.y + 2, inner.width, 1),
-    );
-
-    if inner.height < 4 {
-        return;
-    }
-
-    // Line 4: RAM traffic
-    let line4 = format!(
-        "RAM Reads: {}  RAM Writes: {}",
-        fmt_bytes(stats.bytes_loaded),
-        fmt_bytes(stats.ram_write_bytes)
-    );
-    f.render_widget(
-        Paragraph::new(Span::styled(line4, style::metric(style::Metric::Cycles))),
-        Rect::new(inner.x, inner.y + 3, inner.width, 1),
-    );
-
-    if inner.height < 5 {
-        return;
-    }
-
-    // Line 5: CPU store bytes (D-cache only)
-    if !icache {
-        let line5 = format!("CPU Stores:{}", fmt_bytes(stats.bytes_stored));
-        f.render_widget(
-            Paragraph::new(Span::styled(line5, style::label())),
-            Rect::new(inner.x, inner.y + 4, inner.width, 1),
-        );
-    }
-
-    if inner.height < 6 {
-        return;
-    }
-
-    // Line 6: cycles/access and CPI contribution
     let cycles = stats.total_cycles;
     let avg = if total == 0 {
         0.0_f64
@@ -309,39 +224,70 @@ fn render_cache_metrics(f: &mut Frame, area: Rect, app: &App, icache: bool) {
     } else {
         cycles as f64 / instructions as f64
     };
-    let line6 =
-        format!("Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}");
-    f.render_widget(
-        Paragraph::new(Span::styled(line6, style::metric(style::Metric::Cpi))),
-        Rect::new(inner.x, inner.y + 5, inner.width, 1),
-    );
-
-    if inner.height < 7 {
-        return;
-    }
-
-    // Line 7: cost model summary
     let hit_cyc = cfg.tag_search_cycles();
     let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
-    let line7 = format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc");
-    f.render_widget(
-        Paragraph::new(Span::styled(line7, style::label())),
-        Rect::new(inner.x, inner.y + 6, inner.width, 1),
-    );
-
-    if inner.height < 8 {
-        return;
-    }
-
-    // Line 8: AMAT
     let amat = app
         .cache_hierarchy()
         .map_or(0.0, |caches| caches.amat(0, role));
-    let line8 = format!("Avarage Memory Access Time: {amat:.2} cyc");
-    f.render_widget(
-        Paragraph::new(Span::styled(line8, Style::default().fg(theme::CACHE_L2))),
-        Rect::new(inner.x, inner.y + 7, inner.width, 1),
+
+    // Grouped `label value` readouts — counts, then traffic, then timing. This
+    // was eight flat `"Hits: 0  Misses: 0  Miss Rate: 0.0%"` strings, each one
+    // painted a single colour, so the numbers a reader is actually after were
+    // typographically identical to the twenty words naming them.
+    use style::readout as ro;
+    let mut rows = vec![
+        style::readout_row(vec![
+            ro("hits", stats.hits, theme::TEXT),
+            ro("misses", stats.misses, theme::TEXT),
+            ro("miss rate", format!("{miss_rate:.1}%"), hit_color),
+            ro(
+                "MPKI",
+                format!("{:.1}", stats.mpki(instructions)),
+                theme::TEXT,
+            ),
+        ]),
+        style::readout_row(vec![
+            ro("accesses", total, theme::TEXT),
+            ro("evictions", stats.evictions, theme::TEXT),
+            ro("line fills", fills, theme::TEXT),
+        ]),
+    ];
+    // Writebacks and CPU stores only exist on a cache the program writes to.
+    let mut traffic = vec![
+        ro("RAM read", fmt_bytes(stats.bytes_loaded), theme::METRIC_CYC),
+        ro(
+            "RAM written",
+            fmt_bytes(stats.ram_write_bytes),
+            theme::METRIC_CYC,
+        ),
+    ];
+    if !icache {
+        traffic.push(ro(
+            "CPU stored",
+            fmt_bytes(stats.bytes_stored),
+            theme::METRIC_CYC,
+        ));
+        traffic.push(ro("writebacks", stats.writebacks, theme::LABEL));
+    }
+    rows.push(style::readout_row(traffic));
+    rows.push(style::readout_row(vec![
+        ro("service", format!("{cycles} cyc"), theme::METRIC_CPI),
+        ro("per access", format!("{avg:.2}"), theme::METRIC_CPI),
+        ro("per instr", format!("{cpi_contrib:.2}"), theme::METRIC_CPI),
+    ]));
+    rows.push(style::readout_row(vec![
+        ro("hit", format!("{hit_cyc} cyc"), theme::LABEL),
+        ro("miss", format!("{miss_cyc} cyc"), theme::LABEL),
+        ro("AMAT", format!("{amat:.2} cyc"), theme::CACHE_L2),
+    ]));
+
+    let body = Rect::new(
+        inner.x,
+        inner.y + 1,
+        inner.width,
+        inner.height.saturating_sub(1),
     );
+    f.render_widget(Paragraph::new(rows), body);
 }
 
 fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
@@ -349,7 +295,7 @@ fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
     let title = if is_running {
         " Snapshots (\u{23f8} to view) "
     } else {
-        " Snapshots (\u{2191}\u{2193} \u{b7} Enter=view \u{b7} D=delete) "
+        " Snapshots "
     };
     let inner = render_panel(f, area, panel::panel(title, PanelKind::Plain));
 
@@ -448,7 +394,7 @@ fn render_chart(f: &mut Frame, area: Rect, app: &App) {
     let inner = render_panel(
         f,
         area,
-        panel::panel_frame(PanelKind::Plain).title("Hit Rate History (%)"),
+        panel::panel("Hit Rate History (%)", PanelKind::Plain),
     );
 
     if inner.height < 3 || inner.width < 10 {
@@ -585,56 +531,15 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
         return;
     }
 
-    let hits = stats.hits;
-    let misses = stats.misses;
+    // Same grouped readouts as the split L1 panels above — one shape for one
+    // kind of information, whichever level is on screen.
     let total = stats.total_accesses();
     let miss_rate = if total == 0 { 0.0 } else { 100.0 - hit_rate };
-    let mpki = stats.mpki(instructions);
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            format!("Hits: {hits}  Misses: {misses}  Miss Rate: {miss_rate:.1}%  Misses per 1K Instrs: {mpki:.1}"),
-            style::value(),
-        )),
-        Rect::new(inner.x, inner.y + 1, inner.width, 1),
-    );
-    if inner.height < 3 {
-        return;
-    }
-
     let fills = if cfg.enabled && cfg.line_size > 0 {
         stats.bytes_loaded / cfg.line_size as u64
     } else {
         0
     };
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            format!(
-                "Accesses: {total}  Evictions: {}  Writebacks: {}  Line Fills: {fills}",
-                stats.evictions, stats.writebacks
-            ),
-            style::label(),
-        )),
-        Rect::new(inner.x, inner.y + 2, inner.width, 1),
-    );
-    if inner.height < 4 {
-        return;
-    }
-
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            format!(
-                "RAM Reads: {}  RAM Writes: {}",
-                fmt_bytes(stats.bytes_loaded),
-                fmt_bytes(stats.ram_write_bytes)
-            ),
-            style::metric(style::Metric::Cycles),
-        )),
-        Rect::new(inner.x, inner.y + 3, inner.width, 1),
-    );
-    if inner.height < 5 {
-        return;
-    }
-
     let cycles = stats.total_cycles;
     let avg = if total == 0 {
         0.0_f64
@@ -646,41 +551,58 @@ fn render_unified_metrics(f: &mut Frame, area: Rect, app: &App, extra_idx: usize
     } else {
         cycles as f64 / instructions as f64
     };
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            format!(
-                "Svc Cycles: {cycles}  Average: {avg:.2} cyc/access  Svc/Instr: {cpi_contrib:.2}"
-            ),
-            style::metric(style::Metric::Cpi),
-        )),
-        Rect::new(inner.x, inner.y + 4, inner.width, 1),
-    );
-    if inner.height < 6 {
-        return;
-    }
-
     let hit_cyc = cfg.tag_search_cycles();
     let miss_cyc = hit_cyc + cfg.miss_penalty + cfg.line_transfer_cycles();
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            format!("Cost model: Hit={hit_cyc}cyc  Miss={miss_cyc}cyc"),
-            style::label(),
-        )),
-        Rect::new(inner.x, inner.y + 5, inner.width, 1),
-    );
-    if inner.height < 7 {
-        return;
-    }
-
     let amat = app
         .cache_hierarchy()
         .map_or(0.0, |caches| caches.amat(extra_idx + 1, CacheRole::Unified));
+
+    use style::readout as ro;
+    let rows = vec![
+        style::readout_row(vec![
+            ro("hits", stats.hits, theme::TEXT),
+            ro("misses", stats.misses, theme::TEXT),
+            ro("miss rate", format!("{miss_rate:.1}%"), theme::TEXT),
+            ro(
+                "MPKI",
+                format!("{:.1}", stats.mpki(instructions)),
+                theme::TEXT,
+            ),
+        ]),
+        style::readout_row(vec![
+            ro("accesses", total, theme::TEXT),
+            ro("evictions", stats.evictions, theme::TEXT),
+            ro("writebacks", stats.writebacks, theme::TEXT),
+            ro("line fills", fills, theme::TEXT),
+        ]),
+        style::readout_row(vec![
+            ro("RAM read", fmt_bytes(stats.bytes_loaded), theme::METRIC_CYC),
+            ro(
+                "RAM written",
+                fmt_bytes(stats.ram_write_bytes),
+                theme::METRIC_CYC,
+            ),
+        ]),
+        style::readout_row(vec![
+            ro("service", format!("{cycles} cyc"), theme::METRIC_CPI),
+            ro("per access", format!("{avg:.2}"), theme::METRIC_CPI),
+            ro("per instr", format!("{cpi_contrib:.2}"), theme::METRIC_CPI),
+        ]),
+        style::readout_row(vec![
+            ro("hit", format!("{hit_cyc} cyc"), theme::LABEL),
+            ro("miss", format!("{miss_cyc} cyc"), theme::LABEL),
+            ro("AMAT", format!("{amat:.2} cyc"), theme::CACHE_L2),
+        ]),
+    ];
+
     f.render_widget(
-        Paragraph::new(Span::styled(
-            format!("Avarage Memory Access Time: {amat:.2} cyc"),
-            Style::default().fg(theme::CACHE_L2),
-        )),
-        Rect::new(inner.x, inner.y + 6, inner.width, 1),
+        Paragraph::new(rows),
+        Rect::new(
+            inner.x,
+            inner.y + 1,
+            inner.width,
+            inner.height.saturating_sub(1),
+        ),
     );
 }
 
@@ -688,7 +610,7 @@ fn render_unified_chart(f: &mut Frame, area: Rect, app: &App, extra_idx: usize) 
     let inner = render_panel(
         f,
         area,
-        panel::panel_frame(PanelKind::Plain).title("Hit Rate History (%)"),
+        panel::panel("Hit Rate History (%)", PanelKind::Plain),
     );
 
     if inner.height < 3 || inner.width < 10 {
@@ -780,7 +702,7 @@ pub(in crate::ui::view) fn render_snapshot_popup(f: &mut Frame, area: Rect, app:
                 format!(" Snapshot {} ", snap.label),
                 Style::default().fg(theme::ACCENT).bold(),
             ),
-            bottom: Some(Line::from(Span::styled(" Esc=close ", style::label()))),
+            bottom: Some(Line::from(Span::styled(" [esc] close ", style::label()))),
         },
     );
 

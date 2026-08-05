@@ -4,11 +4,13 @@
 use ratatui::{
     Frame,
     prelude::*,
-    widgets::{Axis, Block, BorderType, Borders, Chart, Dataset, GraphType, Paragraph},
+    widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
 };
 
 use crate::ui::app::App;
 use crate::ui::theme;
+use crate::ui::view::components::panel::{self, PanelKind, render_panel};
+use crate::ui::view::style;
 
 pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
     let history_h = if app.cache.session_history.is_empty() {
@@ -20,7 +22,7 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(9),
+            Constraint::Length(6),
             Constraint::Min(8),
             Constraint::Length(history_h), // snapshot history (0 = hidden)
         ])
@@ -37,18 +39,14 @@ pub(super) fn render_stats(f: &mut Frame, area: Rect, app: &App) {
 /// columns show the translation-side numbers.
 fn render_history_table(f: &mut Frame, area: Rect, app: &App) {
     let is_running = app.session.is_running;
-    let title = if is_running {
-        " Snapshots (\u{23f8} to view) "
-    } else {
-        " Snapshots (\u{2191}\u{2193} \u{b7} Enter=view \u{b7} D=delete) "
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(title, Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    // Why the list is inert is *state*, so it goes in the right-hand slot the
+    // panel keeps for exactly that.
+    let state = if is_running { "pause to inspect" } else { "" };
+    let inner = render_panel(
+        f,
+        area,
+        panel::panel_state("Snapshots", state, PanelKind::Plain),
+    );
 
     if inner.height == 0 {
         return;
@@ -117,91 +115,76 @@ fn render_stats_metrics(f: &mut Frame, area: Rect, app: &App) {
         .filter_map(|i| translation.tlb_entry(i))
         .filter(|entry| entry.valid)
         .count();
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(" Hits:       ", Style::default().fg(theme::LABEL)),
-            Span::styled(format!("{}", stats.hits), Style::default().fg(theme::TEXT)),
-        ]),
-        Line::from(vec![
-            Span::styled(" Misses:     ", Style::default().fg(theme::LABEL)),
+    // Three grouped lines instead of seven stacked ones. The list ran down the
+    // left edge of a 150-column panel with each label padded to its own guessed
+    // width — so `Page Faults:` and `Valid Entries:` overran the column the
+    // rows above had set up, and the chart below lost four rows to the gap.
+    let metric = |label: &str, value: String, color: Color| {
+        vec![
+            Span::styled(label.to_string(), style::idle()),
             Span::styled(
-                format!("{}", stats.misses),
-                Style::default().fg(theme::TEXT),
+                format!(" {value}"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
+        ]
+    };
+    let gap = || Span::raw("    ");
+
+    let hit_color = if hit_rate >= 80.0 {
+        theme::RUNNING
+    } else if hit_rate >= 50.0 {
+        theme::ACCENT
+    } else {
+        theme::PAUSED
+    };
+    let fault_color = if stats.faults > 0 {
+        theme::DANGER
+    } else {
+        theme::TEXT
+    };
+    // Ways follow from the geometry the backend reports, so this stays right
+    // for a fully-associative or direct-mapped TLB.
+    let ways = translation.tlb_len() / translation.tlb_sets().max(1);
+
+    let mut line1 = vec![Span::raw(" ")];
+    line1.extend(metric("hits", stats.hits.to_string(), theme::TEXT));
+    line1.push(gap());
+    line1.extend(metric("misses", stats.misses.to_string(), theme::TEXT));
+    line1.push(gap());
+    line1.extend(metric("hit rate", format!("{hit_rate:.1}%"), hit_color));
+
+    let mut line2 = vec![Span::raw(" ")];
+    line2.extend(metric("evictions", stats.evictions.to_string(), theme::TEXT));
+    line2.push(gap());
+    line2.extend(metric("page faults", stats.faults.to_string(), fault_color));
+    line2.push(gap());
+    line2.extend(metric(
+        "valid entries",
+        format!("{valid_entries} / {}", translation.tlb_len()),
+        theme::TEXT,
+    ));
+
+    let mut line3 = vec![Span::raw(" ")];
+    line3.extend(metric(
+        "geometry",
+        format!("{} sets × {ways} ways", translation.tlb_sets()),
+        theme::LABEL,
+    ));
+
+    let inner = render_panel(f, area, panel::panel("TLB Metrics", PanelKind::Plain));
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(line1),
+            Line::from(line2),
+            Line::raw(""),
+            Line::from(line3),
         ]),
-        Line::from(vec![
-            Span::styled(" Hit Rate:   ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                format!("{:.1}%", hit_rate),
-                Style::default().fg(if hit_rate >= 80.0 {
-                    theme::RUNNING
-                } else if hit_rate >= 50.0 {
-                    theme::ACCENT
-                } else {
-                    theme::PAUSED
-                }),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" Evictions:  ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                format!("{}", stats.evictions),
-                Style::default().fg(theme::TEXT),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" Page Faults:", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                format!(" {}", stats.faults),
-                Style::default().fg(if stats.faults > 0 {
-                    theme::DANGER
-                } else {
-                    theme::TEXT
-                }),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" Valid Entries: ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                format!("{} / {}", valid_entries, translation.tlb_len()),
-                Style::default().fg(theme::TEXT),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" Sets:       ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                format!("{}", translation.tlb_sets()),
-                Style::default().fg(theme::BORDER),
-            ),
-            Span::raw("   "),
-            Span::styled(" Ways:       ", Style::default().fg(theme::LABEL)),
-            Span::styled(
-                // Ways follow from the geometry the backend reports, so this
-                // stays right for a fully-associative or direct-mapped TLB.
-                format!("{}", translation.tlb_len() / translation.tlb_sets().max(1)),
-                Style::default().fg(theme::BORDER),
-            ),
-        ]),
-    ];
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled("Metrics", Style::default().fg(theme::LABEL)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    f.render_widget(Paragraph::new(lines), inner);
+        inner,
+    );
 }
 
 fn render_hit_chart(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BORDER))
-        .title(Span::styled(
-            "Hit Rate History",
-            Style::default().fg(theme::LABEL),
-        ));
+    let block = panel::panel("Hit Rate History", PanelKind::Plain);
 
     let pts: Vec<(f64, f64)> = app
         .translation()

@@ -82,14 +82,22 @@ pub(crate) fn header_body(area: Rect, header_heights: &[u16]) -> (Vec<Rect>, Rec
     (headers, body)
 }
 
-/// The root app frame: `(tabs, body, status)` = `[Length(3), Min(5), Length(1)]`.
-/// The single definition of this split, shared by `view::ui` and the mouse
-/// router so the tab bar / body / status line agree on their bounds.
+/// Rows the top tab strip occupies: the labels, then one rule whose heavy
+/// segment marks the active tab.
+///
+/// This was three — labels, a separate underline row, then a full-width rule —
+/// which spent a row drawing a line under a line. Merging them gives the row
+/// back to the content and reads more like a tab strip.
+pub(crate) const TAB_BAR_H: u16 = 2;
+
+/// The root app frame: `(tabs, body, status)`. The single definition of this
+/// split, shared by `view::ui` and the mouse router so the tab bar / body /
+/// status line agree on their bounds.
 pub(crate) fn app_frame(area: Rect) -> (Rect, Rect, Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(TAB_BAR_H),
             Constraint::Min(5),
             Constraint::Length(1),
         ])

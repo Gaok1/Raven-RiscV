@@ -1,42 +1,31 @@
 use crate::falcon::jit::BackendKind;
 use crate::ui::app::{
-    App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_CPI_START, SETTINGS_ROW_JIT_MODE,
-    SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
-    SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
-    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
+    App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES,
+    SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
+    SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
+    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
 };
 use crossterm::event::{KeyCode, KeyEvent};
-
-/// Row index of the blank separator that visually splits the toggle list
-/// from the CPI section. Always sits one row before the first CPI field.
-const SETTINGS_BLANK_ROW: usize = SETTINGS_ROW_CPI_START - 1;
 
 pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
     if matches!(key.code, KeyCode::Char('a') | KeyCode::Char('A')) {
         app.cycle_architecture();
         return true;
     }
-    if app.settings.cpi_editing {
+    if app.settings.num_editing {
         return handle_numeric_edit(app, key.code);
     }
 
+    // The rows are contiguous again now that the CPI block has moved to the
+    // Pipeline tab — the blank-row skip that used to sit here existed only to
+    // step over the separator between the toggles and that block.
     match key.code {
         KeyCode::Up => {
-            if app.settings.selected > 0 {
-                app.settings.selected -= 1;
-                if app.settings.selected == SETTINGS_BLANK_ROW {
-                    app.settings.selected = SETTINGS_BLANK_ROW - 1;
-                }
-            }
+            app.settings.selected = app.settings.selected.saturating_sub(1);
             true
         }
         KeyCode::Down => {
-            if app.settings.selected + 1 < SETTINGS_ROWS {
-                app.settings.selected += 1;
-                if app.settings.selected == SETTINGS_BLANK_ROW {
-                    app.settings.selected = SETTINGS_ROW_CPI_START;
-                }
-            }
+            app.settings.selected = (app.settings.selected + 1).min(SETTINGS_ROWS - 1);
             true
         }
         KeyCode::Left | KeyCode::Right => true,
@@ -44,11 +33,11 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             if app.settings.selected == SETTINGS_ROW_CACHE_ENABLED {
                 app.set_cache_enabled(!app.session.cache_enabled);
             } else if app.settings.selected == SETTINGS_ROW_MAX_CORES {
-                app.settings.cpi_edit_buf = app.max_cores.to_string();
-                app.settings.cpi_editing = true;
+                app.settings.num_edit_buf = app.max_cores.to_string();
+                app.settings.num_editing = true;
             } else if app.settings.selected == SETTINGS_ROW_MEM_SIZE {
-                app.settings.cpi_edit_buf = (app.session.mem_size / 1024).to_string();
-                app.settings.cpi_editing = true;
+                app.settings.num_edit_buf = (app.session.mem_size / 1024).to_string();
+                app.settings.num_editing = true;
             } else if app.settings.selected == SETTINGS_ROW_RUN_SCOPE {
                 app.run_scope = app.run_scope.cycle();
             } else if app.settings.selected == SETTINGS_ROW_PIPELINE_ENABLED {
@@ -70,10 +59,6 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 app.set_trace_syscalls(!app.session.trace_syscalls);
             } else if app.settings.selected == SETTINGS_ROW_SCREEN_TARGET {
                 app.console.screen_target = app.console.screen_target.cycle();
-            } else if app.settings.selected >= SETTINGS_ROW_CPI_START {
-                let i = app.settings.selected - SETTINGS_ROW_CPI_START;
-                app.settings.cpi_edit_buf = app.session.cpi_config.get(i).to_string();
-                app.settings.cpi_editing = true;
             }
             true
         }
@@ -82,9 +67,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 || app.settings.selected == SETTINGS_ROW_MEM_SIZE)
                 && c.is_ascii_digit() =>
         {
-            app.settings.cpi_edit_buf.clear();
-            app.settings.cpi_edit_buf.push(c);
-            app.settings.cpi_editing = true;
+            app.settings.num_edit_buf.clear();
+            app.settings.num_edit_buf.push(c);
+            app.settings.num_editing = true;
             true
         }
         _ => false,
@@ -94,45 +79,35 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
 fn handle_numeric_edit(app: &mut App, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc => {
-            app.settings.cpi_editing = false;
-            app.settings.cpi_edit_buf.clear();
+            app.settings.num_editing = false;
+            app.settings.num_edit_buf.clear();
         }
         KeyCode::Enter => {
             commit_numeric_edit(app);
-            app.settings.cpi_editing = false;
-            app.settings.cpi_edit_buf.clear();
+            app.settings.num_editing = false;
+            app.settings.num_edit_buf.clear();
         }
         KeyCode::Up => {
             commit_numeric_edit(app);
-            app.settings.cpi_editing = false;
-            app.settings.cpi_edit_buf.clear();
-            if app.settings.selected > 0 {
-                app.settings.selected -= 1;
-                if app.settings.selected == SETTINGS_BLANK_ROW {
-                    app.settings.selected = SETTINGS_BLANK_ROW - 1;
-                }
-            }
+            app.settings.num_editing = false;
+            app.settings.num_edit_buf.clear();
+            app.settings.selected = app.settings.selected.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Tab => {
             commit_numeric_edit(app);
-            app.settings.cpi_editing = false;
-            app.settings.cpi_edit_buf.clear();
-            if app.settings.selected + 1 < SETTINGS_ROWS {
-                app.settings.selected += 1;
-                if app.settings.selected == SETTINGS_BLANK_ROW {
-                    app.settings.selected = SETTINGS_ROW_CPI_START;
-                }
-            }
+            app.settings.num_editing = false;
+            app.settings.num_edit_buf.clear();
+            app.settings.selected = (app.settings.selected + 1).min(SETTINGS_ROWS - 1);
         }
         KeyCode::Char(c)
             if c.is_ascii_digit()
                 || (app.settings.selected == SETTINGS_ROW_MEM_SIZE
                     && matches!(c, 'k' | 'K' | 'm' | 'M' | 'b' | 'B')) =>
         {
-            app.settings.cpi_edit_buf.push(c);
+            app.settings.num_edit_buf.push(c);
         }
         KeyCode::Backspace => {
-            app.settings.cpi_edit_buf.pop();
+            app.settings.num_edit_buf.pop();
         }
         _ => {}
     }
@@ -142,14 +117,14 @@ fn handle_numeric_edit(app: &mut App, code: KeyCode) -> bool {
 
 fn commit_numeric_edit(app: &mut App) {
     if app.settings.selected == SETTINGS_ROW_MAX_CORES {
-        if let Ok(v) = app.settings.cpi_edit_buf.trim().parse::<usize>() {
+        if let Ok(v) = app.settings.num_edit_buf.trim().parse::<usize>() {
             if (1..=32).contains(&v) && v != app.max_cores {
                 app.max_cores = v;
                 app.restart_simulation();
             }
         }
     } else if app.settings.selected == SETTINGS_ROW_MEM_SIZE {
-        let raw = app.settings.cpi_edit_buf.trim().to_lowercase();
+        let raw = app.settings.num_edit_buf.trim().to_lowercase();
         let kb = if let Some(n) = raw.strip_suffix("mb") {
             n.trim().parse::<usize>().ok().map(|v| v * 1024)
         } else if let Some(n) = raw.strip_suffix("kb") {
@@ -165,10 +140,7 @@ fn commit_numeric_edit(app: &mut App) {
                 app.restart_simulation();
             }
         }
-    } else {
-        let cpi_idx = app.settings.selected.saturating_sub(SETTINGS_ROW_CPI_START);
-        if let Ok(v) = app.settings.cpi_edit_buf.trim().parse::<u64>() {
-            app.session.cpi_config.set(cpi_idx, v);
-        }
     }
+    // Only max cores and memory size are typed here now; the CPI fields moved
+    // to the Pipeline tab and commit through `pipeline_keys::commit_cpi_edit`.
 }

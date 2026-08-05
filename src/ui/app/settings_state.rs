@@ -37,10 +37,12 @@ pub(crate) const SETTINGS_ROW_JIT_MODE: usize = 7;
 pub(crate) const SETTINGS_ROW_TRACE_SYSCALLS: usize = 8;
 /// Row index of the screen output selector (graphics syscalls: TUI / window).
 pub(crate) const SETTINGS_ROW_SCREEN_TARGET: usize = 9;
-/// First CPI row index in the settings list (10 rows + 1 blank separator).
-pub(crate) const SETTINGS_ROW_CPI_START: usize = 11;
-/// Total number of settings rows (10 rows + 1 blank + 11 CPI fields).
-pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_CPI_START + 11;
+/// Total number of settings rows.
+///
+/// The list used to run to 22: ten toggles, a blank, and the eleven CPI fields.
+/// Those moved to the Pipeline tab's settings page, next to the datapath they
+/// parameterise.
+pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_SCREEN_TARGET + 1;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub(crate) enum RunScope {
@@ -69,12 +71,10 @@ pub(crate) struct SettingsState {
     pub(crate) selected: usize,
     /// Mouse hover over a whole settings row.
     pub(crate) hover_row: Option<usize>,
-    /// true when a CPI field is being edited
-    pub(crate) cpi_editing: bool,
-    /// Text buffer while editing a CPI field
-    pub(crate) cpi_edit_buf: String,
-    /// Mouse hover: which CPI field row (0-based within CPI section)
-    pub(crate) hover_cpi_field: Option<usize>,
+    /// true while a numeric field (max cores, memory size) is open for typing
+    pub(crate) num_editing: bool,
+    /// Digits typed into the open numeric field
+    pub(crate) num_edit_buf: String,
     /// Mouse hover over the cache_enabled bool button
     pub(crate) hover_cache_enabled: bool,
     /// Mouse hover over the pipeline_enabled bool button
@@ -117,8 +117,14 @@ pub(crate) struct SettingsState {
     pub(crate) export_rcfg_rect: std::cell::Cell<(u16, u16, u16)>,
     /// Geometry of the visible settings list area (x, y, width, height)
     pub(crate) list_rect: std::cell::Cell<(u16, u16, u16, u16)>,
-    /// Geometry of each CPI row (y) — written by render, read by mouse
-    pub(crate) cpi_rows_y: std::cell::Cell<[u16; 11]>,
+    /// Screen row of every settings row, indexed by `SETTINGS_ROW_*` — written
+    /// by render, read by mouse.
+    ///
+    /// The hover chain used to walk `first_row + 0 ..= first_row + 9` instead,
+    /// which is a second copy of the list's layout: it silently pointed at the
+    /// wrong setting the moment a section heading or a blank line was inserted
+    /// between two rows.
+    pub(crate) row_ys: std::cell::Cell<[u16; super::SETTINGS_ROWS]>,
 }
 
 impl Default for SettingsState {
@@ -126,9 +132,8 @@ impl Default for SettingsState {
         Self {
             selected: 0,
             hover_row: None,
-            cpi_editing: false,
-            cpi_edit_buf: String::new(),
-            hover_cpi_field: None,
+            num_editing: false,
+            num_edit_buf: String::new(),
             hover_cache_enabled: false,
             hover_pipeline_enabled: false,
             hover_vm_enabled: false,
@@ -150,7 +155,7 @@ impl Default for SettingsState {
             import_rcfg_rect: std::cell::Cell::new((0, 0, 0)),
             export_rcfg_rect: std::cell::Cell::new((0, 0, 0)),
             list_rect: std::cell::Cell::new((0, 0, 0, 0)),
-            cpi_rows_y: std::cell::Cell::new([0u16; 11]),
+            row_ys: std::cell::Cell::new([0u16; super::SETTINGS_ROWS]),
         }
     }
 }

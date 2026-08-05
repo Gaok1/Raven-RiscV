@@ -182,7 +182,10 @@ fn render_col_header(desc_w: usize, ty_w: usize) -> Line<'static> {
 
 fn render_doc_row(app: &App, row: &InstructionDoc, desc_w: usize, ty_w: usize) -> Line<'static> {
     let color = ty_color(app, row.kind);
-    let badge = format!("{:>ty_w$}", format!("[{}]", row.kind));
+    // Bare, coloured, right-aligned into its column: the kind is data, and the
+    // bracket means a keyboard key. Colour already separates it from the
+    // mnemonic beside it.
+    let badge = format!("{:>ty_w$}", row.kind);
 
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
@@ -292,19 +295,12 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
     let filter_area = chunks[3];
     let table_area = chunks[4];
 
-    let search_hint = if app.docs.search_open {
-        "  Ctrl+f=search"
-    } else {
-        ""
-    };
-    let filter_hint = if !app.docs.search_open {
-        "  ←/→=filter  Space=toggle"
-    } else {
-        ""
-    };
-    let tab_hint = format!("{search_hint}{filter_hint}  ↑/↓=scroll");
+    // The key list that used to sit beside the page tabs (`←/→=filter
+    // Space=toggle ↑/↓=scroll`) is in the footer, which lists exactly these.
+    // Repeating it here spent the row twice and put keys somewhere the design
+    // system says keys do not go.
     render_page_tabs(f, tab_area, app);
-    render_tab_hint(f, tab_area, app, tab_hint);
+    render_tab_hint(f, tab_area, app, String::new());
 
     let meta_lines = vec![operand_legend(app), separator_line(area.width)];
     f.render_widget(Paragraph::new(meta_lines), meta_area);
@@ -324,7 +320,7 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App) {
                     .fg(theme::LABEL_Y)
                     .bg(Color::Rgb(30, 30, 50)),
             ),
-            Span::styled("  Esc=close", style::label().bg(Color::Rgb(30, 30, 50))),
+            Span::styled("  [esc] close", style::label().bg(Color::Rgb(30, 30, 50))),
         ]);
         f.render_widget(Paragraph::new(bar_line).style(bar_style), search_area);
 

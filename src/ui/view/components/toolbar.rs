@@ -24,19 +24,44 @@
 use ratatui::prelude::*;
 
 use crate::ui::theme;
-use crate::ui::view::components::controls::{ControlState, control_style};
+use crate::ui::view::components::controls::{
+    ControlState, control_style, control_surface_style,
+};
 
 /// Default columns of blank space rendered between adjacent cells.
 const GAP: u16 = 3;
 
-/// One control in a [`Toolbar`]: an optional dim `label` plus a pre-styled
-/// `value` span. `start..end` are columns relative to the toolbar origin, filled
-/// in as the cell is pushed.
+/// A clickable control, drawn as a filled pill: one padding column each side so
+/// the surface reads as a shape rather than as a highlight on the word.
+///
+/// The surface is what separates a control from a readout. `fmt hex` and
+/// `word 0x293` used to be typographically identical, which is the same
+/// ambiguity that lost the help button in the chrome. A disabled control keeps
+/// its columns but drops the surface — see
+/// [`control_surface_style`](super::controls::control_surface_style).
+pub(crate) fn pill(text: &str, state: ControlState, color: Color) -> Span<'static> {
+    if state == ControlState::Disabled {
+        // No surface, but the same width, so the row does not reflow when a
+        // control goes inert under the cursor.
+        return Span::styled(
+            format!(" {text} "),
+            control_style(state, color, theme::IDLE),
+        );
+    }
+    Span::styled(format!(" {text} "), control_surface_style(state, color))
+}
+
+/// One cell in a [`Toolbar`]: an optional dim `label` plus pre-styled `value`
+/// spans. `start..end` are columns relative to the toolbar origin, filled in as
+/// the cell is pushed.
 struct Cell<Id> {
-    id: Id,
+    /// `None` for a decorative cell — a status badge, a group separator, a
+    /// readout. Those occupy columns (so the clickable cells after them land in
+    /// the right place) but can never be the answer to [`Toolbar::hit`].
+    id: Option<Id>,
     /// `Some` for a `label value` pair, `None` for a bare value/action word.
     label: Option<String>,
-    value: Span<'static>,
+    value: Vec<Span<'static>>,
     /// When `false` the cell is transparent to clicks (a `Disabled` control).
     enabled: bool,
     start: u16,
@@ -84,8 +109,19 @@ impl<Id: Copy> Toolbar<Id> {
         state: ControlState,
         color: Color,
     ) -> &mut Self {
-        let span = Span::styled(value.to_string(), control_style(state, color, theme::IDLE));
-        self.span(id, Some(label), span, state != ControlState::Disabled)
+        // Label and pill go in as one cell rather than using the `label` slot,
+        // because that slot inserts its own separating space — and the pill
+        // already carries a padding column. Two spaces between the word and the
+        // control it names reads as a gap, not as a pair.
+        self.push(
+            Some(id),
+            None,
+            vec![
+                Span::styled(label.to_string(), Style::default().fg(theme::IDLE)),
+                pill(value, state, color),
+            ],
+            state != ControlState::Disabled,
+        )
     }
 
     /// A value-only control with no label (subtab / scope word): dim when
@@ -117,8 +153,7 @@ impl<Id: Copy> Toolbar<Id> {
             ControlState::Hovered => ControlState::Hovered,
             _ => ControlState::Selected,
         };
-        let span = Span::styled(text.to_string(), control_style(lit, color, theme::IDLE));
-        self.span(id, None, span, state != ControlState::Disabled)
+        self.span(id, None, pill(text, lit, color), state != ControlState::Disabled)
     }
 
     /// The low-level escape hatch: push a pre-styled `value` span (e.g. an
@@ -132,14 +167,59 @@ impl<Id: Copy> Toolbar<Id> {
         value: Span<'static>,
         enabled: bool,
     ) -> &mut Self {
+        self.push(Some(id), label, vec![value], enabled)
+    }
+
+    /// A cell that occupies columns but can never be clicked — a status badge, a
+    /// readout, a group separator.
+    ///
+    /// Decorative cells still go through the toolbar rather than being spliced
+    /// into the rendered line by hand, because the clickable cells *after* them
+    /// need their columns counted. Splicing is what makes a hit-test drift one
+    /// control to the left the day someone widens a badge.
+    pub(crate) fn text(&mut self, spans: Vec<Span<'static>>) -> &mut Self {
+        self.push(None, None, spans, false)
+    }
+
+    /// A dim `│` marking a group boundary, with the usual gap either side.
+    /// Grouping is what turns a queue of same-weight controls into something
+    /// scannable.
+    pub(crate) fn separator(&mut self) -> &mut Self {
+        self.text(vec![Span::styled(
+            "│",
+            Style::default().fg(theme::BORDER),
+        )])
+    }
+
+    /// Advance the cursor so the next cell starts at `col` (relative to the
+    /// toolbar origin). No-op if the toolbar is already past `col`.
+    ///
+    /// Lets a group be parked at a fixed column so it stops sliding as the text
+    /// to its left changes width.
+    pub(crate) fn pad_to(&mut self, col: u16) -> &mut Self {
+        if col > self.cursor {
+            let gap = col - self.cursor - self.gap.min(col - self.cursor);
+            self.text(vec![Span::raw(" ".repeat(gap as usize))]);
+        }
+        self
+    }
+
+    fn push(
+        &mut self,
+        id: Option<Id>,
+        label: Option<&str>,
+        value: Vec<Span<'static>>,
+        enabled: bool,
+    ) -> &mut Self {
         if !self.cells.is_empty() {
             self.cursor += self.gap;
         }
         // label + one space + value, or just the value.
         let label = label.map(str::to_string);
+        let value_w: u16 = value.iter().map(|s| s.width() as u16).sum();
         let width = match &label {
-            Some(l) => l.chars().count() as u16 + 1 + value.width() as u16,
-            None => value.width() as u16,
+            Some(l) => l.chars().count() as u16 + 1 + value_w,
+            None => value_w,
         };
         let start = self.cursor;
         self.cursor += width;
@@ -168,7 +248,7 @@ impl<Id: Copy> Toolbar<Id> {
                 ));
                 spans.push(Span::raw(" "));
             }
-            spans.push(cell.value.clone());
+            spans.extend(cell.value.iter().cloned());
         }
         spans
     }
@@ -180,17 +260,20 @@ impl<Id: Copy> Toolbar<Id> {
     }
 
     /// Per-cell `(id, start, end)` columns relative to the origin — used to align
-    /// a second row under each cell (the tab bar's underline).
+    /// a second row under each cell (the tab bar's underline). Decorative cells
+    /// have nothing to align to, so they are skipped.
     pub(crate) fn cells(&self) -> impl Iterator<Item = (Id, u16, u16)> + '_ {
-        self.cells.iter().map(|c| (c.id, c.start, c.end))
+        self.cells
+            .iter()
+            .filter_map(|c| c.id.map(|id| (id, c.start, c.end)))
     }
 
     /// The control under `col`, where `origin` is the toolbar's first rendered
-    /// column. Disabled cells are transparent to clicks.
+    /// column. Disabled and decorative cells are transparent to clicks.
     pub(crate) fn hit(&self, col: u16, origin: u16) -> Option<Id> {
         self.cells
             .iter()
             .find(|c| c.enabled && col >= origin + c.start && col < origin + c.end)
-            .map(|c| c.id)
+            .and_then(|c| c.id)
     }
 }

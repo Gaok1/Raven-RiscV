@@ -76,25 +76,29 @@ pub fn debug_run_controls_dump(opts: DebugRunControlsOptions) -> String {
     let status = run_status_area(&app, root);
     let line = run_controls_plain_text(&app);
 
-    let mut ranges: Vec<(u16, u16, RunButton)> = Vec::new();
-    let mut cur: Option<(u16, RunButton)> = None;
-    for col in status.x..status.x + status.width {
-        match (cur, run_status_hit(&app, status, col)) {
-            (None, Some(btn)) => cur = Some((col, btn)),
-            (Some((start, prev)), Some(btn)) if prev == btn => cur = Some((start, prev)),
-            (Some((start, prev)), Some(btn)) => {
-                ranges.push((start, col, prev));
-                cur = Some((col, btn));
+    // The command bar is two rows — transport on the first, display toggles on
+    // the second — so the sweep has to walk both.
+    let mut ranges: Vec<(u16, u16, u16, RunButton)> = Vec::new();
+    for row in [status.y, status.y + 1] {
+        let mut cur: Option<(u16, RunButton)> = None;
+        for col in status.x..status.x + status.width {
+            match (cur, run_status_hit(&app, status, row, col)) {
+                (None, Some(btn)) => cur = Some((col, btn)),
+                (Some((start, prev)), Some(btn)) if prev == btn => cur = Some((start, prev)),
+                (Some((start, prev)), Some(btn)) => {
+                    ranges.push((row, start, col, prev));
+                    cur = Some((col, btn));
+                }
+                (Some((start, prev)), None) => {
+                    ranges.push((row, start, col, prev));
+                    cur = None;
+                }
+                (None, None) => {}
             }
-            (Some((start, prev)), None) => {
-                ranges.push((start, col, prev));
-                cur = None;
-            }
-            (None, None) => {}
         }
-    }
-    if let Some((start, btn)) = cur {
-        ranges.push((start, status.x + status.width, btn));
+        if let Some((start, btn)) = cur {
+            ranges.push((row, start, status.x + status.width, btn));
+        }
     }
 
     let mut out = String::new();
@@ -116,7 +120,7 @@ pub fn debug_run_controls_dump(opts: DebugRunControlsOptions) -> String {
     out.push_str("line:\n");
     out.push_str(&line);
     out.push_str("\n\nhitboxes:\n");
-    for (start, end, btn) in ranges {
+    for (row, start, end, btn) in ranges {
         let name = match btn {
             RunButton::Core => "Core",
             RunButton::View => "View",
@@ -129,10 +133,16 @@ pub fn debug_run_controls_dump(opts: DebugRunControlsOptions) -> String {
             RunButton::Speed => "Speed",
             RunButton::ExecCount => "ExecCount",
             RunButton::InstrType => "InstrType",
+            RunButton::Run => "Run",
+            RunButton::Pause => "Pause",
+            RunButton::Step => "Step",
             RunButton::Stepback => "Stepback",
             RunButton::Reset => "Reset",
         };
-        out.push_str(&format!("  {:<10} cols [{}..{})\n", name, start, end));
+        out.push_str(&format!(
+            "  {:<10} row {} cols [{}..{})\n",
+            name, row, start, end
+        ));
     }
     out
 }

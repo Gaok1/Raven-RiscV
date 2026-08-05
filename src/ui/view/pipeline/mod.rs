@@ -22,13 +22,15 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
         app.run
             .pipeline_view()
             .config_row_rects
-            .set([(0, 0, 0); crate::ui::pipeline::PipelineBypassConfig::CONFIG_ROWS]);
+            .set([(0, 0, 0); crate::ui::pipeline::PIPELINE_CONFIG_ROWS]);
     }
 
-    // Layout: merged header (2) | content (min)
+    // Layout: merged header | content. Three rows, not two: the controls and the
+    // metrics under them are separate groups, and the blank between them is what
+    // says so — the same rhythm every other tab's header now keeps.
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .constraints([Constraint::Length(PIPELINE_HEADER_H), Constraint::Min(0)])
         .split(area);
 
     // The tab is only offered to a backend that declares a pipeline, so `None`
@@ -244,17 +246,17 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineIns
             Style::default().fg(theme::PAUSED),
         ));
     } else {
-        spans.push(Span::styled(
-            "   s=step · p=run · r=reset · f=speed",
-            Style::default()
-                .fg(theme::LABEL)
-                .add_modifier(Modifier::DIM),
-        ));
+        // The footer already lists these keys; a second copy here spent a row
+        // repeating itself and put keys somewhere the design system reserves for
+        // state.
     }
     let line2 = Line::from(spans);
 
-    f.render_widget(Paragraph::new(vec![line1, line2]), area);
+    f.render_widget(Paragraph::new(vec![line1, Line::raw(""), line2]), area);
 }
+
+/// Rows the Pipeline header occupies: controls, gap, metrics.
+pub(crate) const PIPELINE_HEADER_H: u16 = 3;
 
 /// Below this width header line 2 shows only the stall total, without the
 /// per-type breakdown.
