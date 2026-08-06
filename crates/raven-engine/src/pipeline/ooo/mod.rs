@@ -13,9 +13,11 @@
 
 pub mod registers;
 pub mod scoreboard;
+pub mod tomasulo;
 
 #[cfg(test)]
 mod tests;
 
 pub use registers::{Operands, Producer, RegisterTable};
 pub use scoreboard::{SCOREBOARD_PHASES, ScoreboardPipeline};
+pub use tomasulo::{TOMASULO_PHASES, TomasuloPipeline};

@@ -95,6 +95,9 @@ struct Unit<P> {
     /// Kept beside the op so the bookkeeping survives the moment the op is out
     /// with the backend being executed.
     class: PipelineInstructionClass,
+    /// Whether this instruction can change the next fetch address, which is the
+    /// question issue is really asking — not what class it belongs to.
+    redirects: bool,
     op: Option<PipelineOp<P>>,
     phase: Phase,
     /// Registers read and written, in the table's index space.
@@ -109,6 +112,7 @@ impl<P> Unit<P> {
         Self {
             spec,
             class: PipelineInstructionClass::Unknown,
+            redirects: false,
             op: None,
             phase: Phase::Wait,
             sources: Vec::new(),
@@ -438,6 +442,7 @@ impl<P> ScoreboardPipeline<P> {
         };
         let unit = &mut self.units[index];
         let class = unit.class;
+        let redirects = unit.redirects;
         let destinations = std::mem::take(&mut unit.destinations);
         unit.clear();
 
@@ -447,34 +452,43 @@ impl<P> ScoreboardPipeline<P> {
         for waiting in &mut self.units {
             waiting.pending.retain(|(_, producer)| *producer != index);
         }
-        match class {
-            PipelineInstructionClass::Branch | PipelineInstructionClass::Jump => {
-                self.branch_pending = false;
-            }
-            PipelineInstructionClass::System => self.system_pending = false,
-            _ => {}
+        if redirects {
+            self.branch_pending = false;
+        }
+        if class == PipelineInstructionClass::System {
+            self.system_pending = false;
         }
     }
 
+    /// Spend a cycle in every running unit. `cycles_left` counts the cycles
+    /// still owed *after* the current one, so a unit leaves at the end of the
+    /// cycle in which it runs out rather than one later.
     fn tick_execute(&mut self) {
         for unit in &mut self.units {
             if unit.phase != Phase::Execute {
                 continue;
             }
             let Some(op) = unit.op.as_mut() else { continue };
-            op.cycles_left = op.cycles_left.saturating_sub(1);
             if op.cycles_left == 0 {
                 unit.phase = Phase::Write;
+            } else {
+                op.cycles_left -= 1;
             }
         }
     }
 
     /// Hand every unit that read its operands last cycle to its own hardware.
+    ///
+    /// The cycle it starts in is one of the cycles it runs for, so single-cycle
+    /// work is finished at the end of it.
     fn start_ready(&mut self) {
         for unit in &mut self.units {
-            if unit.phase == Phase::Read && unit.busy() {
-                unit.phase = Phase::Execute;
+            if unit.phase != Phase::Read {
+                continue;
             }
+            let Some(op) = unit.op.as_mut() else { continue };
+            op.cycles_left = op.cycles_left.saturating_sub(1);
+            unit.phase = Phase::Execute;
         }
     }
 
@@ -574,16 +588,16 @@ impl<P> ScoreboardPipeline<P> {
         for register in &operands.destinations {
             self.registers.claim(*register, index);
         }
-        match op.class {
-            PipelineInstructionClass::Branch | PipelineInstructionClass::Jump => {
-                self.branch_pending = true;
-            }
-            PipelineInstructionClass::System => self.system_pending = true,
-            _ => {}
+        if op.branch {
+            self.branch_pending = true;
+        }
+        if op.class == PipelineInstructionClass::System {
+            self.system_pending = true;
         }
 
         let unit = &mut self.units[index];
         unit.class = op.class;
+        unit.redirects = op.branch;
         unit.phase = Phase::Wait;
         unit.sources = operands.sources;
         unit.destinations = operands.destinations;
