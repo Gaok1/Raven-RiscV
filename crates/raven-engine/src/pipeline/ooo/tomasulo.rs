@@ -41,13 +41,15 @@
 use std::collections::VecDeque;
 
 use crate::capability::{
-    PipelineControl, PipelineEdge, PipelineEdgeKind, PipelineHazardKind, PipelineInspect,
-    PipelineInstructionClass, PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus,
-    PipelineTimelineCell, PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind,
-    PipelineTraceView, PipelineUnitView,
+    PipelineBufferView, PipelineControl, PipelineDynamicInspect, PipelineEdge, PipelineEdgeKind,
+    PipelineEntryPhase, PipelineHazardKind, PipelineInspect, PipelineInstructionClass,
+    PipelineOperandView, PipelineRenameView, PipelineSlotView, PipelineStageRole,
+    PipelineStageView, PipelineStationView, PipelineStats, PipelineStatus, PipelineTimelineCell,
+    PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
+    PipelineUnitView,
 };
 
-use super::super::config::{PipelineMode, PipelineShape, StageSpec, UnitSpec};
+use super::super::config::{BranchPredict, PipelineMode, PipelineShape, StageSpec, UnitSpec};
 use super::super::op::PipelineOp;
 use super::super::predictor::TwoBitPredictor;
 use super::super::timeline::{Cell, Timeline, Trace};
@@ -94,6 +96,7 @@ enum Phase {
 }
 
 /// One reorder-buffer entry: an instruction and its place in program order.
+#[derive(Clone)]
 struct Entry<P> {
     /// A tag, never reused, so a station can name a producer that has since
     /// left without any chance of naming a different instruction instead.
@@ -112,6 +115,7 @@ struct Entry<P> {
 /// It exists from issue until the result is broadcast — not until commit. That
 /// is the point of having both: the buffer keeps program order long after the
 /// hardware that did the work has moved on.
+#[derive(Clone)]
 struct Station {
     /// Which declared unit this station belongs to.
     unit: usize,
@@ -127,6 +131,7 @@ struct Station {
 /// Driven exactly like [`ScalarPipeline`](super::super::ScalarPipeline) and
 /// [`ScoreboardPipeline`](super::ScoreboardPipeline), so an architecture
 /// changes model without changing its loop.
+#[derive(Clone)]
 pub struct TomasuloPipeline<P> {
     shape: PipelineShape,
     specs: &'static [UnitSpec],
@@ -136,6 +141,12 @@ pub struct TomasuloPipeline<P> {
     /// issue up — happens either way.
     capacity: Vec<usize>,
     stations: Vec<Station>,
+    /// One name per station slot, occupied or not — `"DIV0"`, `"DIV1"`. Built
+    /// with the bank so a host can borrow them instead of being handed freshly
+    /// formatted strings every frame, and because a free slot has to be drawn
+    /// to be understood: an empty bank beside a stalling front end is what a
+    /// structural hazard looks like.
+    station_labels: Vec<String>,
     /// Program order, front = oldest.
     buffer: VecDeque<Entry<P>>,
     buffer_size: usize,
@@ -171,11 +182,13 @@ impl<P> TomasuloPipeline<P> {
             shape.units
         };
         let capacity: Vec<usize> = specs.iter().map(|spec| spec.capacity.max(1)).collect();
+        let station_labels = labels(specs, &capacity);
         Self {
             shape,
             specs,
             capacity,
             stations: Vec::new(),
+            station_labels,
             buffer: VecDeque::new(),
             buffer_size: DEFAULT_BUFFER,
             registers: RegisterTable::new(),
@@ -213,6 +226,28 @@ impl<P> TomasuloPipeline<P> {
         self.fetch_pc
     }
 
+    /// The oldest instruction still in the buffer or the queue — where a
+    /// different engine would pick this program up. Everything here is
+    /// speculative or merely finished; none of it has committed.
+    pub fn resume_pc(&self) -> u64 {
+        self.buffer
+            .iter()
+            .filter_map(|entry| entry.op.as_ref())
+            .chain(self.queue.iter())
+            .min_by_key(|op| op.seq)
+            .map_or(self.fetch_pc, |op| op.address)
+    }
+
+    /// Change how the front end guesses, forgetting what the old policy learnt.
+    pub fn set_predict(&mut self, predict: BranchPredict) -> bool {
+        if self.shape.predict == predict {
+            return false;
+        }
+        self.shape.predict = predict;
+        self.predictor.clear();
+        true
+    }
+
     /// How many instructions may be in flight at once. Shrinking it until issue
     /// starts backing up is how a user finds out what the buffer was buying.
     pub fn set_buffer_size(&mut self, entries: usize) {
@@ -229,6 +264,7 @@ impl<P> TomasuloPipeline<P> {
             return false;
         };
         *slot = stations.max(1);
+        self.station_labels = labels(self.specs, &self.capacity);
         true
     }
 
@@ -356,6 +392,7 @@ impl<P> TomasuloPipeline<P> {
 
         self.timeline.open(
             op.row,
+            op.address,
             op.disassembly.clone(),
             op.class,
             op.atomic,
@@ -808,6 +845,15 @@ fn mnemonic<P>(op: &PipelineOp<P>) -> &str {
     op.disassembly.split_whitespace().next().unwrap_or("?")
 }
 
+/// One name per station slot of the whole bank, in unit order.
+fn labels(specs: &'static [UnitSpec], capacity: &[usize]) -> Vec<String> {
+    specs
+        .iter()
+        .zip(capacity)
+        .flat_map(|(spec, slots)| (0..*slots).map(move |slot| format!("{}{slot}", spec.name)))
+        .collect()
+}
+
 // ── What a host sees ─────────────────────────────────────────────────────────
 
 impl<P> PipelineControl for TomasuloPipeline<P> {
@@ -821,6 +867,136 @@ impl<P> PipelineControl for TomasuloPipeline<P> {
 
     fn redirect(&mut self, address: u64) {
         self.reset_to(address, true);
+    }
+}
+
+impl<P> TomasuloPipeline<P> {
+    /// Which unit a flat station row belongs to, and which slot of it.
+    fn station_slot(&self, index: usize) -> Option<(usize, usize)> {
+        let mut seen = 0;
+        for (unit, slots) in self.capacity.iter().enumerate() {
+            if index < seen + slots {
+                return Some((unit, index - seen));
+            }
+            seen += slots;
+        }
+        None
+    }
+
+    /// The station occupying slot `slot` of `unit`, oldest first — so a bank
+    /// fills from the top and a row keeps meaning something between cycles.
+    fn station_at(&self, unit: usize, slot: usize) -> Option<&Station> {
+        let mut mine: Vec<&Station> = self
+            .stations
+            .iter()
+            .filter(|station| station.unit == unit)
+            .collect();
+        mine.sort_by_key(|station| station.entry);
+        mine.get(slot).copied()
+    }
+}
+
+/// The four structures the model runs on.
+///
+/// Between them they answer the questions the design exists to raise: what is
+/// each waiting instruction still missing (a station's operands), what order
+/// will the machine change in (the buffer), and which register currently names
+/// a producer rather than a value (the alias table).
+impl<P> PipelineDynamicInspect for TomasuloPipeline<P> {
+    fn station_count(&self) -> usize {
+        self.capacity.iter().sum()
+    }
+
+    fn station(&self, index: usize) -> Option<PipelineStationView<'_>> {
+        let (unit, slot) = self.station_slot(index)?;
+        let name = self.station_labels.get(index).map_or("?", String::as_str);
+        let Some(station) = self.station_at(unit, slot) else {
+            return Some(PipelineStationView {
+                name,
+                unit,
+                tag: None,
+                slot: None,
+                phase: PipelineEntryPhase::Free,
+                operands: [None, None],
+            });
+        };
+        let entry = self.entry(station.entry)?;
+        let op = entry.op.as_ref();
+        // An operand's name comes from the instruction, and whether it is still
+        // owed comes from the station. The pair is the rename made readable:
+        // "waiting for #7" rather than "waiting".
+        let operand = |index: usize| {
+            let register = op?.sources.get(index)?;
+            Some(PipelineOperandView {
+                register,
+                producer: self.registers.get(register).and_then(|register| {
+                    station
+                        .pending
+                        .iter()
+                        .find(|(waiting, _)| *waiting == register)
+                        .map(|(_, tag)| *tag as u64)
+                }),
+            })
+        };
+        Some(PipelineStationView {
+            name,
+            unit,
+            tag: Some(station.entry as u64),
+            slot: op.map(PipelineOp::view),
+            phase: match entry.phase {
+                Phase::Issued if !station.pending.is_empty() => PipelineEntryPhase::Waiting,
+                Phase::Issued => PipelineEntryPhase::Armed,
+                Phase::Executing => PipelineEntryPhase::Executing,
+                Phase::Done | Phase::Ready => PipelineEntryPhase::Finished,
+            },
+            operands: [operand(0), operand(1)],
+        })
+    }
+
+    fn buffer_count(&self) -> usize {
+        self.buffer.len()
+    }
+
+    fn buffer_capacity(&self) -> usize {
+        self.buffer_size
+    }
+
+    fn buffer_entry(&self, index: usize) -> Option<PipelineBufferView<'_>> {
+        let entry = self.buffer.get(index)?;
+        Some(PipelineBufferView {
+            tag: entry.id as u64,
+            slot: entry.op.as_ref().map(PipelineOp::view)?,
+            phase: match entry.phase {
+                Phase::Issued => PipelineEntryPhase::Waiting,
+                Phase::Executing => PipelineEntryPhase::Executing,
+                Phase::Done => PipelineEntryPhase::Finished,
+                // Only the head may commit, however long anyone else has been
+                // ready — which is the whole reason the buffer is there.
+                Phase::Ready if index == 0 => PipelineEntryPhase::Committing,
+                Phase::Ready => PipelineEntryPhase::Finished,
+            },
+            speculative: entry.speculative,
+        })
+    }
+
+    fn rename_count(&self) -> usize {
+        self.registers.outstanding().count()
+    }
+
+    fn rename(&self, index: usize) -> Option<PipelineRenameView<'_>> {
+        let (register, producer) = self.registers.outstanding().nth(index)?;
+        Some(PipelineRenameView {
+            register: self.registers.name(register),
+            producer: producer as u64,
+        })
+    }
+
+    fn queue_count(&self) -> usize {
+        self.queue.len()
+    }
+
+    fn queued(&self, index: usize) -> Option<PipelineSlotView<'_>> {
+        self.queue.get(index).map(PipelineOp::view)
     }
 }
 

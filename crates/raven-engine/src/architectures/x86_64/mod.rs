@@ -12,7 +12,8 @@ pub use elf::image_from_elf;
 
 use crate::capability::{
     BitRole, InstructionBitField, InstructionCodec, InstructionField, InstructionInfo,
-    MemoryInspect, MemoryRegion, PipelineControl, PipelineInspect, PipelineTuning, RegisterBank, RegisterFile,
+    MemoryInspect, MemoryRegion, PipelineControl, PipelineDynamicInspect, PipelineInspect,
+    PipelineTuning, RegisterBank, RegisterFile,
     RegisterId,
 };
 use crate::{
@@ -2250,9 +2251,11 @@ impl Machine for X86_64Machine {
     fn reset(&mut self) {
         let image = self.image.clone();
         let size = self.memory.len();
-        let pipeline_enabled = self.pipeline.enabled();
-        *self = Self::new(size);
-        self.pipeline.set_enabled(pipeline_enabled);
+        // The tuned datapath outlives the run; see the note on `Toy16::reset`.
+        let mut fresh = Self::new(size);
+        std::mem::swap(&mut fresh.pipeline, &mut self.pipeline);
+        *self = fresh;
+        self.pipeline.reset(self.rip);
         if let Some(image) = image
             && let Err(error) = self.load(&image)
         {
@@ -2740,6 +2743,10 @@ impl Machine for X86_64Machine {
 
     fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
         Some(&mut self.pipeline)
+    }
+
+    fn pipeline_dynamic(&self) -> Option<&dyn PipelineDynamicInspect> {
+        self.pipeline.dynamic()
     }
 }
 

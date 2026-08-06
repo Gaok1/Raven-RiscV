@@ -57,6 +57,13 @@ pub fn pipeline_tick(
         return None;
     }
 
+    // A dynamically scheduled model replaces everything below: it schedules,
+    // and RV32 executes an instruction in one piece when it says so. The stage
+    // machinery here is the in-order datapath and only that.
+    if state.ooo.is_some() {
+        return super::ooo::ooo_tick(state, cpu, mem, cpi, console);
+    }
+
     state.last_cycle_cache_only = false;
     state.hazard_msgs.clear();
     state.hazard_traces.clear();
@@ -131,7 +138,7 @@ pub fn pipeline_tick(
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// **ID stage** — Decode instruction word and read register operands.
-fn stage_id(slot: &mut PipeSlot, cpu: &Cpu) {
+pub(super) fn stage_id(slot: &mut PipeSlot, cpu: &Cpu) {
     if slot.is_bubble || slot.class == InstrClass::Unknown {
         return;
     }
@@ -223,7 +230,7 @@ fn stage_id(slot: &mut PipeSlot, cpu: &Cpu) {
 
 /// **EX stage** — ALU compute, branch resolve, address calculation.
 /// Pure computation — no side effects on cpu/mem.
-fn stage_ex(slot: &mut PipeSlot) {
+pub(super) fn stage_ex(slot: &mut PipeSlot) {
     if slot.is_bubble {
         return;
     }
@@ -997,7 +1004,7 @@ pub(crate) struct MemTrap {
 /// Returns `(latency, faulted, trap)`.  `faulted=true` means a fatal bus
 /// error; `trap=Some(_)` means a page fault that should be routed through
 /// the trap handler. The two are mutually exclusive at any given call.
-fn stage_mem(
+pub(super) fn stage_mem(
     slot: &mut PipeSlot,
     cpu: &mut Cpu,
     mem: &mut CacheController,
@@ -1608,7 +1615,7 @@ fn classify_mem_err(
 /// drain every stage, push cause/tval/mepc via the same helper used in
 /// sequential mode, and resume fetch at `mtvec`. With no installed handler
 /// (`mtvec == 0`), the pipeline is marked faulted instead.
-fn pipeline_enter_trap(
+pub(super) fn pipeline_enter_trap(
     state: &mut PipelineSimState,
     cpu: &mut Cpu,
     mem: &mut CacheController,
@@ -1646,7 +1653,7 @@ fn pipeline_enter_trap(
 // ── Commit (WB) ──────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
-fn commit_wb(
+pub(super) fn commit_wb(
     state: &mut PipelineSimState,
     cpu: &mut Cpu,
     mem: &mut CacheController,
@@ -3454,9 +3461,9 @@ fn insert_stall(
 /// - `None`: normal empty cycle or successful fetch.
 /// - `Some(Err(msg))`: fatal bus / decode error, stop the pipeline.
 /// - `Some(Ok(trap))`: instruction-fetch page fault — route via `mtvec`.
-type FetchError = Option<Result<MemTrap, String>>;
+pub(super) type FetchError = Option<Result<MemTrap, String>>;
 
-fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, FetchError) {
+pub(super) fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, FetchError) {
     let (result, latency) = mem.fetch32_timed_no_count(pc);
     match result {
         Ok(word) => {

@@ -26,11 +26,16 @@ use crate::capability::{
     PipelineTimelineState, PipelineTraceKind,
 };
 
-use super::config::PipelineShape;
+use super::config::{BranchPredict, PipelineMode, PipelineShape};
 use super::op::PipelineOp;
 use super::predictor::TwoBitPredictor;
 use super::timeline::{Cell, Timeline, Trace};
 
+/// `Clone` because a host may journal its machine for step-back, and the
+/// datapath is part of what a cycle changed. Cloning one is cloning what is in
+/// flight — bounded by the stage count and the history cap, never by how long
+/// the program has run.
+#[derive(Clone)]
 pub struct ScalarPipeline<P> {
     pub(super) shape: PipelineShape,
     pub(super) stages: Vec<Option<PipelineOp<P>>>,
@@ -100,6 +105,74 @@ impl<P> ScalarPipeline<P> {
 
     pub fn fetch_pc(&self) -> u64 {
         self.fetch_pc
+    }
+
+    /// Where a fresh engine would start fetching to carry this program on: the
+    /// oldest instruction that has not executed yet.
+    ///
+    /// Nothing in the datapath has changed the machine — a backend executes an
+    /// instruction in one piece when it retires — so everything in flight is
+    /// timing state, and refetching from here loses no work. That is what makes
+    /// swapping the execution model mid-run a thing that can be done at all.
+    pub fn resume_pc(&self) -> u64 {
+        self.stages
+            .iter()
+            .flatten()
+            .chain(self.units.iter().flatten())
+            .min_by_key(|op| op.seq)
+            .map_or(self.fetch_pc, |op| op.address)
+    }
+
+    /// How many instructions a declared unit may hold at once.
+    pub fn set_capacity(&mut self, unit: usize, instances: usize) -> bool {
+        let Some(slot) = self.unit_capacity.get_mut(unit) else {
+            return false;
+        };
+        *slot = instances.max(1);
+        true
+    }
+
+    /// Change how the front end guesses, forgetting what the old policy learnt.
+    pub fn set_predict(&mut self, predict: BranchPredict) -> bool {
+        if self.shape.predict == predict {
+            return false;
+        }
+        self.shape.predict = predict;
+        self.predictor.clear();
+        true
+    }
+
+    /// Change how execute schedules work.
+    ///
+    /// Only the in-order pair is reachable from here: this engine keeps program
+    /// order by construction, and offering a user a scoreboard it cannot run
+    /// would be a lie. [`PipelineEngine`](super::PipelineEngine) is what swaps
+    /// between engines.
+    pub fn set_mode(&mut self, mode: PipelineMode) -> bool {
+        if mode.is_out_of_order() || self.shape.mode == mode {
+            return false;
+        }
+        self.shape.mode = mode;
+        // Work already dispatched belongs to the model that was running;
+        // leaving it there would let it retire under rules it was never issued
+        // under.
+        self.drain_units();
+        true
+    }
+
+    /// Send everything sitting in a unit back into the datapath, in order.
+    fn drain_units(&mut self) {
+        let mut waiting: Vec<PipelineOp<P>> =
+            self.units.iter_mut().flat_map(std::mem::take).collect();
+        waiting.sort_by_key(|op| op.seq);
+        let landing = self.shape.execute_stage();
+        for op in waiting {
+            if self.stages[landing].is_none() {
+                self.stages[landing] = Some(op);
+            }
+            // Anything that will not fit was speculative work the model change
+            // invalidated; dropping it is the same as a flush.
+        }
     }
 
     /// The instruction occupying `stage`, for a backend that has to look inside
@@ -253,6 +326,7 @@ impl<P> ScalarPipeline<P> {
 
         self.timeline.open(
             op.row,
+            op.address,
             op.disassembly.clone(),
             op.class,
             op.atomic,

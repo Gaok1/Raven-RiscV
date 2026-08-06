@@ -280,11 +280,147 @@ pub struct PipelineTimelineCell<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct PipelineTimelineRow<'a> {
+    /// Which instruction this row is. A host that lights a row up from
+    /// somewhere else on screen needs to know which one it is looking at, and
+    /// the disassembly cannot say — a loop body repeats it every trip.
+    pub address: u64,
     pub disassembly: &'a str,
     pub class: PipelineInstructionClass,
     pub first_cycle: u64,
     pub cells: usize,
     pub atomic: bool,
+}
+
+// ── Dynamically scheduled internals ──────────────────────────────────────────
+//
+// A model that leaves program order has no stages worth drawing: the state that
+// matters moved into the structures that replaced them. These describe those
+// structures in terms no model owns — a place to wait, a place to keep order, a
+// register that is owed a value — so one screen serves a scoreboard and a
+// reorder buffer without knowing which it is looking at.
+
+/// How far an in-flight instruction has got, where "got" is not a stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineEntryPhase {
+    /// The slot exists and holds nothing. Reported rather than skipped: a bank
+    /// of free stations beside a stalling front end is what a structural
+    /// hazard looks like, and an empty list would hide it.
+    Free,
+    /// Issued, still missing an operand.
+    Waiting,
+    /// Every operand in hand; not started.
+    Armed,
+    Executing,
+    /// Done. The result exists but is not architectural yet.
+    Finished,
+    /// At the head, allowed to change the machine.
+    Committing,
+}
+
+impl PipelineEntryPhase {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Free => "free",
+            Self::Waiting => "wait",
+            Self::Armed => "armed",
+            Self::Executing => "exec",
+            Self::Finished => "ready",
+            Self::Committing => "commit",
+        }
+    }
+
+    pub fn occupied(self) -> bool {
+        self != Self::Free
+    }
+}
+
+/// One source operand, and whether it is a value or a promise.
+///
+/// This is renaming made visible: an operand either has what it needs, or it
+/// names the entry that owes it. Nothing else about the model has to be
+/// explained for that distinction to be readable.
+#[derive(Clone, Copy, Debug)]
+pub struct PipelineOperandView<'a> {
+    pub register: &'a str,
+    /// The entry that will produce it, or `None` when the value is available.
+    pub producer: Option<u64>,
+}
+
+/// One place an instruction waits for its operands and its hardware.
+///
+/// A reservation station in a renaming model; a functional unit's scoreboard
+/// row in one without. Both answer the same question — what is sitting here,
+/// and what is it still missing.
+#[derive(Clone, Copy, Debug)]
+pub struct PipelineStationView<'a> {
+    /// What to call this slot, such as `"DIV0"`.
+    pub name: &'a str,
+    /// The declared unit it belongs to, indexing [`PipelineInspect::unit`].
+    pub unit: usize,
+    /// Identity for cross-referencing the other tables: the buffer entry this
+    /// station produces for, or the station's own tag in a model with no
+    /// buffer. `None` only when the slot is free.
+    pub tag: Option<u64>,
+    pub slot: Option<PipelineSlotView<'a>>,
+    pub phase: PipelineEntryPhase,
+    /// Sources, in the order the instruction names them. Two, like
+    /// [`PipelineSlotView::sources`] — the third operand of an x86 `div` is
+    /// implicit and not what these tables are for.
+    pub operands: [Option<PipelineOperandView<'a>>; 2],
+}
+
+/// One entry of the structure that keeps program order.
+#[derive(Clone, Copy, Debug)]
+pub struct PipelineBufferView<'a> {
+    pub tag: u64,
+    pub slot: PipelineSlotView<'a>,
+    pub phase: PipelineEntryPhase,
+    /// Issued while a branch ahead of it was still a guess.
+    pub speculative: bool,
+}
+
+/// One register whose next value is owed by something in flight.
+#[derive(Clone, Copy, Debug)]
+pub struct PipelineRenameView<'a> {
+    pub register: &'a str,
+    /// The entry that owes it — a buffer tag, or a unit in a model without one.
+    pub producer: u64,
+}
+
+/// The structures a dynamically scheduled model runs on.
+///
+/// Offered only by a model that has them: a host asks for this and draws the
+/// workbench when it gets one, or draws stages when it does not. Everything is
+/// borrowed one item at a time, like [`PipelineInspect`], because these tables
+/// change every cycle and a host redraws them every frame.
+pub trait PipelineDynamicInspect {
+    /// Places to wait, free ones included, in a stable order.
+    fn station_count(&self) -> usize;
+    fn station(&self, index: usize) -> Option<PipelineStationView<'_>>;
+
+    /// Program order, oldest first. Empty in a model that keeps no buffer —
+    /// which is itself the thing worth seeing about a scoreboard.
+    fn buffer_count(&self) -> usize {
+        0
+    }
+
+    /// How many entries the buffer holds when full.
+    fn buffer_capacity(&self) -> usize {
+        0
+    }
+
+    fn buffer_entry(&self, _index: usize) -> Option<PipelineBufferView<'_>> {
+        None
+    }
+
+    /// Registers with a producer in flight — the alias table, or the
+    /// scoreboard's register-result table. Same question, two names.
+    fn rename_count(&self) -> usize;
+    fn rename(&self, index: usize) -> Option<PipelineRenameView<'_>>;
+
+    /// Fetched and not yet issued, in program order.
+    fn queue_count(&self) -> usize;
+    fn queued(&self, index: usize) -> Option<PipelineSlotView<'_>>;
 }
 
 /// Read-only pipeline data for stage, hazard, utilization, and history panes.

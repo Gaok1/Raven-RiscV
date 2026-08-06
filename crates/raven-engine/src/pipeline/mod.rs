@@ -44,8 +44,15 @@
 //! [`PipelineShape`] and the same [`PipelineOp`]s, and a backend drives them
 //! with the same cycle, so a declared datapath can be run under any of the
 //! models without the backend knowing which one it is.
+//!
+//! Which is what [`PipelineEngine`] is for: a backend holds one of those rather
+//! than a particular engine, the shape's [`PipelineMode`] picks which engine it
+//! builds, and a user changing that setting swaps the engine underneath a
+//! running program. All four models are then reachable from the same settings
+//! screen, and a backend that never mentions any of them gets all four.
 
 mod config;
+mod engine;
 mod inspect;
 mod op;
 mod predictor;
@@ -61,6 +68,7 @@ pub use config::{
     BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineShape,
     PipelineTiming, RISC_FIVE_STAGE, StageSpec, UnitSpec,
 };
+pub use engine::PipelineEngine;
 pub use ooo::{ScoreboardPipeline, TomasuloPipeline};
 pub use op::PipelineOp;
 pub use predictor::TwoBitPredictor;

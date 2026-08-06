@@ -87,6 +87,12 @@ pub trait JournaledPipeline {
     fn control(&mut self) -> Option<&mut dyn crate::capability::PipelineControl> {
         None
     }
+
+    /// The structures a dynamically scheduled model runs on, when the model
+    /// running has any. `None` under an in-order one.
+    fn dynamic(&self) -> Option<&dyn crate::capability::PipelineDynamicInspect> {
+        None
+    }
 }
 
 /// The "no pipeline" instantiation: a [`Machine`] that only ever single-steps

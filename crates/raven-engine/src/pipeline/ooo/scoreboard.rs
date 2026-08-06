@@ -41,10 +41,11 @@
 use std::collections::VecDeque;
 
 use crate::capability::{
-    PipelineControl, PipelineEdge, PipelineEdgeKind, PipelineHazardKind, PipelineInspect,
-    PipelineInstructionClass, PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus,
-    PipelineTimelineCell, PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind,
-    PipelineTraceView, PipelineUnitView,
+    PipelineControl, PipelineDynamicInspect, PipelineEdge, PipelineEdgeKind, PipelineEntryPhase,
+    PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineOperandView,
+    PipelineRenameView, PipelineSlotView, PipelineStageRole, PipelineStageView,
+    PipelineStationView, PipelineStats, PipelineStatus, PipelineTimelineCell, PipelineTimelineRow,
+    PipelineTimelineState, PipelineTraceKind, PipelineTraceView, PipelineUnitView,
 };
 
 use super::super::config::{PipelineMode, PipelineShape, StageSpec, UnitSpec};
@@ -89,9 +90,13 @@ enum Phase {
 }
 
 /// One functional-unit instance and the scoreboard row that tracks it.
+#[derive(Clone)]
 struct Unit<P> {
     /// Which declared [`UnitSpec`] this is an instance of.
     spec: usize,
+    /// What to call this instance — `"DIV0"`. Built once and kept so a host can
+    /// borrow it rather than being handed a freshly formatted string per frame.
+    label: String,
     /// Kept beside the op so the bookkeeping survives the moment the op is out
     /// with the backend being executed.
     class: PipelineInstructionClass,
@@ -108,9 +113,10 @@ struct Unit<P> {
 }
 
 impl<P> Unit<P> {
-    fn idle(spec: usize) -> Self {
+    fn idle(spec: usize, label: String) -> Self {
         Self {
             spec,
+            label,
             class: PipelineInstructionClass::Unknown,
             redirects: false,
             op: None,
@@ -130,7 +136,7 @@ impl<P> Unit<P> {
     }
 
     fn clear(&mut self) {
-        *self = Self::idle(self.spec);
+        *self = Self::idle(self.spec, std::mem::take(&mut self.label));
     }
 }
 
@@ -139,6 +145,7 @@ impl<P> Unit<P> {
 /// Driven exactly like [`ScalarPipeline`](super::super::ScalarPipeline) — the
 /// backend takes what `start_cycle` hands back, executes it, and calls
 /// `advance` — so an architecture switches models without changing its loop.
+#[derive(Clone)]
 pub struct ScoreboardPipeline<P> {
     shape: PipelineShape,
     /// The units the shape declares, or the generic one when it declares none.
@@ -219,6 +226,18 @@ impl<P> ScoreboardPipeline<P> {
 
     pub fn fetch_pc(&self) -> u64 {
         self.fetch_pc
+    }
+
+    /// The oldest instruction that has not written its result yet — where a
+    /// different engine would pick this program up. Nothing in a unit has
+    /// changed the machine, so refetching from here loses no work.
+    pub fn resume_pc(&self) -> u64 {
+        self.units
+            .iter()
+            .filter_map(|unit| unit.op.as_ref())
+            .chain(self.queue.iter())
+            .min_by_key(|op| op.seq)
+            .map_or(self.fetch_pc, |op| op.address)
     }
 
     /// How many instances of a declared unit exist. Raising it is the
@@ -338,6 +357,7 @@ impl<P> ScoreboardPipeline<P> {
 
         self.timeline.open(
             op.row,
+            op.address,
             op.disassembly.clone(),
             op.class,
             op.atomic,
@@ -608,11 +628,16 @@ impl<P> ScoreboardPipeline<P> {
     // ── Internals ────────────────────────────────────────────────────────────
 
     fn build_units(&mut self) {
+        let specs = self.specs;
         self.units = self
             .capacity
             .iter()
             .enumerate()
-            .flat_map(|(spec, instances)| (0..*instances).map(move |_| Unit::idle(spec)))
+            .flat_map(|(spec, instances)| {
+                (0..*instances).map(move |instance| {
+                    Unit::idle(spec, format!("{}{instance}", specs[spec].name))
+                })
+            })
             .collect();
     }
 
@@ -820,6 +845,73 @@ impl<P> PipelineControl for ScoreboardPipeline<P> {
 
     fn redirect(&mut self, address: u64) {
         self.reset_to(address, true);
+    }
+}
+
+/// The scoreboard's own tables.
+///
+/// There is no reorder buffer here, and the empty one a host draws is the
+/// point: results reach the register file in whatever order the units finish,
+/// which is exactly why this model cannot promise a precise exception. The
+/// station rows are the classic scoreboard — what is in each unit, what it
+/// still owes, and who owes it.
+impl<P> PipelineDynamicInspect for ScoreboardPipeline<P> {
+    fn station_count(&self) -> usize {
+        self.units.len()
+    }
+
+    fn station(&self, index: usize) -> Option<PipelineStationView<'_>> {
+        let unit = self.units.get(index)?;
+        let operand = |slot: usize| {
+            let register = *unit.sources.get(slot)?;
+            Some(PipelineOperandView {
+                register: self.registers.name(register),
+                producer: unit
+                    .pending
+                    .iter()
+                    .find(|(waiting, _)| *waiting == register)
+                    .map(|(_, producer)| *producer as u64),
+            })
+        };
+        Some(PipelineStationView {
+            name: &unit.label,
+            unit: unit.spec,
+            // A unit is its own name here: with nothing renamed, the thing that
+            // owes a register *is* the hardware computing it.
+            tag: unit.busy().then_some(index as u64),
+            slot: unit.op.as_ref().map(PipelineOp::view),
+            phase: match (unit.busy(), unit.phase) {
+                (false, _) => PipelineEntryPhase::Free,
+                (_, Phase::Wait) if !unit.pending.is_empty() => PipelineEntryPhase::Waiting,
+                (_, Phase::Wait | Phase::Read) => PipelineEntryPhase::Armed,
+                (_, Phase::Execute) => PipelineEntryPhase::Executing,
+                (_, Phase::Write) => PipelineEntryPhase::Finished,
+            },
+            operands: [operand(0), operand(1)],
+        })
+    }
+
+    fn rename_count(&self) -> usize {
+        self.registers.outstanding().count()
+    }
+
+    /// The register-result table: which unit will write each register. A
+    /// scoreboard has room for exactly one writer per register, and that limit
+    /// is the WAW stall it pays at issue.
+    fn rename(&self, index: usize) -> Option<PipelineRenameView<'_>> {
+        let (register, producer) = self.registers.outstanding().nth(index)?;
+        Some(PipelineRenameView {
+            register: self.registers.name(register),
+            producer: producer as u64,
+        })
+    }
+
+    fn queue_count(&self) -> usize {
+        self.queue.len()
+    }
+
+    fn queued(&self, index: usize) -> Option<PipelineSlotView<'_>> {
+        self.queue.get(index).map(PipelineOp::view)
     }
 }
 

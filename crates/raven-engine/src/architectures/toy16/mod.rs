@@ -6,10 +6,11 @@
 use crate::cache_model::TeachingCache;
 use crate::capability::{
     BitRole, CacheHierarchy, InstructionBitField, InstructionCodec, InstructionField,
-    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineInspect, PipelineTuning,
+    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineDynamicInspect,
+    PipelineInspect, PipelineTuning,
     PipelineInstructionClass, RegisterBank, RegisterFile, RegisterId,
 };
-use crate::pipeline::{PipelineOp, PipelineShape, ScalarPipeline, StageSpec, UnitSpec};
+use crate::pipeline::{PipelineEngine, PipelineOp, PipelineShape, StageSpec, UnitSpec};
 use crate::{
     Architecture, ArchitectureCapabilities, ArchitectureDescriptor, Assembler, CycleResult,
     Diagnostic, Endianness, InstructionDoc, Machine, MachineError, MachineSnapshot, MachineState,
@@ -315,7 +316,7 @@ pub struct Toy16Machine {
     stdout: Vec<u8>,
     fault: Option<String>,
     cache: TeachingCache,
-    pipeline: ScalarPipeline<u16>,
+    pipeline: PipelineEngine<u16>,
 }
 
 /// Toy16's whole datapath declaration: the classic five stages, two bytes per
@@ -367,7 +368,7 @@ impl Toy16Machine {
             stdout: vec![],
             fault: None,
             cache: TeachingCache::new(16, 256, 8, 2),
-            pipeline: ScalarPipeline::new(pipeline_shape(), 0),
+            pipeline: PipelineEngine::new(pipeline_shape(), 0),
         }
     }
 
@@ -509,9 +510,15 @@ impl Machine for Toy16Machine {
     fn reset(&mut self) {
         let image = self.image.clone();
         let size = self.memory.len();
-        let pipeline_enabled = self.pipeline.enabled();
-        *self = Self::new(size);
-        self.pipeline.set_enabled(pipeline_enabled);
+        // The datapath the user tuned is not part of the program being
+        // reloaded. Rebuilding the machine from defaults used to throw away
+        // every stage, unit and latency setting on every reset, carrying only
+        // `enabled` across — so carry the whole pipeline instead and clear just
+        // its execution state, which is the part a run does own.
+        let mut fresh = Self::new(size);
+        std::mem::swap(&mut fresh.pipeline, &mut self.pipeline);
+        *self = fresh;
+        self.pipeline.reset(u64::from(self.pc));
         if let Some(image) = image
             && let Err(error) = self.load(&image)
         {
@@ -705,6 +712,10 @@ impl Machine for Toy16Machine {
 
     fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
         Some(&mut self.pipeline)
+    }
+
+    fn pipeline_dynamic(&self) -> Option<&dyn PipelineDynamicInspect> {
+        self.pipeline.dynamic()
     }
 }
 

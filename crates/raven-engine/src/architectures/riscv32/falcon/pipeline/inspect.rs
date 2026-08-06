@@ -205,6 +205,7 @@ impl PipelineInspect for PipelineSimState {
     fn timeline_row(&self, index: usize) -> Option<PipelineTimelineRow<'_>> {
         let row = self.gantt.get(index)?;
         Some(PipelineTimelineRow {
+            address: u64::from(row.pc),
             disassembly: &row.disasm,
             class: row.class,
             first_cycle: row.first_cycle,

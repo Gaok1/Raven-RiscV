@@ -5,21 +5,71 @@
 //! stalls appear, move the branch predictor and watch the flushes move, add a
 //! divider and watch two divides overlap. That used to exist for exactly one
 //! architecture.
+//!
+//! All three engines answer the same screen, and the first row is the same
+//! question for each of them — which model is scheduling the instructions. What
+//! follows it differs, because the models differ: a scoreboard has no bypass
+//! network to toggle and no predictor to choose, and a reorder buffer has a
+//! depth that nothing else has. A row a model cannot honour is a row it does
+//! not offer.
 
-use crate::capability::{PipelineSettingValue, PipelineSettingView, PipelineTuning};
+use crate::capability::{
+    PipelineInspect, PipelineSettingValue, PipelineSettingView, PipelineTuning,
+};
 
-use super::config::{BranchPredict, BranchResolve, PipelineMode};
-use super::op::PipelineOp;
+use super::config::{BranchPredict, BranchResolve, PipelineMode, PipelineTiming};
+use super::ooo::{ScoreboardPipeline, TomasuloPipeline};
 use super::scalar::ScalarPipeline;
 
-const FORWARDING: &str = "FORWARDING";
 const CONTROL: &str = "CONTROL";
+const FORWARDING: &str = "FORWARDING";
 const UNITS: &str = "FUNCTIONAL UNITS";
+const STATIONS: &str = "RESERVATION STATIONS";
+const BUFFER: &str = "REORDER BUFFER";
 const LATENCY: &str = "CYCLES PER INSTRUCTION";
 
-/// The rows that are the same for every shape. Unit capacities and latencies
-/// follow, and there are as many of those as the shape declares.
-const FIXED: usize = 7;
+/// Where the model row sits. The same index in every engine, so a host's cursor
+/// is still on the model when the model change swaps the engine underneath it.
+pub(super) const MODE_ROW: usize = 0;
+
+/// Rows before the units in the in-order engine: the model, where branches
+/// resolve, how they are guessed, and the four bypasses.
+const SCALAR_FIXED: usize = 7;
+/// A scoreboard offers the model and nothing else: it has no bypasses, and a
+/// predictor would hide the cost the model exists to show.
+const SCOREBOARD_FIXED: usize = 1;
+/// The model, the predictor it does use, and how deep the buffer is.
+const TOMASULO_FIXED: usize = 3;
+
+const MODE_SUMMARY: &str = "Which model schedules instructions once they leave \
+                            decode. The first two keep program order from end \
+                            to end; the scoreboard and Tomasulo run work the \
+                            moment its operands are ready. Those two are \
+                            engines of their own, so switching to or from them \
+                            refetches from the oldest instruction still in \
+                            flight and starts the counters over.";
+
+const RESOLVE_SUMMARY: &str = "Where a branch's real direction becomes known. \
+                               The later it resolves, the more speculative work \
+                               a wrong guess throws away.";
+
+const PREDICT_SUMMARY: &str = "How the front end guesses a branch before it \
+                               resolves. A wrong guess costs a flush; the \
+                               two-bit predictor learns from the branches it \
+                               has already seen.";
+
+const CAPACITY_SUMMARY: &str = "How many instructions of this class can be in \
+                                flight at once. Beyond that a later one waits \
+                                until the unit frees up.";
+
+const STATION_SUMMARY: &str = "How many instructions of this class can be \
+                               waiting or running at once. A station and the \
+                               hardware it feeds are one resource here, so this \
+                               is both how many may queue and how many may run.";
+
+const BUFFER_SUMMARY: &str = "How many instructions may be in flight at once. \
+                              Shrinking it until issue starts backing up is how \
+                              you find out what the buffer was buying.";
 
 const BYPASS_SUMMARY: [&str; 4] = [
     "Forwards a result the moment execute computes it, straight back into the \
@@ -34,174 +84,78 @@ const BYPASS_SUMMARY: [&str; 4] = [
      does not have to wait for the store to reach memory.",
 ];
 
-const CONTROL_SUMMARY: [&str; 3] = [
-    "Serialized keeps one instruction in execute at a time. Parallel units \
-     dispatch each class to its own unit, so a long divide and a short add are \
-     in flight together — still retiring in program order.",
-    "Where a branch's real direction becomes known. The later it resolves, the \
-     more speculative work a wrong guess throws away.",
-    "How the front end guesses a branch before it resolves. A wrong guess costs \
-     a flush; the two-bit predictor learns from the branches it has already \
-     seen.",
-];
+// ── Rows every model shares ──────────────────────────────────────────────────
 
-impl<P> ScalarPipeline<P> {
-    fn bypass_flag(&mut self, index: usize) -> &mut bool {
-        let bypass = &mut self.shape.bypass;
-        match index {
-            0 => &mut bypass.ex_to_ex,
-            1 => &mut bypass.mem_to_ex,
-            2 => &mut bypass.wb_to_id,
-            _ => &mut bypass.store_to_load,
-        }
-    }
-
-    /// Unit rows come after the fixed ones, then the latency table.
-    fn unit_row(&self, index: usize) -> Option<usize> {
-        index
-            .checked_sub(FIXED)
-            .filter(|unit| *unit < self.shape.units.len())
-    }
-
-    fn latency_row(&self, index: usize) -> Option<usize> {
-        index
-            .checked_sub(FIXED + self.shape.units.len())
-            .filter(|field| *field < super::PipelineTiming::field_names().len())
+/// The model row, which every engine reports and only
+/// [`PipelineEngine`](super::PipelineEngine) can change.
+pub(super) fn mode_setting(mode: PipelineMode) -> PipelineSettingView<'static> {
+    PipelineSettingView {
+        group: CONTROL,
+        name: "Execution",
+        value: PipelineSettingValue::Choice(mode.label()),
+        summary: MODE_SUMMARY,
     }
 }
 
-impl<P> PipelineTuning for ScalarPipeline<P> {
-    fn setting_count(&self) -> usize {
-        FIXED + self.shape.units.len() + super::PipelineTiming::field_names().len()
-    }
+/// Unit rows come after an engine's own controls, then the latency table. Every
+/// model has both, so the arithmetic is written once.
+fn unit_row(index: usize, fixed: usize, units: usize) -> Option<usize> {
+    index.checked_sub(fixed).filter(|unit| *unit < units)
+}
 
-    fn setting(&self, index: usize) -> Option<PipelineSettingView<'_>> {
-        if index < 4 {
-            let bypass = self.shape.bypass;
-            let on = [
-                bypass.ex_to_ex,
-                bypass.mem_to_ex,
-                bypass.wb_to_id,
-                bypass.store_to_load,
-            ][index];
-            return Some(PipelineSettingView {
-                group: FORWARDING,
-                name: ["EX→EX", "MEM→EX", "WB→ID", "Store→Load"][index],
-                value: PipelineSettingValue::Toggle(on),
-                summary: BYPASS_SUMMARY[index],
-            });
-        }
-        if index < FIXED {
-            let control = index - 4;
-            let value = match control {
-                0 => self.shape.mode.label(),
-                1 => self.shape.resolve.label(),
-                _ => self.shape.predict.label(),
-            };
-            return Some(PipelineSettingView {
-                group: CONTROL,
-                name: ["Execution", "Branch resolve", "Branch predict"][control],
-                value: PipelineSettingValue::Choice(value),
-                summary: CONTROL_SUMMARY[control],
-            });
-        }
-        if let Some(unit) = self.unit_row(index) {
-            let spec = &self.shape.units[unit];
-            return Some(PipelineSettingView {
-                group: UNITS,
-                name: spec.name,
-                value: PipelineSettingValue::Number(spec.capacity.max(1) as u64),
-                summary: "How many instructions of this class can be in flight \
-                          at once. Beyond that a later one waits in execute \
-                          until the unit frees up.",
-            });
-        }
-        let field = self.latency_row(index)?;
+fn latency_row(index: usize, fixed: usize, units: usize) -> Option<usize> {
+    index
+        .checked_sub(fixed + units)
+        .filter(|field| *field < PipelineTiming::field_names().len())
+}
+
+fn row_count(fixed: usize, units: usize) -> usize {
+    fixed + units + PipelineTiming::field_names().len()
+}
+
+fn capacity_setting<'a>(
+    name: &'a str,
+    capacity: usize,
+    group: &'static str,
+    summary: &'static str,
+) -> PipelineSettingView<'a> {
+    PipelineSettingView {
+        group,
+        name,
+        value: PipelineSettingValue::Number(capacity.max(1) as u64),
+        summary,
+    }
+}
+
+fn latency_setting(timing: &PipelineTiming, field: usize) -> PipelineSettingView<'static> {
+    PipelineSettingView {
+        group: LATENCY,
+        name: PipelineTiming::field_names()[field],
+        value: PipelineSettingValue::Number(timing.get(field)),
+        summary: PipelineTiming::descriptions()[field],
+    }
+}
+
+/// Nudge a `Number` row by one, through whatever `set_number` the engine has.
+/// Rows of any other kind are their engine's own business.
+fn step_number(tuning: &mut impl PipelineTuning, index: usize, forward: bool) -> bool {
+    let current = match tuning.setting(index) {
         Some(PipelineSettingView {
-            group: LATENCY,
-            name: super::PipelineTiming::field_names()[field],
-            value: PipelineSettingValue::Number(self.shape.timing.get(field)),
-            summary: super::PipelineTiming::descriptions()[field],
-        })
-    }
-
-    fn adjust(&mut self, index: usize, forward: bool) -> bool {
-        if index < 4 {
-            let flag = self.bypass_flag(index);
-            *flag = !*flag;
-            return true;
-        }
-        if index < FIXED {
-            match index - 4 {
-                0 => {
-                    // Only the in-order modes: this is the in-order engine, and
-                    // offering a user a scoreboard it cannot run would be a lie.
-                    // The dynamic-scheduling models are their own engine.
-                    self.shape.mode = step(
-                        self.shape.mode,
-                        &[PipelineMode::SingleCycle, PipelineMode::FunctionalUnits],
-                        forward,
-                    );
-                    // Work already dispatched belongs to the model that was
-                    // running; leaving it there would let it retire under rules
-                    // it was never issued under.
-                    self.drain_units();
-                }
-                1 => {
-                    self.shape.resolve = step(
-                        self.shape.resolve,
-                        &[BranchResolve::Id, BranchResolve::Ex, BranchResolve::Mem],
-                        forward,
-                    );
-                }
-                _ => {
-                    self.shape.predict = step(
-                        self.shape.predict,
-                        &[
-                            BranchPredict::NotTaken,
-                            BranchPredict::Taken,
-                            BranchPredict::Btfnt,
-                            BranchPredict::TwoBit,
-                        ],
-                        forward,
-                    );
-                    self.predictor.clear();
-                }
-            }
-            return true;
-        }
-        let current = match self.setting(index) {
-            Some(PipelineSettingView {
-                value: PipelineSettingValue::Number(value),
-                ..
-            }) => value,
-            _ => return false,
-        };
-        let next = if forward {
-            current.saturating_add(1)
-        } else {
-            current.saturating_sub(1)
-        };
-        self.set_number(index, next)
-    }
-
-    fn set_number(&mut self, index: usize, value: u64) -> bool {
-        if let Some(unit) = self.unit_row(index) {
-            // Capacity lives in the shape's static declaration, so a change has
-            // to go somewhere the shape owns.
-            self.unit_capacity[unit] = value.max(1) as usize;
-            return true;
-        }
-        let Some(field) = self.latency_row(index) else {
-            return false;
-        };
-        self.shape.timing.set(field, value);
-        true
-    }
+            value: PipelineSettingValue::Number(value),
+            ..
+        }) => value,
+        _ => return false,
+    };
+    let next = if forward {
+        current.saturating_add(1)
+    } else {
+        current.saturating_sub(1)
+    };
+    tuning.set_number(index, next)
 }
 
 /// The next (or previous) entry in a fixed cycle of policies.
-fn step<T: Copy + PartialEq>(current: T, all: &[T], forward: bool) -> T {
+pub(super) fn step<T: Copy + PartialEq>(current: T, all: &[T], forward: bool) -> T {
     let at = all.iter().position(|value| *value == current).unwrap_or(0);
     let next = if forward {
         (at + 1) % all.len()
@@ -211,24 +165,261 @@ fn step<T: Copy + PartialEq>(current: T, all: &[T], forward: bool) -> T {
     all[next]
 }
 
+// ── In order ─────────────────────────────────────────────────────────────────
+
 impl<P> ScalarPipeline<P> {
-    /// Send everything sitting in a unit back into the datapath, in order.
-    ///
-    /// Used when the execution model changes underneath in-flight work.
-    fn drain_units(&mut self) {
-        let mut waiting: Vec<PipelineOp<P>> = self
-            .units
-            .iter_mut()
-            .flat_map(std::mem::take)
-            .collect();
-        waiting.sort_by_key(|op| op.seq);
-        let landing = self.shape.execute_stage();
-        for op in waiting {
-            if self.stages[landing].is_none() {
-                self.stages[landing] = Some(op);
-            }
-            // Anything that will not fit was speculative work the model change
-            // invalidated; dropping it is the same as a flush.
+    fn bypass_flag(&mut self, index: usize) -> &mut bool {
+        let bypass = &mut self.shape.bypass;
+        match index - 3 {
+            0 => &mut bypass.ex_to_ex,
+            1 => &mut bypass.mem_to_ex,
+            2 => &mut bypass.wb_to_id,
+            _ => &mut bypass.store_to_load,
         }
+    }
+}
+
+impl<P> PipelineTuning for ScalarPipeline<P> {
+    fn setting_count(&self) -> usize {
+        row_count(SCALAR_FIXED, self.shape().units.len())
+    }
+
+    fn setting(&self, index: usize) -> Option<PipelineSettingView<'_>> {
+        let shape = self.shape();
+        if index < 3 {
+            return Some(match index {
+                MODE_ROW => mode_setting(shape.mode),
+                1 => PipelineSettingView {
+                    group: CONTROL,
+                    name: "Branch resolve",
+                    value: PipelineSettingValue::Choice(shape.resolve.label()),
+                    summary: RESOLVE_SUMMARY,
+                },
+                _ => PipelineSettingView {
+                    group: CONTROL,
+                    name: "Branch predict",
+                    value: PipelineSettingValue::Choice(shape.predict.label()),
+                    summary: PREDICT_SUMMARY,
+                },
+            });
+        }
+        if index < SCALAR_FIXED {
+            let bypass = shape.bypass;
+            let path = index - 3;
+            let on = [
+                bypass.ex_to_ex,
+                bypass.mem_to_ex,
+                bypass.wb_to_id,
+                bypass.store_to_load,
+            ][path];
+            return Some(PipelineSettingView {
+                group: FORWARDING,
+                name: ["EX→EX", "MEM→EX", "WB→ID", "Store→Load"][path],
+                value: PipelineSettingValue::Toggle(on),
+                summary: BYPASS_SUMMARY[path],
+            });
+        }
+        let units = shape.units.len();
+        if let Some(unit) = unit_row(index, SCALAR_FIXED, units) {
+            let view = self.unit(unit)?;
+            return Some(capacity_setting(
+                view.name,
+                view.capacity,
+                UNITS,
+                CAPACITY_SUMMARY,
+            ));
+        }
+        let field = latency_row(index, SCALAR_FIXED, units)?;
+        Some(latency_setting(&shape.timing, field))
+    }
+
+    fn adjust(&mut self, index: usize, forward: bool) -> bool {
+        match index {
+            // Only the in-order pair: this is the in-order engine, and the
+            // dynamically scheduled models are engines of their own.
+            MODE_ROW => self.set_mode(step(
+                self.shape().mode,
+                &[PipelineMode::SingleCycle, PipelineMode::FunctionalUnits],
+                forward,
+            )),
+            1 => {
+                let resolve = step(
+                    self.shape().resolve,
+                    &[BranchResolve::Id, BranchResolve::Ex, BranchResolve::Mem],
+                    forward,
+                );
+                self.shape_mut().resolve = resolve;
+                true
+            }
+            2 => {
+                let predict = step(
+                    self.shape().predict,
+                    &[
+                        BranchPredict::NotTaken,
+                        BranchPredict::Taken,
+                        BranchPredict::Btfnt,
+                        BranchPredict::TwoBit,
+                    ],
+                    forward,
+                );
+                self.set_predict(predict)
+            }
+            _ if index < SCALAR_FIXED => {
+                let flag = self.bypass_flag(index);
+                *flag = !*flag;
+                true
+            }
+            _ => step_number(self, index, forward),
+        }
+    }
+
+    fn set_number(&mut self, index: usize, value: u64) -> bool {
+        let units = self.shape().units.len();
+        if let Some(unit) = unit_row(index, SCALAR_FIXED, units) {
+            // Capacity lives in the shape's static declaration, so a change has
+            // to go somewhere the shape owns.
+            return self.set_capacity(unit, value.max(1) as usize);
+        }
+        let Some(field) = latency_row(index, SCALAR_FIXED, units) else {
+            return false;
+        };
+        self.shape_mut().timing.set(field, value);
+        true
+    }
+}
+
+// ── Scoreboard ───────────────────────────────────────────────────────────────
+
+impl<P> PipelineTuning for ScoreboardPipeline<P> {
+    fn setting_count(&self) -> usize {
+        row_count(SCOREBOARD_FIXED, self.unit_count())
+    }
+
+    /// The model, then one row per unit, then the latency table.
+    ///
+    /// No forwarding section and no predictor, and both absences are the model
+    /// rather than an omission: a scoreboard has no bypass network, and it does
+    /// not speculate, so a row for either would be a control that does nothing.
+    fn setting(&self, index: usize) -> Option<PipelineSettingView<'_>> {
+        if index == MODE_ROW {
+            return Some(mode_setting(self.shape().mode));
+        }
+        let units = self.unit_count();
+        if let Some(unit) = unit_row(index, SCOREBOARD_FIXED, units) {
+            let view = self.unit(unit)?;
+            return Some(capacity_setting(
+                view.name,
+                view.capacity,
+                UNITS,
+                CAPACITY_SUMMARY,
+            ));
+        }
+        let field = latency_row(index, SCOREBOARD_FIXED, units)?;
+        Some(latency_setting(&self.shape().timing, field))
+    }
+
+    fn adjust(&mut self, index: usize, forward: bool) -> bool {
+        // Becoming another model means becoming another engine, which is
+        // something only whoever owns this one can do.
+        if index == MODE_ROW {
+            return false;
+        }
+        step_number(self, index, forward)
+    }
+
+    fn set_number(&mut self, index: usize, value: u64) -> bool {
+        let units = self.unit_count();
+        if let Some(unit) = unit_row(index, SCOREBOARD_FIXED, units) {
+            return self.set_capacity(unit, value.max(1) as usize);
+        }
+        let Some(field) = latency_row(index, SCOREBOARD_FIXED, units) else {
+            return false;
+        };
+        self.shape_mut().timing.set(field, value);
+        true
+    }
+}
+
+// ── Tomasulo ─────────────────────────────────────────────────────────────────
+
+impl<P> PipelineTuning for TomasuloPipeline<P> {
+    fn setting_count(&self) -> usize {
+        row_count(TOMASULO_FIXED, self.unit_count())
+    }
+
+    /// The model, the predictor, the buffer depth, the stations, the latencies.
+    ///
+    /// No forwarding section here either, for the opposite reason: the common
+    /// data bus is not optional wiring, it is what the model *is*. Nor a branch
+    /// resolve row — a mispredict is discovered at commit and nowhere else.
+    fn setting(&self, index: usize) -> Option<PipelineSettingView<'_>> {
+        match index {
+            MODE_ROW => return Some(mode_setting(self.shape().mode)),
+            1 => {
+                return Some(PipelineSettingView {
+                    group: CONTROL,
+                    name: "Branch predict",
+                    value: PipelineSettingValue::Choice(self.shape().predict.label()),
+                    summary: PREDICT_SUMMARY,
+                });
+            }
+            2 => {
+                return Some(PipelineSettingView {
+                    group: BUFFER,
+                    name: "Entries",
+                    value: PipelineSettingValue::Number(self.buffer_size() as u64),
+                    summary: BUFFER_SUMMARY,
+                });
+            }
+            _ => {}
+        }
+        let units = self.unit_count();
+        if let Some(unit) = unit_row(index, TOMASULO_FIXED, units) {
+            let view = self.unit(unit)?;
+            return Some(capacity_setting(
+                view.name,
+                view.capacity,
+                STATIONS,
+                STATION_SUMMARY,
+            ));
+        }
+        let field = latency_row(index, TOMASULO_FIXED, units)?;
+        Some(latency_setting(&self.shape().timing, field))
+    }
+
+    fn adjust(&mut self, index: usize, forward: bool) -> bool {
+        match index {
+            MODE_ROW => false,
+            1 => {
+                let predict = step(
+                    self.shape().predict,
+                    &[
+                        BranchPredict::NotTaken,
+                        BranchPredict::Taken,
+                        BranchPredict::Btfnt,
+                        BranchPredict::TwoBit,
+                    ],
+                    forward,
+                );
+                self.set_predict(predict)
+            }
+            _ => step_number(self, index, forward),
+        }
+    }
+
+    fn set_number(&mut self, index: usize, value: u64) -> bool {
+        if index == 2 {
+            self.set_buffer_size(value.max(1) as usize);
+            return true;
+        }
+        let units = self.unit_count();
+        if let Some(unit) = unit_row(index, TOMASULO_FIXED, units) {
+            return self.set_capacity(unit, value.max(1) as usize);
+        }
+        let Some(field) = latency_row(index, TOMASULO_FIXED, units) else {
+            return false;
+        };
+        self.shape_mut().timing.set(field, value);
+        true
     }
 }

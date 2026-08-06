@@ -1,6 +1,6 @@
 use crate::capability::{
     AddressTranslation, CacheHierarchy, InstructionCodec, MemoryInspect, PipelineControl,
-    PipelineInspect, PipelineTuning, RegisterFile,
+    PipelineDynamicInspect, PipelineInspect, PipelineTuning, RegisterFile,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -444,6 +444,16 @@ pub trait Machine: Send + std::any::Any {
     }
 
     fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
+        None
+    }
+
+    /// The structures a dynamically scheduled model runs on — reservation
+    /// stations, the reorder buffer, the register alias table.
+    ///
+    /// `None` from a backend running an in-order model, which is what tells a
+    /// host to draw stages instead of a workbench. The answer changes with the
+    /// model, so a host asks every frame rather than once.
+    fn pipeline_dynamic(&self) -> Option<&dyn PipelineDynamicInspect> {
         None
     }
 

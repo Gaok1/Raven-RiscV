@@ -11,13 +11,15 @@
 use super::{BinaryOp, Decoded, DecodedOp, Operand, REG64, UnaryOp, WideningOp, reg_name};
 use crate::capability::{PipelineInstructionClass, PipelineStageRole};
 use crate::pipeline::{
-    PipelineBypassConfig, PipelineOp, PipelineShape, PipelineTiming, ScalarPipeline, StageSpec,
+    PipelineBypassConfig, PipelineEngine, PipelineOp, PipelineShape, PipelineTiming, StageSpec,
     UnitSpec,
 };
 
 /// An in-flight x86 instruction: the shared op, carrying this ISA's decode.
 pub(super) type X86Op = PipelineOp<Decoded>;
-pub(super) type X86Pipeline = ScalarPipeline<Decoded>;
+/// Whichever model the declared mode names — this backend drives all four the
+/// same way, so it never has to know which one it is running.
+pub(super) type X86Pipeline = PipelineEngine<Decoded>;
 
 static STAGES: [StageSpec; 6] = [
     StageSpec::new("IF", PipelineStageRole::Fetch),

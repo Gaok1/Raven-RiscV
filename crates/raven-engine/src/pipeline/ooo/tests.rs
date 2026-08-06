@@ -5,8 +5,9 @@
 //! a scoreboard that has not been separated from one.
 
 use crate::capability::{
-    PipelineControl, PipelineEdgeKind, PipelineHazardKind, PipelineInspect,
-    PipelineInstructionClass, PipelineStageRole, PipelineTimelineState, PipelineTraceKind,
+    PipelineControl, PipelineDynamicInspect, PipelineEdgeKind, PipelineEntryPhase,
+    PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineStageRole,
+    PipelineTimelineState, PipelineTraceKind,
 };
 
 use super::super::{
@@ -680,6 +681,148 @@ fn tomasulo_declares_a_common_data_bus_and_a_stage_to_commit_at() {
         "the one wire a scoreboard does not have: {bus:?}"
     );
     assert_eq!((bus[0].from, bus[0].to), (3, 1), "writeback back to issue");
+}
+
+// ── The structures a host draws ──────────────────────────────────────────────
+
+/// The tables are the screen: a model that leaves program order has no stages
+/// worth drawing, so what it reports about its own structures is the whole of
+/// what a user can see.
+#[test]
+fn the_reorder_buffer_reports_program_order_and_who_may_commit() {
+    let mut rob = tomasulo();
+    rob.set_capacity(0, 3);
+    let program = [
+        divide(0, "q", &["a"]),
+        alu(4, "s", &["b"]),
+        alu(8, "t", &["c"]),
+    ];
+    run_rob(&mut rob, &program, 4);
+    let view: &dyn PipelineDynamicInspect = &rob;
+
+    assert_eq!(view.buffer_capacity(), 16);
+    assert!(view.buffer_count() >= 2, "the machine ran ahead");
+    let entries: Vec<_> = (0..view.buffer_count())
+        .filter_map(|index| view.buffer_entry(index))
+        .collect();
+    assert_eq!(
+        entries.iter().map(|entry| entry.slot.address).collect::<Vec<_>>(),
+        (0..entries.len() as u64).map(|i| i * 4).collect::<Vec<_>>(),
+        "oldest first, whatever order the units finished in"
+    );
+    assert!(
+        entries
+            .iter()
+            .skip(1)
+            .all(|entry| entry.phase != PipelineEntryPhase::Committing),
+        "only the head may commit, however ready anyone else is"
+    );
+}
+
+/// The rename made visible: an operand either holds what it needs or names the
+/// entry that owes it. That distinction is the model, so it has to survive the
+/// trip to a host intact.
+#[test]
+fn a_station_says_which_entry_owes_it_each_operand() {
+    let mut rob = tomasulo();
+    rob.set_capacity(0, 2);
+    // The add reads what the divide is still computing.
+    run_rob(&mut rob, &[divide(0, "q", &["a"]), alu(4, "s", &["q"])], 3);
+    let view: &dyn PipelineDynamicInspect = &rob;
+
+    let stations: Vec<_> = (0..view.station_count())
+        .filter_map(|index| view.station(index))
+        .collect();
+    assert_eq!(
+        stations.len(),
+        UNITS.iter().map(|_| 1).sum::<usize>() + 1,
+        "every slot of the bank, free ones included"
+    );
+
+    let waiting = stations
+        .iter()
+        .find(|station| station.phase == PipelineEntryPhase::Waiting)
+        .expect("the add is issued and short an operand");
+    let operand = waiting.operands[0].expect("it reads exactly one register");
+    assert_eq!(operand.register, "q");
+    let owed = operand.producer.expect("and q is owed, not held");
+    assert!(
+        (0..view.buffer_count())
+            .filter_map(|index| view.buffer_entry(index))
+            .any(|entry| entry.tag == owed),
+        "the tag names an entry that is really in the buffer"
+    );
+
+    // The alias table says the same thing from the register's side.
+    let renamed: Vec<_> = (0..view.rename_count())
+        .filter_map(|index| view.rename(index))
+        .collect();
+    assert!(
+        renamed.iter().any(|rename| rename.register == "q"),
+        "q names a producer rather than a value: {:?}",
+        renamed.iter().map(|r| r.register).collect::<Vec<_>>()
+    );
+}
+
+/// A free station is drawn rather than omitted — a full bank beside a stalling
+/// front end is what a structural hazard looks like.
+#[test]
+fn a_bank_reports_its_free_slots_and_fills_them_as_work_issues() {
+    let mut rob = tomasulo();
+    assert!(rob.set_capacity(1, 2), "two dividers");
+    let view: &dyn PipelineDynamicInspect = &rob;
+    let free = |view: &dyn PipelineDynamicInspect| {
+        (0..view.station_count())
+            .filter_map(|index| view.station(index))
+            .filter(|station| station.phase == PipelineEntryPhase::Free)
+            .count()
+    };
+    let total = view.station_count();
+    assert_eq!(free(view), total, "nothing has issued yet");
+
+    run_rob(&mut rob, &[divide(0, "q", &["a"]), divide(4, "r", &["b"])], 4);
+    let view: &dyn PipelineDynamicInspect = &rob;
+    assert_eq!(view.station_count(), total, "the bank is the same size");
+    assert_eq!(free(view), total - 2, "and two of its slots are taken");
+    assert!(
+        (0..view.station_count())
+            .filter_map(|index| view.station(index))
+            .filter(|station| station.phase.occupied())
+            .all(|station| station.name.starts_with("DIV")),
+        "each slot is named for the unit it belongs to"
+    );
+}
+
+/// A scoreboard has no buffer, and the empty table is the model rather than a
+/// gap: results reach the register file in whatever order the units finish.
+#[test]
+fn a_scoreboard_reports_units_and_no_buffer_at_all() {
+    let mut board = scoreboard();
+    run(&mut board, &[divide(0, "q", &["a", "b"])], 3);
+    let view: &dyn PipelineDynamicInspect = &board;
+
+    assert_eq!(view.buffer_count(), 0);
+    assert_eq!(view.buffer_capacity(), 0);
+    assert!(view.buffer_entry(0).is_none());
+
+    let busy = (0..view.station_count())
+        .filter_map(|index| view.station(index))
+        .find(|station| station.phase.occupied())
+        .expect("the divide is in its unit");
+    assert_eq!(busy.name, "DIV0");
+    assert_eq!(
+        busy.operands
+            .iter()
+            .flatten()
+            .map(|operand| operand.register)
+            .collect::<Vec<_>>(),
+        ["a", "b"],
+        "both sources, named as the instruction named them"
+    );
+    // The register-result table: one unit owes q, and a second writer would be
+    // the WAW stall this model pays.
+    assert_eq!(view.rename_count(), 1);
+    assert_eq!(view.rename(0).unwrap().register, "q");
 }
 
 #[test]

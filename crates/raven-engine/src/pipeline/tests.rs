@@ -10,8 +10,8 @@ use crate::capability::{
 };
 
 use super::{
-    BranchPredict, PipelineBypassConfig, PipelineOp, PipelineShape, PipelineTiming,
-    RISC_FIVE_STAGE, ScalarPipeline, StageSpec, UnitSpec,
+    BranchPredict, PipelineBypassConfig, PipelineEngine, PipelineMode, PipelineOp, PipelineShape,
+    PipelineTiming, RISC_FIVE_STAGE, ScalarPipeline, StageSpec, UnitSpec,
 };
 
 static THREE_STAGE: [StageSpec; 3] = [
@@ -420,15 +420,20 @@ fn a_declared_shape_is_adjustable_through_the_capability() {
     );
     assert!(tuning.setting(usize::MAX).is_none());
 
+    // The first row is the model, for every engine, so a host's cursor is on
+    // the same question whichever one is running.
+    assert_eq!(pipeline.setting(0).unwrap().name, "Execution");
+
     // Turning a bypass off is the experiment the screen exists for, and it has
     // to reach the model, not just the display.
+    let ex_to_ex = 3;
     assert_eq!(
-        pipeline.setting(0).unwrap().value,
+        pipeline.setting(ex_to_ex).unwrap().value,
         PipelineSettingValue::Toggle(true)
     );
-    assert!(pipeline.adjust(0, true));
+    assert!(pipeline.adjust(ex_to_ex, true));
     assert_eq!(
-        pipeline.setting(0).unwrap().value,
+        pipeline.setting(ex_to_ex).unwrap().value,
         PipelineSettingValue::Toggle(false)
     );
     assert!(!pipeline.shape().bypass.ex_to_ex);
@@ -466,6 +471,225 @@ fn adjusting_a_unit_changes_how_much_work_it_takes() {
         0,
         "with two dividers the second divide no longer waits"
     );
+}
+
+// ── Choosing the engine ──────────────────────────────────────────────────────
+//
+// The models are three engines, and a user picks between them from one row of
+// one screen. What that costs — and what it must not cost — is what these
+// check.
+
+/// A machine with something worth watching in it: a divider that takes long
+/// enough for the models to disagree about what happens meanwhile.
+fn engine(mode: PipelineMode) -> PipelineEngine<()> {
+    let timing = PipelineTiming {
+        div: 5,
+        ..PipelineTiming::single_cycle()
+    };
+    let mut shape = shape().with_units(&UNITS).with_timing(timing);
+    shape.mode = mode;
+    PipelineEngine::new(shape, 0)
+}
+
+/// Six independent instructions, so nothing in these tests turns on a hazard.
+fn independent() -> Vec<PipelineOp<()>> {
+    ["p", "q", "r", "s", "t", "u"]
+        .iter()
+        .enumerate()
+        .map(|(index, name)| alu(index as u64 * 4, name, &[]))
+        .collect()
+}
+
+/// Drive whichever engine it is exactly as a backend does, reporting what
+/// reached the machine.
+fn drive(engine: &mut PipelineEngine<()>, program: &[PipelineOp<()>], cycles: usize) -> Vec<u64> {
+    let mut retired = Vec::new();
+    PipelineControl::set_enabled(engine, true);
+    for _ in 0..cycles {
+        let mut redirect = None;
+        if let Some(op) = engine.start_cycle() {
+            engine.retire(&op);
+            retired.push(op.address);
+            redirect = engine.resolve(&op, op.address + 4);
+        }
+        if let Some(address) = engine.advance(redirect) {
+            if let Some(next) = program.iter().find(|op| op.address == address) {
+                engine.fetched(next.clone());
+            }
+        }
+    }
+    retired
+}
+
+fn row_names(engine: &PipelineEngine<()>) -> Vec<&str> {
+    (0..engine.setting_count())
+        .filter_map(|index| engine.setting(index))
+        .map(|setting| setting.name)
+        .collect()
+}
+
+#[test]
+fn the_declared_mode_picks_the_engine() {
+    for (mode, phases) in [
+        (PipelineMode::SingleCycle, ["IF", "ID", "EX", "MEM", "WB"]),
+        (
+            PipelineMode::FunctionalUnits,
+            ["IF", "ID", "EX", "MEM", "WB"],
+        ),
+        (PipelineMode::Scoreboard, ["IF", "IS", "RO", "EX", "WR"]),
+        (PipelineMode::TomasuloRob, ["IF", "IS", "EX", "WB", "CM"]),
+    ] {
+        let engine = engine(mode);
+        assert_eq!(engine.mode(), mode);
+        assert_eq!(
+            (0..engine.stage_count())
+                .filter_map(|index| engine.stage(index))
+                .map(|stage| stage.name)
+                .collect::<Vec<_>>(),
+            phases,
+            "{mode:?} reports its own phases, not the declared datapath's"
+        );
+    }
+}
+
+/// The claim that makes swapping engines mid-run legitimate: an instruction
+/// that had not executed is refetched, and one that had is not run twice.
+#[test]
+fn changing_the_model_mid_run_loses_no_instruction_and_repeats_none() {
+    let program = independent();
+    let mut engine = engine(PipelineMode::SingleCycle);
+    let mut retired = drive(&mut engine, &program, 8);
+    assert!(
+        !retired.is_empty() && retired.len() < program.len(),
+        "the switch has to land mid-program to prove anything: {retired:?}"
+    );
+
+    assert!(engine.set_mode(PipelineMode::TomasuloRob));
+    retired.extend(drive(&mut engine, &program, 40));
+
+    assert_eq!(
+        retired,
+        program.iter().map(|op| op.address).collect::<Vec<_>>(),
+        "every instruction once, in order, across two engines"
+    );
+}
+
+/// Reconfiguring a machine keeps its numbers; replacing it cannot.
+#[test]
+fn only_a_new_engine_starts_the_counters_over() {
+    let mut engine = engine(PipelineMode::SingleCycle);
+    drive(&mut engine, &independent(), 8);
+    let cycles = engine.stats().cycles;
+    assert!(cycles > 0);
+
+    assert!(engine.set_mode(PipelineMode::FunctionalUnits));
+    assert_eq!(
+        engine.stats().cycles,
+        cycles,
+        "the same engine, adjusted — as much as turning a bypass off is"
+    );
+    assert!(engine.timeline_len() > 0);
+
+    assert!(engine.set_mode(PipelineMode::Scoreboard));
+    assert_eq!(
+        engine.stats().cycles,
+        0,
+        "another model's cycles would describe neither machine"
+    );
+    assert_eq!(engine.timeline_len(), 0);
+}
+
+#[test]
+fn the_machine_a_user_built_survives_a_model_change() {
+    let mut engine = engine(PipelineMode::FunctionalUnits);
+    assert!(engine.set_capacity(2, 3), "three dividers");
+    assert!(engine.set_number(7 + UNITS.len() + 2, 9), "a slower divide");
+
+    assert!(engine.set_mode(PipelineMode::Scoreboard));
+    assert_eq!(engine.unit(2).unwrap().capacity, 3);
+    assert_eq!(engine.shape().timing.div, 9);
+}
+
+#[test]
+fn the_model_row_is_the_first_row_of_every_engine() {
+    let mut engine = engine(PipelineMode::SingleCycle);
+    for expected in [
+        PipelineMode::FunctionalUnits,
+        PipelineMode::Scoreboard,
+        PipelineMode::TomasuloRob,
+        PipelineMode::SingleCycle,
+    ] {
+        assert!(engine.adjust(0, true));
+        assert_eq!(engine.mode(), expected);
+        let row = engine.setting(0).unwrap();
+        assert_eq!(row.name, "Execution", "the cursor has not moved off it");
+        assert_eq!(
+            row.value,
+            PipelineSettingValue::Choice(expected.label()),
+            "and it says which model is running"
+        );
+    }
+}
+
+/// A row a model cannot honour is a row it does not offer — a control that does
+/// nothing would be worse than no control at all.
+#[test]
+fn each_model_offers_only_the_rows_it_can_honour() {
+    let scoreboard = engine(PipelineMode::Scoreboard);
+    assert!(
+        (0..scoreboard.setting_count())
+            .filter_map(|index| scoreboard.setting(index))
+            .all(|row| row.group != "FORWARDING"),
+        "a scoreboard has no bypass network to wire"
+    );
+    assert!(
+        !row_names(&scoreboard).contains(&"Branch predict"),
+        "and nothing to predict with: it does not speculate"
+    );
+
+    let tomasulo = engine(PipelineMode::TomasuloRob);
+    let rows = row_names(&tomasulo);
+    assert!(rows.contains(&"Branch predict"), "this one does speculate");
+    assert!(rows.contains(&"Entries"), "and has a buffer to size");
+    assert!(
+        !rows.contains(&"Branch resolve"),
+        "but nowhere to move: a mispredict is found at commit"
+    );
+}
+
+#[test]
+fn every_row_of_every_model_reads_and_writes() {
+    for mode in PipelineMode::all() {
+        let mut engine = engine(mode);
+        assert!(
+            (0..engine.setting_count()).all(|index| engine.setting(index).is_some()),
+            "{mode:?}: every counted row can be described"
+        );
+        assert!(engine.setting(usize::MAX).is_none());
+
+        for index in 1..engine.setting_count() {
+            engine.adjust(index, true);
+        }
+        assert_eq!(
+            engine.mode(),
+            mode,
+            "{mode:?}: no row but the first changes which engine is running"
+        );
+    }
+}
+
+#[test]
+fn a_stopped_machine_does_not_restart_when_the_model_changes() {
+    let mut engine = engine(PipelineMode::SingleCycle);
+    drive(&mut engine, &independent(), 8);
+    engine.halt();
+
+    assert!(engine.set_mode(PipelineMode::TomasuloRob));
+    assert!(
+        engine.status().halted,
+        "a new engine is not a reason for a stopped program to run again"
+    );
+    assert!(drive(&mut engine, &independent(), 8).is_empty());
 }
 
 #[test]

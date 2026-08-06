@@ -25,6 +25,7 @@
 
 pub mod forwarding;
 mod inspect;
+pub mod ooo;
 pub mod predictor;
 pub mod sim;
 
@@ -531,9 +532,24 @@ pub fn fu_latency_for_class(class: InstrClass, timing: &PipelineTiming) -> u8 {
     timing.latency(class)
 }
 
+/// The dynamically scheduled models, as RV32 runs them.
+///
+/// Not a second simulator: these are the engines from [`crate::pipeline`], with
+/// RV32 supplying only what an ISA has to — the instruction word, what it reads
+/// and writes, where a branch goes. The stage-by-stage model below stays for
+/// the in-order modes, where live operand values, cache stalls and MMU traps
+/// mid-datapath are the whole point; under an out-of-order model an instruction
+/// executes in one piece at commit, which is the contract the package
+/// documents and what makes its exceptions precise.
+pub type OooEngine = crate::pipeline::PipelineEngine<u32>;
+
 /// Reversible execution state plus physical pipeline configuration and telemetry.
 pub struct PipelineSimState {
     pub enabled: bool,
+    /// Present exactly while [`Self::mode`] names a dynamically scheduled
+    /// model. Journaled with the rest, so step-back reverses an out-of-order
+    /// cycle the same way it reverses an in-order one.
+    pub ooo: Option<OooEngine>,
     pub bypass: PipelineBypassConfig,
     pub branch_resolve: BranchResolve,
     pub mode: PipelineMode,
@@ -568,6 +584,7 @@ pub struct PipelineExecSnapshot {
     fetch_pc: u32,
     halted: bool,
     faulted: bool,
+    ooo: Option<OooEngine>,
     stages: [Option<PipeSlot>; 5],
     fu_bank: FuBank,
     fu_busy: [u8; 7],
@@ -596,6 +613,7 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
             fetch_pc: self.fetch_pc,
             halted: self.halted,
             faulted: self.faulted,
+            ooo: self.ooo.clone(),
             stages: self.stages.clone(),
             fu_bank: self.fu_bank.clone(),
             fu_busy: self.fu_busy,
@@ -621,6 +639,7 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
         self.fetch_pc = s.fetch_pc;
         self.halted = s.halted;
         self.faulted = s.faulted;
+        self.ooo = s.ooo;
         self.stages = s.stages;
         self.fu_bank = s.fu_bank;
         self.fu_busy = s.fu_busy;
@@ -641,12 +660,23 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
         self.next_seq = s.next_seq;
     }
 
+    /// Under a dynamically scheduled model the engine *is* the pipeline: the
+    /// stage array here stays empty and its Gantt never advances, so every
+    /// question a host asks has to reach the engine instead. One branch, in the
+    /// one place the observer is handed out.
     fn inspect(&self) -> Option<&dyn crate::capability::PipelineInspect> {
-        Some(self)
+        match &self.ooo {
+            Some(engine) => Some(engine),
+            None => Some(self),
+        }
     }
 
     fn control(&mut self) -> Option<&mut dyn crate::capability::PipelineControl> {
         Some(self)
+    }
+
+    fn dynamic(&self) -> Option<&dyn crate::capability::PipelineDynamicInspect> {
+        PipelineSimState::dynamic(self)
     }
 }
 
@@ -677,6 +707,9 @@ impl PipelineSimState {
     pub fn new() -> Self {
         Self {
             enabled: true,
+            // `SingleCycle` is statically scheduled, so there is no engine yet;
+            // switching `mode` to a dynamic model is what builds one.
+            ooo: None,
             bypass: PipelineBypassConfig::default(),
             branch_resolve: BranchResolve::Ex,
             mode: PipelineMode::SingleCycle,
@@ -766,6 +799,36 @@ impl PipelineSimState {
             self.predict = predict;
             self.predictor.clear();
         }
+    }
+
+    /// Change the execution model, building or dropping the shared engine.
+    ///
+    /// The two in-order modes are this file's own datapath; the other two are
+    /// engines from [`crate::pipeline`]. Either way the work in flight goes:
+    /// nothing had executed — an instruction changes the machine at commit and
+    /// nowhere else — so refetching from the current PC loses nothing, and the
+    /// counters start over because they describe a model.
+    pub fn set_mode(&mut self, mode: PipelineMode, timing: &PipelineTiming) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        self.stages = Default::default();
+        self.fu_bank = std::array::from_fn(|_| Vec::new());
+        self.fu_busy = [0; 7];
+        self.hazard_msgs.clear();
+        self.hazard_traces.clear();
+        self.ooo = ooo::engine_for(mode, timing, &self.fu_capacity, self.fetch_pc);
+        if let Some(engine) = &mut self.ooo {
+            crate::capability::PipelineControl::set_enabled(engine, self.enabled);
+        }
+        self.reset_stats();
+        self.gantt.clear();
+    }
+
+    /// The model's own observer, when a dynamically scheduled one is running.
+    pub fn dynamic(&self) -> Option<&dyn crate::capability::PipelineDynamicInspect> {
+        self.ooo.as_ref().and_then(OooEngine::dynamic)
     }
 
     pub fn set_legacy_forwarding(&mut self, enabled: bool) {

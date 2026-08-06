@@ -3,10 +3,11 @@
 use crate::cache_model::TeachingCache;
 use crate::capability::{
     BitRole, CacheHierarchy, InstructionBitField, InstructionCodec, InstructionField,
-    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineInspect, PipelineTuning,
+    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineDynamicInspect,
+    PipelineInspect, PipelineTuning,
     PipelineInstructionClass, PipelineStageRole, RegisterBank, RegisterFile, RegisterId,
 };
-use crate::pipeline::{PipelineOp, PipelineShape, ScalarPipeline, StageSpec, UnitSpec};
+use crate::pipeline::{PipelineEngine, PipelineOp, PipelineShape, StageSpec, UnitSpec};
 use crate::{
     Architecture, ArchitectureCapabilities, ArchitectureDescriptor, Assembler, CycleResult,
     Diagnostic, Endianness, InstructionDoc, Machine, MachineError, MachineSnapshot, MachineState,
@@ -307,7 +308,7 @@ pub struct SapMachine {
     stdout: Vec<u8>,
     fault: Option<String>,
     cache: TeachingCache,
-    pipeline: ScalarPipeline<u8>,
+    pipeline: PipelineEngine<u8>,
 }
 
 /// SAP's whole datapath declaration. Three stages, one byte per instruction —
@@ -368,7 +369,7 @@ impl SapMachine {
             stdout: vec![],
             fault: None,
             cache: TeachingCache::new(4, 16, 4, 1),
-            pipeline: ScalarPipeline::new(pipeline_shape(), 0),
+            pipeline: PipelineEngine::new(pipeline_shape(), 0),
         }
     }
 
@@ -519,9 +520,11 @@ impl Machine for SapMachine {
     fn reset(&mut self) {
         let image = self.image.clone();
         let size = self.memory.len();
-        let pipeline_enabled = self.pipeline.enabled();
-        *self = Self::new(size);
-        self.pipeline.set_enabled(pipeline_enabled);
+        // The tuned datapath outlives the run; see the note on `Toy16::reset`.
+        let mut fresh = Self::new(size);
+        std::mem::swap(&mut fresh.pipeline, &mut self.pipeline);
+        *self = fresh;
+        self.pipeline.reset(u64::from(self.pc));
         if let Some(image) = image
             && let Err(error) = self.load(&image)
         {
@@ -724,6 +727,10 @@ impl Machine for SapMachine {
 
     fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
         Some(&mut self.pipeline)
+    }
+
+    fn pipeline_dynamic(&self) -> Option<&dyn PipelineDynamicInspect> {
+        self.pipeline.dynamic()
     }
 }
 

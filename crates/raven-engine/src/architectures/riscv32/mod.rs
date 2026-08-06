@@ -548,6 +548,13 @@ impl Machine for RiscV32Machine {
         self.machine.pipeline_controls()
     }
 
+    /// The stations, buffer and alias table of whichever dynamically scheduled
+    /// model is running — and `None` under the in-order one, which is what
+    /// tells the host to draw stages.
+    fn pipeline_dynamic(&self) -> Option<&dyn crate::capability::PipelineDynamicInspect> {
+        self.machine.pipeline().dynamic()
+    }
+
     /// One clock of the pipeline model, journaled so a host can step back.
     ///
     /// With the model switched off a cycle is a whole instruction, which is the

@@ -13,6 +13,7 @@ use crate::capability::{
 
 /// One thing that happened between two stages this cycle — a bypass that
 /// carried an operand, a hazard that held something back.
+#[derive(Clone)]
 pub(super) struct Trace {
     pub kind: PipelineTraceKind,
     pub from: usize,
@@ -20,14 +21,19 @@ pub(super) struct Trace {
     pub detail: String,
 }
 
+#[derive(Clone)]
 pub(super) struct Cell {
     pub label: &'static str,
     pub state: PipelineTimelineState,
     pub role: PipelineStageRole,
 }
 
+#[derive(Clone)]
 pub(super) struct Row {
     pub id: u64,
+    /// The instruction this row follows, so a host can light it up from
+    /// somewhere else on screen.
+    pub address: u64,
     pub disassembly: String,
     pub class: PipelineInstructionClass,
     pub first_cycle: u64,
@@ -43,6 +49,7 @@ pub(super) struct Row {
 /// history forever.
 const MAX_CELLS: usize = 200;
 
+#[derive(Clone)]
 pub(super) struct Timeline {
     rows: Vec<Row>,
     capacity: usize,
@@ -64,9 +71,11 @@ impl Timeline {
         self.rows.len()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn open(
         &mut self,
         id: u64,
+        address: u64,
         disassembly: String,
         class: PipelineInstructionClass,
         atomic: bool,
@@ -75,6 +84,7 @@ impl Timeline {
     ) {
         self.rows.push(Row {
             id,
+            address,
             disassembly,
             class,
             first_cycle,
@@ -99,6 +109,7 @@ impl Timeline {
     pub(super) fn row(&self, index: usize) -> Option<PipelineTimelineRow<'_>> {
         let row = self.rows.get(index)?;
         Some(PipelineTimelineRow {
+            address: row.address,
             disassembly: &row.disassembly,
             class: row.class,
             first_cycle: row.first_cycle,
