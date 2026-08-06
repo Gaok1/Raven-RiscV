@@ -157,6 +157,15 @@ pub struct PipelineUnitView<'a> {
     pub active: usize,
     pub first: Option<PipelineSlotView<'a>>,
     pub latency_class: PipelineInstructionClass,
+    /// Cycles an instruction of `latency_class` occupies this unit — what
+    /// `first`'s `cycles_remaining` counts down from.
+    ///
+    /// Without it a host can only show the countdown, not how far through the
+    /// operation it is, and guessing the total from some other backend's timing
+    /// fills the bar against the wrong denominator. `None` says this model does
+    /// not own its timing: RV32 is tuned from a table the host holds, so there
+    /// the host supplies the total. Declare it wherever the model knows it.
+    pub latency: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]

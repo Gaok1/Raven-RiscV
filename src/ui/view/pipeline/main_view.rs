@@ -13,7 +13,7 @@ use ratatui::{
 use raven_engine::capability::{
     PipelineHazardKind, PipelineInspect, PipelineInstructionClass, PipelineSlotView,
     PipelineStageRole, PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind,
-    PipelineTraceView,
+    PipelineTraceView, PipelineUnitView,
 };
 
 use unicode_truncate::UnicodeTruncateStr;
@@ -557,7 +557,7 @@ fn render_fu_strip(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn Pipeline
         let unit = pipeline.unit(index).unwrap();
 
         if let Some(slot) = unit.first {
-            let total = pipeline_latency(unit.latency_class, cpi);
+            let total = unit_latency(&unit, cpi);
             let done = total.saturating_sub(slot.cycles_remaining);
             spans.push(Span::styled(
                 unit.name.to_string(),
@@ -609,6 +609,17 @@ fn render_fu_strip(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn Pipeline
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// What the mini bar fills against: the cycles the unit's occupant spends
+/// there, so `cycles_remaining` reads as a position rather than a bare count.
+///
+/// A backend that declares its own total gets it used as-is — the CPI table
+/// below is RV32's, tuned in the Pipeline settings subtab, and means nothing to
+/// a datapath that is not RV32's. RV32 keeps that table in the session rather
+/// than in its pipeline model, so it is the one backend that lands here.
+fn unit_latency(unit: &PipelineUnitView<'_>, cpi: &crate::ui::app::CpiConfig) -> u8 {
+    unit.latency.unwrap_or_else(|| pipeline_latency(unit.latency_class, cpi))
 }
 
 fn pipeline_latency(class: PipelineInstructionClass, cpi: &crate::ui::app::CpiConfig) -> u8 {
@@ -980,14 +991,16 @@ fn cell_to_span(cell: PipelineTimelineCell<'_>) -> (&str, Style) {
 mod tests {
     use super::{
         bubble_label_for_stage, cell_to_span, compact_stage_hazard_label, plan_main_layout,
-        split_fu_activity, trace_stage_summary,
+        split_fu_activity, trace_stage_summary, unit_latency,
     };
+    use crate::ui::app::CpiConfig;
     use crate::ui::pipeline::{
         FuKind, FuState, GanttCell, HazardTrace, HazardType, PipeSlot, Stage, TraceKind,
     };
     use raven_engine::capability::{
         PipelineHazardKind, PipelineInstructionClass, PipelineSlotView, PipelineStageRole,
         PipelineTimelineCell, PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
+        PipelineUnitView,
     };
 
     fn slot(hazard: Option<PipelineHazardKind>, bubble: bool) -> PipelineSlotView<'static> {
@@ -1200,6 +1213,32 @@ mod tests {
         let (parallel, mirror) = split_fu_activity(FuKind::Alu, &fu_states, Some(&ex_slot));
         assert!(parallel.is_empty());
         assert!(mirror.is_some());
+    }
+
+    /// The FU bar fills against the backend's own total. RV32's CPI table is
+    /// tuned in the Pipeline settings subtab and says nothing about a datapath
+    /// that never read it, so a declared latency has to win over it.
+    #[test]
+    fn declared_unit_latency_wins_over_the_rv32_cpi_table() {
+        fn div_unit(latency: Option<u8>) -> PipelineUnitView<'static> {
+            PipelineUnitView {
+                name: "DIV",
+                capacity: 1,
+                active: 1,
+                first: Some(slot(None, false)),
+                latency_class: PipelineInstructionClass::Divide,
+                latency,
+            }
+        }
+
+        let cpi = CpiConfig {
+            div: 19,
+            ..CpiConfig::default()
+        };
+
+        assert_eq!(unit_latency(&div_unit(Some(1)), &cpi), 1);
+        // RV32 declares no total, so its own table still supplies one.
+        assert_eq!(unit_latency(&div_unit(None), &cpi), 20);
     }
 }
 

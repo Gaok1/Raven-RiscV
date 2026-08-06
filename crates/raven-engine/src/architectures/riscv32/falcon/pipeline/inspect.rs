@@ -227,6 +227,10 @@ impl PipelineInspect for PipelineSimState {
             active,
             first,
             latency_class,
+            // RV32's per-class latencies are tunable and live in the caller's
+            // `PipelineTiming`, which is handed to each step rather than kept
+            // here — so the total belongs to whoever owns that table.
+            latency: None,
         })
     }
 

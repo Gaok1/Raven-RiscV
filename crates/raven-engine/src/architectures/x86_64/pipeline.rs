@@ -566,6 +566,8 @@ impl PipelineInspect for X86Pipeline {
         2
     }
 
+    /// Both units retire whatever they hold in a single cycle — this model has
+    /// no multi-cycle execute — so each declares a latency of one.
     fn unit(&self, index: usize) -> Option<PipelineUnitView<'_>> {
         match index {
             0 => Some(PipelineUnitView {
@@ -574,6 +576,7 @@ impl PipelineInspect for X86Pipeline {
                 active: usize::from(self.stages[EXECUTE].is_some()),
                 first: self.stages[EXECUTE].as_ref().map(PipelineInstruction::view),
                 latency_class: PipelineInstructionClass::Alu,
+                latency: Some(1),
             }),
             1 => Some(PipelineUnitView {
                 name: "Load/Store",
@@ -594,6 +597,7 @@ impl PipelineInspect for X86Pipeline {
                     })
                     .map(PipelineInstruction::view),
                 latency_class: PipelineInstructionClass::Load,
+                latency: Some(1),
             }),
             _ => None,
         }
