@@ -159,6 +159,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 open_cpi_edit(app, cursor);
                 return true;
             }
+            // Read before the mutable borrow: changing the model rebuilds the
+            // engine, and the engine is built from the latency table.
+            let timing = app.session.cpi_config.clone();
             let Some(pipeline) = app.pipeline_config_mut() else {
                 return true;
             };
@@ -168,12 +171,16 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 2 => pipeline.bypass.wb_to_id = !pipeline.bypass.wb_to_id,
                 3 => pipeline.bypass.store_to_load = !pipeline.bypass.store_to_load,
                 4 => {
-                    // Only the modes this backend's own model implements; the
-                    // dynamic-scheduling ones belong to the shared engine.
-                    pipeline.mode = match pipeline.mode {
+                    // All four: the in-order pair is this backend's own
+                    // datapath, and the dynamically scheduled two are engines
+                    // from the shared package that RV32 now drives.
+                    let next = match pipeline.mode {
                         PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
-                        _ => PipelineMode::SingleCycle,
+                        PipelineMode::FunctionalUnits => PipelineMode::Scoreboard,
+                        PipelineMode::Scoreboard => PipelineMode::TomasuloRob,
+                        PipelineMode::TomasuloRob => PipelineMode::SingleCycle,
                     };
+                    pipeline.set_mode(next, &timing);
                 }
                 5 => {
                     pipeline.branch_resolve = match pipeline.branch_resolve {

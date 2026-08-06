@@ -91,6 +91,19 @@ pub const CPI_PANEL: Color = Color::Rgb(72, 195, 168);
 // ── Editor / syntax highlighting ──────────────────────────────────────────────
 /// Code labels — warm amber (distinct from neutral text)
 pub const LABEL_Y: Color = Color::Rgb(218, 178, 75);
+
+// ── Dependency wires (out-of-order view) ─────────────────────────────────────
+//
+// A hover lights one dependency chain across every table. Direction is the
+// whole content of the picture — who this instruction waits for, and who waits
+// for it — so the two ends must never be mistaken for each other.
+
+/// An instruction the focused one is waiting on.
+pub const WIRE_PRODUCER: Color = Color::Rgb(115, 178, 235);
+/// An instruction waiting on the focused one.
+pub const WIRE_CONSUMER: Color = Color::Rgb(88, 200, 148);
+/// Rows outside the focused chain, so the chain is what the eye finds.
+pub const HL_DIM: Color = Color::Rgb(88, 88, 96);
 /// Block comments — muted sage (clearly softer than normal text)
 pub const COMMENT: Color = Color::Rgb(98, 138, 112);
 /// Immediate values — steel blue (same family as metrics)

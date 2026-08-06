@@ -693,6 +693,91 @@ fn pipeline_main_subtab_ignores_stale_config_row_hitboxes() {
     assert_eq!(app.rv32().unwrap().pipeline().bypass.ex_to_ex, original);
 }
 
+/// The out-of-order screen is inspected by pointing at it, so the hover has to
+/// come back from the boxes the renderer recorded — and has to clear again when
+/// the cursor leaves, or the screen stays dimmed around a chain nobody is
+/// looking at any more.
+#[test]
+fn hovering_an_out_of_order_row_resolves_it_and_leaving_clears_it() {
+    use crate::ui::pipeline::{OooFocus, OooPanel, OooRowHit};
+
+    let mut app = App::new(None);
+    app.tab = Tab::Pipeline;
+    app.run.pipeline_view_mut().subtab = crate::ui::pipeline::PipelineSubtab::Main;
+    let focus = OooFocus {
+        panel: OooPanel::Buffer,
+        row: 2,
+    };
+    *app.run.pipeline_view().ooo_row_hits.borrow_mut() = vec![OooRowHit {
+        focus,
+        y: 14,
+        x0: 80,
+        x1: 120,
+    }];
+
+    let at = |app: &mut App, column, row| {
+        handle_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 160, 40),
+        );
+    };
+
+    at(&mut app, 90, 14);
+    assert_eq!(app.run.pipeline_view().ooo_hover, Some(focus));
+
+    // One column past the row's right edge is off it.
+    at(&mut app, 120, 14);
+    assert_eq!(app.run.pipeline_view().ooo_hover, None);
+}
+
+/// A backend that declares its datapath adjusts through the shared capability,
+/// and the first row of that screen is the execution model. Clicking it has to
+/// reach the same place the keyboard does — a row a key can step and a click
+/// cannot is a control that only half exists.
+#[test]
+fn clicking_the_model_row_changes_the_model_on_a_declared_datapath() {
+    let mut app = App::new_with_architecture(
+        Some(64 * 1024),
+        crate::falcon::jit::BackendKind::None,
+        "toy16",
+    )
+    .unwrap();
+    app.tab = Tab::Pipeline;
+    app.run.pipeline_view_mut().subtab = crate::ui::pipeline::PipelineSubtab::Config;
+    let mut rects = [(0, 0, 0); crate::ui::pipeline::PIPELINE_CONFIG_ROWS];
+    rects[0] = (12, 4, 40);
+    app.run.pipeline_view().config_row_rects.set(rects);
+
+    let before = app
+        .pipeline_tuning()
+        .and_then(|tuning| tuning.setting(0))
+        .map(|row| format!("{:?}", row.value));
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 10,
+            row: 12,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 160, 40),
+    );
+
+    let after = app
+        .pipeline_tuning()
+        .and_then(|tuning| tuning.setting(0))
+        .map(|row| format!("{:?}", row.value));
+    assert!(before.is_some(), "toy16 offers a settings screen");
+    assert_ne!(before, after, "the click never reached the model");
+}
+
 #[test]
 fn cache_config_hover_uses_rendered_preset_and_apply_hitboxes() {
     let mut app = App::new(None);

@@ -713,6 +713,14 @@ impl App {
         self.machine.pipeline()
     }
 
+    /// The structures a dynamically scheduled model runs on, when one is
+    /// running. `None` is what tells the Pipeline tab to draw stages.
+    pub(crate) fn pipeline_dynamic(
+        &self,
+    ) -> Option<&dyn raven_engine::capability::PipelineDynamicInspect> {
+        self.machine.pipeline_dynamic()
+    }
+
     /// The datapath's adjustable properties, for any backend that declares a
     /// shape. RV32 drives its own richer screen; this is what every other
     /// backend now offers instead of nothing.
