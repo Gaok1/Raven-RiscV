@@ -134,10 +134,14 @@ impl<P> PipelineTuning for ScalarPipeline<P> {
         if index < FIXED {
             match index - 4 {
                 0 => {
-                    self.shape.mode = match self.shape.mode {
-                        PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
-                        PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
-                    };
+                    // Only the in-order modes: this is the in-order engine, and
+                    // offering a user a scoreboard it cannot run would be a lie.
+                    // The dynamic-scheduling models are their own engine.
+                    self.shape.mode = step(
+                        self.shape.mode,
+                        &[PipelineMode::SingleCycle, PipelineMode::FunctionalUnits],
+                        forward,
+                    );
                     // Work already dispatched belongs to the model that was
                     // running; leaving it there would let it retire under rules
                     // it was never issued under.

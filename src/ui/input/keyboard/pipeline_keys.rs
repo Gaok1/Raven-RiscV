@@ -168,9 +168,11 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 2 => pipeline.bypass.wb_to_id = !pipeline.bypass.wb_to_id,
                 3 => pipeline.bypass.store_to_load = !pipeline.bypass.store_to_load,
                 4 => {
+                    // Only the modes this backend's own model implements; the
+                    // dynamic-scheduling ones belong to the shared engine.
                     pipeline.mode = match pipeline.mode {
                         PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
-                        PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
+                        _ => PipelineMode::SingleCycle,
                     };
                 }
                 5 => {

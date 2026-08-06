@@ -2875,7 +2875,12 @@ fn advance_while_ex_busy(state: &mut PipelineSimState) {
 
 fn dispatch_id_to_execution(state: &mut PipelineSimState, cpi: &CpiConfig) {
     match state.mode {
-        super::PipelineMode::SingleCycle => dispatch_id_to_execution_serialized(state, cpi),
+        // The dynamic-scheduling models replace these latches entirely rather
+        // than dispatching out of them; until this backend is wired to the
+        // shared out-of-order engine it runs its in-order path.
+        super::PipelineMode::SingleCycle
+        | super::PipelineMode::Scoreboard
+        | super::PipelineMode::TomasuloRob => dispatch_id_to_execution_serialized(state, cpi),
         super::PipelineMode::FunctionalUnits => {
             let id_parallel_eligible = state.stages[Stage::ID as usize]
                 .as_ref()

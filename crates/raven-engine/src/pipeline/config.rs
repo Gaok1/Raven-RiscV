@@ -76,11 +76,25 @@ impl BranchResolve {
     }
 }
 
-/// Whether execute is one shared stage or a bank of parallel functional units.
+/// How instructions are scheduled once they leave decode.
+///
+/// The first two keep program order all the way through. The last two do not:
+/// they are the classic dynamic-scheduling designs, where an instruction runs
+/// as soon as its operands are ready rather than as soon as its turn comes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PipelineMode {
+    /// One instruction in execute at a time.
     SingleCycle,
+    /// Execute dispatches into the unit bank; issue and retirement stay in
+    /// program order.
     FunctionalUnits,
+    /// CDC 6600 scoreboard: dynamic scheduling without renaming, so a WAW
+    /// stalls at issue and a WAR is guarded at write-result.
+    Scoreboard,
+    /// Tomasulo with a reorder buffer: renaming makes the name hazards
+    /// disappear, execution runs out of order, commit stays in order and
+    /// exceptions stay precise.
+    TomasuloRob,
 }
 
 impl PipelineMode {
@@ -88,7 +102,24 @@ impl PipelineMode {
         match self {
             Self::SingleCycle => "Serialized",
             Self::FunctionalUnits => "Parallel UFs",
+            Self::Scoreboard => "Scoreboard",
+            Self::TomasuloRob => "Tomasulo + ROB",
         }
+    }
+
+    /// Whether this model may execute instructions out of program order.
+    pub fn is_out_of_order(self) -> bool {
+        matches!(self, Self::Scoreboard | Self::TomasuloRob)
+    }
+
+    /// Every mode, in the order a settings screen cycles through them.
+    pub fn all() -> [Self; 4] {
+        [
+            Self::SingleCycle,
+            Self::FunctionalUnits,
+            Self::Scoreboard,
+            Self::TomasuloRob,
+        ]
     }
 }
 

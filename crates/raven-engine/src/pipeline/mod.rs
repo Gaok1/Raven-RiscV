@@ -41,6 +41,7 @@ mod inspect;
 mod op;
 mod predictor;
 mod scalar;
+pub mod ooo;
 mod timeline;
 mod tuning;
 

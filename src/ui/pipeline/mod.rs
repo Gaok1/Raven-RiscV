@@ -162,9 +162,13 @@ pub fn serialize_pipeline_config(cfg: &PipelineConfig) -> String {
         "bypass.store_to_load={}\n",
         cfg.bypass.store_to_load
     ));
+    // Stable tags the config parser reads back — not the display labels, which
+    // are free to change.
     let mode = match cfg.mode {
         PipelineMode::SingleCycle => "Serialized",
         PipelineMode::FunctionalUnits => "ParallelUFs",
+        PipelineMode::Scoreboard => "Scoreboard",
+        PipelineMode::TomasuloRob => "TomasuloRob",
     };
     s.push_str(&format!("mode={mode}\n"));
     s.push_str(&format!(
@@ -225,6 +229,8 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
         "singlecycle" | "single-cycle" | "serialized" => PipelineMode::SingleCycle,
         "functionalunits" | "functional-units" | "functional_units" | "parallelufs"
         | "parallel-ufs" | "parallel_ufs" => PipelineMode::FunctionalUnits,
+        "scoreboard" => PipelineMode::Scoreboard,
+        "tomasulorob" | "tomasulo-rob" | "tomasulo_rob" | "tomasulo" => PipelineMode::TomasuloRob,
         other => return Err(format!("Unknown pipeline mode: {other}")),
     };
 
