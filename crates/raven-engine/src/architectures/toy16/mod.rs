@@ -6,10 +6,11 @@
 use crate::cache_model::TeachingCache;
 use crate::capability::{
     BitRole, CacheHierarchy, InstructionBitField, InstructionCodec, InstructionField,
-    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineInspect,
-    PipelineInstructionClass, PipelineStageRole, RegisterBank, RegisterFile, RegisterId,
+    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineDynamicInspect,
+    PipelineInspect, PipelineTuning,
+    PipelineInstructionClass, RegisterBank, RegisterFile, RegisterId,
 };
-use crate::teaching_pipeline::{StageSpec, TeachingInstruction, TeachingPipeline};
+use crate::pipeline::{PipelineEngine, PipelineOp, PipelineShape, StageSpec, UnitSpec};
 use crate::{
     Architecture, ArchitectureCapabilities, ArchitectureDescriptor, Assembler, CycleResult,
     Diagnostic, Endianness, InstructionDoc, Machine, MachineError, MachineSnapshot, MachineState,
@@ -315,31 +316,45 @@ pub struct Toy16Machine {
     stdout: Vec<u8>,
     fault: Option<String>,
     cache: TeachingCache,
-    pipeline: TeachingPipeline,
+    pipeline: PipelineEngine<u16>,
 }
 
-static PIPELINE_STAGES: [StageSpec; 5] = [
-    StageSpec {
-        name: "IF",
-        role: PipelineStageRole::Fetch,
-    },
-    StageSpec {
-        name: "ID",
-        role: PipelineStageRole::Decode,
-    },
-    StageSpec {
-        name: "EX",
-        role: PipelineStageRole::Execute,
-    },
-    StageSpec {
-        name: "MEM",
-        role: PipelineStageRole::Memory,
-    },
-    StageSpec {
-        name: "WB",
-        role: PipelineStageRole::Writeback,
-    },
+/// Toy16's whole datapath declaration: the classic five stages, two bytes per
+/// instruction. Everything the pipeline pane shows follows from these two facts.
+static PIPELINE_STAGES: [StageSpec; 5] = crate::pipeline::RISC_FIVE_STAGE;
+
+/// Execute dispatches into these. Toy16 has no instruction that runs long, so
+/// the bank never holds work — but the utilization strip still shows which unit
+/// each instruction went through, and the model is the same one a machine with
+/// a slow multiplier would use.
+static PIPELINE_UNITS: [UnitSpec; 3] = [
+    UnitSpec::new(
+        "ALU",
+        &[
+            PipelineInstructionClass::Alu,
+            PipelineInstructionClass::Branch,
+            PipelineInstructionClass::Jump,
+        ],
+        PipelineInstructionClass::Alu,
+    ),
+    UnitSpec::new(
+        "LSU",
+        &[
+            PipelineInstructionClass::Load,
+            PipelineInstructionClass::Store,
+        ],
+        PipelineInstructionClass::Load,
+    ),
+    UnitSpec::new(
+        "SYS",
+        &[PipelineInstructionClass::System],
+        PipelineInstructionClass::System,
+    ),
 ];
+
+fn pipeline_shape() -> PipelineShape {
+    PipelineShape::scalar(&PIPELINE_STAGES, Some(2)).with_parallel_units(&PIPELINE_UNITS)
+}
 
 impl Toy16Machine {
     fn new(memory_size: usize) -> Self {
@@ -353,7 +368,7 @@ impl Toy16Machine {
             stdout: vec![],
             fault: None,
             cache: TeachingCache::new(16, 256, 8, 2),
-            pipeline: TeachingPipeline::new(&PIPELINE_STAGES, 2, 0),
+            pipeline: PipelineEngine::new(pipeline_shape(), 0),
         }
     }
 
@@ -423,7 +438,7 @@ impl Toy16Machine {
         Ok(StepOutcome::Stepped)
     }
 
-    fn pipeline_instruction(&mut self, address: u64) -> TeachingInstruction {
+    fn pipeline_instruction(&mut self, address: u64) -> PipelineOp<u16> {
         let Some(pc) = usize::try_from(address).ok() else {
             return Self::pipeline_fetch_fault(address);
         };
@@ -444,13 +459,13 @@ impl Toy16Machine {
             1 | 8 | 9 => PipelineInstructionClass::System,
             _ => PipelineInstructionClass::Unknown,
         };
-        let mut instruction = TeachingInstruction::new(
+        let mut instruction = PipelineOp::new(
             address,
-            u32::from(word),
             Toy16Codec
                 .disassemble(address, &bytes)
                 .unwrap_or_else(|| format!(".word 0x{word:04X}")),
             class,
+            word,
         );
         match opcode {
             2 | 4 => {
@@ -462,24 +477,29 @@ impl Toy16Machine {
                 let destination = register(9);
                 instruction.destination = Some(destination.clone());
                 instruction.writes.push(destination);
-                instruction.sources = [Some(register(6)), Some(register(3))];
+                instruction.sources.extend([register(6), register(3)]);
             }
-            5 | 7 | 8 => instruction.sources[0] = Some(register(9)),
+            5 | 7 | 8 => instruction.sources.push(register(9)),
             _ => {}
         }
-        instruction.branch = matches!(opcode, 6 | 7);
+        // Both control transfers encode their target, so the front end can
+        // speculate rather than always assuming the fall-through path.
+        match opcode {
+            6 => {
+                instruction.branch = true;
+                instruction.branch_target = Some(u64::from((word & 0x0fff) * 2));
+            }
+            7 => {
+                instruction.branch = true;
+                instruction.branch_target = Some(u64::from((word & 0xff) * 2));
+            }
+            _ => {}
+        }
         instruction
     }
 
-    fn pipeline_fetch_fault(address: u64) -> TeachingInstruction {
-        let mut instruction = TeachingInstruction::new(
-            address,
-            0,
-            "fetch fault".into(),
-            PipelineInstructionClass::Unknown,
-        );
-        instruction.fault = Some("Toy16 fetch out of bounds or unaligned".into());
-        instruction
+    fn pipeline_fetch_fault(address: u64) -> PipelineOp<u16> {
+        PipelineOp::faulted(address, "Toy16 fetch out of bounds or unaligned", 0)
     }
 }
 
@@ -490,9 +510,15 @@ impl Machine for Toy16Machine {
     fn reset(&mut self) {
         let image = self.image.clone();
         let size = self.memory.len();
-        let pipeline_enabled = self.pipeline.enabled();
-        *self = Self::new(size);
-        self.pipeline.set_enabled(pipeline_enabled);
+        // The datapath the user tuned is not part of the program being
+        // reloaded. Rebuilding the machine from defaults used to throw away
+        // every stage, unit and latency setting on every reset, carrying only
+        // `enabled` across — so carry the whole pipeline instead and clear just
+        // its execution state, which is the part a run does own.
+        let mut fresh = Self::new(size);
+        std::mem::swap(&mut fresh.pipeline, &mut self.pipeline);
+        *self = fresh;
+        self.pipeline.reset(u64::from(self.pc));
         if let Some(image) = image
             && let Err(error) = self.load(&image)
         {
@@ -585,16 +611,14 @@ impl Machine for Toy16Machine {
                 self.pipeline.fault(message.clone());
                 return self.fail(message);
             }
-            let sequential = instruction.address.saturating_add(2);
-            let outcome = match self
-                .execute_instruction(instruction.address as usize, instruction.encoding as u16)
-            {
-                Ok(outcome) => outcome,
-                Err(error) => {
-                    self.pipeline.fault(error.to_string());
-                    return Err(error);
-                }
-            };
+            let outcome =
+                match self.execute_instruction(instruction.address as usize, instruction.payload) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        self.pipeline.fault(error.to_string());
+                        return Err(error);
+                    }
+                };
             self.pipeline.retire(&instruction);
             result = CycleResult {
                 retired_address: Some(instruction.address),
@@ -604,9 +628,7 @@ impl Machine for Toy16Machine {
                 self.pipeline.halt();
                 return Ok(result);
             }
-            if instruction.branch && u64::from(self.pc) != sequential {
-                redirect = Some(u64::from(self.pc));
-            }
+            redirect = self.pipeline.resolve(&instruction, u64::from(self.pc));
         }
         if let Some(address) = self.pipeline.advance(redirect) {
             let instruction = self.pipeline_instruction(address);
@@ -682,6 +704,18 @@ impl Machine for Toy16Machine {
 
     fn pipeline_control(&mut self) -> Option<&mut dyn PipelineControl> {
         Some(&mut self.pipeline)
+    }
+
+    fn pipeline_tuning(&self) -> Option<&dyn PipelineTuning> {
+        Some(&self.pipeline)
+    }
+
+    fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
+        Some(&mut self.pipeline)
+    }
+
+    fn pipeline_dynamic(&self) -> Option<&dyn PipelineDynamicInspect> {
+        self.pipeline.dynamic()
     }
 }
 

@@ -1,10 +1,12 @@
 use raven_engine::architectures::riscv32;
 use raven_engine::capability::{
     CacheRole, InstructionCodec, PipelineEdge, PipelineEdgeKind, PipelineInspect,
-    PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell,
-    PipelineTimelineRow, PipelineTraceView, PipelineUnitView, RegisterId, TranslationOutcome,
+    PipelineSettingValue, PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus,
+    PipelineTimelineCell, PipelineTimelineRow, PipelineTraceView, PipelineUnitView, RegisterId,
+    TranslationOutcome,
 };
 use raven_engine::falcon::memory::{Bus, Ram};
+use raven_engine::pipeline::{PipelineMode, PipelineTiming};
 use raven_engine::{
     ArchitectureRegistry, Engine, MachineState, ProgramImage, ProgramSegment, StepOutcome, ZeroFill,
 };
@@ -787,6 +789,124 @@ fn riscv32_exposes_its_pipeline_through_the_trait() {
     }
 }
 
+/// RV32 runs the dynamically scheduled models too — the same engines every
+/// other backend gets, with RV32 supplying only the semantics.
+///
+/// The program has to produce what it produces under any model: scheduling is a
+/// claim about *when* work happens, never about what it does. The loop leans on
+/// a branch and a load-use pair so the models have something to disagree about.
+#[test]
+fn riscv32_runs_the_same_program_under_every_model() {
+    let source = ".text\n\
+                  main:\n\
+                  \tli a0, 0\n\
+                  \tli t0, 5\n\
+                  loop:\n\
+                  \taddi a0, a0, 3\n\
+                  \taddi t0, t0, -1\n\
+                  \tbnez t0, loop\n\
+                  \thalt\n";
+
+    let mut baseline = None;
+    for mode in PipelineMode::all() {
+        let mut machine = trait_machine(riscv32::ID, source);
+        machine.pipeline_control().unwrap().set_enabled(true);
+        // RV32 drives its own settings screen rather than the shared one, so
+        // the model is selected on its pipeline directly — the same call that
+        // screen makes.
+        (machine.as_mut() as &mut dyn std::any::Any)
+            .downcast_mut::<riscv32::RiscV32Machine>()
+            .expect("an RV32 machine downcasts to RV32")
+            .falcon_mut()
+            .pipeline_mut()
+            .set_mode(mode, &PipelineTiming::default());
+        let model = mode.label();
+
+        for _ in 0..4000 {
+            match machine.cycle() {
+                Ok(result) => {
+                    if matches!(
+                        result.outcome,
+                        StepOutcome::Halted | StepOutcome::Exited(_)
+                    ) {
+                        break;
+                    }
+                }
+                Err(error) => panic!("{model}: {error}"),
+            }
+        }
+
+        let snapshot = machine.snapshot();
+        // `a0` is `x10`; whichever name this backend reports it under, the
+        // value program order produces is the same.
+        let a0 = snapshot
+            .registers
+            .iter()
+            .find(|register| matches!(register.name.as_str(), "a0" | "x10"))
+            .map(|register| register.value);
+        assert_eq!(a0, Some(15), "{model}: five trips adding three");
+
+        let committed = machine.pipeline().unwrap().stats().committed;
+        assert!(committed > 0, "{model} committed nothing");
+        match baseline {
+            None => baseline = Some(snapshot.stdout.clone()),
+            Some(ref expected) => {
+                assert_eq!(&snapshot.stdout, expected, "{model} printed something else");
+            }
+        }
+
+        // The two dynamic models own the screen a host draws; the in-order pair
+        // has stages instead, and says so by answering `None`.
+        assert_eq!(
+            machine.pipeline_dynamic().is_some(),
+            mode.is_out_of_order(),
+            "{model} disagrees about which screen it wants"
+        );
+    }
+}
+
+/// Step-back reverses an out-of-order cycle the way it reverses an in-order
+/// one. The buffer and the stations are part of what a cycle changed, so
+/// undoing one has to put them back too — otherwise a user stepping backwards
+/// would watch the machine's registers rewind while its schedule did not.
+#[test]
+fn stepping_back_reverses_an_out_of_order_cycle() {
+    let mut machine = trait_machine(
+        riscv32::ID,
+        ".text\n\tli a0, 1\n\tli a1, 2\n\tadd a2, a0, a1\n\thalt\n",
+    );
+    machine.pipeline_control().unwrap().set_enabled(true);
+    let rv32 = (machine.as_mut() as &mut dyn std::any::Any)
+        .downcast_mut::<riscv32::RiscV32Machine>()
+        .expect("an RV32 machine downcasts to RV32");
+    rv32.falcon_mut()
+        .pipeline_mut()
+        .set_mode(PipelineMode::TomasuloRob, &PipelineTiming::default());
+
+    for _ in 0..6 {
+        machine.cycle().unwrap();
+    }
+    let rv32 = (machine.as_mut() as &mut dyn std::any::Any)
+        .downcast_mut::<riscv32::RiscV32Machine>()
+        .unwrap();
+    let before = rv32.falcon().pipeline().ooo.as_ref().map(|engine| {
+        let view = engine.dynamic().expect("Tomasulo has structures");
+        (view.buffer_count(), view.queue_count())
+    });
+    assert!(before.is_some(), "the model is running");
+
+    rv32.falcon_mut().stepback().expect("a cycle to undo");
+    let after = rv32.falcon().pipeline().ooo.as_ref().map(|engine| {
+        let view = engine.dynamic().unwrap();
+        (view.buffer_count(), view.queue_count())
+    });
+    assert!(after.is_some(), "and it is still running afterwards");
+    assert_ne!(
+        before, after,
+        "the schedule went back with the registers, not just alongside them"
+    );
+}
+
 /// Every built-in exposes a real, clockable pipeline through the same traits.
 #[test]
 fn teaching_backends_expose_and_run_their_pipelines() {
@@ -819,6 +939,256 @@ fn teaching_backends_expose_and_run_their_pipelines() {
         let pipeline = machine.pipeline().unwrap();
         assert!(pipeline.stats().cycles > pipeline.stats().committed);
         assert!(pipeline.timeline_len() > 0);
+    }
+}
+
+/// Declaring a pipeline is the whole cost of having one.
+///
+/// A backend says `pipeline: true` in its descriptor and declares its stages;
+/// everything a host draws — occupancy, hazard traces, statistics, the timing
+/// history — has to be there without the backend implementing any of it. This
+/// walks every registered architecture, so a new one that declares a shape and
+/// forgets to wire something up fails here rather than in a host.
+#[test]
+fn declaring_a_pipeline_is_enough_to_get_the_whole_package() {
+    let registry = ArchitectureRegistry::with_builtins();
+    for architecture in registry.architectures() {
+        let descriptor = architecture.descriptor();
+        if !descriptor.capabilities.pipeline {
+            continue;
+        }
+        let id = descriptor.id;
+        let mut machine = trait_machine(id, architecture.default_source());
+        assert!(
+            machine.pipeline().is_some() && machine.pipeline_control().is_some(),
+            "{id} declares a pipeline but does not expose one"
+        );
+        machine.pipeline_control().unwrap().set_enabled(true);
+
+        for _ in 0..400 {
+            match machine.cycle() {
+                Ok(cycle) if cycle.outcome == StepOutcome::Stepped => {}
+                _ => break,
+            }
+        }
+
+        let pipeline = machine.pipeline().unwrap();
+        assert!(pipeline.stage_count() > 1, "{id} has a one-stage datapath");
+        for index in 0..pipeline.stage_count() {
+            let stage = pipeline.stage(index).unwrap_or_else(|| {
+                panic!("{id} counts {index} stages but cannot describe them all")
+            });
+            assert!(!stage.name.is_empty(), "{id} has an unnamed stage");
+        }
+        assert_eq!(
+            pipeline.stage_order().len(),
+            pipeline.stage_count(),
+            "{id} drops a stage from its layout order"
+        );
+        // A clocked pipeline has a history and has spent cycles; a host that
+        // opens the Gantt view on any backend finds something in it.
+        assert!(pipeline.stats().cycles > 0, "{id} clocked without cycles");
+        assert!(pipeline.timeline_len() > 0, "{id} recorded no history");
+        for row in 0..pipeline.timeline_len() {
+            let cells = pipeline.timeline_row(row).unwrap().cells;
+            for cell in 0..cells {
+                assert!(
+                    pipeline.timeline_cell(row, cell).is_some(),
+                    "{id} row {row} promises {cells} cells but is missing one"
+                );
+            }
+        }
+        for index in 0..pipeline.unit_count() {
+            let unit = pipeline.unit(index).expect("declared unit");
+            assert!(
+                unit.active <= unit.capacity,
+                "{id} unit {} is over capacity",
+                unit.name
+            );
+        }
+    }
+}
+
+/// A datapath a user cannot change is a datapath they cannot experiment with.
+///
+/// Every backend that declares a shape offers the same settings screen, so the
+/// Pipeline tab is the same tab on all of them. Only RV32, whose model predates
+/// the shared package and carries its own richer configuration, is exempt.
+#[test]
+fn every_declared_datapath_can_be_retuned_through_the_capability() {
+    let registry = ArchitectureRegistry::with_builtins();
+    for architecture in registry.architectures() {
+        let descriptor = architecture.descriptor();
+        if !descriptor.capabilities.pipeline || descriptor.id == riscv32::ID {
+            continue;
+        }
+        let id = descriptor.id;
+        let mut machine = trait_machine(id, architecture.default_source());
+        let tuning = machine
+            .pipeline_tuning()
+            .unwrap_or_else(|| panic!("{id} declares a pipeline but offers no settings"));
+        let count = tuning.setting_count();
+        assert!(count > 0, "{id} offers an empty settings screen");
+        assert!(tuning.setting(count).is_none(), "{id} counts past its rows");
+
+        let mut groups: Vec<&str> = Vec::new();
+        for index in 0..count {
+            let setting = tuning
+                .setting(index)
+                .unwrap_or_else(|| panic!("{id} cannot describe row {index}"));
+            assert!(!setting.name.is_empty(), "{id} row {index} is unnamed");
+            assert!(
+                !setting.summary.is_empty(),
+                "{id} row {index} explains nothing"
+            );
+            // Rows of a group arrive together, so a host can draw one heading.
+            if groups.last() != Some(&setting.group) {
+                assert!(
+                    !groups.contains(&setting.group),
+                    "{id} splits the {} group",
+                    setting.group
+                );
+                groups.push(setting.group);
+            }
+        }
+
+        // Every row moves, and moving one is visible in the next read.
+        let before: Vec<String> = (0..count)
+            .map(|index| format!("{:?}", tuning.setting(index).unwrap().value))
+            .collect();
+        let tuning = machine.pipeline_tuning_mut().unwrap();
+        for index in 1..count {
+            assert!(tuning.adjust(index, true), "{id} row {index} does not move");
+        }
+        let tuning = machine.pipeline_tuning().unwrap();
+        let after: Vec<String> = (0..count)
+            .map(|index| format!("{:?}", tuning.setting(index).unwrap().value))
+            .collect();
+        assert_ne!(before, after, "{id} settings did not change when adjusted");
+
+        // The first row is the execution model, and it is the one row that
+        // changes which rows there are — a scoreboard has no bypasses to
+        // offer. Whichever model it lands on still describes a whole screen,
+        // which is what a host needs in order to draw one.
+        for step in 0..PipelineMode::all().len() {
+            let tuning = machine.pipeline_tuning_mut().unwrap();
+            assert!(tuning.adjust(0, true), "{id} cannot change execution model");
+            let tuning = machine.pipeline_tuning().unwrap();
+            let rows = tuning.setting_count();
+            assert!(rows > 0, "{id} offers no rows after model change {step}");
+            assert!(
+                (0..rows).all(|index| tuning.setting(index).is_some()),
+                "{id} cannot describe itself after model change {step}"
+            );
+            assert_eq!(
+                tuning.setting(0).unwrap().name,
+                "Execution",
+                "{id} moved the model row out from under a host's cursor"
+            );
+        }
+    }
+}
+
+/// Reset restarts the *program*, not the machine the user built to run it.
+///
+/// `reset` rebuilt the backend with `Self::new`, carrying only `enabled` across,
+/// so every tuned row — the execution model included — snapped back to its
+/// default the moment the user pressed reset in the Pipeline tab.
+#[test]
+fn resetting_a_machine_keeps_the_datapath_the_user_tuned() {
+    let registry = ArchitectureRegistry::with_builtins();
+    for architecture in registry.architectures() {
+        let descriptor = architecture.descriptor();
+        if !descriptor.capabilities.pipeline || descriptor.id == riscv32::ID {
+            continue;
+        }
+        let id = descriptor.id;
+        let mut machine = trait_machine(id, architecture.default_source());
+        machine.pipeline_control().unwrap().set_enabled(true);
+
+        // Move every row off its default, so a reset that rebuilds from
+        // defaults cannot coincidentally land on the same screen.
+        let count = machine.pipeline_tuning().unwrap().setting_count();
+        for index in 0..count {
+            machine.pipeline_tuning_mut().unwrap().adjust(index, true);
+        }
+        let tuned: Vec<String> = {
+            let tuning = machine.pipeline_tuning().unwrap();
+            (0..tuning.setting_count())
+                .map(|index| format!("{:?}", tuning.setting(index).unwrap().value))
+                .collect()
+        };
+
+        machine.cycle().unwrap();
+        machine.reset();
+
+        let tuning = machine.pipeline_tuning().unwrap();
+        let after: Vec<String> = (0..tuning.setting_count())
+            .map(|index| format!("{:?}", tuning.setting(index).unwrap().value))
+            .collect();
+        assert_eq!(after, tuned, "{id} lost its pipeline settings on reset");
+        assert!(
+            machine.pipeline().unwrap().status().enabled,
+            "{id} switched the pipeline model off on reset"
+        );
+
+        // The run itself does belong to the program: reset still clears it.
+        assert_eq!(
+            machine.pipeline().unwrap().stats().cycles,
+            0,
+            "{id} kept the previous run's cycles across a reset"
+        );
+    }
+}
+
+/// Step the model row until the screen says the model asked for is running.
+///
+/// Through the capability and nothing else: a host has no other way to change
+/// it, so neither does this.
+fn select_model(machine: &mut dyn raven_engine::Machine, mode: PipelineMode, id: &str) {
+    for _ in 0..PipelineMode::all().len() {
+        let showing = machine.pipeline_tuning().unwrap().setting(0).unwrap().value;
+        if showing == PipelineSettingValue::Choice(mode.label()) {
+            return;
+        }
+        machine.pipeline_tuning_mut().unwrap().adjust(0, true);
+    }
+    panic!("{id} never offers {}", mode.label());
+}
+
+/// A model change is not just a screen. Whichever engine the row selects has to
+/// run the program the backend loaded, and produce what it produced before —
+/// scheduling is a claim about *when* work happens, never about what it does.
+#[test]
+fn every_declared_datapath_runs_the_same_program_under_every_model() {
+    for (id, source, expected) in [
+        (
+            "sap",
+            "LDI 1\nJZ wrong\nJMP done\nwrong: LDI 9\ndone: OUT\nHLT\n",
+            b"1\n".as_slice(),
+        ),
+        (
+            "toy16",
+            "li r0, 1\njnz r0, done\nli r1, 99\ndone: li r1, 42\nprint r1\nhalt\n",
+            b"42\n".as_slice(),
+        ),
+    ] {
+        for mode in PipelineMode::all() {
+            let mut machine = trait_machine(id, source);
+            select_model(machine.as_mut(), mode, id);
+            machine.pipeline_control().unwrap().set_enabled(true);
+            for _ in 0..400 {
+                if machine.cycle().unwrap().outcome == StepOutcome::Halted {
+                    break;
+                }
+            }
+            let model = mode.label();
+            assert_eq!(machine.snapshot().stdout, expected, "{id} under {model}");
+            assert!(
+                machine.pipeline().unwrap().stats().committed > 0,
+                "{id} under {model} committed nothing"
+            );
+        }
     }
 }
 

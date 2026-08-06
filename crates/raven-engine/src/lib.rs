@@ -9,7 +9,7 @@ pub mod architectures;
 mod cache_model;
 pub mod capability;
 mod falc;
-mod teaching_pipeline;
+pub mod pipeline;
 
 /// Compatibility path for the production RV32 backend.
 ///

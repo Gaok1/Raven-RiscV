@@ -1,54 +1,12 @@
 //! Adapter from the RV32 pipeline simulator to the engine-level observer API.
 
 use crate::capability::{
-    PipelineEdge, PipelineEdgeKind, PipelineHazardKind, PipelineInspect, PipelineInstructionClass,
-    PipelineSlotView, PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus,
-    PipelineTimelineCell, PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind,
-    PipelineTraceView, PipelineUnitView,
+    PipelineEdge, PipelineEdgeKind, PipelineInspect, PipelineSlotView, PipelineStageRole,
+    PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell, PipelineTimelineRow,
+    PipelineTimelineState, PipelineTraceView, PipelineUnitView,
 };
 
-use super::{
-    FuKind, GanttCell, HazardType, InstrClass, PipeSlot, PipelineSimState, Stage, TraceKind,
-};
-
-/// The one place RV32's stage names are mapped to their roles; the stage view
-/// and the timeline both read it, so they cannot disagree.
-fn stage_role(stage: Stage) -> PipelineStageRole {
-    match stage {
-        Stage::IF => PipelineStageRole::Fetch,
-        Stage::ID => PipelineStageRole::Decode,
-        Stage::EX => PipelineStageRole::Execute,
-        Stage::MEM => PipelineStageRole::Memory,
-        Stage::WB => PipelineStageRole::Writeback,
-    }
-}
-
-fn instruction_class(class: InstrClass) -> PipelineInstructionClass {
-    match class {
-        InstrClass::Alu => PipelineInstructionClass::Alu,
-        InstrClass::Mul => PipelineInstructionClass::Multiply,
-        InstrClass::Div => PipelineInstructionClass::Divide,
-        InstrClass::Load => PipelineInstructionClass::Load,
-        InstrClass::Store => PipelineInstructionClass::Store,
-        InstrClass::Branch => PipelineInstructionClass::Branch,
-        InstrClass::Jump => PipelineInstructionClass::Jump,
-        InstrClass::System => PipelineInstructionClass::System,
-        InstrClass::Fp => PipelineInstructionClass::FloatingPoint,
-        InstrClass::Unknown => PipelineInstructionClass::Unknown,
-    }
-}
-
-fn hazard_kind(hazard: HazardType) -> PipelineHazardKind {
-    match hazard {
-        HazardType::Raw => PipelineHazardKind::ReadAfterWrite,
-        HazardType::LoadUse => PipelineHazardKind::LoadUse,
-        HazardType::BranchFlush => PipelineHazardKind::BranchFlush,
-        HazardType::FuBusy => PipelineHazardKind::FunctionalUnitBusy,
-        HazardType::MemLatency => PipelineHazardKind::MemoryLatency,
-        HazardType::Waw => PipelineHazardKind::WriteAfterWrite,
-        HazardType::War => PipelineHazardKind::WriteAfterRead,
-    }
-}
+use super::{FuKind, GanttCell, PipeSlot, PipelineSimState, Stage, TraceKind};
 
 fn is_atomic(slot: &PipeSlot) -> bool {
     use crate::falcon::instruction::Instruction;
@@ -75,7 +33,7 @@ fn slot_view(slot: &PipeSlot) -> PipelineSlotView<'_> {
     PipelineSlotView {
         address: u64::from(slot.pc),
         disassembly: &slot.disasm,
-        class: instruction_class(slot.class),
+        class: slot.class,
         destination: slot.rd.map(super::sim::reg_name),
         sources: [
             slot.rs1.map(super::sim::reg_name),
@@ -84,23 +42,9 @@ fn slot_view(slot: &PipeSlot) -> PipelineSlotView<'_> {
         bubble: slot.is_bubble,
         speculative: slot.is_speculative,
         predicted_taken: slot.predicted_taken,
-        hazard: slot.hazard.map(hazard_kind),
+        hazard: slot.hazard,
         atomic: is_atomic(slot),
         cycles_remaining: slot.fu_cycles_left,
-    }
-}
-
-fn slot_belongs_to_unit(slot: &PipeSlot, unit: FuKind) -> bool {
-    match unit {
-        FuKind::Alu => matches!(
-            slot.class,
-            InstrClass::Alu | InstrClass::Branch | InstrClass::Jump
-        ),
-        FuKind::Mul => slot.class == InstrClass::Mul,
-        FuKind::Div => slot.class == InstrClass::Div,
-        FuKind::Fpu => slot.class == InstrClass::Fp,
-        FuKind::Lsu => matches!(slot.class, InstrClass::Load | InstrClass::Store),
-        FuKind::Sys => slot.class == InstrClass::System,
     }
 }
 
@@ -143,6 +87,10 @@ impl PipelineInspect for PipelineSimState {
             branch_stalls: branch,
             functional_unit_stalls: unit,
             memory_stalls: memory,
+            // This datapath retires in order, so a name hazard never costs it
+            // a cycle. Only a dynamically scheduled model can report these.
+            waw_stalls: 0,
+            war_stalls: 0,
             flushes: self.flush_count,
             branches: self.branches_executed,
         }
@@ -157,7 +105,7 @@ impl PipelineInspect for PipelineSimState {
         Some(PipelineStageView {
             name: stage.label(),
             slot: self.stages[index].as_ref().map(slot_view),
-            role: stage_role(stage),
+            role: stage.role(),
         })
     }
 
@@ -194,7 +142,7 @@ impl PipelineInspect for PipelineSimState {
                 ex.seq != 0
                     && ex.seq == slot.seq
                     && ex.pc == slot.pc
-                    && slot_belongs_to_unit(ex, kind)
+                    && kind.spec().handles(ex.class)
             });
             if is_mirrored {
                 mirrored = Some(slot);
@@ -207,26 +155,14 @@ impl PipelineInspect for PipelineSimState {
             active += 1;
             first.get_or_insert_with(|| slot_view(slot));
         }
-        let latency_class = match kind {
-            FuKind::Alu => first.map_or(PipelineInstructionClass::Alu, |slot| slot.class),
-            FuKind::Mul => PipelineInstructionClass::Multiply,
-            FuKind::Div => PipelineInstructionClass::Divide,
-            FuKind::Fpu => PipelineInstructionClass::FloatingPoint,
-            FuKind::Lsu => first.map_or(PipelineInstructionClass::Load, |slot| {
-                if slot.class == PipelineInstructionClass::Store {
-                    PipelineInstructionClass::Store
-                } else {
-                    PipelineInstructionClass::Load
-                }
-            }),
-            FuKind::Sys => PipelineInstructionClass::System,
-        };
         Some(PipelineUnitView {
             name: kind.label(),
             capacity: usize::from(self.fu_capacity[kind.index()].max(1)),
             active,
             first,
-            latency_class,
+            // Idle, the unit shows the work it exists for; busy, it shows what
+            // it is actually running — a store in the LSU rather than a load.
+            latency_class: first.map_or(kind.spec().latency_class, |slot| slot.class),
             // RV32's per-class latencies are tunable and live in the caller's
             // `PipelineTiming`, which is handed to each step rather than kept
             // here — so the total belongs to whoever owns that table.
@@ -240,10 +176,6 @@ impl PipelineInspect for PipelineSimState {
 
     fn trace(&self, index: usize) -> Option<PipelineTraceView<'_>> {
         let trace = self.hazard_traces.get(index)?;
-        let kind = match trace.kind {
-            TraceKind::Hazard(hazard) => PipelineTraceKind::Hazard(hazard_kind(hazard)),
-            TraceKind::Forward => PipelineTraceKind::Forward,
-        };
         let detail = if trace.detail.is_empty() {
             match trace.kind {
                 TraceKind::Hazard(hazard) => self
@@ -257,7 +189,7 @@ impl PipelineInspect for PipelineSimState {
             trace.detail.as_str()
         };
         Some(PipelineTraceView {
-            kind,
+            kind: trace.kind,
             from_stage: trace.from_stage,
             to_stage: trace.to_stage,
             detail,
@@ -277,8 +209,9 @@ impl PipelineInspect for PipelineSimState {
     fn timeline_row(&self, index: usize) -> Option<PipelineTimelineRow<'_>> {
         let row = self.gantt.get(index)?;
         Some(PipelineTimelineRow {
+            address: u64::from(row.pc),
             disassembly: &row.disasm,
-            class: instruction_class(row.class),
+            class: row.class,
             first_cycle: row.first_cycle,
             cells: row.cells.len(),
             atomic: row_is_atomic(&row.disasm),
@@ -292,7 +225,7 @@ impl PipelineInspect for PipelineSimState {
             GanttCell::InStage(stage) => (
                 stage.label(),
                 PipelineTimelineState::Active,
-                stage_role(stage),
+                stage.role(),
             ),
             GanttCell::InFu(_) => (
                 "EX",
@@ -302,7 +235,7 @@ impl PipelineInspect for PipelineSimState {
             GanttCell::Speculative(stage) => (
                 stage.label(),
                 PipelineTimelineState::Speculative,
-                stage_role(stage),
+                stage.role(),
             ),
             GanttCell::SpeculativeFu(_) => (
                 "EX",
@@ -379,7 +312,7 @@ mod tests {
     fn stage_views_widen_addresses_and_name_registers() {
         let mut pipeline = PipelineSimState::new();
         let mut slot = PipeSlot::from_word(0x1234, 0x0015_8513); // addi a0, a1, 1
-        slot.hazard = Some(HazardType::Raw);
+        slot.hazard = Some(HazardType::ReadAfterWrite);
         pipeline.stages[Stage::ID as usize] = Some(slot);
 
         let stage = pipeline.stage(Stage::ID as usize).unwrap();

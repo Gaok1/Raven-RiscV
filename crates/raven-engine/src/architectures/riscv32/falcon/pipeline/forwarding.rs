@@ -571,7 +571,7 @@ fn emit_forward_trace(
     );
     super::sim::push_trace(state, TraceKind::Forward, prod_idx, consumer_stage, detail);
     state.hazard_msgs.push((
-        HazardType::Raw,
+        HazardType::ReadAfterWrite,
         format!(
             "BYPASS: {} via {} into {}:{} [RAW covered]",
             super::sim::reg_name(p_rd),
@@ -621,7 +621,7 @@ fn emit_forward_trace_for_slot(
     );
     super::sim::push_trace(state, TraceKind::Forward, prod_idx, consumer_stage, detail);
     state.hazard_msgs.push((
-        HazardType::Raw,
+        HazardType::ReadAfterWrite,
         format!(
             "BYPASS: {} via {} into {}:{} [RAW covered]",
             super::sim::reg_name(p_rd),

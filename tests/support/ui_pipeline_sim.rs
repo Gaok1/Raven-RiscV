@@ -351,11 +351,11 @@ fn branch_prediction_taken_redirects_fetch() {
 #[test]
 fn fence_and_fence_i_flow_through_pipeline_as_system_ops() {
     assert_eq!(
-        InstrClass::from_word(encode(Instruction::Fence).unwrap()),
+        crate::falcon::pipeline::classify(encode(Instruction::Fence).unwrap()),
         InstrClass::System
     );
     assert_eq!(
-        InstrClass::from_word(encode(Instruction::FenceI).unwrap()),
+        crate::falcon::pipeline::classify(encode(Instruction::FenceI).unwrap()),
         InstrClass::System
     );
 }
@@ -790,7 +790,7 @@ fn forwarded_raw_and_waw_are_both_reported_for_same_register() {
         saw_waw |= state
             .hazard_traces
             .iter()
-            .any(|t| t.kind == TraceKind::Hazard(HazardType::Waw));
+            .any(|t| t.kind == TraceKind::Hazard(HazardType::WriteAfterWrite));
         if saw_forward && saw_waw {
             break;
         }
@@ -1273,10 +1273,10 @@ fn if_cache_stall_inserts_frontend_bubble_into_id() {
         .as_ref()
         .expect("ID should contain an explicit front-end bubble");
     assert!(id_slot.is_bubble);
-    assert_eq!(id_slot.hazard, Some(HazardType::MemLatency));
+    assert_eq!(id_slot.hazard, Some(HazardType::MemoryLatency));
     assert!(
         state.hazard_msgs.iter().any(|(kind, msg)| {
-            *kind == HazardType::MemLatency && msg.contains("front-end bubble")
+            *kind == HazardType::MemoryLatency && msg.contains("front-end bubble")
         }),
         "expected a textual explanation for IF-cache bubble injection"
     );
@@ -1333,7 +1333,7 @@ fn if_cache_stall_bubble_propagates_into_ex() {
         .as_ref()
         .expect("EX should contain the propagated front-end bubble");
     assert!(ex_slot.is_bubble);
-    assert_eq!(ex_slot.hazard, Some(HazardType::MemLatency));
+    assert_eq!(ex_slot.hazard, Some(HazardType::MemoryLatency));
 }
 
 #[test]
@@ -2619,7 +2619,7 @@ fn branch_in_id_does_not_false_stall_on_value_committed_from_wb_this_cycle() {
         "same-cycle WB commit should satisfy branch-in-ID without needing WB->ID bypass"
     );
     assert_eq!(
-        without_forward.stall_by_type[HazardType::Raw.as_stall_index().unwrap()],
+        without_forward.stall_by_type[HazardType::ReadAfterWrite.as_stall_index().unwrap()],
         0
     );
 }
@@ -3083,7 +3083,7 @@ fn parallel_fu_mode_keeps_dependent_consumer_blocked_until_producer_finishes() {
         .first()
         .and_then(|fu| fu.slot.as_ref())
         .expect("mul should still be active in MUL bank");
-    assert!(matches!(mul_slot.class, InstrClass::Mul));
+    assert!(matches!(mul_slot.class, InstrClass::Multiply));
 
     assert!(
         state.fu_bank[crate::falcon::pipeline::FuKind::Alu.index()]
@@ -3238,7 +3238,7 @@ fn parallel_fu_mode_stalls_in_id_when_parallel_alu_bank_is_full() {
     );
     assert!(
         state.hazard_msgs.iter().any(
-            |(hazard, msg)| *hazard == HazardType::FuBusy && msg.contains("ALU is at capacity")
+            |(hazard, msg)| *hazard == HazardType::FunctionalUnitBusy && msg.contains("ALU is at capacity")
         )
     );
 }
@@ -3445,7 +3445,7 @@ fn ready_fu_result_can_promote_into_bubbled_wb() {
                 rs1: 10,
                 rs2: 11,
             }),
-            class: InstrClass::Div,
+            class: InstrClass::Divide,
             rd: Some(10),
             alu_result: 3,
             fu_cycles_left: 1,
@@ -3635,7 +3635,7 @@ fn mem_cache_stall_does_not_freeze_parallel_fu_progress() {
                 rs1: 10,
                 rs2: 11,
             }),
-            class: InstrClass::Div,
+            class: InstrClass::Divide,
             rd: Some(10),
             alu_result: 3,
             fu_cycles_left: 4,

@@ -12,7 +12,8 @@ pub use elf::image_from_elf;
 
 use crate::capability::{
     BitRole, InstructionBitField, InstructionCodec, InstructionField, InstructionInfo,
-    MemoryInspect, MemoryRegion, PipelineControl, PipelineInspect, RegisterBank, RegisterFile,
+    MemoryInspect, MemoryRegion, PipelineControl, PipelineDynamicInspect, PipelineInspect,
+    PipelineTuning, RegisterBank, RegisterFile,
     RegisterId,
 };
 use crate::{
@@ -20,7 +21,7 @@ use crate::{
     Diagnostic, Endianness, InstructionDoc, Machine, MachineError, MachineSnapshot, MachineState,
     ProgramImage, ProgramSegment, RegisterValue, SourceMap, StepOutcome, ZeroFill,
 };
-use pipeline::{PipelineInstruction, X86Pipeline};
+use pipeline::{X86Op, X86Pipeline};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 
@@ -1997,7 +1998,7 @@ impl X86_64Machine {
             stdout: Vec::new(),
             input: VecDeque::new(),
             fault: None,
-            pipeline: X86Pipeline::new(0),
+            pipeline: X86Pipeline::new(pipeline::shape(), 0),
         }
     }
 
@@ -2201,19 +2202,19 @@ impl X86_64Machine {
         }
     }
 
-    fn pipeline_instruction(&self, address: u64) -> PipelineInstruction {
+    fn pipeline_instruction(&self, address: u64) -> X86Op {
         let Ok(start) = usize::try_from(address) else {
-            return PipelineInstruction::fault(address, "x86-64 fetch address overflow");
+            return pipeline::fault_op(address, "x86-64 fetch address overflow");
         };
         let Some(bytes) = self
             .memory
             .get(start..start.saturating_add(15).min(self.memory.len()))
         else {
-            return PipelineInstruction::fault(address, "x86-64 fetch out of bounds");
+            return pipeline::fault_op(address, "x86-64 fetch out of bounds");
         };
         decode(bytes, address).map_or_else(
             || {
-                PipelineInstruction::fault(
+                pipeline::fault_op(
                     address,
                     format!(
                         "unsupported x86-64 opcode 0x{:02X} at 0x{address:016X}",
@@ -2221,7 +2222,7 @@ impl X86_64Machine {
                     ),
                 )
             },
-            |decoded| PipelineInstruction::new(address, decoded),
+            |decoded| pipeline::op(address, decoded),
         )
     }
 }
@@ -2250,9 +2251,11 @@ impl Machine for X86_64Machine {
     fn reset(&mut self) {
         let image = self.image.clone();
         let size = self.memory.len();
-        let pipeline_enabled = self.pipeline.enabled();
-        *self = Self::new(size);
-        self.pipeline.set_enabled(pipeline_enabled);
+        // The tuned datapath outlives the run; see the note on `Toy16::reset`.
+        let mut fresh = Self::new(size);
+        std::mem::swap(&mut fresh.pipeline, &mut self.pipeline);
+        *self = fresh;
+        self.pipeline.reset(self.rip);
         if let Some(image) = image
             && let Err(error) = self.load(&image)
         {
@@ -2621,8 +2624,6 @@ impl Machine for X86_64Machine {
                 return self.fail(message);
             }
             let address = instruction.address;
-            let sequential = instruction.sequential_address();
-            let branch = instruction.is_branch();
             let pipeline_enabled = self.pipeline.enabled();
             self.pipeline.set_enabled(false);
             self.rip = address;
@@ -2636,7 +2637,7 @@ impl Machine for X86_64Machine {
                 }
             };
             if outcome == StepOutcome::AwaitingInput {
-                self.pipeline.retry(instruction);
+                self.pipeline.retry(instruction, "awaiting input");
                 return Ok(CycleResult {
                     retired_address: None,
                     outcome,
@@ -2651,9 +2652,7 @@ impl Machine for X86_64Machine {
                 self.pipeline.halt();
                 return Ok(result);
             }
-            if branch && self.rip != sequential {
-                redirect = Some(self.rip);
-            }
+            redirect = self.pipeline.resolve(&instruction, self.rip);
         }
 
         if let Some(address) = self.pipeline.advance(redirect) {
@@ -2736,6 +2735,18 @@ impl Machine for X86_64Machine {
 
     fn pipeline_control(&mut self) -> Option<&mut dyn PipelineControl> {
         Some(&mut self.pipeline)
+    }
+
+    fn pipeline_tuning(&self) -> Option<&dyn PipelineTuning> {
+        Some(&self.pipeline)
+    }
+
+    fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
+        Some(&mut self.pipeline)
+    }
+
+    fn pipeline_dynamic(&self) -> Option<&dyn PipelineDynamicInspect> {
+        self.pipeline.dynamic()
     }
 }
 

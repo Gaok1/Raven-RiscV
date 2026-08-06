@@ -644,9 +644,9 @@ fn slot_belongs_to_fu_kind(slot: &crate::ui::pipeline::PipeSlot, fu_kind: FuKind
             slot.class,
             InstrClass::Alu | InstrClass::Branch | InstrClass::Jump
         ),
-        FuKind::Mul => matches!(slot.class, InstrClass::Mul),
-        FuKind::Div => matches!(slot.class, InstrClass::Div),
-        FuKind::Fpu => matches!(slot.class, InstrClass::Fp),
+        FuKind::Mul => matches!(slot.class, InstrClass::Multiply),
+        FuKind::Div => matches!(slot.class, InstrClass::Divide),
+        FuKind::Fpu => matches!(slot.class, InstrClass::FloatingPoint),
         FuKind::Lsu => matches!(slot.class, InstrClass::Load | InstrClass::Store),
         FuKind::Sys => matches!(slot.class, InstrClass::System),
     }
@@ -685,7 +685,7 @@ fn split_fu_activity<'a>(
 
 // ── Hazard messages ────────────────────────────────────────────────────────────
 
-fn render_hazards(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInspect) {
+pub(super) fn render_hazards(f: &mut Frame, area: Rect, pipeline: &dyn PipelineInspect) {
     // Upper case and set on the rule, matching the section headings in the Run
     // tab's Instruction panel — the app has one way of naming a region inside a
     // pane, and this is it.
@@ -814,8 +814,28 @@ fn trace_badge_style(kind: PipelineTraceKind) -> Style {
 
 // ── Gantt diagram ─────────────────────────────────────────────────────────────
 
-fn render_gantt(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn PipelineInspect) {
+pub(super) fn render_gantt(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn PipelineInspect) {
+    render_gantt_focused(f, area, app, pipeline, None);
+}
+
+/// The history, with one instruction's row picked out.
+///
+/// `focus` is an address rather than a row index because the out-of-order
+/// screen points at instructions, not at history rows — and a loop body has one
+/// address and many rows, so the newest matching row is the one in flight.
+pub(super) fn render_gantt_focused(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    pipeline: &dyn PipelineInspect,
+    focus: Option<u64>,
+) {
     let view = app.run.pipeline_view();
+    let focus_row = focus.and_then(|address| {
+        (0..pipeline.timeline_len())
+            .rev()
+            .find(|index| pipeline.timeline_row(*index).is_some_and(|row| row.address == address))
+    });
 
     const LABEL_W: usize = 12;
     const CELL_W: usize = 4;
@@ -891,10 +911,19 @@ fn render_gantt(f: &mut Frame, area: Rect, app: &App, pipeline: &dyn PipelineIns
             row.disassembly.to_string()
         };
         let (label, _) = row_label.unicode_truncate(LABEL_W - 1);
-        let label_style = if is_invalid {
+        let label_style = if focus_row == Some(row_index) {
+            // The row the rest of the screen is pointing at. Lit rather than
+            // merely marked: this is the same instruction as the highlighted
+            // station and buffer rows, and saying so is the point of the sync.
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD)
+        } else if is_invalid {
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM)
+        } else if focus_row.is_some() {
+            style::value().add_modifier(Modifier::DIM)
         } else {
             style::value()
         };
@@ -977,6 +1006,12 @@ fn cell_to_span(cell: PipelineTimelineCell<'_>) -> (&str, Style) {
             PipelineStageRole::Decode | PipelineStageRole::Memory => {
                 Style::default().fg(theme::LABEL_Y)
             }
+            // Waiting to run and being allowed to count are not execution, and
+            // a dynamically scheduled row is mostly made of them: an entry sits
+            // at issue for its operands and at commit for its turn. Colouring
+            // them as execute would hide the two waits the models are about.
+            PipelineStageRole::Issue => Style::default().fg(theme::METRIC_CYC),
+            PipelineStageRole::Commit => Style::default().fg(theme::CPI_PANEL),
             _ => style::success(),
         },
         PipelineTimelineState::Speculative => Style::default().fg(theme::SPECULATIVE),
@@ -1196,6 +1231,31 @@ mod tests {
             })
             .0,
             "──"
+        );
+    }
+
+    /// A dynamically scheduled row is mostly waiting: at issue for operands, at
+    /// commit for its turn. Both have to read as something other than execute,
+    /// or the history shows a machine that is busy the whole time.
+    #[test]
+    fn the_history_colours_waiting_apart_from_executing() {
+        let cell = |role| {
+            cell_to_span(PipelineTimelineCell {
+                role,
+                label: "··",
+                state: PipelineTimelineState::Active,
+            })
+            .1
+        };
+
+        let executing = cell(PipelineStageRole::Execute);
+        for waiting in [PipelineStageRole::Issue, PipelineStageRole::Commit] {
+            assert_ne!(cell(waiting), executing, "{waiting:?} reads as execute");
+        }
+        assert_ne!(
+            cell(PipelineStageRole::Issue),
+            cell(PipelineStageRole::Commit),
+            "and the two waits are not each other either"
         );
     }
 

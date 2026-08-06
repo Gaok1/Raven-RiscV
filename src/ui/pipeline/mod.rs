@@ -5,7 +5,7 @@ pub mod sim {
     pub use raven_engine::falcon::pipeline::sim::*;
 }
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -162,9 +162,13 @@ pub fn serialize_pipeline_config(cfg: &PipelineConfig) -> String {
         "bypass.store_to_load={}\n",
         cfg.bypass.store_to_load
     ));
+    // Stable tags the config parser reads back — not the display labels, which
+    // are free to change.
     let mode = match cfg.mode {
         PipelineMode::SingleCycle => "Serialized",
         PipelineMode::FunctionalUnits => "ParallelUFs",
+        PipelineMode::Scoreboard => "Scoreboard",
+        PipelineMode::TomasuloRob => "TomasuloRob",
     };
     s.push_str(&format!("mode={mode}\n"));
     s.push_str(&format!(
@@ -225,6 +229,8 @@ pub fn parse_pipeline_config(text: &str) -> Result<PipelineConfig, String> {
         "singlecycle" | "single-cycle" | "serialized" => PipelineMode::SingleCycle,
         "functionalunits" | "functional-units" | "functional_units" | "parallelufs"
         | "parallel-ufs" | "parallel_ufs" => PipelineMode::FunctionalUnits,
+        "scoreboard" => PipelineMode::Scoreboard,
+        "tomasulorob" | "tomasulo-rob" | "tomasulo_rob" | "tomasulo" => PipelineMode::TomasuloRob,
         other => return Err(format!("Unknown pipeline mode: {other}")),
     };
 
@@ -301,6 +307,35 @@ pub const CPI_ROWS: usize = 11;
 /// Rows the Pipeline settings page navigates: the datapath config, then [`CPI_ROWS`].
 pub const PIPELINE_CONFIG_ROWS: usize = PipelineBypassConfig::CONFIG_ROWS + CPI_ROWS;
 
+/// Which table of the out-of-order screen a row belongs to.
+///
+/// The tables show one machine from four sides, so a row in any of them can be
+/// the same instruction as a row in another — which is what makes hovering one
+/// worth lighting up the rest.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OooPanel {
+    Stations,
+    Buffer,
+    Registers,
+    Queue,
+}
+
+/// The row under the cursor, as the renderer recorded it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OooFocus {
+    pub panel: OooPanel,
+    pub row: usize,
+}
+
+/// One hovered row's hitbox: where it was drawn, and what it was.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OooRowHit {
+    pub focus: OooFocus,
+    pub y: u16,
+    pub x0: u16,
+    pub x1: u16,
+}
+
 /// Non-reversible state owned exclusively by the TUI.
 pub struct PipelineViewState {
     pub speed: PipelineSpeed,
@@ -336,6 +371,13 @@ pub struct PipelineViewState {
     pub btn_import_cfg_rect: Cell<(u16, u16, u16)>,
     pub btn_export_cfg_rect: Cell<(u16, u16, u16)>,
     pub gantt_area_rect: Cell<(u16, u16, u16, u16)>,
+    /// The out-of-order row under the cursor. Mouse only, by decision: the
+    /// tables are for inspecting, and inspecting is a thing you point at.
+    pub ooo_hover: Option<OooFocus>,
+    /// Where each out-of-order row was drawn last frame, so the mouse resolves
+    /// a hover against what is actually on screen rather than against a layout
+    /// recomputed from scratch.
+    pub ooo_row_hits: RefCell<Vec<OooRowHit>>,
 }
 
 impl PipelineViewState {
@@ -372,6 +414,8 @@ impl PipelineViewState {
             btn_import_cfg_rect: Cell::new((0, 0, 0)),
             btn_export_cfg_rect: Cell::new((0, 0, 0)),
             gantt_area_rect: Cell::new((0, 0, 0, 0)),
+            ooo_hover: None,
+            ooo_row_hits: RefCell::new(Vec::new()),
         }
     }
 

@@ -146,10 +146,22 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             use crate::ui::pipeline::{BranchPredict, BranchResolve, PipelineMode};
             app.run.pipeline_view_mut().clear_hover_state();
             let cursor = app.run.pipeline_view().config_cursor;
+            // A backend that declares its datapath adjusts through the shared
+            // capability: its rows are its own, so RV32's row numbering — and
+            // its typed CPI editor — do not apply.
+            if app.pipeline_config().is_none() {
+                if let Some(tuning) = app.pipeline_tuning_mut() {
+                    tuning.adjust(cursor, true);
+                }
+                return true;
+            }
             if cursor >= PipelineBypassConfig::CONFIG_ROWS {
                 open_cpi_edit(app, cursor);
                 return true;
             }
+            // Read before the mutable borrow: changing the model rebuilds the
+            // engine, and the engine is built from the latency table.
+            let timing = app.session.cpi_config.clone();
             let Some(pipeline) = app.pipeline_config_mut() else {
                 return true;
             };
@@ -159,10 +171,16 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 2 => pipeline.bypass.wb_to_id = !pipeline.bypass.wb_to_id,
                 3 => pipeline.bypass.store_to_load = !pipeline.bypass.store_to_load,
                 4 => {
-                    pipeline.mode = match pipeline.mode {
+                    // All four: the in-order pair is this backend's own
+                    // datapath, and the dynamically scheduled two are engines
+                    // from the shared package that RV32 now drives.
+                    let next = match pipeline.mode {
                         PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
-                        PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
+                        PipelineMode::FunctionalUnits => PipelineMode::Scoreboard,
+                        PipelineMode::Scoreboard => PipelineMode::TomasuloRob,
+                        PipelineMode::TomasuloRob => PipelineMode::SingleCycle,
                     };
+                    pipeline.set_mode(next, &timing);
                 }
                 5 => {
                     pipeline.branch_resolve = match pipeline.branch_resolve {
@@ -251,9 +269,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            app.run.pipeline_view_mut().config_cursor = (app.run.pipeline_view_mut().config_cursor
-                + 1)
-            .min(crate::ui::pipeline::PIPELINE_CONFIG_ROWS - 1);
+            let last = app.pipeline_config_rows().saturating_sub(1);
+            app.run.pipeline_view_mut().config_cursor =
+                (app.run.pipeline_view_mut().config_cursor + 1).min(last);
             true
         }
         // Gantt scroll is bottom-anchored: 0 = follow the newest row, so Up

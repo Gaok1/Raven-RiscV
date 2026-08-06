@@ -713,6 +713,41 @@ impl App {
         self.machine.pipeline()
     }
 
+    /// The structures a dynamically scheduled model runs on, when one is
+    /// running. `None` is what tells the Pipeline tab to draw stages.
+    pub(crate) fn pipeline_dynamic(
+        &self,
+    ) -> Option<&dyn raven_engine::capability::PipelineDynamicInspect> {
+        self.machine.pipeline_dynamic()
+    }
+
+    /// The datapath's adjustable properties, for any backend that declares a
+    /// shape. RV32 drives its own richer screen; this is what every other
+    /// backend now offers instead of nothing.
+    pub(crate) fn pipeline_tuning(&self) -> Option<&dyn raven_engine::capability::PipelineTuning> {
+        self.machine.pipeline_tuning()
+    }
+
+    pub(crate) fn pipeline_tuning_mut(
+        &mut self,
+    ) -> Option<&mut dyn raven_engine::capability::PipelineTuning> {
+        self.machine.pipeline_tuning_mut()
+    }
+
+    /// How many rows the Pipeline tab's settings screen has for this backend.
+    ///
+    /// RV32 has a fixed thirteen plus the latency table; every other backend has
+    /// as many as its declared shape offers, so the cursor cannot walk past the
+    /// end of a three-stage datapath's four settings.
+    pub(crate) fn pipeline_config_rows(&self) -> usize {
+        if self.pipeline_config().is_some() {
+            crate::ui::pipeline::PIPELINE_CONFIG_ROWS
+        } else {
+            self.pipeline_tuning()
+                .map_or(0, raven_engine::capability::PipelineTuning::setting_count)
+        }
+    }
+
     /// The pipeline *model* rather than a view of it, for the Pipeline tab's
     /// configuration controls: bypass paths, branch resolution, how many
     /// functional units of each kind. Retuning a datapath is not something the

@@ -1,5 +1,6 @@
 mod config_view;
 mod main_view;
+mod ooo;
 
 pub(crate) use main_view::{MainLayoutPlan, plan_main_layout};
 
@@ -14,7 +15,7 @@ use ratatui::{
     prelude::*,
     widgets::Paragraph,
 };
-use raven_engine::capability::PipelineInspect;
+use raven_engine::capability::{PipelineInspect, PipelineStats};
 
 pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
     app.run.pipeline_view().gantt_area_rect.set((0, 0, 0, 0));
@@ -60,7 +61,14 @@ pub fn render_pipeline(f: &mut Frame, area: Rect, app: &App) {
     }
 
     match app.run.pipeline_view().subtab {
-        PipelineSubtab::Main => main_view::render_pipeline_main(f, layout[1], app, pipeline),
+        // A model that has left program order has no stages to draw, so it gets
+        // the workbench of structures that replaced them. Asking the backend
+        // each frame rather than once: the model is a setting, and a user can
+        // change it between two frames.
+        PipelineSubtab::Main => match app.pipeline_dynamic() {
+            Some(model) => ooo::render_pipeline_ooo(f, layout[1], app, pipeline, model),
+            None => main_view::render_pipeline_main(f, layout[1], app, pipeline),
+        },
         PipelineSubtab::Config => config_view::render_pipeline_config(f, layout[1], app),
     }
 }
@@ -210,20 +218,10 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineIns
             format!("  CPI {cpi:.2}"),
             Style::default().fg(theme::METRIC_CPI),
         ));
-        let stalls = if header_drops_stall_breakdown(area.width) {
-            format!("  instr {}  stalls {}", stats.committed, stats.stalls)
-        } else {
-            let raw = stats.raw_stalls;
-            let lu = stats.load_use_stalls;
-            let br = stats.branch_stalls;
-            let fu = stats.functional_unit_stalls;
-            let mem = stats.memory_stalls;
-            format!(
-                "  instr {}  stalls {} (RAW {raw} · LD {lu} · BR {br} · FU {fu} · MEM {mem})",
-                stats.committed, stats.stalls
-            )
-        };
-        spans.push(Span::styled(stalls, Style::default().fg(theme::LABEL)));
+        spans.push(Span::styled(
+            stall_breakdown(&stats, area.width),
+            Style::default().fg(theme::LABEL),
+        ));
         if stats.branches > 0 {
             let mispredict_pct = stats.flushes as f64 / stats.branches as f64 * 100.0;
             spans.push(Span::styled(
@@ -255,6 +253,32 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, inspect: &dyn PipelineIns
     f.render_widget(Paragraph::new(vec![line1, Line::raw(""), line2]), area);
 }
 
+/// What the cycles went to, for the metrics line.
+///
+/// The two name hazards are listed only when something actually paid for them,
+/// which is the same as saying: only under a model that has no spare names. In
+/// an in-order or renaming machine they are permanently zero, and a pair of
+/// zeroes on every screen would be five words of noise — but where they are not
+/// zero, they are the number the model is being watched for.
+fn stall_breakdown(stats: &PipelineStats, width: u16) -> String {
+    if header_drops_stall_breakdown(width) {
+        return format!("  instr {}  stalls {}", stats.committed, stats.stalls);
+    }
+    let raw = stats.raw_stalls;
+    let lu = stats.load_use_stalls;
+    let br = stats.branch_stalls;
+    let fu = stats.functional_unit_stalls;
+    let mem = stats.memory_stalls;
+    let names = match (stats.waw_stalls, stats.war_stalls) {
+        (0, 0) => String::new(),
+        (waw, war) => format!(" · WAW {waw} · WAR {war}"),
+    };
+    format!(
+        "  instr {}  stalls {} (RAW {raw} · LD {lu} · BR {br} · FU {fu} · MEM {mem}{names})",
+        stats.committed, stats.stalls
+    )
+}
+
 /// Rows the Pipeline header occupies: controls, gap, metrics.
 pub(crate) const PIPELINE_HEADER_H: u16 = 3;
 
@@ -271,6 +295,39 @@ fn subtab_style(active: bool, hovered: bool) -> Style {
         Style::default().fg(theme::TEXT).bold()
     } else {
         Style::default().fg(theme::IDLE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stall_breakdown;
+    use raven_engine::capability::PipelineStats;
+
+    #[test]
+    fn the_name_hazards_are_listed_only_by_a_model_that_pays_for_them() {
+        let in_order = PipelineStats {
+            committed: 4,
+            stalls: 2,
+            raw_stalls: 2,
+            ..PipelineStats::default()
+        };
+        let line = stall_breakdown(&in_order, 120);
+        assert!(line.contains("RAW 2"));
+        assert!(
+            !line.contains("WAW"),
+            "two permanent zeroes are noise: {line}"
+        );
+
+        let scoreboard = PipelineStats {
+            waw_stalls: 3,
+            war_stalls: 1,
+            ..in_order
+        };
+        let line = stall_breakdown(&scoreboard, 120);
+        assert!(line.contains("WAW 3") && line.contains("WAR 1"), "{line}");
+
+        // A narrow header keeps only the total, whichever model is running.
+        assert!(!stall_breakdown(&scoreboard, 80).contains("WAW"));
     }
 }
 

@@ -76,10 +76,12 @@ pub use cache::{
 pub use code::{BitRole, InstructionBitField, InstructionCodec, InstructionField, InstructionInfo};
 pub use memory::{MemoryInspect, MemoryRegion};
 pub use pipeline::{
-    PipelineControl, PipelineEdge, PipelineEdgeKind, PipelineHazardKind, PipelineInspect,
-    PipelineInstructionClass, PipelineSlotView, PipelineStageRole, PipelineStageView,
-    PipelineStats, PipelineStatus, PipelineTimelineCell, PipelineTimelineRow,
-    PipelineTimelineState, PipelineTraceKind, PipelineTraceView, PipelineUnitView,
+    PipelineBufferView, PipelineControl, PipelineDynamicInspect, PipelineEdge, PipelineEdgeKind,
+    PipelineEntryPhase, PipelineHazardKind, PipelineInspect, PipelineInstructionClass,
+    PipelineOperandView, PipelineRenameView, PipelineSettingValue, PipelineSettingView,
+    PipelineSlotView, PipelineStageRole, PipelineStageView, PipelineStationView, PipelineStats,
+    PipelineStatus, PipelineTimelineCell, PipelineTimelineRow, PipelineTimelineState,
+    PipelineTraceKind, PipelineTraceView, PipelineTuning, PipelineUnitView,
 };
 pub use registers::{RegisterBank, RegisterEntry, RegisterFile, RegisterFormat, RegisterId};
 pub use translation::{

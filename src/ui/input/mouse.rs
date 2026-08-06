@@ -2668,6 +2668,7 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
     p.hover_import_cfg = false;
     p.hover_export_cfg = false;
     p.hover_config_row = None;
+    p.ooo_hover = None;
 
     let (main_y, main_x0, main_x1) = p.btn_subtab_main_rect.get();
     if me.row == main_y && me.column >= main_x0 && me.column < main_x1 {
@@ -2713,6 +2714,21 @@ fn update_pipeline_hover(app: &mut App, me: MouseEvent) {
     if me.row == out_y && me.column >= out_x0 && me.column < out_x1 {
         p.hover_export_cfg = true;
         return;
+    }
+
+    // Out-of-order row hover. Resolved against the boxes the renderer recorded
+    // last frame, so what lights up is what is actually on screen.
+    if matches!(p.subtab, crate::ui::pipeline::PipelineSubtab::Main) {
+        let hit = p
+            .ooo_row_hits
+            .borrow()
+            .iter()
+            .find(|hit| me.row == hit.y && me.column >= hit.x0 && me.column < hit.x1)
+            .map(|hit| hit.focus);
+        if hit.is_some() {
+            p.ooo_hover = hit;
+            return;
+        }
     }
 
     // Config row hover
@@ -2803,12 +2819,26 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
         for i in 0..crate::ui::pipeline::PIPELINE_CONFIG_ROWS {
             let (ry, rx0, rx1) = rects[i];
             if ry > 0 && me.row == ry && me.column >= rx0 && me.column < rx1 {
+                // A backend that declares its datapath adjusts through the
+                // shared capability: its rows are its own, so RV32's row
+                // numbering — and its typed CPI editor — do not apply. The same
+                // branch the keyboard takes, so a row a user can step with a
+                // key is a row they can click.
+                if app.pipeline_config().is_none() {
+                    if let Some(tuning) = app.pipeline_tuning_mut() {
+                        tuning.adjust(i, true);
+                    }
+                    return;
+                }
                 // A CPI row opens for typing instead of cycling — a cycle count
                 // runs past twenty, which is no good as a click-through list.
                 if i >= PipelineBypassConfig::CONFIG_ROWS {
                     crate::ui::input::keyboard::pipeline_keys::open_cpi_edit(app, i);
                     return;
                 }
+                // Read before the mutable borrow: changing the model rebuilds
+                // the engine, and the engine is built from the latency table.
+                let timing = app.session.cpi_config.clone();
                 let Some(pipeline) = app.pipeline_config_mut() else {
                     return;
                 };
@@ -2818,10 +2848,14 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                     2 => pipeline.bypass.wb_to_id = !pipeline.bypass.wb_to_id,
                     3 => pipeline.bypass.store_to_load = !pipeline.bypass.store_to_load,
                     4 => {
-                        pipeline.mode = match pipeline.mode {
+                        // All four, the same cycle the keyboard steps through.
+                        let next = match pipeline.mode {
                             PipelineMode::SingleCycle => PipelineMode::FunctionalUnits,
-                            PipelineMode::FunctionalUnits => PipelineMode::SingleCycle,
-                        }
+                            PipelineMode::FunctionalUnits => PipelineMode::Scoreboard,
+                            PipelineMode::Scoreboard => PipelineMode::TomasuloRob,
+                            PipelineMode::TomasuloRob => PipelineMode::SingleCycle,
+                        };
+                        pipeline.set_mode(next, &timing);
                     }
                     5 => {
                         pipeline.branch_resolve = match pipeline.branch_resolve {
