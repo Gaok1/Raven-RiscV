@@ -1,13 +1,24 @@
-//! The cycle-by-cycle history behind a Gantt view.
+//! What a host reads back about cycles that have already happened.
 //!
-//! One row per instruction, one cell per cycle it was visible. The recorder
-//! keeps the rows bounded so a long run cannot grow without limit; a host reads
-//! them one cell at a time through [`PipelineInspect`](crate::capability::PipelineInspect).
+//! Two records, both written by an engine and read through
+//! [`PipelineInspect`](crate::capability::PipelineInspect): the Gantt history —
+//! one row per instruction, one cell per cycle it was visible — and the
+//! per-cycle [`Trace`]s explaining why something moved or did not. The recorder
+//! keeps the rows bounded so a long run cannot grow without limit.
 
 use crate::capability::{
     PipelineInstructionClass, PipelineStageRole, PipelineTimelineCell, PipelineTimelineRow,
-    PipelineTimelineState,
+    PipelineTimelineState, PipelineTraceKind,
 };
+
+/// One thing that happened between two stages this cycle — a bypass that
+/// carried an operand, a hazard that held something back.
+pub(super) struct Trace {
+    pub kind: PipelineTraceKind,
+    pub from: usize,
+    pub to: usize,
+    pub detail: String,
+}
 
 pub(super) struct Cell {
     pub label: &'static str,

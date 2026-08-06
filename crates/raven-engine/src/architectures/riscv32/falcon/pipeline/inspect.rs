@@ -87,6 +87,10 @@ impl PipelineInspect for PipelineSimState {
             branch_stalls: branch,
             functional_unit_stalls: unit,
             memory_stalls: memory,
+            // This datapath retires in order, so a name hazard never costs it
+            // a cycle. Only a dynamically scheduled model can report these.
+            waw_stalls: 0,
+            war_stalls: 0,
             flushes: self.flush_count,
             branches: self.branches_executed,
         }

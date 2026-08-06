@@ -29,14 +29,7 @@ use crate::capability::{
 use super::config::PipelineShape;
 use super::op::PipelineOp;
 use super::predictor::TwoBitPredictor;
-use super::timeline::{Cell, Timeline};
-
-pub(super) struct Trace {
-    pub kind: PipelineTraceKind,
-    pub from: usize,
-    pub to: usize,
-    pub detail: String,
-}
+use super::timeline::{Cell, Timeline, Trace};
 
 pub struct ScalarPipeline<P> {
     pub(super) shape: PipelineShape,

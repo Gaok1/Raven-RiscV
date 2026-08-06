@@ -141,6 +141,13 @@ pub struct PipelineStats {
     pub branch_stalls: u64,
     pub functional_unit_stalls: u64,
     pub memory_stalls: u64,
+    /// Cycles lost to a second writer of a register that already has one in
+    /// flight. Always zero in an in-order design, and in a renaming one: it is
+    /// the price a scoreboard pays for having no spare names.
+    pub waw_stalls: u64,
+    /// Cycles a finished result waited so it would not overwrite a register an
+    /// older instruction had yet to read.
+    pub war_stalls: u64,
     pub flushes: u64,
     pub branches: u64,
 }

@@ -35,6 +35,14 @@
 //! [`with_parallel_units`](PipelineShape::with_parallel_units) turns execute
 //! into a bank of functional units that overlap — a divide and an add in flight
 //! together, still retiring in order.
+//!
+//! Leaving program order behind does take a different engine, because the
+//! question changes from "has the instruction ahead finished?" to "has anyone
+//! produced what I read?". [`ooo`] holds those: a [`ScoreboardPipeline`] issues
+//! in order and writes out of it. They take the same [`PipelineShape`] and the
+//! same [`PipelineOp`]s, and a backend drives them with the same cycle, so a
+//! declared datapath can be run under any of the models without the backend
+//! knowing which one it is.
 
 mod config;
 mod inspect;
@@ -52,6 +60,7 @@ pub use config::{
     BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineShape,
     PipelineTiming, RISC_FIVE_STAGE, StageSpec, UnitSpec,
 };
+pub use ooo::ScoreboardPipeline;
 pub use op::PipelineOp;
 pub use predictor::TwoBitPredictor;
 pub use scalar::ScalarPipeline;

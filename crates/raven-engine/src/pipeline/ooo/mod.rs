@@ -12,5 +12,10 @@
 //! [`PipelineOp`]: super::PipelineOp
 
 pub mod registers;
+pub mod scoreboard;
+
+#[cfg(test)]
+mod tests;
 
 pub use registers::{Operands, Producer, RegisterTable};
+pub use scoreboard::{SCOREBOARD_PHASES, ScoreboardPipeline};
