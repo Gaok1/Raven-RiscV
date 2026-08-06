@@ -1,6 +1,6 @@
 use crate::capability::{
     AddressTranslation, CacheHierarchy, InstructionCodec, MemoryInspect, PipelineControl,
-    PipelineInspect, RegisterFile,
+    PipelineInspect, PipelineTuning, RegisterFile,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -430,6 +430,20 @@ pub trait Machine: Send + std::any::Any {
     }
 
     fn pipeline_control(&mut self) -> Option<&mut dyn PipelineControl> {
+        None
+    }
+
+    /// The datapath's adjustable properties, for a settings screen.
+    ///
+    /// A backend with a fixed datapath answers `None` and a host shows nothing;
+    /// one that declares a shape can answer `Some` and let a user rewire the
+    /// bypasses, change the branch predictor or add a functional unit, and then
+    /// watch what it does to the Gantt view.
+    fn pipeline_tuning(&self) -> Option<&dyn PipelineTuning> {
+        None
+    }
+
+    fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
         None
     }
 

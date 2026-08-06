@@ -8,12 +8,13 @@ use crate::ui::view::components::{
     ControlState, bool_value, dense_value, edit_value, label_span,
 };
 use crate::ui::view::style;
+use raven_engine::capability::PipelineSettingValue;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
 };
 
 /// A pipeline config-row value: a boolean (rendered true/false green/red) or a
@@ -58,12 +59,9 @@ fn section(name: &str, width: u16) -> Line<'static> {
 
 pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
     let Some(p) = app.pipeline_config() else {
-        f.render_widget(
-            Paragraph::new("This backend exposes a fixed teaching pipeline; it has no tunable datapath settings.")
-                .alignment(Alignment::Center)
-                .style(style::label()),
-            area,
-        );
+        // Every other backend declares its datapath through the shared
+        // pipeline package, so it has the same knobs — read generically.
+        render_declared_settings(f, area, app);
         return;
     };
     let view = app.run.pipeline_view();
@@ -128,6 +126,99 @@ pub fn render_pipeline_config(f: &mut Frame, area: Rect, app: &App) {
     render_settings_list(f, cols[1], app, &rows_data);
     if cols[2].width >= 24 {
         render_explanation(f, cols[2], app, view.config_cursor, &rows_data);
+    }
+}
+
+/// The settings screen for a backend that declares its datapath through the
+/// shared pipeline package.
+///
+/// It reads rows off [`PipelineTuning`] rather than off one ISA's config
+/// struct, so the same screen serves SAP's three stages and x86-64's six. The
+/// groups come from the rows themselves — a backend that declares no functional
+/// units simply has no unit section.
+fn render_declared_settings(f: &mut Frame, area: Rect, app: &App) {
+    let Some(tuning) = app.pipeline_tuning() else {
+        f.render_widget(
+            Paragraph::new("This backend has no pipeline model to configure.")
+                .alignment(Alignment::Center)
+                .style(style::label()),
+            area,
+        );
+        return;
+    };
+    let inner = render_panel(f, area, panel::panel("Pipeline Settings", PanelKind::Accent));
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let view = app.run.pipeline_view();
+    let cursor = view.config_cursor.min(tuning.setting_count().saturating_sub(1));
+    let settings_w = SETTINGS_W.min(inner.width);
+    let explain_w = EXPLAIN_W.min(inner.width.saturating_sub(settings_w));
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(settings_w),
+            Constraint::Length(explain_w),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut rects = view.config_row_rects.get();
+    let mut group = "";
+    for index in 0..tuning.setting_count() {
+        let Some(setting) = tuning.setting(index) else {
+            continue;
+        };
+        if setting.group != group {
+            if !lines.is_empty() {
+                lines.push(Line::raw(""));
+            }
+            lines.push(section(setting.group, cols[1].width));
+            group = setting.group;
+        }
+        let selected = cursor == index;
+        let hovered = view.hover_config_row == Some(index);
+        let y = cols[1].y + lines.len() as u16;
+        if y < cols[1].y + cols[1].height && index < rects.len() {
+            rects[index] = (y, cols[1].x, cols[1].x + cols[1].width);
+        }
+        let count;
+        let value = match setting.value {
+            PipelineSettingValue::Toggle(on) => bool_value(on, hovered),
+            PipelineSettingValue::Choice(label) => {
+                dense_value(label, hovered, selected, theme::ACCENT)
+            }
+            PipelineSettingValue::Number(number) => {
+                count = number.to_string();
+                dense_value(&count, hovered, selected, theme::ACCENT)
+            }
+        };
+        lines.push(Line::from(vec![
+            Span::raw(" "),
+            label_span(
+                format!("{:<width$}", setting.name, width = CONFIG_LABEL_W),
+                ControlState::from(selected, hovered),
+                theme::TEXT,
+            ),
+            value,
+        ]));
+    }
+    view.config_row_rects.set(rects);
+    f.render_widget(Paragraph::new(lines), cols[1]);
+
+    if cols[2].width >= 24
+        && let Some(setting) = tuning.setting(cursor)
+    {
+        let rule_w = cols[2].width.min(74);
+        let body = vec![
+            section(setting.name, rule_w),
+            Line::raw(""),
+            Line::styled(format!(" {}", setting.summary), style::label()),
+        ];
+        f.render_widget(Paragraph::new(body).wrap(Wrap { trim: true }), cols[2]);
     }
 }
 

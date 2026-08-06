@@ -77,9 +77,10 @@ pub use code::{BitRole, InstructionBitField, InstructionCodec, InstructionField,
 pub use memory::{MemoryInspect, MemoryRegion};
 pub use pipeline::{
     PipelineControl, PipelineEdge, PipelineEdgeKind, PipelineHazardKind, PipelineInspect,
-    PipelineInstructionClass, PipelineSlotView, PipelineStageRole, PipelineStageView,
-    PipelineStats, PipelineStatus, PipelineTimelineCell, PipelineTimelineRow,
-    PipelineTimelineState, PipelineTraceKind, PipelineTraceView, PipelineUnitView,
+    PipelineInstructionClass, PipelineSettingValue, PipelineSettingView, PipelineSlotView,
+    PipelineStageRole, PipelineStageView, PipelineStats, PipelineStatus, PipelineTimelineCell,
+    PipelineTimelineRow, PipelineTimelineState, PipelineTraceKind, PipelineTraceView,
+    PipelineTuning, PipelineUnitView,
 };
 pub use registers::{RegisterBank, RegisterEntry, RegisterFile, RegisterFormat, RegisterId};
 pub use translation::{

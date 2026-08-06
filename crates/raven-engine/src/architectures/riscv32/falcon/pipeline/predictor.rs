@@ -1,80 +1,17 @@
 #![allow(clippy::collapsible_if, clippy::match_like_matches_macro)]
 
-use super::{BranchPredict, HazardType, InstrClass, PipeSlot, PipelineSimState, Stage, TraceKind};
+use super::{HazardType, InstrClass, PipeSlot, PipelineSimState, Stage, TraceKind};
 use crate::falcon::instruction::Instruction;
 
-const TWO_BIT_TABLE_SIZE: usize = 64;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TwoBitEntry {
-    valid: bool,
-    tag: u32,
-    counter: u8,
-}
-
-impl Default for TwoBitEntry {
-    fn default() -> Self {
-        Self {
-            valid: false,
-            tag: 0,
-            counter: 1,
-        }
-    }
-}
+/// The saturating-counter table is the same hardware on every machine, so RV32
+/// borrows it and keeps only the part that needs a decoder: recognising a branch
+/// and working out where it goes.
+pub type PredictorState = crate::pipeline::TwoBitPredictor;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Prediction {
     pub taken: bool,
     pub target: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PredictorState {
-    two_bit: [TwoBitEntry; TWO_BIT_TABLE_SIZE],
-}
-
-impl Default for PredictorState {
-    fn default() -> Self {
-        Self {
-            two_bit: [TwoBitEntry::default(); TWO_BIT_TABLE_SIZE],
-        }
-    }
-}
-
-impl PredictorState {
-    pub fn clear(&mut self) {
-        *self = Self::default();
-    }
-
-    fn two_bit_index(pc: u32) -> usize {
-        ((pc >> 2) as usize) & (TWO_BIT_TABLE_SIZE - 1)
-    }
-
-    fn predict_two_bit(&self, pc: u32) -> bool {
-        let entry = self.two_bit[Self::two_bit_index(pc)];
-        if entry.valid && entry.tag == pc {
-            entry.counter >= 2
-        } else {
-            false
-        }
-    }
-
-    fn update_two_bit(&mut self, pc: u32, taken: bool) {
-        let idx = Self::two_bit_index(pc);
-        let entry = &mut self.two_bit[idx];
-        if !entry.valid || entry.tag != pc {
-            *entry = TwoBitEntry {
-                valid: true,
-                tag: pc,
-                counter: 1,
-            };
-        }
-        entry.counter = if taken {
-            entry.counter.saturating_add(1).min(3)
-        } else {
-            entry.counter.saturating_sub(1)
-        };
-    }
 }
 
 fn conditional_branch_target(instr: Instruction, slot: &PipeSlot) -> Option<u32> {
@@ -104,12 +41,10 @@ fn is_conditional_branch(instr: Instruction) -> bool {
 pub(super) fn predict_control(slot: &PipeSlot, state: &PipelineSimState) -> Option<Prediction> {
     let instr = slot.instr?;
     if let Some(target) = conditional_branch_target(instr, slot) {
-        let taken = match state.predict {
-            BranchPredict::NotTaken => false,
-            BranchPredict::Taken => true,
-            BranchPredict::Btfnt => target < slot.pc,
-            BranchPredict::TwoBit => state.predictor.predict_two_bit(slot.pc),
-        };
+        let taken =
+            state
+                .predictor
+                .direction(state.predict, u64::from(slot.pc), u64::from(target));
         return Some(Prediction {
             taken,
             target: if taken {
@@ -182,7 +117,9 @@ pub(super) fn update_predictor(state: &mut PipelineSimState, resolve_stage: usiz
         return;
     };
     if is_conditional_branch(instr) {
-        state.predictor.update_two_bit(slot.pc, slot.branch_taken);
+        state
+            .predictor
+            .update(u64::from(slot.pc), slot.branch_taken);
     }
 }
 

@@ -359,13 +359,13 @@ pub(super) fn reg_name_cli(r: u8) -> &'static str {
 
 pub(super) fn hazard_type_label(hazard: HazardType) -> &'static str {
     match hazard {
-        HazardType::Raw => "RAW",
+        HazardType::ReadAfterWrite => "RAW",
         HazardType::LoadUse => "LOAD",
         HazardType::BranchFlush => "CTRL",
-        HazardType::FuBusy => "FU",
-        HazardType::MemLatency => "STALL",
-        HazardType::Waw => "WAW",
-        HazardType::War => "WAR",
+        HazardType::FunctionalUnitBusy => "FU",
+        HazardType::MemoryLatency => "STALL",
+        HazardType::WriteAfterWrite => "WAW",
+        HazardType::WriteAfterRead => "WAR",
     }
 }
 

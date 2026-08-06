@@ -12,7 +12,7 @@ pub use crate::falcon::{CacheController, Cpu, jit::BackendKind};
 use crate::capability::{
     AddressTranslation, BitRole, CacheHierarchy, CacheLevelView, CacheRole, CacheSetView,
     InstructionBitField, InstructionCodec, InstructionField, InstructionInfo, MemoryInspect,
-    MemoryRegion, PipelineInspect, RegisterBank, RegisterFile, RegisterId,
+    MemoryRegion, PipelineControl, PipelineInspect, RegisterBank, RegisterFile, RegisterId,
 };
 use crate::falcon::cache::CacheConfig;
 use crate::falcon::jit::ExecOutcome;
@@ -22,9 +22,9 @@ use crate::falcon::memory::Bus;
 use crate::falcon::pipeline::PipelineSimState;
 use crate::host::Console;
 use crate::{
-    Architecture, ArchitectureCapabilities, ArchitectureDescriptor, Assembler, Diagnostic,
-    Endianness, Machine, MachineError, MachineSnapshot, MachineState, ProgramImage, ProgramSegment,
-    RegisterValue, SourceMap, StepOutcome, ZeroFill,
+    Architecture, ArchitectureCapabilities, ArchitectureDescriptor, Assembler, CycleResult,
+    Diagnostic, Endianness, Machine, MachineError, MachineSnapshot, MachineState, ProgramImage,
+    ProgramSegment, RegisterValue, SourceMap, StepOutcome, ZeroFill,
 };
 use std::sync::{Arc, OnceLock};
 
@@ -297,6 +297,10 @@ pub struct RiscV32Machine {
     state: MachineState,
     stdout: Vec<u8>,
     fault: Option<String>,
+    /// Per-class latencies used when a host clocks this machine through
+    /// [`Machine::cycle`]. A host with its own configuration screen drives the
+    /// simulator directly and passes its own.
+    timing: falcon::pipeline::PipelineTiming,
 }
 
 impl RiscV32Machine {
@@ -313,6 +317,7 @@ impl RiscV32Machine {
             state: MachineState::Ready,
             stdout: Vec::new(),
             fault: None,
+            timing: falcon::pipeline::PipelineTiming::default(),
         }
     }
 
@@ -380,6 +385,9 @@ impl Machine for RiscV32Machine {
 
     fn reset(&mut self) {
         let image = self.image.clone();
+        // Whether the pipeline model is running is the user's choice, not the
+        // program's — every other backend carries it across a reset too.
+        let pipelined = self.machine.pipeline().enabled;
         *self = Self::new(self.memory_size);
         if let Some(image) = image
             && let Err(error) = self.load(&image)
@@ -387,6 +395,7 @@ impl Machine for RiscV32Machine {
             self.state = MachineState::Faulted;
             self.fault = Some(error.to_string());
         }
+        self.machine.pipeline_mut().enabled = pipelined;
     }
 
     /// Load `image` atomically: memory is built and filled on the side, so a
@@ -407,7 +416,9 @@ impl Machine for RiscV32Machine {
         // A fresh runtime rather than an in-place edit: loading a program must
         // not leave the previous one's pipeline latches or step-back history
         // reachable behind the new image.
-        self.machine = FalconMachine::new(cpu, mem, PipelineSimState::default());
+        let mut pipeline = PipelineSimState::default();
+        pipeline.reset_stages(entry);
+        self.machine = FalconMachine::new(cpu, mem, pipeline);
         self.image = Some(image.clone());
         self.state = MachineState::Ready;
         self.stdout.clear();
@@ -531,6 +542,74 @@ impl Machine for RiscV32Machine {
     /// to hide the tab rather than draw five empty stages.
     fn pipeline(&self) -> Option<&dyn PipelineInspect> {
         self.machine.pipeline_inspect()
+    }
+
+    fn pipeline_control(&mut self) -> Option<&mut dyn PipelineControl> {
+        self.machine.pipeline_controls()
+    }
+
+    /// One clock of the pipeline model, journaled so a host can step back.
+    ///
+    /// With the model switched off a cycle is a whole instruction, which is the
+    /// default contract. Switched on, this is the same tick the TUI drives —
+    /// reaching it no longer means downcasting to the concrete backend.
+    fn cycle(&mut self) -> Result<CycleResult, MachineError> {
+        if !self.machine.pipeline().enabled {
+            let address = self.snapshot().pc;
+            return self.step().map(|outcome| CycleResult {
+                retired_address: Some(address),
+                outcome,
+            });
+        }
+        if matches!(
+            self.state,
+            MachineState::Halted | MachineState::Exited(_) | MachineState::Faulted
+        ) {
+            return Err(MachineError::new("machine is not runnable; reset it first"));
+        }
+        self.state = MachineState::Running;
+        self.machine.sync_mmu();
+
+        let timing = self.timing.clone();
+        let console = &mut self.console;
+        let commit = self.machine.step_pipeline(
+            |pipeline, cpu, memory| {
+                falcon::pipeline::sim::pipeline_tick(pipeline, cpu, memory, &timing, console)
+            },
+            Option::is_some,
+        );
+
+        let emitted = std::mem::take(&mut self.machine.cpu_mut_unjournaled().stdout);
+        self.stdout.extend(emitted);
+        let retired_address = commit.map(|info| u64::from(info.pc));
+
+        let pipeline = self.machine.pipeline();
+        if pipeline.faulted {
+            let message = pipeline
+                .hazard_msgs
+                .first()
+                .map_or_else(|| "RV32 pipeline fault".to_string(), |(_, m)| m.clone());
+            self.state = MachineState::Faulted;
+            self.fault = Some(message.clone());
+            return Err(MachineError::new(message));
+        }
+        let outcome = if !pipeline.halted {
+            StepOutcome::Stepped
+        } else if self.cpu().exit_code.is_some()
+            || self.cpu().ebreak_hit
+            || self.cpu().local_exit
+        {
+            let code = self.cpu().exit_code.unwrap_or(0) as i32;
+            self.state = MachineState::Exited(code);
+            StepOutcome::Exited(code)
+        } else {
+            self.state = MachineState::Halted;
+            StepOutcome::Halted
+        };
+        Ok(CycleResult {
+            retired_address,
+            outcome,
+        })
     }
 
     /// Always `Some`: RV32 has an MMU even when paging is switched off, and the

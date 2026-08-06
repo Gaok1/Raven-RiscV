@@ -146,6 +146,15 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             use crate::ui::pipeline::{BranchPredict, BranchResolve, PipelineMode};
             app.run.pipeline_view_mut().clear_hover_state();
             let cursor = app.run.pipeline_view().config_cursor;
+            // A backend that declares its datapath adjusts through the shared
+            // capability: its rows are its own, so RV32's row numbering — and
+            // its typed CPI editor — do not apply.
+            if app.pipeline_config().is_none() {
+                if let Some(tuning) = app.pipeline_tuning_mut() {
+                    tuning.adjust(cursor, true);
+                }
+                return true;
+            }
             if cursor >= PipelineBypassConfig::CONFIG_ROWS {
                 open_cpi_edit(app, cursor);
                 return true;
@@ -251,9 +260,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             ) =>
         {
             app.run.pipeline_view_mut().clear_hover_state();
-            app.run.pipeline_view_mut().config_cursor = (app.run.pipeline_view_mut().config_cursor
-                + 1)
-            .min(crate::ui::pipeline::PIPELINE_CONFIG_ROWS - 1);
+            let last = app.pipeline_config_rows().saturating_sub(1);
+            app.run.pipeline_view_mut().config_cursor =
+                (app.run.pipeline_view_mut().config_cursor + 1).min(last);
             true
         }
         // Gantt scroll is bottom-anchored: 0 = follow the newest row, so Up

@@ -822,6 +822,132 @@ fn teaching_backends_expose_and_run_their_pipelines() {
     }
 }
 
+/// Declaring a pipeline is the whole cost of having one.
+///
+/// A backend says `pipeline: true` in its descriptor and declares its stages;
+/// everything a host draws — occupancy, hazard traces, statistics, the timing
+/// history — has to be there without the backend implementing any of it. This
+/// walks every registered architecture, so a new one that declares a shape and
+/// forgets to wire something up fails here rather than in a host.
+#[test]
+fn declaring_a_pipeline_is_enough_to_get_the_whole_package() {
+    let registry = ArchitectureRegistry::with_builtins();
+    for architecture in registry.architectures() {
+        let descriptor = architecture.descriptor();
+        if !descriptor.capabilities.pipeline {
+            continue;
+        }
+        let id = descriptor.id;
+        let mut machine = trait_machine(id, architecture.default_source());
+        assert!(
+            machine.pipeline().is_some() && machine.pipeline_control().is_some(),
+            "{id} declares a pipeline but does not expose one"
+        );
+        machine.pipeline_control().unwrap().set_enabled(true);
+
+        for _ in 0..400 {
+            match machine.cycle() {
+                Ok(cycle) if cycle.outcome == StepOutcome::Stepped => {}
+                _ => break,
+            }
+        }
+
+        let pipeline = machine.pipeline().unwrap();
+        assert!(pipeline.stage_count() > 1, "{id} has a one-stage datapath");
+        for index in 0..pipeline.stage_count() {
+            let stage = pipeline.stage(index).unwrap_or_else(|| {
+                panic!("{id} counts {index} stages but cannot describe them all")
+            });
+            assert!(!stage.name.is_empty(), "{id} has an unnamed stage");
+        }
+        assert_eq!(
+            pipeline.stage_order().len(),
+            pipeline.stage_count(),
+            "{id} drops a stage from its layout order"
+        );
+        // A clocked pipeline has a history and has spent cycles; a host that
+        // opens the Gantt view on any backend finds something in it.
+        assert!(pipeline.stats().cycles > 0, "{id} clocked without cycles");
+        assert!(pipeline.timeline_len() > 0, "{id} recorded no history");
+        for row in 0..pipeline.timeline_len() {
+            let cells = pipeline.timeline_row(row).unwrap().cells;
+            for cell in 0..cells {
+                assert!(
+                    pipeline.timeline_cell(row, cell).is_some(),
+                    "{id} row {row} promises {cells} cells but is missing one"
+                );
+            }
+        }
+        for index in 0..pipeline.unit_count() {
+            let unit = pipeline.unit(index).expect("declared unit");
+            assert!(
+                unit.active <= unit.capacity,
+                "{id} unit {} is over capacity",
+                unit.name
+            );
+        }
+    }
+}
+
+/// A datapath a user cannot change is a datapath they cannot experiment with.
+///
+/// Every backend that declares a shape offers the same settings screen, so the
+/// Pipeline tab is the same tab on all of them. Only RV32, whose model predates
+/// the shared package and carries its own richer configuration, is exempt.
+#[test]
+fn every_declared_datapath_can_be_retuned_through_the_capability() {
+    let registry = ArchitectureRegistry::with_builtins();
+    for architecture in registry.architectures() {
+        let descriptor = architecture.descriptor();
+        if !descriptor.capabilities.pipeline || descriptor.id == riscv32::ID {
+            continue;
+        }
+        let id = descriptor.id;
+        let mut machine = trait_machine(id, architecture.default_source());
+        let tuning = machine
+            .pipeline_tuning()
+            .unwrap_or_else(|| panic!("{id} declares a pipeline but offers no settings"));
+        let count = tuning.setting_count();
+        assert!(count > 0, "{id} offers an empty settings screen");
+        assert!(tuning.setting(count).is_none(), "{id} counts past its rows");
+
+        let mut groups: Vec<&str> = Vec::new();
+        for index in 0..count {
+            let setting = tuning
+                .setting(index)
+                .unwrap_or_else(|| panic!("{id} cannot describe row {index}"));
+            assert!(!setting.name.is_empty(), "{id} row {index} is unnamed");
+            assert!(
+                !setting.summary.is_empty(),
+                "{id} row {index} explains nothing"
+            );
+            // Rows of a group arrive together, so a host can draw one heading.
+            if groups.last() != Some(&setting.group) {
+                assert!(
+                    !groups.contains(&setting.group),
+                    "{id} splits the {} group",
+                    setting.group
+                );
+                groups.push(setting.group);
+            }
+        }
+
+        // Every row moves, and moving one is visible in the next read.
+        let before: Vec<String> = (0..count)
+            .map(|index| format!("{:?}", tuning.setting(index).unwrap().value))
+            .collect();
+        let tuning = machine.pipeline_tuning_mut().unwrap();
+        for index in 0..count {
+            assert!(tuning.adjust(index, true), "{id} row {index} does not move");
+        }
+        let tuning = machine.pipeline_tuning().unwrap();
+        let after: Vec<String> = (0..count)
+            .map(|index| format!("{:?}", tuning.setting(index).unwrap().value))
+            .collect();
+        assert_ne!(before, after, "{id} settings did not change when adjusted");
+    }
+}
+
 #[test]
 fn teaching_pipelines_flush_taken_branch_paths() {
     for (id, source, expected_output) in [

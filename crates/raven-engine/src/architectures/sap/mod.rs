@@ -3,10 +3,10 @@
 use crate::cache_model::TeachingCache;
 use crate::capability::{
     BitRole, CacheHierarchy, InstructionBitField, InstructionCodec, InstructionField,
-    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineInspect,
+    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineInspect, PipelineTuning,
     PipelineInstructionClass, PipelineStageRole, RegisterBank, RegisterFile, RegisterId,
 };
-use crate::teaching_pipeline::{StageSpec, TeachingInstruction, TeachingPipeline};
+use crate::pipeline::{PipelineOp, PipelineShape, ScalarPipeline, StageSpec, UnitSpec};
 use crate::{
     Architecture, ArchitectureCapabilities, ArchitectureDescriptor, Assembler, CycleResult,
     Diagnostic, Endianness, InstructionDoc, Machine, MachineError, MachineSnapshot, MachineState,
@@ -307,23 +307,50 @@ pub struct SapMachine {
     stdout: Vec<u8>,
     fault: Option<String>,
     cache: TeachingCache,
-    pipeline: TeachingPipeline,
+    pipeline: ScalarPipeline<u8>,
 }
 
+/// SAP's whole datapath declaration. Three stages, one byte per instruction —
+/// and from that the shared package supplies hazard detection, forwarding, the
+/// branch predictor and the Gantt history.
 static PIPELINE_STAGES: [StageSpec; 3] = [
-    StageSpec {
-        name: "IF",
-        role: PipelineStageRole::Fetch,
-    },
-    StageSpec {
-        name: "ID",
-        role: PipelineStageRole::Decode,
-    },
-    StageSpec {
-        name: "EX",
-        role: PipelineStageRole::Execute,
-    },
+    StageSpec::new("IF", PipelineStageRole::Fetch),
+    StageSpec::new("ID", PipelineStageRole::Decode),
+    StageSpec::new("EX", PipelineStageRole::Execute),
 ];
+
+/// The two things SAP's execute stage can be doing: arithmetic on the
+/// accumulator, or reaching memory. Every instruction takes one cycle, so the
+/// bank never has to hold work — but a learner can still see which unit each
+/// instruction used, which is the point of showing them at all.
+static PIPELINE_UNITS: [UnitSpec; 3] = [
+    UnitSpec::new(
+        "ALU",
+        &[
+            PipelineInstructionClass::Alu,
+            PipelineInstructionClass::Branch,
+            PipelineInstructionClass::Jump,
+        ],
+        PipelineInstructionClass::Alu,
+    ),
+    UnitSpec::new(
+        "MEM",
+        &[
+            PipelineInstructionClass::Load,
+            PipelineInstructionClass::Store,
+        ],
+        PipelineInstructionClass::Load,
+    ),
+    UnitSpec::new(
+        "SYS",
+        &[PipelineInstructionClass::System],
+        PipelineInstructionClass::System,
+    ),
+];
+
+fn pipeline_shape() -> PipelineShape {
+    PipelineShape::scalar(&PIPELINE_STAGES, Some(1)).with_parallel_units(&PIPELINE_UNITS)
+}
 
 impl SapMachine {
     fn new(memory_size: usize) -> Self {
@@ -341,7 +368,7 @@ impl SapMachine {
             stdout: vec![],
             fault: None,
             cache: TeachingCache::new(4, 16, 4, 1),
-            pipeline: TeachingPipeline::new(&PIPELINE_STAGES, 1, 0),
+            pipeline: ScalarPipeline::new(pipeline_shape(), 0),
         }
     }
 
@@ -426,7 +453,7 @@ impl SapMachine {
         Ok(StepOutcome::Stepped)
     }
 
-    fn pipeline_instruction(&mut self, address: u64) -> TeachingInstruction {
+    fn pipeline_instruction(&mut self, address: u64) -> PipelineOp<u8> {
         let Some(pc) = usize::try_from(address).ok() else {
             return Self::pipeline_fetch_fault(address);
         };
@@ -445,13 +472,13 @@ impl SapMachine {
             0x0 => PipelineInstructionClass::Alu,
             _ => PipelineInstructionClass::Unknown,
         };
-        let mut instruction = TeachingInstruction::new(
+        let mut instruction = PipelineOp::new(
             address,
-            u32::from(byte),
             SapCodec
                 .disassemble(address, &[byte])
                 .unwrap_or_else(|| format!(".byte 0x{byte:02X}")),
             class,
+            byte,
         );
         match opcode {
             0x1 | 0x5 => {
@@ -460,29 +487,27 @@ impl SapMachine {
             }
             0x2 | 0x3 => {
                 instruction.destination = Some("a".into());
-                instruction.sources[0] = Some("a".into());
+                instruction.sources.push("a".into());
                 instruction
                     .writes
                     .extend(["a", "b", "carry", "zero"].map(str::to_string));
             }
-            0x4 | 0xe => instruction.sources[0] = Some("a".into()),
-            0x7 => instruction.sources[0] = Some("carry".into()),
-            0x8 => instruction.sources[0] = Some("zero".into()),
+            0x4 | 0xe => instruction.sources.push("a".into()),
+            0x7 => instruction.sources.push("carry".into()),
+            0x8 => instruction.sources.push("zero".into()),
             _ => {}
         }
-        instruction.branch = matches!(opcode, 0x6..=0x8);
+        if matches!(opcode, 0x6..=0x8) {
+            // The operand nibble is the target, so the front end can run ahead
+            // down a predicted-taken jump instead of always falling through.
+            instruction.branch = true;
+            instruction.branch_target = Some(u64::from(byte & 0x0f));
+        }
         instruction
     }
 
-    fn pipeline_fetch_fault(address: u64) -> TeachingInstruction {
-        let mut instruction = TeachingInstruction::new(
-            address,
-            0,
-            "fetch fault".into(),
-            PipelineInstructionClass::Unknown,
-        );
-        instruction.fault = Some("SAP fetch out of bounds".into());
-        instruction
+    fn pipeline_fetch_fault(address: u64) -> PipelineOp<u8> {
+        PipelineOp::faulted(address, "SAP fetch out of bounds", 0)
     }
 }
 
@@ -594,16 +619,14 @@ impl Machine for SapMachine {
                 self.pipeline.fault(message.clone());
                 return self.fail(message);
             }
-            let sequential = instruction.address.saturating_add(1);
-            let outcome = match self
-                .execute_instruction(instruction.address as usize, instruction.encoding as u8)
-            {
-                Ok(outcome) => outcome,
-                Err(error) => {
-                    self.pipeline.fault(error.to_string());
-                    return Err(error);
-                }
-            };
+            let outcome =
+                match self.execute_instruction(instruction.address as usize, instruction.payload) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        self.pipeline.fault(error.to_string());
+                        return Err(error);
+                    }
+                };
             self.pipeline.retire(&instruction);
             result = CycleResult {
                 retired_address: Some(instruction.address),
@@ -613,9 +636,7 @@ impl Machine for SapMachine {
                 self.pipeline.halt();
                 return Ok(result);
             }
-            if instruction.branch && u64::from(self.pc) != sequential {
-                redirect = Some(u64::from(self.pc));
-            }
+            redirect = self.pipeline.resolve(&instruction, u64::from(self.pc));
         }
         if let Some(address) = self.pipeline.advance(redirect) {
             let instruction = self.pipeline_instruction(address);
@@ -694,6 +715,14 @@ impl Machine for SapMachine {
     }
 
     fn pipeline_control(&mut self) -> Option<&mut dyn PipelineControl> {
+        Some(&mut self.pipeline)
+    }
+
+    fn pipeline_tuning(&self) -> Option<&dyn PipelineTuning> {
+        Some(&self.pipeline)
+    }
+
+    fn pipeline_tuning_mut(&mut self) -> Option<&mut dyn PipelineTuning> {
         Some(&mut self.pipeline)
     }
 }

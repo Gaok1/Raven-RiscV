@@ -18,6 +18,44 @@ pub enum PipelineInstructionClass {
     Unknown,
 }
 
+impl PipelineInstructionClass {
+    pub const COUNT: usize = 10;
+
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Alu,
+        Self::Multiply,
+        Self::Divide,
+        Self::Load,
+        Self::Store,
+        Self::Branch,
+        Self::Jump,
+        Self::System,
+        Self::FloatingPoint,
+        Self::Unknown,
+    ];
+
+    /// Short name for a column header or a legend.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Alu => "ALU",
+            Self::Multiply => "MUL",
+            Self::Divide => "DIV",
+            Self::Load => "Load",
+            Self::Store => "Store",
+            Self::Branch => "Branch",
+            Self::Jump => "Jump",
+            Self::System => "System",
+            Self::FloatingPoint => "FP",
+            Self::Unknown => "?",
+        }
+    }
+
+    /// Index into a per-class counter array.
+    pub fn as_usize(self) -> usize {
+        self as usize
+    }
+}
+
 /// Hazards common to pipeline models, independent of register width or ISA.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PipelineHazardKind {
@@ -30,10 +68,57 @@ pub enum PipelineHazardKind {
     WriteAfterRead,
 }
 
+impl PipelineHazardKind {
+    /// How many hazard kinds actually cost cycles. The name hazards are
+    /// informational in an in-order design, so they have no counter.
+    pub const STALL_TYPE_COUNT: usize = 5;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ReadAfterWrite => "RAW",
+            Self::LoadUse => "load-use",
+            Self::BranchFlush => "branch flush",
+            Self::FunctionalUnitBusy => "FU busy",
+            Self::MemoryLatency => "cache stall",
+            Self::WriteAfterWrite => "WAW",
+            Self::WriteAfterRead => "WAR",
+        }
+    }
+
+    /// Index into a `[u64; STALL_TYPE_COUNT]` array, or `None` for the name
+    /// hazards, which are reported but never stall an in-order pipeline.
+    pub fn as_stall_index(self) -> Option<usize> {
+        match self {
+            Self::ReadAfterWrite => Some(0),
+            Self::LoadUse => Some(1),
+            Self::BranchFlush => Some(2),
+            Self::FunctionalUnitBusy => Some(3),
+            Self::MemoryLatency => Some(4),
+            Self::WriteAfterWrite | Self::WriteAfterRead => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PipelineTraceKind {
     Hazard(PipelineHazardKind),
     Forward,
+}
+
+impl PipelineTraceKind {
+    /// A fixed-width tag for a dense trace column.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::Hazard(PipelineHazardKind::ReadAfterWrite) => "RAW",
+            Self::Hazard(PipelineHazardKind::LoadUse) => "LOAD",
+            Self::Hazard(PipelineHazardKind::BranchFlush) => "CTRL",
+            Self::Hazard(PipelineHazardKind::FunctionalUnitBusy) => "FU",
+            Self::Hazard(PipelineHazardKind::MemoryLatency) => "MEM",
+            Self::Hazard(PipelineHazardKind::WriteAfterWrite) => "WAW",
+            Self::Hazard(PipelineHazardKind::WriteAfterRead) => "WAR",
+            Self::Forward => "FWD",
+        }
+    }
 }
 
 /// Current lifecycle and mode flags for a pipeline runtime.
@@ -276,4 +361,49 @@ pub trait PipelineControl {
     fn set_enabled(&mut self, enabled: bool);
     fn reset(&mut self, address: u64);
     fn redirect(&mut self, address: u64);
+}
+
+/// What one adjustable property of a datapath currently reads as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineSettingValue<'a> {
+    /// A wire that is either there or not — a bypass path.
+    Toggle(bool),
+    /// One of a fixed set of policies, named.
+    Choice(&'a str),
+    /// A count a user types: how many units, how many cycles.
+    Number(u64),
+}
+
+/// One row of a pipeline settings screen.
+///
+/// The host draws rows and sends back adjustments; it never knows that a row
+/// means "MEM→EX bypass" rather than "how many dividers". That keeps the
+/// settings screen the same screen for every backend, which is the point: a
+/// datapath a user cannot change is a datapath they cannot experiment with.
+#[derive(Clone, Copy, Debug)]
+pub struct PipelineSettingView<'a> {
+    /// Heading this row sits under, such as `"FORWARDING"`. Rows sharing a
+    /// group arrive consecutively.
+    pub group: &'a str,
+    pub name: &'a str,
+    pub value: PipelineSettingValue<'a>,
+    /// One or two sentences on what changing it does, for the explanation pane.
+    pub summary: &'a str,
+}
+
+/// A pipeline whose datapath a user can change while the machine is loaded.
+///
+/// Every setting is addressed by index, and the set is fixed for a given
+/// backend, so a host can lay the screen out once.
+pub trait PipelineTuning {
+    fn setting_count(&self) -> usize;
+    fn setting(&self, index: usize) -> Option<PipelineSettingView<'_>>;
+
+    /// Step a setting to its next value, or its previous one. Returns whether
+    /// anything changed, so a host can decide not to redraw.
+    fn adjust(&mut self, index: usize, forward: bool) -> bool;
+
+    /// Set a [`PipelineSettingValue::Number`] row directly, for a host that
+    /// lets the value be typed. Rows of any other kind refuse.
+    fn set_number(&mut self, index: usize, value: u64) -> bool;
 }

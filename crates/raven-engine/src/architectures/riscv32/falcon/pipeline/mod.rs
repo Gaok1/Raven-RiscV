@@ -1,4 +1,27 @@
 //! RV32 pipeline execution core. Presentation and interaction live in the host TUI.
+//!
+//! # What is here, and what is not
+//!
+//! The *vocabulary* of a pipeline is not RISC-V's, so it is not defined here:
+//! instruction classes, hazard kinds, trace kinds, bypass configuration, branch
+//! resolution and prediction policy, the timing table, the two-bit predictor
+//! and the stage and unit declarations all come from [`crate::pipeline`] and
+//! are re-exported below. Any architecture gets the same set by declaring a
+//! [`PipelineShape`](crate::pipeline::PipelineShape), and three already do.
+//!
+//! What stays is the part that needs an ISA to mean anything. This model does
+//! not merely *time* instructions the way
+//! [`ScalarPipeline`](crate::pipeline::ScalarPipeline) does — it executes them
+//! stage by stage, so [`PipeSlot`] carries live operand values, an address
+//! computed in EX, a value loaded in MEM. That is what lets RV32 forward real
+//! values along a configurable set of bypasses, stall on a cache miss it can
+//! measure, and take an MMU trap from the middle of the datapath. A generic
+//! engine cannot do any of it without knowing what a register holds.
+//!
+//! The [`FuState`] bank and the Gantt recorder stay for the same reason: they
+//! track values and cache latency in flight, not just occupancy. Their
+//! occupancy-only equivalents already live in the shared package, which is what
+//! every other backend uses.
 
 pub mod forwarding;
 mod inspect;
@@ -10,436 +33,227 @@ use crate::falcon::registers::ExecRegion;
 use std::collections::VecDeque;
 
 // ── Instruction class ────────────────────────────────────────────────────────
+//
+// RV32 kept its own ten-variant class enum next to the ten-variant one every
+// host already reads. They were the same list — an instruction is a multiply or
+// a load regardless of who encodes it — so the enum is the shared one and only
+// the decoding stayed here, where the ISA is.
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum InstrClass {
-    Alu,
-    Mul,
-    Div,
-    Load,
-    Store,
-    Branch,
-    Jump,
-    System,
-    Fp,
-    Unknown,
-}
+pub use crate::capability::PipelineInstructionClass as InstrClass;
 
-impl InstrClass {
-    pub const COUNT: usize = 10;
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Alu => "ALU",
-            Self::Mul => "MUL",
-            Self::Div => "DIV",
-            Self::Load => "Load",
-            Self::Store => "Store",
-            Self::Branch => "Branch",
-            Self::Jump => "Jump",
-            Self::System => "System",
-            Self::Fp => "FP",
-            Self::Unknown => "?",
+/// Classify an instruction word.
+pub fn classify(word: u32) -> InstrClass {
+    use crate::falcon::instruction::Instruction::*;
+    match crate::falcon::decoder::decode(word) {
+        Ok(
+            Add { .. }
+            | Sub { .. }
+            | And { .. }
+            | Or { .. }
+            | Xor { .. }
+            | Sll { .. }
+            | Srl { .. }
+            | Sra { .. }
+            | Slt { .. }
+            | Sltu { .. }
+            | Addi { .. }
+            | Andi { .. }
+            | Ori { .. }
+            | Xori { .. }
+            | Slti { .. }
+            | Sltiu { .. }
+            | Slli { .. }
+            | Srli { .. }
+            | Srai { .. }
+            | Lui { .. }
+            | Auipc { .. },
+        ) => InstrClass::Alu,
+        Ok(Mul { .. } | Mulh { .. } | Mulhsu { .. } | Mulhu { .. }) => InstrClass::Multiply,
+        Ok(Div { .. } | Divu { .. } | Rem { .. } | Remu { .. }) => InstrClass::Divide,
+        Ok(Lb { .. } | Lh { .. } | Lw { .. } | Lbu { .. } | Lhu { .. }) => InstrClass::Load,
+        Ok(LrW { .. }) => InstrClass::Load,
+        Ok(
+            Sb { .. }
+            | Sh { .. }
+            | Sw { .. }
+            | ScW { .. }
+            | AmoswapW { .. }
+            | AmoaddW { .. }
+            | AmoxorW { .. }
+            | AmoandW { .. }
+            | AmoorW { .. }
+            | AmomaxW { .. }
+            | AmominW { .. }
+            | AmomaxuW { .. }
+            | AmominuW { .. },
+        ) => InstrClass::Store,
+        Ok(Beq { .. } | Bne { .. } | Blt { .. } | Bge { .. } | Bltu { .. } | Bgeu { .. }) => {
+            InstrClass::Branch
         }
-    }
-
-    pub fn as_usize(self) -> usize {
-        self as usize
-    }
-
-    /// Classify an instruction word into an InstrClass.
-    pub fn from_word(word: u32) -> Self {
-        use crate::falcon::instruction::Instruction::*;
-        match crate::falcon::decoder::decode(word) {
-            Ok(
-                Add { .. }
-                | Sub { .. }
-                | And { .. }
-                | Or { .. }
-                | Xor { .. }
-                | Sll { .. }
-                | Srl { .. }
-                | Sra { .. }
-                | Slt { .. }
-                | Sltu { .. }
-                | Addi { .. }
-                | Andi { .. }
-                | Ori { .. }
-                | Xori { .. }
-                | Slti { .. }
-                | Sltiu { .. }
-                | Slli { .. }
-                | Srli { .. }
-                | Srai { .. }
-                | Lui { .. }
-                | Auipc { .. },
-            ) => Self::Alu,
-            Ok(Mul { .. } | Mulh { .. } | Mulhsu { .. } | Mulhu { .. }) => Self::Mul,
-            Ok(Div { .. } | Divu { .. } | Rem { .. } | Remu { .. }) => Self::Div,
-            Ok(Lb { .. } | Lh { .. } | Lw { .. } | Lbu { .. } | Lhu { .. }) => Self::Load,
-            Ok(LrW { .. }) => Self::Load,
-            Ok(
-                Sb { .. }
-                | Sh { .. }
-                | Sw { .. }
-                | ScW { .. }
-                | AmoswapW { .. }
-                | AmoaddW { .. }
-                | AmoxorW { .. }
-                | AmoandW { .. }
-                | AmoorW { .. }
-                | AmomaxW { .. }
-                | AmominW { .. }
-                | AmomaxuW { .. }
-                | AmominuW { .. },
-            ) => Self::Store,
-            Ok(Beq { .. } | Bne { .. } | Blt { .. } | Bge { .. } | Bltu { .. } | Bgeu { .. }) => {
-                Self::Branch
-            }
-            Ok(Jal { .. } | Jalr { .. }) => Self::Jump,
-            Ok(Ecall | Ebreak | Halt | Fence | FenceI) => Self::System,
-            Ok(
-                Flw { .. }
-                | Fsw { .. }
-                | FaddS { .. }
-                | FsubS { .. }
-                | FmulS { .. }
-                | FdivS { .. }
-                | FsqrtS { .. }
-                | FminS { .. }
-                | FmaxS { .. }
-                | FsgnjS { .. }
-                | FsgnjnS { .. }
-                | FsgnjxS { .. }
-                | FeqS { .. }
-                | FltS { .. }
-                | FleS { .. }
-                | FcvtWS { .. }
-                | FcvtWuS { .. }
-                | FcvtSW { .. }
-                | FcvtSWu { .. }
-                | FmvXW { .. }
-                | FmvWX { .. }
-                | FclassS { .. }
-                | FmaddS { .. }
-                | FmsubS { .. }
-                | FnmsubS { .. }
-                | FnmaddS { .. },
-            ) => Self::Fp,
-            _ => Self::Unknown,
-        }
-    }
-
-    /// Extract (rd, rs1, rs2) from an instruction word.
-    pub fn operands(word: u32) -> (Option<u8>, Option<u8>, Option<u8>) {
-        use crate::falcon::instruction::Instruction::*;
-        match crate::falcon::decoder::decode(word) {
-            // R-type
-            Ok(
-                Add { rd, rs1, rs2 }
-                | Sub { rd, rs1, rs2 }
-                | And { rd, rs1, rs2 }
-                | Or { rd, rs1, rs2 }
-                | Xor { rd, rs1, rs2 }
-                | Sll { rd, rs1, rs2 }
-                | Srl { rd, rs1, rs2 }
-                | Sra { rd, rs1, rs2 }
-                | Slt { rd, rs1, rs2 }
-                | Sltu { rd, rs1, rs2 }
-                | Mul { rd, rs1, rs2 }
-                | Mulh { rd, rs1, rs2 }
-                | Mulhsu { rd, rs1, rs2 }
-                | Mulhu { rd, rs1, rs2 }
-                | Div { rd, rs1, rs2 }
-                | Divu { rd, rs1, rs2 }
-                | Rem { rd, rs1, rs2 }
-                | Remu { rd, rs1, rs2 },
-            ) => (Some(rd), Some(rs1), Some(rs2)),
-            // I-type (rd + rs1)
-            Ok(
-                Addi { rd, rs1, .. }
-                | Andi { rd, rs1, .. }
-                | Ori { rd, rs1, .. }
-                | Xori { rd, rs1, .. }
-                | Slti { rd, rs1, .. }
-                | Sltiu { rd, rs1, .. }
-                | Slli { rd, rs1, .. }
-                | Srli { rd, rs1, .. }
-                | Srai { rd, rs1, .. }
-                | Lb { rd, rs1, .. }
-                | Lh { rd, rs1, .. }
-                | Lw { rd, rs1, .. }
-                | Lbu { rd, rs1, .. }
-                | Lhu { rd, rs1, .. }
-                | Jalr { rd, rs1, .. }
-                | Flw { rd, rs1, .. }
-                | LrW { rd, rs1, .. },
-            ) => (Some(rd), Some(rs1), None),
-            // U-type / J-type (only rd)
-            Ok(Lui { rd, .. } | Auipc { rd, .. } | Jal { rd, .. }) => (Some(rd), None, None),
-            // S-type (no rd, has rs1+rs2)
-            Ok(
-                Sb { rs1, rs2, .. }
-                | Sh { rs1, rs2, .. }
-                | Sw { rs1, rs2, .. }
-                | Fsw { rs1, rs2, .. },
-            ) => (None, Some(rs1), Some(rs2)),
-            Ok(
-                ScW { rd, rs1, rs2, .. }
-                | AmoswapW { rd, rs1, rs2, .. }
-                | AmoaddW { rd, rs1, rs2, .. }
-                | AmoxorW { rd, rs1, rs2, .. }
-                | AmoandW { rd, rs1, rs2, .. }
-                | AmoorW { rd, rs1, rs2, .. }
-                | AmomaxW { rd, rs1, rs2, .. }
-                | AmominW { rd, rs1, rs2, .. }
-                | AmomaxuW { rd, rs1, rs2, .. }
-                | AmominuW { rd, rs1, rs2, .. },
-            ) => (Some(rd), Some(rs1), Some(rs2)),
-            // B-type (no rd, has rs1+rs2)
-            Ok(
-                Beq { rs1, rs2, .. }
-                | Bne { rs1, rs2, .. }
-                | Blt { rs1, rs2, .. }
-                | Bge { rs1, rs2, .. }
-                | Bltu { rs1, rs2, .. }
-                | Bgeu { rs1, rs2, .. },
-            ) => (None, Some(rs1), Some(rs2)),
-            // FP R-type
-            Ok(
-                FaddS { rd, rs1, rs2, .. }
-                | FsubS { rd, rs1, rs2, .. }
-                | FmulS { rd, rs1, rs2, .. }
-                | FdivS { rd, rs1, rs2, .. }
-                | FminS { rd, rs1, rs2, .. }
-                | FmaxS { rd, rs1, rs2, .. }
-                | FsgnjS { rd, rs1, rs2, .. }
-                | FsgnjnS { rd, rs1, rs2, .. }
-                | FsgnjxS { rd, rs1, rs2, .. }
-                | FmaddS { rd, rs1, rs2, .. }
-                | FmsubS { rd, rs1, rs2, .. }
-                | FnmsubS { rd, rs1, rs2, .. }
-                | FnmaddS { rd, rs1, rs2, .. },
-            ) => (Some(rd), Some(rs1), Some(rs2)),
-            // FP compare: rd + rs1 + rs2
-            Ok(
-                FeqS { rd, rs1, rs2, .. } | FltS { rd, rs1, rs2, .. } | FleS { rd, rs1, rs2, .. },
-            ) => (Some(rd), Some(rs1), Some(rs2)),
-            // FP I-type with rd
-            Ok(
-                FsqrtS { rd, rs1, .. }
-                | FcvtWS { rd, rs1, .. }
-                | FcvtWuS { rd, rs1, .. }
-                | FcvtSW { rd, rs1, .. }
-                | FcvtSWu { rd, rs1, .. }
-                | FmvXW { rd, rs1, .. }
-                | FmvWX { rd, rs1, .. }
-                | FclassS { rd, rs1, .. },
-            ) => (Some(rd), Some(rs1), None),
-            _ => (None, None, None),
-        }
+        Ok(Jal { .. } | Jalr { .. }) => InstrClass::Jump,
+        Ok(Ecall | Ebreak | Halt | Fence | FenceI) => InstrClass::System,
+        Ok(
+            Flw { .. }
+            | Fsw { .. }
+            | FaddS { .. }
+            | FsubS { .. }
+            | FmulS { .. }
+            | FdivS { .. }
+            | FsqrtS { .. }
+            | FminS { .. }
+            | FmaxS { .. }
+            | FsgnjS { .. }
+            | FsgnjnS { .. }
+            | FsgnjxS { .. }
+            | FeqS { .. }
+            | FltS { .. }
+            | FleS { .. }
+            | FcvtWS { .. }
+            | FcvtWuS { .. }
+            | FcvtSW { .. }
+            | FcvtSWu { .. }
+            | FmvXW { .. }
+            | FmvWX { .. }
+            | FclassS { .. }
+            | FmaddS { .. }
+            | FmsubS { .. }
+            | FnmsubS { .. }
+            | FnmaddS { .. },
+        ) => InstrClass::FloatingPoint,
+        _ => InstrClass::Unknown,
     }
 }
 
-// ── Pipeline config enums ────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BranchResolve {
-    /// Branch resolved at end of ID → 1 bubble (pipeline stalls IF while branch in ID)
-    Id,
-    /// Branch resolved at end of EX → 2 bubbles
-    Ex,
-    /// Branch resolved at end of MEM → 3 bubbles
-    Mem,
-}
-
-impl BranchResolve {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Id => "ID (1 stall)",
-            Self::Ex => "EX (2 stalls)",
-            Self::Mem => "MEM (3 stalls)",
-        }
-    }
-    /// Number of pipeline stages after the branch that must be flushed.
-    pub fn flush_depth(self) -> usize {
-        match self {
-            Self::Id => 1,
-            Self::Ex => 2,
-            Self::Mem => 3,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PipelineMode {
-    SingleCycle,
-    FunctionalUnits,
-}
-
-impl PipelineMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::SingleCycle => "Serialized",
-            Self::FunctionalUnits => "Parallel UFs",
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BranchPredict {
-    NotTaken,
-    Taken,
-    Btfnt,
-    TwoBit,
-}
-impl BranchPredict {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::NotTaken => "Not-taken",
-            Self::Taken => "Always-taken",
-            Self::Btfnt => "BTFNT",
-            Self::TwoBit => "2-bit Dynamic",
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct PipelineBypassConfig {
-    pub ex_to_ex: bool,
-    pub mem_to_ex: bool,
-    pub wb_to_id: bool,
-    pub store_to_load: bool,
-}
-
-impl PipelineBypassConfig {
-    pub const CONFIG_ROWS: usize = 13;
-
-    pub const fn new(ex_to_ex: bool, mem_to_ex: bool, wb_to_id: bool, store_to_load: bool) -> Self {
-        Self {
-            ex_to_ex,
-            mem_to_ex,
-            wb_to_id,
-            store_to_load,
-        }
-    }
-
-    pub const fn legacy_enabled() -> Self {
-        Self::new(true, true, true, false)
-    }
-
-    pub const fn disabled() -> Self {
-        Self::new(false, false, false, false)
-    }
-
-    pub fn set_legacy_forwarding(&mut self, enabled: bool) {
-        *self = if enabled {
-            Self::legacy_enabled()
-        } else {
-            Self::disabled()
-        };
-    }
-
-    pub fn legacy_forwarding_enabled(self) -> bool {
-        self.ex_to_ex && self.mem_to_ex && self.wb_to_id
-    }
-
-    pub fn summary(self) -> String {
-        let mut enabled = Vec::new();
-        if self.ex_to_ex {
-            enabled.push("EX->EX");
-        }
-        if self.mem_to_ex {
-            enabled.push("MEM->EX");
-        }
-        if self.wb_to_id {
-            enabled.push("WB->ID");
-        }
-        if self.store_to_load {
-            enabled.push("Store->Load");
-        }
-        if enabled.is_empty() {
-            "none".to_string()
-        } else {
-            enabled.join(" | ")
-        }
+/// Extract (rd, rs1, rs2) from an instruction word.
+pub fn operands(word: u32) -> (Option<u8>, Option<u8>, Option<u8>) {
+    use crate::falcon::instruction::Instruction::*;
+    match crate::falcon::decoder::decode(word) {
+        // R-type
+        Ok(
+            Add { rd, rs1, rs2 }
+            | Sub { rd, rs1, rs2 }
+            | And { rd, rs1, rs2 }
+            | Or { rd, rs1, rs2 }
+            | Xor { rd, rs1, rs2 }
+            | Sll { rd, rs1, rs2 }
+            | Srl { rd, rs1, rs2 }
+            | Sra { rd, rs1, rs2 }
+            | Slt { rd, rs1, rs2 }
+            | Sltu { rd, rs1, rs2 }
+            | Mul { rd, rs1, rs2 }
+            | Mulh { rd, rs1, rs2 }
+            | Mulhsu { rd, rs1, rs2 }
+            | Mulhu { rd, rs1, rs2 }
+            | Div { rd, rs1, rs2 }
+            | Divu { rd, rs1, rs2 }
+            | Rem { rd, rs1, rs2 }
+            | Remu { rd, rs1, rs2 },
+        ) => (Some(rd), Some(rs1), Some(rs2)),
+        // I-type (rd + rs1)
+        Ok(
+            Addi { rd, rs1, .. }
+            | Andi { rd, rs1, .. }
+            | Ori { rd, rs1, .. }
+            | Xori { rd, rs1, .. }
+            | Slti { rd, rs1, .. }
+            | Sltiu { rd, rs1, .. }
+            | Slli { rd, rs1, .. }
+            | Srli { rd, rs1, .. }
+            | Srai { rd, rs1, .. }
+            | Lb { rd, rs1, .. }
+            | Lh { rd, rs1, .. }
+            | Lw { rd, rs1, .. }
+            | Lbu { rd, rs1, .. }
+            | Lhu { rd, rs1, .. }
+            | Jalr { rd, rs1, .. }
+            | Flw { rd, rs1, .. }
+            | LrW { rd, rs1, .. },
+        ) => (Some(rd), Some(rs1), None),
+        // U-type / J-type (only rd)
+        Ok(Lui { rd, .. } | Auipc { rd, .. } | Jal { rd, .. }) => (Some(rd), None, None),
+        // S-type (no rd, has rs1+rs2)
+        Ok(
+            Sb { rs1, rs2, .. }
+            | Sh { rs1, rs2, .. }
+            | Sw { rs1, rs2, .. }
+            | Fsw { rs1, rs2, .. },
+        ) => (None, Some(rs1), Some(rs2)),
+        Ok(
+            ScW { rd, rs1, rs2, .. }
+            | AmoswapW { rd, rs1, rs2, .. }
+            | AmoaddW { rd, rs1, rs2, .. }
+            | AmoxorW { rd, rs1, rs2, .. }
+            | AmoandW { rd, rs1, rs2, .. }
+            | AmoorW { rd, rs1, rs2, .. }
+            | AmomaxW { rd, rs1, rs2, .. }
+            | AmominW { rd, rs1, rs2, .. }
+            | AmomaxuW { rd, rs1, rs2, .. }
+            | AmominuW { rd, rs1, rs2, .. },
+        ) => (Some(rd), Some(rs1), Some(rs2)),
+        // B-type (no rd, has rs1+rs2)
+        Ok(
+            Beq { rs1, rs2, .. }
+            | Bne { rs1, rs2, .. }
+            | Blt { rs1, rs2, .. }
+            | Bge { rs1, rs2, .. }
+            | Bltu { rs1, rs2, .. }
+            | Bgeu { rs1, rs2, .. },
+        ) => (None, Some(rs1), Some(rs2)),
+        // FP R-type
+        Ok(
+            FaddS { rd, rs1, rs2, .. }
+            | FsubS { rd, rs1, rs2, .. }
+            | FmulS { rd, rs1, rs2, .. }
+            | FdivS { rd, rs1, rs2, .. }
+            | FminS { rd, rs1, rs2, .. }
+            | FmaxS { rd, rs1, rs2, .. }
+            | FsgnjS { rd, rs1, rs2, .. }
+            | FsgnjnS { rd, rs1, rs2, .. }
+            | FsgnjxS { rd, rs1, rs2, .. }
+            | FmaddS { rd, rs1, rs2, .. }
+            | FmsubS { rd, rs1, rs2, .. }
+            | FnmsubS { rd, rs1, rs2, .. }
+            | FnmaddS { rd, rs1, rs2, .. },
+        ) => (Some(rd), Some(rs1), Some(rs2)),
+        // FP compare: rd + rs1 + rs2
+        Ok(
+            FeqS { rd, rs1, rs2, .. } | FltS { rd, rs1, rs2, .. } | FleS { rd, rs1, rs2, .. },
+        ) => (Some(rd), Some(rs1), Some(rs2)),
+        // FP I-type with rd
+        Ok(
+            FsqrtS { rd, rs1, .. }
+            | FcvtWS { rd, rs1, .. }
+            | FcvtWuS { rd, rs1, .. }
+            | FcvtSW { rd, rs1, .. }
+            | FcvtSWu { rd, rs1, .. }
+            | FmvXW { rd, rs1, .. }
+            | FmvWX { rd, rs1, .. }
+            | FclassS { rd, rs1, .. },
+        ) => (Some(rd), Some(rs1), None),
+        _ => (None, None, None),
     }
 }
 
-impl Default for PipelineBypassConfig {
-    fn default() -> Self {
-        Self::legacy_enabled()
-    }
-}
+// ── Pipeline config ──────────────────────────────────────────────────────────
+//
+// None of this is RISC-V's. Where a branch resolves, which bypasses are wired,
+// how long each class of work takes — every pipelined machine has an answer, so
+// the definitions live in `crate::pipeline` and RV32 merely declares its own.
+// They are re-exported here because `falcon::pipeline` is the established path.
 
-// ── FU latency (derived from global CpiConfig) ──────────────────────────────
-
-/// Map an instruction class to its EX-stage latency using the global CPI config.
-/// Values are additive: effective latency = 1 + cpi.field (minimum 1 cycle).
+pub use crate::pipeline::{
+    BranchPredict, BranchResolve, PipelineBypassConfig, PipelineMode, PipelineTiming, UnitSpec,
+};
 
 // ── Hazard type ───────────────────────────────────────────────────────────────
+//
+// RV32 used to keep its own copy of these and a pair of functions translating
+// to the ones a host reads. The two enums always had the same variants — they
+// describe hazards, not an ISA — so there is one now, and no translation to
+// keep in step.
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum HazardType {
-    Raw,
-    LoadUse,
-    BranchFlush,
-    FuBusy,
-    MemLatency,
-    Waw,
-    War,
-}
-
-impl HazardType {
-    /// Number of stall-causing hazard types (WAW/WAR are informational, not counted).
-    pub const STALL_TYPE_COUNT: usize = 5;
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Raw => "RAW",
-            Self::LoadUse => "load-use",
-            Self::BranchFlush => "branch flush",
-            Self::FuBusy => "FU busy",
-            Self::MemLatency => "cache stall",
-            Self::Waw => "WAW",
-            Self::War => "WAR",
-        }
-    }
-
-    /// Index into the `stall_by_type` array.  Returns `None` for WAW/WAR which
-    /// are informational only and do not cause pipeline stalls in an in-order pipeline.
-    pub fn as_stall_index(self) -> Option<usize> {
-        match self {
-            Self::Raw => Some(0),
-            Self::LoadUse => Some(1),
-            Self::BranchFlush => Some(2),
-            Self::FuBusy => Some(3),
-            Self::MemLatency => Some(4),
-            Self::Waw | Self::War => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TraceKind {
-    Hazard(HazardType),
-    Forward,
-}
-
-impl TraceKind {
-    pub fn short_label(self) -> &'static str {
-        match self {
-            Self::Hazard(HazardType::Raw) => "RAW",
-            Self::Hazard(HazardType::LoadUse) => "LOAD",
-            Self::Hazard(HazardType::BranchFlush) => "CTRL",
-            Self::Hazard(HazardType::FuBusy) => "FU",
-            Self::Hazard(HazardType::MemLatency) => "MEM",
-            Self::Hazard(HazardType::Waw) => "WAW",
-            Self::Hazard(HazardType::War) => "WAR",
-            Self::Forward => "FWD",
-        }
-    }
-}
+pub use crate::capability::PipelineHazardKind as HazardType;
+pub use crate::capability::PipelineTraceKind as TraceKind;
 
 #[derive(Clone, Debug)]
 pub struct HazardTrace {
@@ -450,6 +264,11 @@ pub struct HazardTrace {
 }
 
 // ── Stage names ───────────────────────────────────────────────────────────────
+
+/// RV32's datapath declaration. The names and roles a host draws come from
+/// here, so [`Stage`] stays what it is useful for — an index into the stage
+/// array — instead of being a second place stage names are spelled out.
+pub static STAGES: [crate::pipeline::StageSpec; 5] = crate::pipeline::RISC_FIVE_STAGE;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
@@ -462,20 +281,50 @@ pub enum Stage {
 
 impl Stage {
     pub fn label(self) -> &'static str {
-        match self {
-            Self::IF => "IF",
-            Self::ID => "ID",
-            Self::EX => "EX",
-            Self::MEM => "MEM",
-            Self::WB => "WB",
-        }
+        STAGES[self as usize].name
     }
+
+    pub fn role(self) -> crate::capability::PipelineStageRole {
+        STAGES[self as usize].role
+    }
+
     pub fn all() -> [Stage; 5] {
         [Stage::IF, Stage::ID, Stage::EX, Stage::MEM, Stage::WB]
     }
 }
 
-// ── Functional-unit names ─────────────────────────────────────────────────────
+// ── Functional units ──────────────────────────────────────────────────────────
+
+/// RV32's execution units, declared in the shared vocabulary.
+///
+/// [`FuKind`] stays what it is good for — a name for an index into this array —
+/// while the labels, the classes each unit claims and the colour a host paints
+/// an idle one all come from one declaration instead of three matches that had
+/// to agree.
+pub static UNITS: [UnitSpec; 6] = [
+    UnitSpec::new(
+        "ALU",
+        &[
+            InstrClass::Alu,
+            InstrClass::Branch,
+            InstrClass::Jump,
+        ],
+        InstrClass::Alu,
+    ),
+    UnitSpec::new("MUL", &[InstrClass::Multiply], InstrClass::Multiply),
+    UnitSpec::new("DIV", &[InstrClass::Divide], InstrClass::Divide),
+    UnitSpec::new(
+        "FPU",
+        &[InstrClass::FloatingPoint],
+        InstrClass::FloatingPoint,
+    ),
+    UnitSpec::new(
+        "LSU",
+        &[InstrClass::Load, InstrClass::Store],
+        InstrClass::Load,
+    ),
+    UnitSpec::new("SYS", &[InstrClass::System], InstrClass::System),
+];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FuKind {
@@ -488,17 +337,14 @@ pub enum FuKind {
 }
 
 impl FuKind {
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = UNITS.len();
+
+    pub fn spec(self) -> &'static UnitSpec {
+        &UNITS[self as usize]
+    }
 
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Alu => "ALU",
-            Self::Mul => "MUL",
-            Self::Div => "DIV",
-            Self::Fpu => "FPU",
-            Self::Lsu => "LSU",
-            Self::Sys => "SYS",
-        }
+        self.spec().name
     }
 
     pub fn index(self) -> usize {
@@ -516,16 +362,13 @@ impl FuKind {
         ]
     }
 
+    /// The unit that runs `class`. An unrecognised instruction belongs to no
+    /// unit, which is what keeps it from being dispatched at all.
     pub fn from_class(class: InstrClass) -> Option<Self> {
-        match class {
-            InstrClass::Alu | InstrClass::Branch | InstrClass::Jump => Some(Self::Alu),
-            InstrClass::Mul => Some(Self::Mul),
-            InstrClass::Div => Some(Self::Div),
-            InstrClass::Fp => Some(Self::Fpu),
-            InstrClass::Load | InstrClass::Store => Some(Self::Lsu),
-            InstrClass::System => Some(Self::Sys),
-            InstrClass::Unknown => None,
-        }
+        (class != InstrClass::Unknown)
+            .then(|| UNITS.iter().position(|unit| unit.handles(class)))
+            .flatten()
+            .map(|index| Self::all()[index])
     }
 }
 
@@ -611,8 +454,8 @@ impl PipeSlot {
     }
 
     pub fn from_word(pc: u32, word: u32) -> Self {
-        let class = InstrClass::from_word(word);
-        let (rd, rs1, rs2) = InstrClass::operands(word);
+        let class = classify(word);
+        let (rd, rs1, rs2) = operands(word);
         let disasm = crate::falcon::decoder::disasm(word);
         Self {
             seq: 0,
@@ -683,121 +526,9 @@ pub struct GanttRow {
     pub last_stage: Option<GanttTrack>,
 }
 
-/// Extra execution cycles used by the pipeline and sequential RV32 runtimes.
-#[derive(Clone, Debug)]
-pub struct PipelineTiming {
-    pub alu: u64,
-    pub mul: u64,
-    pub div: u64,
-    pub load: u64,
-    pub store: u64,
-    pub branch_taken: u64,
-    pub branch_not_taken: u64,
-    pub jump: u64,
-    pub system: u64,
-    pub fp: u64,
-    pub stage_overhead: u64,
-}
-
-impl Default for PipelineTiming {
-    fn default() -> Self {
-        Self {
-            alu: 0,
-            mul: 2,
-            div: 19,
-            load: 0,
-            store: 0,
-            branch_taken: 2,
-            branch_not_taken: 0,
-            jump: 1,
-            system: 9,
-            fp: 4,
-            stage_overhead: 3,
-        }
-    }
-}
-
-impl PipelineTiming {
-    pub fn field_names() -> &'static [&'static str] {
-        &[
-            "ALU",
-            "MUL",
-            "DIV",
-            "Load+",
-            "Store+",
-            "Branch-T",
-            "Branch-NT",
-            "Jump",
-            "System",
-            "FP",
-            "Stages",
-        ]
-    }
-
-    pub fn get(&self, idx: usize) -> u64 {
-        match idx {
-            0 => self.alu,
-            1 => self.mul,
-            2 => self.div,
-            3 => self.load,
-            4 => self.store,
-            5 => self.branch_taken,
-            6 => self.branch_not_taken,
-            7 => self.jump,
-            8 => self.system,
-            9 => self.fp,
-            10 => self.stage_overhead,
-            _ => 0,
-        }
-    }
-
-    pub fn set(&mut self, idx: usize, val: u64) {
-        match idx {
-            0 => self.alu = val,
-            1 => self.mul = val,
-            2 => self.div = val,
-            3 => self.load = val,
-            4 => self.store = val,
-            5 => self.branch_taken = val,
-            6 => self.branch_not_taken = val,
-            7 => self.jump = val,
-            8 => self.system = val,
-            9 => self.fp = val,
-            10 => self.stage_overhead = val,
-            _ => {}
-        }
-    }
-
-    pub fn descriptions() -> &'static [&'static str] {
-        &[
-            "add/sub/logic/shift/lui/auipc/imm",
-            "mul/mulh/mulhsu/mulhu",
-            "div/divu/rem/remu",
-            "load (extra over cache miss)",
-            "store (extra over cache)",
-            "branch when taken (pipeline flush)",
-            "branch when not taken",
-            "jal / jalr",
-            "ecall / ebreak / halt",
-            "RV32F float instructions",
-            "stage overhead added when pipeline is off (IF+ID+WB)",
-        ]
-    }
-}
-
 /// Map an instruction class to its EX-stage latency.
 pub fn fu_latency_for_class(class: InstrClass, timing: &PipelineTiming) -> u8 {
-    let extra = match class {
-        InstrClass::Alu => timing.alu,
-        InstrClass::Mul => timing.mul,
-        InstrClass::Div => timing.div,
-        InstrClass::Fp => timing.fp,
-        InstrClass::Load => timing.load,
-        InstrClass::Store => timing.store,
-        InstrClass::System => timing.system,
-        InstrClass::Branch | InstrClass::Jump | InstrClass::Unknown => 0,
-    };
-    ((1 + extra) as u8).max(1)
+    timing.latency(class)
 }
 
 /// Reversible execution state plus physical pipeline configuration and telemetry.
@@ -912,6 +643,33 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
 
     fn inspect(&self) -> Option<&dyn crate::capability::PipelineInspect> {
         Some(self)
+    }
+
+    fn control(&mut self) -> Option<&mut dyn crate::capability::PipelineControl> {
+        Some(self)
+    }
+}
+
+/// The controls every pipeline offers, answered against RV32's own state.
+///
+/// Narrower than [`PipelineSimState`]'s inherent methods on purpose: this is
+/// what a host may do to *any* pipeline, so it must not depend on RV32 having a
+/// bypass matrix or a functional-unit bank. Those stay behind the concrete type.
+impl crate::capability::PipelineControl for PipelineSimState {
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// Start a fresh run from `address`: stages, units, counters and history
+    /// all go, because none of it describes the new run.
+    fn reset(&mut self, address: u64) {
+        self.reset_stages(address as u32);
+    }
+
+    /// Follow a jump the host made: clear what was in flight and refill from
+    /// `address`, keeping the statistics, which are still this run's.
+    fn redirect(&mut self, address: u64) {
+        self.redirect_pc(address as u32);
     }
 }
 

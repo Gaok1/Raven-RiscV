@@ -32,9 +32,9 @@ pub struct CommitInfo {
 fn fu_type_idx(class: InstrClass) -> Option<usize> {
     match class {
         InstrClass::Alu => Some(0),
-        InstrClass::Mul => Some(1),
-        InstrClass::Div => Some(2),
-        InstrClass::Fp => Some(3),
+        InstrClass::Multiply => Some(1),
+        InstrClass::Divide => Some(2),
+        InstrClass::FloatingPoint => Some(3),
         InstrClass::Load => Some(4),
         InstrClass::Store => Some(5),
         InstrClass::System => Some(6),
@@ -1815,7 +1815,7 @@ fn detect_stall(
                         };
                         if forwarding::slot_has_wb_only_syscall_result(p) {
                             found = Some((
-                                HazardType::Raw,
+                                HazardType::ReadAfterWrite,
                                 format!(
                                     "RAW: ID reads {} — ecall still owns ABI arg/result regs in {stage_name}",
                                     reg_name(arg_reg)
@@ -1836,7 +1836,7 @@ fn detect_stall(
                             if let Some((prod_file, prod_rd)) = forwarding::slot_destination(p) {
                                 if prod_file == forwarding::RegFile::Int && prod_rd == arg_reg {
                                     found = Some((
-                                        HazardType::Raw,
+                                        HazardType::ReadAfterWrite,
                                         format!(
                                             "RAW: ecall reads {} — value still pending in {stage_name}",
                                             reg_name(arg_reg)
@@ -1871,7 +1871,7 @@ fn detect_stall(
                                 let fu_label = fu.kind.map_or("FU", |k| k.label());
                                 if forwarding::slot_has_wb_only_syscall_result(p) {
                                     found = Some((
-                                        HazardType::Raw,
+                                        HazardType::ReadAfterWrite,
                                         format!(
                                             "RAW: ID reads {} — ecall still owns ABI arg/result regs in {fu_label}",
                                             reg_name(arg_reg)
@@ -1899,7 +1899,7 @@ fn detect_stall(
                                             && prod_rd == arg_reg
                                         {
                                             found = Some((
-                                                HazardType::Raw,
+                                                HazardType::ReadAfterWrite,
                                                 format!(
                                                     "RAW: ecall reads {} — value still pending in {fu_label}",
                                                     reg_name(arg_reg)
@@ -1941,7 +1941,7 @@ fn detect_stall(
         if let Some((from_idx, to_idx, detail)) = trace {
             push_trace(
                 state,
-                TraceKind::Hazard(HazardType::Raw),
+                TraceKind::Hazard(HazardType::ReadAfterWrite),
                 from_idx,
                 to_idx,
                 detail,
@@ -1975,7 +1975,7 @@ fn detect_stall(
                         if let Some(p) = producer {
                             if forwarding::slot_has_wb_only_syscall_result(p) {
                                 found = Some((
-                                    HazardType::Raw,
+                                    HazardType::ReadAfterWrite,
                                     format!(
                                         "RAW: ID reads {} — syscall result from ecall still pending in {stage_name}",
                                         reg_name(arg_reg)
@@ -2006,7 +2006,7 @@ fn detect_stall(
                                 if forwarding::slot_has_wb_only_syscall_result(p) {
                                     let fu_label = fu.kind.map_or("FU", |k| k.label());
                                     found = Some((
-                                        HazardType::Raw,
+                                        HazardType::ReadAfterWrite,
                                         format!(
                                             "RAW: ID reads {} — syscall result from ecall still pending in {fu_label}",
                                             reg_name(arg_reg)
@@ -2043,7 +2043,7 @@ fn detect_stall(
         if let Some((from_idx, to_idx, detail)) = trace {
             push_trace(
                 state,
-                TraceKind::Hazard(HazardType::Raw),
+                TraceKind::Hazard(HazardType::ReadAfterWrite),
                 from_idx,
                 to_idx,
                 detail,
@@ -2205,7 +2205,7 @@ fn detect_stall(
                                 id_s.disasm.split_whitespace().next().unwrap_or("?");
                             let producer_name = p.disasm.split_whitespace().next().unwrap_or("?");
                             found = Some((
-                                HazardType::Raw,
+                                HazardType::ReadAfterWrite,
                                 format!(
                                     "RAW: ID reads {} — {producer_name} is still active in {}",
                                     reg_name(p_rd),
@@ -2288,7 +2288,7 @@ fn detect_stall(
                                 )
                             };
                             found = Some((
-                                HazardType::Raw,
+                                HazardType::ReadAfterWrite,
                                 detail_msg,
                                 Some((
                                     stage_idx,
@@ -2313,7 +2313,7 @@ fn detect_stall(
         if let Some((from_idx, to_idx, detail)) = trace {
             push_trace(
                 state,
-                TraceKind::Hazard(HazardType::Raw),
+                TraceKind::Hazard(HazardType::ReadAfterWrite),
                 from_idx,
                 to_idx,
                 detail,
@@ -2483,10 +2483,10 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                     "WAW: {} in {} and {} in {} both write {}",
                     writers[j].3, writers[j].4, writers[i].3, writers[i].4, dest_name,
                 );
-                state.hazard_msgs.push((HazardType::Waw, msg));
+                state.hazard_msgs.push((HazardType::WriteAfterWrite, msg));
                 push_trace(
                     state,
-                    TraceKind::Hazard(HazardType::Waw),
+                    TraceKind::Hazard(HazardType::WriteAfterWrite),
                     writers[j].0,
                     writers[i].0,
                     format!("{} = {}", writers[j].3, dest_name),
@@ -2498,7 +2498,7 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
     for idx in waw_tags {
         if let Some(ref mut s) = state.stages[idx] {
             if s.hazard.is_none() {
-                s.hazard = Some(HazardType::Waw);
+                s.hazard = Some(HazardType::WriteAfterWrite);
             }
         }
     }
@@ -2521,10 +2521,10 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
                     "WAR: {} in {} writes {} read by {} in {}",
                     w_name, w_label, dest_name, r_name, r_label,
                 );
-                state.hazard_msgs.push((HazardType::War, msg));
+                state.hazard_msgs.push((HazardType::WriteAfterRead, msg));
                 push_trace(
                     state,
-                    TraceKind::Hazard(HazardType::War),
+                    TraceKind::Hazard(HazardType::WriteAfterRead),
                     w_idx,
                     r_idx,
                     format!("{} -> {}", w_name, r_name),
@@ -2536,7 +2536,7 @@ fn detect_name_hazards(state: &mut PipelineSimState) {
     for idx in war_tags {
         if let Some(ref mut s) = state.stages[idx] {
             if s.hazard.is_none() {
-                s.hazard = Some(HazardType::War);
+                s.hazard = Some(HazardType::WriteAfterRead);
             }
         }
     }
@@ -2572,15 +2572,15 @@ fn advance_stages(
     if mem_cache_stall {
         if let Some(ref mut s) = state.stages[Stage::MEM as usize] {
             s.mem_stall_cycles -= 1;
-            s.hazard = Some(HazardType::MemLatency);
+            s.hazard = Some(HazardType::MemoryLatency);
         }
         if if_cache_stall {
             if let Some(ref mut s) = state.stages[Stage::IF as usize] {
-                s.hazard = Some(HazardType::MemLatency);
+                s.hazard = Some(HazardType::MemoryLatency);
             }
         }
         state.stall_count += 1;
-        state.stall_by_type[HazardType::MemLatency.as_stall_index().unwrap()] += 1;
+        state.stall_by_type[HazardType::MemoryLatency.as_stall_index().unwrap()] += 1;
         state.stages[4] = None; // WB stays empty; MEM does not advance
         advance_parallel_fu_banks(state);
         promote_ready_lsu_to_mem(state);
@@ -2593,7 +2593,7 @@ fn advance_stages(
     if if_cache_stall {
         if let Some(ref mut s) = state.stages[Stage::IF as usize] {
             s.if_stall_cycles -= 1;
-            s.hazard = Some(HazardType::MemLatency);
+            s.hazard = Some(HazardType::MemoryLatency);
         }
     }
 
@@ -2693,10 +2693,10 @@ fn advance_stages(
         }
         if if_cache_stall {
             tick_if_cache_latency(state);
-            state.stall_by_type[HazardType::MemLatency.as_stall_index().unwrap()] += 1;
+            state.stall_by_type[HazardType::MemoryLatency.as_stall_index().unwrap()] += 1;
         }
         state.stall_count += 1;
-        state.stall_by_type[HazardType::FuBusy.as_stall_index().unwrap()] += 1;
+        state.stall_by_type[HazardType::FunctionalUnitBusy.as_stall_index().unwrap()] += 1;
         refresh_fu_busy(state);
         return;
     }
@@ -2717,10 +2717,10 @@ fn advance_stages(
     }
     if if_cache_stall {
         if let Some(ref mut s) = state.stages[Stage::IF as usize] {
-            s.hazard = Some(HazardType::MemLatency);
+            s.hazard = Some(HazardType::MemoryLatency);
         }
         state.stall_count += 1;
-        state.stall_by_type[HazardType::MemLatency.as_stall_index().unwrap()] += 1;
+        state.stall_by_type[HazardType::MemoryLatency.as_stall_index().unwrap()] += 1;
         state.last_cycle_cache_only = !had_non_if_slots_before;
     }
     advance_parallel_fu_banks(state);
@@ -2818,7 +2818,7 @@ fn advance_stages(
             Stage::MEM as usize,
             detail,
         );
-        state.hazard_msgs.push((HazardType::Raw, msg));
+        state.hazard_msgs.push((HazardType::ReadAfterWrite, msg));
     }
     if let Some((slot_pc, t)) = pending_mem_trap {
         pipeline_enter_trap(state, cpu, mem, console, slot_pc, t);
@@ -2854,7 +2854,7 @@ fn advance_while_ex_busy(state: &mut PipelineSimState) {
     }
     if let Some(ref mut s) = state.stages[Stage::ID as usize] {
         if !s.is_bubble {
-            s.hazard = Some(HazardType::FuBusy);
+            s.hazard = Some(HazardType::FunctionalUnitBusy);
         }
     }
     if let Some(ex_slot) = state.stages[Stage::EX as usize]
@@ -2862,7 +2862,7 @@ fn advance_while_ex_busy(state: &mut PipelineSimState) {
         .filter(|s| !s.is_bubble)
     {
         state.hazard_msgs.push((
-            HazardType::FuBusy,
+            HazardType::FunctionalUnitBusy,
             format!(
                 "FU busy: {} remains in EX for {} more cycle{}",
                 ex_slot.disasm.split_whitespace().next().unwrap_or("?"),
@@ -2952,7 +2952,7 @@ fn apply_just_committed_visibility_to_mem(slot: &mut PipeSlot, committed: &PipeS
 
 fn parallel_fu_kind_for_slot(slot: &PipeSlot) -> Option<FuKind> {
     match slot.class {
-        InstrClass::Alu | InstrClass::Mul | InstrClass::Div | InstrClass::Fp => {
+        InstrClass::Alu | InstrClass::Multiply | InstrClass::Divide | InstrClass::FloatingPoint => {
             FuKind::from_class(slot.class)
         }
         InstrClass::Load | InstrClass::Store => Some(FuKind::Lsu),
@@ -3044,16 +3044,16 @@ fn mark_parallel_fu_capacity_hazard(state: &mut PipelineSimState) {
     if kind == FuKind::Lsu && lsu_dispatch_blocked_by_older_memory(state) {
         let producer_name = id_s.disasm.split_whitespace().next().unwrap_or("?");
         state.hazard_msgs.push((
-            HazardType::FuBusy,
+            HazardType::FunctionalUnitBusy,
             format!(
                 "FU busy: {producer_name} waits in ID because an older LSU operation is still in flight"
             ),
         ));
         if let Some(ref mut s) = state.stages[Stage::ID as usize] {
-            s.hazard = Some(HazardType::FuBusy);
+            s.hazard = Some(HazardType::FunctionalUnitBusy);
         }
         state.stall_count += 1;
-        state.stall_by_type[HazardType::FuBusy.as_stall_index().unwrap()] += 1;
+        state.stall_by_type[HazardType::FunctionalUnitBusy.as_stall_index().unwrap()] += 1;
         return;
     }
     let occupancy = parallel_fu_occupancy(state, kind);
@@ -3063,17 +3063,17 @@ fn mark_parallel_fu_capacity_hazard(state: &mut PipelineSimState) {
     }
     let producer_name = id_s.disasm.split_whitespace().next().unwrap_or("?");
     state.hazard_msgs.push((
-        HazardType::FuBusy,
+        HazardType::FunctionalUnitBusy,
         format!(
             "FU busy: {producer_name} waits in ID because {} is at capacity ({occupancy}/{capacity})",
             kind.label(),
         ),
     ));
     if let Some(ref mut s) = state.stages[Stage::ID as usize] {
-        s.hazard = Some(HazardType::FuBusy);
+        s.hazard = Some(HazardType::FunctionalUnitBusy);
     }
     state.stall_count += 1;
-    state.stall_by_type[HazardType::FuBusy.as_stall_index().unwrap()] += 1;
+    state.stall_by_type[HazardType::FunctionalUnitBusy.as_stall_index().unwrap()] += 1;
 }
 
 fn advance_parallel_fu_banks(state: &mut PipelineSimState) {
@@ -3206,12 +3206,12 @@ fn promote_ready_lsu_to_mem(state: &mut PipelineSimState) -> bool {
 fn refill_id_from_if(state: &mut PipelineSimState, if_cache_stall: bool) {
     if if_cache_stall {
         state.stages[1] = Some(PipeSlot {
-            hazard: Some(HazardType::MemLatency),
+            hazard: Some(HazardType::MemoryLatency),
             ..PipeSlot::bubble()
         });
         if let Some(if_slot) = state.stages[Stage::IF as usize].as_ref() {
             state.hazard_msgs.push((
-                HazardType::MemLatency,
+                HazardType::MemoryLatency,
                 format!(
                     "IF cache latency: fetch at 0x{:04X} is still pending, so ID receives no new instruction and a front-end bubble is inserted",
                     if_slot.pc
@@ -3298,7 +3298,7 @@ fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, consol
             }
             slot.is_speculative = branch_in_flight;
             if slot.if_stall_cycles > 0 {
-                slot.hazard = Some(HazardType::MemLatency);
+                slot.hazard = Some(HazardType::MemoryLatency);
             }
             state.fetch_pc = state.fetch_pc.wrapping_add(4);
         }
@@ -3359,7 +3359,7 @@ fn tick_if_cache_latency(state: &mut PipelineSimState) -> bool {
     if let Some(ref mut s) = state.stages[Stage::IF as usize] {
         if !s.is_bubble && s.if_stall_cycles > 0 {
             s.if_stall_cycles -= 1;
-            s.hazard = Some(HazardType::MemLatency);
+            s.hazard = Some(HazardType::MemoryLatency);
             return true;
         }
     }
@@ -3437,7 +3437,7 @@ fn insert_stall(
         }
     }
     if tick_if_cache_latency(state) {
-        state.stall_by_type[HazardType::MemLatency.as_stall_index().unwrap()] += 1;
+        state.stall_by_type[HazardType::MemoryLatency.as_stall_index().unwrap()] += 1;
     }
 }
 
@@ -3498,9 +3498,9 @@ fn update_gantt(state: &mut PipelineSimState) {
     fn stage_cell_for_slot(stage: Stage, slot: &PipeSlot) -> GanttCell {
         let fu_cell = match slot.class {
             InstrClass::Alu => Some(FuKind::Alu),
-            InstrClass::Mul => Some(FuKind::Mul),
-            InstrClass::Div => Some(FuKind::Div),
-            InstrClass::Fp => Some(FuKind::Fpu),
+            InstrClass::Multiply => Some(FuKind::Mul),
+            InstrClass::Divide => Some(FuKind::Div),
+            InstrClass::FloatingPoint => Some(FuKind::Fpu),
             InstrClass::Load | InstrClass::Store => Some(FuKind::Lsu),
             InstrClass::System => Some(FuKind::Sys),
             InstrClass::Branch | InstrClass::Jump | InstrClass::Unknown => None,

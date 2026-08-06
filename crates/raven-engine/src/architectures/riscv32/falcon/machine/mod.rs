@@ -77,6 +77,16 @@ pub trait JournaledPipeline {
     fn inspect(&self) -> Option<&dyn PipelineInspect> {
         None
     }
+
+    /// Optional control surface: switching the model on, resetting it for a
+    /// fresh run, redirecting it after a jump.
+    ///
+    /// A model that answers `inspect` should answer this too — a host that can
+    /// see a pipeline but not turn it on has to reach past the trait for the
+    /// concrete backend, which is the one thing the capability exists to avoid.
+    fn control(&mut self) -> Option<&mut dyn crate::capability::PipelineControl> {
+        None
+    }
 }
 
 /// The "no pipeline" instantiation: a [`Machine`] that only ever single-steps
@@ -144,6 +154,14 @@ impl<P: JournaledPipeline> Machine<P> {
     /// Pipeline state through the engine-level observer contract.
     pub fn pipeline_inspect(&self) -> Option<&dyn PipelineInspect> {
         self.pipeline.inspect()
+    }
+
+    /// Pipeline controls through the engine-level contract.
+    ///
+    /// Like [`Self::pipeline_mut`] this does not journal: these are between-step
+    /// mutations, not execution.
+    pub fn pipeline_controls(&mut self) -> Option<&mut dyn crate::capability::PipelineControl> {
+        self.pipeline.control()
     }
 
     /// Mutable pipeline access for physical configuration and explicit resets.

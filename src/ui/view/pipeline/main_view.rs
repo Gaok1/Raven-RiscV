@@ -633,9 +633,9 @@ fn slot_belongs_to_fu_kind(slot: &crate::ui::pipeline::PipeSlot, fu_kind: FuKind
             slot.class,
             InstrClass::Alu | InstrClass::Branch | InstrClass::Jump
         ),
-        FuKind::Mul => matches!(slot.class, InstrClass::Mul),
-        FuKind::Div => matches!(slot.class, InstrClass::Div),
-        FuKind::Fpu => matches!(slot.class, InstrClass::Fp),
+        FuKind::Mul => matches!(slot.class, InstrClass::Multiply),
+        FuKind::Div => matches!(slot.class, InstrClass::Divide),
+        FuKind::Fpu => matches!(slot.class, InstrClass::FloatingPoint),
         FuKind::Lsu => matches!(slot.class, InstrClass::Load | InstrClass::Store),
         FuKind::Sys => matches!(slot.class, InstrClass::System),
     }
