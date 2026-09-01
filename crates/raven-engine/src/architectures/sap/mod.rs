@@ -1,4 +1,13 @@
 //! Minimal 8-bit SAP (Simple-As-Possible) CPU and assembler.
+//!
+//! SAP's `syscalls` capability stays `false` on purpose. It is an 8-bit
+//! teaching CPU with a 16-byte address space, one accumulator, and two I/O
+//! instructions — `out` and `putc` — that already cover everything it can
+//! honestly do with the outside world. A read/write/exit ABI needs a buffer
+//! address, a count, and a return value, none of which fit the four-bit
+//! operand field without inventing a calling convention the hardware does not
+//! have. SAP talks to the host through its I/O instructions, not a syscall
+//! layer, so the flag stays off.
 
 use crate::cache_model::TeachingCache;
 use crate::capability::{

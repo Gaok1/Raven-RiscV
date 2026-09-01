@@ -4,16 +4,23 @@
 //! Raven can teach today: moves, integer ALU operations, stack/control flow,
 //! `hlt`, and Linux-style `read`, `write`, and `exit` syscalls. Unsupported
 //! opcodes fault instead of being approximated.
+//!
+//! `virtual_memory`, `multicore`, and `floating_point` stay `false` on purpose.
+//! This is a bare, single-core integer machine with no `CR3`/page-table state,
+//! no privilege rings, no vector/FP register file, and no multi-hart scheduler,
+//! so those capabilities are out of scope for the subset this backend teaches
+//! and are documented as off rather than stubbed.
 
 mod elf;
 mod pipeline;
 
 pub use elf::image_from_elf;
 
+use crate::cache_model::TeachingCache;
 use crate::capability::{
-    BitRole, InstructionBitField, InstructionCodec, InstructionField, InstructionInfo,
-    MemoryInspect, MemoryRegion, PipelineControl, PipelineDynamicInspect, PipelineInspect,
-    PipelineTuning, RegisterBank, RegisterFile,
+    BitRole, CacheHierarchy, InstructionBitField, InstructionCodec, InstructionField,
+    InstructionInfo, MemoryInspect, MemoryRegion, PipelineControl, PipelineDynamicInspect,
+    PipelineInspect, PipelineTuning, RegisterBank, RegisterFile,
     RegisterId,
 };
 use crate::{
@@ -155,7 +162,7 @@ static DESCRIPTOR: ArchitectureDescriptor = ArchitectureDescriptor {
     endianness: Endianness::Little,
     capabilities: ArchitectureCapabilities {
         elf: true,
-        cache: false,
+        cache: true,
         virtual_memory: false,
         jit: false,
         pipeline: true,
@@ -1980,6 +1987,7 @@ pub struct X86_64Machine {
     stdout: Vec<u8>,
     input: VecDeque<u8>,
     fault: Option<String>,
+    cache: TeachingCache,
     pipeline: X86Pipeline,
 }
 
@@ -1998,6 +2006,7 @@ impl X86_64Machine {
             stdout: Vec::new(),
             input: VecDeque::new(),
             fault: None,
+            cache: TeachingCache::new(64, 32 * 1024, 64, 8),
             pipeline: X86Pipeline::new(pipeline::shape(), 0),
         }
     }
@@ -2036,7 +2045,7 @@ impl X86_64Machine {
     }
 
     fn read_operand_width(
-        &self,
+        &mut self,
         operand: Operand,
         bits: u8,
         address: u64,
@@ -2048,6 +2057,7 @@ impl X86_64Machine {
                 let address = effective_address(memory, &self.registers, address, len);
                 let bytes = usize::from(bits / 8);
                 let start = self.range(address, bytes)?;
+                self.cache.read(start, &self.memory);
                 Ok(self.memory[start..start + bytes]
                     .iter()
                     .enumerate()
@@ -2075,6 +2085,8 @@ impl X86_64Machine {
                 let address = effective_address(memory, &self.registers, address, len);
                 let bytes = usize::from(bits / 8);
                 let start = self.range(address, bytes)?;
+                self.cache
+                    .write(start, &value.to_le_bytes()[..bytes], &self.memory);
                 self.memory[start..start + bytes].copy_from_slice(&value.to_le_bytes()[..bytes]);
                 Ok(())
             }
@@ -2298,6 +2310,7 @@ impl Machine for X86_64Machine {
         self.stdout.clear();
         self.input.clear();
         self.fault = None;
+        self.cache.reset();
         self.pipeline.reset(image.entry);
         Ok(())
     }
@@ -2320,6 +2333,7 @@ impl Machine for X86_64Machine {
         let instruction_address = self.rip;
         let start = self.range(instruction_address, 1)?;
         let end = start.saturating_add(15).min(self.memory.len());
+        self.cache.fetch(start, &self.memory);
         let Some(instruction) = decode(&self.memory[start..end], instruction_address) else {
             return self.fail(format!(
                 "unsupported x86-64 opcode 0x{:02X} at 0x{instruction_address:016X}",
@@ -2729,6 +2743,10 @@ impl Machine for X86_64Machine {
         Some(&X86_64Codec)
     }
 
+    fn caches(&self) -> Option<&dyn CacheHierarchy> {
+        Some(&self.cache)
+    }
+
     fn pipeline(&self) -> Option<&dyn PipelineInspect> {
         Some(&self.pipeline)
     }
@@ -2922,6 +2940,7 @@ impl InstructionCodec for X86_64Codec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capability::CacheRole;
 
     #[test]
     fn default_program_prints_and_exits() {
@@ -3314,5 +3333,37 @@ slot: db 0
                 .iter()
                 .any(|edge| edge.kind == crate::capability::PipelineEdgeKind::Feedback)
         );
+    }
+
+    #[test]
+    fn cache_records_instruction_fetches_and_memory_accesses() {
+        let source = r#"
+            mov rbx, 7
+            mov [rel slot], rbx
+            mov rax, [rel slot]
+            hlt
+            .data
+            slot: dq 0
+        "#;
+        let image = X86_64Assembler.assemble(source, 0).unwrap();
+        let mut machine = X86_64Machine::new(4096);
+        machine.load(&image).unwrap();
+        assert_eq!(machine.run(16).unwrap(), StepOutcome::Halted);
+
+        let caches = machine.caches().unwrap();
+        assert_eq!(caches.level_count(), 1);
+
+        let icache = caches.cache(0, CacheRole::Instruction).unwrap();
+        assert!(
+            icache.stats.total_accesses() > 0,
+            "instruction fetch must warm the I-cache"
+        );
+
+        let dcache = caches.cache(0, CacheRole::Data).unwrap();
+        assert!(
+            dcache.stats.total_accesses() > 0,
+            "memory operands must warm the D-cache"
+        );
+        assert!(dcache.stats.bytes_stored > 0, "the store must be observed");
     }
 }

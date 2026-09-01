@@ -16,7 +16,7 @@ use crate::{
     Diagnostic, Endianness, InstructionDoc, Machine, MachineError, MachineSnapshot, MachineState,
     ProgramImage, ProgramSegment, RegisterValue, SourceMap, StepOutcome,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 
 pub const ID: &str = "toy16";
@@ -37,6 +37,7 @@ static INSTRUCTION_DOCS: &[InstructionDoc] = &[
     InstructionDoc::new("I/O", "print", "rs", "Print rs as a decimal number"),
     InstructionDoc::new("I/O", "putc", "ascii", "Print one character by ASCII code"),
     InstructionDoc::new("SYS", "halt", "", "Stop the machine"),
+    InstructionDoc::new("SYS", "syscall", "", "Call read, write, or exit through the host"),
 ];
 
 static DESCRIPTOR: ArchitectureDescriptor = ArchitectureDescriptor {
@@ -55,7 +56,7 @@ static DESCRIPTOR: ArchitectureDescriptor = ArchitectureDescriptor {
         pipeline: true,
         multicore: false,
         floating_point: false,
-        syscalls: false,
+        syscalls: true,
     },
 };
 
@@ -103,7 +104,7 @@ impl Assembler for Toy16Assembler {
 
     fn instruction_forms(&self, mnemonic: &str) -> &'static [&'static str] {
         match mnemonic.to_ascii_lowercase().as_str() {
-            "nop" | "halt" => &[""],
+            "nop" | "halt" | "syscall" => &[""],
             "li" => &["rd, imm"],
             "add" => &["rd, rs1, rs2"],
             "load" | "store" => &["rd, [addr]"],
@@ -236,6 +237,7 @@ fn encode_line(line: &ParsedLine, labels: &HashMap<String, u16>) -> Result<u16, 
     match (mnemonic.as_str(), parts.as_slice()) {
         ("nop", [_]) => Ok(0),
         ("halt", [_]) => Ok(0x1000),
+        ("syscall", [_]) => Ok(0xA000),
         ("li", [_, rd, imm]) => {
             let imm = immediate(imm)?;
             if !(0..=255).contains(&imm) {
@@ -314,6 +316,7 @@ pub struct Toy16Machine {
     state: MachineState,
     instructions: u64,
     stdout: Vec<u8>,
+    input: VecDeque<u8>,
     fault: Option<String>,
     cache: TeachingCache,
     pipeline: PipelineEngine<u16>,
@@ -366,6 +369,7 @@ impl Toy16Machine {
             state: MachineState::Ready,
             instructions: 0,
             stdout: vec![],
+            input: VecDeque::new(),
             fault: None,
             cache: TeachingCache::new(16, 256, 8, 2),
             pipeline: PipelineEngine::new(pipeline_shape(), 0),
@@ -431,11 +435,71 @@ impl Toy16Machine {
                 .stdout
                 .extend_from_slice(format!("{}\n", self.registers[reg(9)]).as_bytes()),
             9 => self.stdout.push((word & 0xff) as u8),
+            0xA => return self.syscall(pc),
             opcode => {
                 return self.fail(format!("invalid Toy16 opcode 0x{opcode:X} at 0x{pc:04X}"));
             }
         }
         Ok(StepOutcome::Stepped)
+    }
+
+    /// Toy16's minimal syscall surface, mirroring the x86-64 ABI: `r0` selects
+    /// the call (`0` read, `1` write, `60` exit), with the same operand roles
+    /// the Linux convention gives them. Only stdin/stdout descriptors are
+    /// answered; anything else returns `-1` in `r0` rather than faking a host
+    /// device that is not there.
+    fn syscall(&mut self, pc: usize) -> Result<StepOutcome, MachineError> {
+        match self.registers[0] {
+            0 => {
+                let count = usize::from(self.registers[3]);
+                if self.registers[1] != 0 {
+                    self.registers[0] = u16::MAX;
+                    return Ok(StepOutcome::Stepped);
+                }
+                if self.input.is_empty() {
+                    self.pc = pc as u16;
+                    self.instructions = self.instructions.saturating_sub(1);
+                    self.state = MachineState::AwaitingInput;
+                    return Ok(StepOutcome::AwaitingInput);
+                }
+                let count = count.min(self.input.len());
+                let start = usize::from(self.registers[2]);
+                let end = start
+                    .checked_add(count)
+                    .ok_or_else(|| MachineError::new("Toy16 read buffer overflow"))?;
+                if end > self.memory.len() {
+                    return self.fail("Toy16 read buffer out of bounds");
+                }
+                for slot in &mut self.memory[start..end] {
+                    *slot = self.input.pop_front().unwrap();
+                }
+                self.registers[0] = count as u16;
+                Ok(StepOutcome::Stepped)
+            }
+            1 => {
+                let count = usize::from(self.registers[3]);
+                let start = usize::from(self.registers[2]);
+                let end = start
+                    .checked_add(count)
+                    .ok_or_else(|| MachineError::new("Toy16 write buffer overflow"))?;
+                if end > self.memory.len() {
+                    return self.fail("Toy16 write buffer out of bounds");
+                }
+                if matches!(self.registers[1], 1 | 2) {
+                    self.stdout.extend_from_slice(&self.memory[start..end]);
+                    self.registers[0] = count as u16;
+                } else {
+                    self.registers[0] = u16::MAX;
+                }
+                Ok(StepOutcome::Stepped)
+            }
+            60 => {
+                let code = self.registers[1] as i32;
+                self.state = MachineState::Exited(code);
+                Ok(StepOutcome::Exited(code))
+            }
+            number => self.fail(format!("unsupported Toy16 syscall {number}")),
+        }
     }
 
     fn pipeline_instruction(&mut self, address: u64) -> PipelineOp<u16> {
@@ -456,7 +520,7 @@ impl Toy16Machine {
             5 => PipelineInstructionClass::Store,
             6 => PipelineInstructionClass::Jump,
             7 => PipelineInstructionClass::Branch,
-            1 | 8 | 9 => PipelineInstructionClass::System,
+            1 | 8 | 9 | 0xA => PipelineInstructionClass::System,
             _ => PipelineInstructionClass::Unknown,
         };
         let mut instruction = PipelineOp::new(
@@ -480,6 +544,11 @@ impl Toy16Machine {
                 instruction.sources.extend([register(6), register(3)]);
             }
             5 | 7 | 8 => instruction.sources.push(register(9)),
+            0xA => {
+                instruction.destination = Some("r0".into());
+                instruction.sources.extend(["r0", "r1", "r2", "r3"].map(str::to_string));
+                instruction.writes.push("r0".into());
+            }
             _ => {}
         }
         // Both control transfers encode their target, so the front end can
@@ -558,6 +627,7 @@ impl Machine for Toy16Machine {
         self.state = MachineState::Ready;
         self.instructions = 0;
         self.stdout.clear();
+        self.input.clear();
         self.fault = None;
         self.cache.reset();
         self.pipeline.reset(u64::from(entry));
@@ -619,6 +689,13 @@ impl Machine for Toy16Machine {
                         return Err(error);
                     }
                 };
+            if outcome == StepOutcome::AwaitingInput {
+                self.pipeline.retry(instruction, "awaiting input");
+                return Ok(CycleResult {
+                    retired_address: None,
+                    outcome,
+                });
+            }
             self.pipeline.retire(&instruction);
             result = CycleResult {
                 retired_address: Some(instruction.address),
@@ -676,7 +753,13 @@ impl Machine for Toy16Machine {
         RegisterFile::write(self, id, value)
     }
 
-    fn push_input(&mut self, _line: &str) {}
+    fn push_input(&mut self, line: &str) {
+        self.input.extend(line.as_bytes());
+        self.input.push_back(b'\n');
+        if self.state == MachineState::AwaitingInput {
+            self.state = MachineState::Ready;
+        }
+    }
 
     fn registers(&self) -> Option<&dyn RegisterFile> {
         Some(self)
@@ -814,6 +897,7 @@ impl InstructionCodec for Toy16Codec {
             7 => format!("jnz r{}, 0x{:04X}", reg(9), (word & 0xff) * 2),
             8 => format!("print r{}", reg(9)),
             9 => format!("putc {}", word & 0xff),
+            0xA => "syscall".to_string(),
             _ => return None,
         })
     }
@@ -880,7 +964,7 @@ impl InstructionCodec for Toy16Codec {
                 name: "ascii",
                 value: (word & 0xff).to_string(),
             }),
-            0 | 1 => {}
+            0 | 1 | 0xA => {}
             _ => return None,
         }
         Some(InstructionInfo {
@@ -890,7 +974,7 @@ impl InstructionCodec for Toy16Codec {
                 5 => "Store",
                 6 | 7 => "Control",
                 8 | 9 => "I/O",
-                1 => "System",
+                1 | 0xA => "System",
                 _ => "ALU",
             },
             encoding: u64::from(word),
@@ -940,5 +1024,57 @@ fn encoding_layout(opcode: u16) -> Vec<InstructionBitField> {
         9 => vec![op, seg("—", 4, Other), seg("ascii", 8, Immediate)],
         // nop / halt carry no operands
         _ => vec![op, seg("—", 12, Other)],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn syscall_writes_memory_to_stdout_and_exits() {
+        let source = "
+            li r0, 1
+            li r1, 1
+            li r2, 0x80
+            li r3, 2
+            syscall
+            li r0, 60
+            li r1, 7
+            syscall
+        ";
+        let image = Toy16Assembler.assemble(source, 0).unwrap();
+        let mut machine = Toy16Machine::new(MEMORY_SIZE);
+        machine.load(&image).unwrap();
+        machine.write_memory(0x80, b"hi").unwrap();
+        assert_eq!(machine.run(64).unwrap(), StepOutcome::Exited(7));
+        assert_eq!(machine.snapshot().stdout, b"hi");
+    }
+
+    #[test]
+    fn syscall_reads_host_input_into_memory() {
+        let source = "
+            li r0, 0
+            li r1, 0
+            li r2, 0x90
+            li r3, 3
+            syscall
+            li r0, 60
+            li r1, 0
+            syscall
+        ";
+        let image = Toy16Assembler.assemble(source, 0).unwrap();
+        let mut machine = Toy16Machine::new(MEMORY_SIZE);
+        machine.load(&image).unwrap();
+        machine.push_input("ab");
+        assert_eq!(machine.run(64).unwrap(), StepOutcome::Exited(0));
+        assert_eq!(machine.read_memory(0x90, 3).unwrap(), b"ab\n");
+    }
+
+    #[test]
+    fn syscall_round_trips_through_the_codec() {
+        let bytes = Toy16Codec.assemble(0, "syscall").unwrap();
+        assert_eq!(bytes, [0x00, 0xA0]);
+        assert_eq!(Toy16Codec.disassemble(0, &bytes).as_deref(), Some("syscall"));
     }
 }
