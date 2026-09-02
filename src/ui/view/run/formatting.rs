@@ -1,5 +1,13 @@
 use super::{App, FormatMode};
 
+/// Hex digits to show a memory address in, matching the backend's address
+/// space — a 16-bit toy16 address is 4 digits, not a padded 32-bit
+/// `0x00001234` that misstates how wide it is. Capped at 8 because the UI
+/// stores addresses as `u32`.
+pub(super) fn address_hex_width(app: &App) -> usize {
+    app.address_hex_width()
+}
+
 /// The cell as the *program* would read it: `MemoryInspect::peek` answers for
 /// whichever backend is running, and on one with a write-back cache it reports
 /// the dirty line rather than the stale word still in RAM.
@@ -124,4 +132,25 @@ pub(super) fn ascii_bytes(bytes: &[u8]) -> String {
             _ => '.',
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn width(id: &str) -> usize {
+        let app =
+            App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, id).unwrap();
+        address_hex_width(&app)
+    }
+
+    /// A memory address is padded to its own width, not a fixed 32 bits — an
+    /// 8-hex-digit toy16 address would misstate how wide it is.
+    #[test]
+    fn address_width_follows_the_backend_address_space() {
+        assert_eq!(width("riscv32"), 8);
+        assert_eq!(width("toy16"), 4);
+        assert_eq!(width("sap"), 1);
+        assert_eq!(width("x86_64"), 8, "x86-64 caps at the u32 the UI stores");
+    }
 }

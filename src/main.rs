@@ -164,20 +164,13 @@ fn main() -> io::Result<()> {
 
     let sub = args.get(1).map(String::as_str);
 
-    // Subcommands → CLI mode
-    let is_cli = matches!(
-        sub,
-        Some("build")
-            | Some("run")
-            | Some("export-config")
-            | Some("check-config")
-            | Some("debug-run-controls")
-            | Some("debug-help-layout")
-            | Some("debug-pipeline-stage")
-            | Some("help")
-            | Some("--help")
-            | Some("-h")
-    );
+    // A leading word that is not a flag is a subcommand — known or not, the
+    // dispatcher reports the ones it does not understand. Bare `raven` and a
+    // flag-first invocation (`raven --mem …`) start the TUI; `--help`/`-h` are
+    // flags but route to help. Without the non-flag clause a typo like
+    // `raven bulid` silently fell through to the TUI instead of erroring.
+    let is_cli = sub.is_some_and(|s| !s.starts_with('-'))
+        || matches!(sub, Some("--help") | Some("-h"));
 
     if is_cli {
         let result = dispatch_subcommand(&args);

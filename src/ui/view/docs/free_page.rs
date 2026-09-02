@@ -37,10 +37,10 @@ pub(super) fn render(f: &mut Frame, area: Rect, app: &App, lines: Vec<Line<'stat
     );
 }
 
-pub(crate) fn free_page_line_count(page: DocsPage, lang: DocsLang) -> usize {
+pub(crate) fn free_page_line_count(page: DocsPage, lang: DocsLang, arch_id: &str) -> usize {
     match page {
         DocsPage::InstrRef => 0,
-        DocsPage::Syscalls => syscalls::syscall_lines(lang).len(),
+        DocsPage::Syscalls => syscalls::syscall_lines(lang, arch_id).len(),
         DocsPage::MemoryMap => memory_map::memory_map_lines(lang).len(),
         DocsPage::FcacheRef => fcache_ref::fcache_ref_lines(lang).len(),
     }

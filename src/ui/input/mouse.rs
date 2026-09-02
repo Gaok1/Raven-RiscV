@@ -904,13 +904,8 @@ fn update_docs_hover(app: &mut App, me: MouseEvent) {
     }
 
     let xs = app.docs.tab_bar_xs.get();
-    let pages = [
-        DocsPage::InstrRef,
-        DocsPage::Syscalls,
-        DocsPage::MemoryMap,
-        DocsPage::FcacheRef,
-    ];
-    for (i, &(x_start, x_end)) in xs.iter().enumerate() {
+    let pages = crate::ui::view::docs::visible_pages(app);
+    for (i, &(x_start, x_end)) in xs.iter().take(pages.len()).enumerate() {
         if col >= x_start && col < x_end {
             app.docs.hover_page = Some(pages[i]);
             return;
@@ -1110,7 +1105,8 @@ fn clamp_docs_scroll(app: &mut App, area: Rect) {
                 app.docs.scroll = 0;
                 return;
             }
-            free_page_line_count(p, app.docs.lang).saturating_sub(viewport_h)
+            free_page_line_count(p, app.docs.lang, app.architecture.descriptor().id)
+                .saturating_sub(viewport_h)
         }
     };
     if app.docs.scroll > max_start {

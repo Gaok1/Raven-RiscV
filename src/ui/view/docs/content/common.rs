@@ -132,11 +132,11 @@ pub(super) fn trow_wrapped(
     out
 }
 
-pub(super) fn thead() -> Line<'static> {
+pub(super) fn thead(num_reg: &'static str) -> Line<'static> {
     Line::from(vec![Span::styled(
         format!(
             "  {:<COL_A7_W$}{:<COL_NAME_W$}{:<COL_ARGS_W$}{:<COL_RET_W$}Notes",
-            "a7", "Name", "Arguments", "Return"
+            num_reg, "Name", "Arguments", "Return"
         ),
         Style::default()
             .fg(Color::DarkGray)

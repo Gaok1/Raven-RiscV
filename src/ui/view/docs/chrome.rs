@@ -113,7 +113,12 @@ pub(crate) fn visible_pages(app: &App) -> Vec<DocsPage> {
         // is built from the descriptor and `MemoryInspect::regions`, this
         // becomes unconditional.
         (DocsPage::MemoryMap, capabilities.virtual_memory),
-        (DocsPage::FcacheRef, capabilities.cache),
+        // The page documents retuning and sharing a *configurable* hierarchy —
+        // `.fcache` files, extra levels, CPI keys, a TLB. A fixed teaching
+        // cache declares `cache` but answers `is_configurable() == false`, so
+        // the page must not appear for it — the same predicate that hides the
+        // Cache tab's add/remove controls.
+        (DocsPage::FcacheRef, app.cache_is_configurable()),
     ]
     .into_iter()
     .filter_map(|(page, shown)| shown.then_some(page))

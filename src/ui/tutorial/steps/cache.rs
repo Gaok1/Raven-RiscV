@@ -242,10 +242,10 @@ pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
         title_en: "Execution Controls",
         title_pt: "Controles de execução",
-        body_en: "Cache simulation controls: [Reset] resets the statistics, Speed sets the rate, State pauses/resumes.\
+        body_en: "Cache simulation controls: reset resets the statistics, speed sets the rate, state pauses/resumes.\
 \n\nThe panel shows total cycles, CPI (Cycles Per Instruction) and the number of executed instructions.\
 \n\nWhen pipeline is enabled, this total uses the same global pipeline clock seen in the Pipeline tab.",
-        body_pt: "Controles de simulação do cache: [Reset] reinicia as estatísticas, Speed define a velocidade, State pausa/retoma.\
+        body_pt: "Controles de simulação do cache: reset reinicia as estatísticas, speed define a velocidade, state pausa/retoma.\
 \n\nO painel mostra o total de ciclos, CPI (Ciclos Por Instrução) e o número de instruções executadas.\
 \n\nQuando o pipeline está habilitado, esse total usa o mesmo clock global do pipeline exibido na aba Pipeline.",
         target: target_exec_ctrl,
@@ -366,12 +366,12 @@ pub static STEPS: &[TutorialStep] = &[
     TutorialStep {
         title_en: "Controls Bar",
         title_pt: "Barra de controles",
-        body_en: "Bottom bar with global actions: [Export Results] saves statistics as .fstats or .csv, [Export Config] and [Import Config] save/load cache configurations as .fcache.\
-\n\nThe scope buttons [I] [D] [Both] filter which cache is shown in the Stats and View subtabs.\
-\n\nKeyboard equivalents: Ctrl+e exports config, Ctrl+l imports config, Ctrl+r exports results.",
-        body_pt: "Barra inferior com ações globais: [Export Results] salva estatísticas em .fstats ou .csv, [Export Config] e [Import Config] salvam/carregam configurações de cache em .fcache.\
-\n\nOs botões de escopo [I] [D] [Both] filtram qual cache é mostrada nas subtabs Stats e View.\
-\n\nEquivalentes no teclado: Ctrl+e exporta config, Ctrl+l importa config, Ctrl+r exporta resultados.",
+        body_en: "Bottom bar with global actions: results saves statistics as .fstats or .csv, export cfg and import cfg save/load cache configurations as .fcache.\
+\n\nThe scope buttons i-cache, d-cache and both filter which cache is shown in the Stats and View subtabs.\
+\n\nKeyboard equivalents: Ctrl+e exports config, Ctrl+l imports config, Ctrl+r exports results; [i] [d] [b] set the scope.",
+        body_pt: "Barra inferior com ações globais: results salva estatísticas em .fstats ou .csv, export cfg e import cfg salvam/carregam configurações de cache em .fcache.\
+\n\nOs botões de escopo i-cache, d-cache e both filtram qual cache é mostrada nas subtabs Stats e View.\
+\n\nEquivalentes no teclado: Ctrl+e exporta config, Ctrl+l importa config, Ctrl+r exporta resultados; [i] [d] [b] definem o escopo.",
         target: target_controls_bar,
         setup: None,
     },

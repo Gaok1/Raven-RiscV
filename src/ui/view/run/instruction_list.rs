@@ -3,6 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
 
 use super::App;
+use super::formatting::address_hex_width;
 use super::memory::{exec_address_in_range, imem_address_in_range};
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
@@ -306,6 +307,7 @@ const HOVER_BG: Color = theme::BG_HOVER;
 const SELECTED_BG: Color = theme::BG_RAISED;
 
 fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
+    let width = address_hex_width(app);
     let word = app
         .memory()
         .map_or(0, |memory| memory.peek_word(u64::from(addr), 4)) as u32;
@@ -353,7 +355,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
         (None, None)
     };
 
-    let addr_part = format!("0x{addr:08x}:  {disasm}");
+    let addr_part = format!("0x{addr:0width$x}:  {disasm}");
 
     // Build span list
     let mut spans: Vec<Span<'static>> = marker;
@@ -401,7 +403,7 @@ fn instruction_item(app: &App, addr: u32) -> ListItem<'static> {
                 .unwrap_or_default();
             let (arrow, color) = if taken {
                 (
-                    format!("  \u{2192} 0x{target:08x}{label}"),
+                    format!("  \u{2192} 0x{target:0width$x}{label}"),
                     Color::Rgb(0, 200, 100),
                 )
             } else {
@@ -462,6 +464,7 @@ fn render_instruction_drag_arrow(f: &mut Frame, area: Rect, app: &App) {
 pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
     let block = panel::panel_state("Trace", "last executed", PanelKind::Plain);
     let inner = render_panel(f, area, block);
+    let width = address_hex_width(app);
 
     let visible = inner.height as usize;
     let total = app.session.exec_trace.len();
@@ -487,7 +490,7 @@ pub(super) fn render_exec_trace(f: &mut Frame, area: Rect, app: &App) {
                 .and_then(|v| v.first())
                 .map(|s| format!(" <{s}>"))
                 .unwrap_or_default();
-            ListItem::new(format!("0x{addr:08x}{lbl}  {disasm}")).style(style)
+            ListItem::new(format!("0x{addr:0width$x}{lbl}  {disasm}")).style(style)
         })
         .collect();
 

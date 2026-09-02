@@ -107,7 +107,8 @@ impl Assembler for Toy16Assembler {
             "nop" | "halt" | "syscall" => &[""],
             "li" => &["rd, imm"],
             "add" => &["rd, rs1, rs2"],
-            "load" | "store" => &["rd, [addr]"],
+            "load" => &["rd, [addr]"],
+            "store" => &["rs, [addr]"],
             "jmp" => &["label"],
             "jnz" => &["rs, label"],
             "print" => &["rs"],
@@ -282,7 +283,7 @@ fn encode_line(line: &ParsedLine, labels: &HashMap<String, u16>) -> Result<u16, 
             Ok(0x9000 | value as u16)
         }
         _ => Err(error(format!(
-            "invalid Toy16 instruction '{}'; expected nop, halt, li, add, load, store, jmp, jnz, print, or putc",
+            "invalid Toy16 instruction '{}'; expected nop, halt, syscall, li, add, load, store, jmp, jnz, print, or putc",
             line.text
         ))),
     }
@@ -1022,7 +1023,7 @@ fn encoding_layout(opcode: u16) -> Vec<InstructionBitField> {
         8 => vec![op, seg("rs", 3, Source), seg("—", 9, Other)],
         // putc ascii
         9 => vec![op, seg("—", 4, Other), seg("ascii", 8, Immediate)],
-        // nop / halt carry no operands
+        // nop / halt / syscall carry no operands
         _ => vec![op, seg("—", 12, Other)],
     }
 }

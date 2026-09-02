@@ -121,6 +121,26 @@ fn status_badge(app: &App) -> Vec<Span<'static>> {
 /// report `state run` while the machine sat still, and it is the same mistake
 /// that would leave `▶ run` looking inert on a stopped machine.
 fn state_label(app: &App) -> (&'static str, Color) {
+    // A trait-driven backend has no per-hart lifecycle to read: the badge asks
+    // the machine's own state — the same place `machine_step`/`machine_cycle`
+    // turn off the run. Without this the bar reported `paused` after a toy16 or
+    // x86-64 program had already `halt`ed or `exit`ed.
+    if app.rv32().is_none() {
+        return match app.machine_snapshot().state {
+            raven_engine::MachineState::Halted => ("halted", theme::DANGER),
+            raven_engine::MachineState::Exited(_) => ("exited", theme::LABEL),
+            raven_engine::MachineState::Faulted => ("faulted", theme::DANGER),
+            raven_engine::MachineState::AwaitingInput => ("awaiting input", theme::PAUSED),
+            _ => {
+                if app.session.is_running {
+                    ("running", theme::RUNNING)
+                } else {
+                    ("paused", theme::PAUSED)
+                }
+            }
+        };
+    }
+
     match app.core_status(app.selected_core) {
         HartLifecycle::Free => ("free", theme::IDLE),
         HartLifecycle::Faulted => ("faulted", theme::DANGER),
@@ -148,7 +168,7 @@ fn metric_spans(app: &App) -> Vec<Span<'static>> {
     vec![
         style::metric_span("cycles ", totals.cycles, Metric::Cycles),
         Span::raw("   "),
-        style::metric_span("cpi ", format!("{:.2}", totals.cpi()), Metric::Cpi),
+        style::metric_span("CPI ", format!("{:.2}", totals.cpi()), Metric::Cpi),
         Span::raw("   "),
         Span::styled(format!("instrs {}", totals.instructions), style::label()),
         Span::raw("  "),
@@ -313,7 +333,7 @@ pub(crate) fn build_run_display_toolbar(app: &App) -> Toolbar<RunButton> {
     bar.toggle(
         RunButton::Speed,
         "speed",
-        speed_text(app),
+        app.session.speed.label(),
         ControlState::chip(true, hov(RunButton::Speed)),
         theme::TEXT,
     );
@@ -411,17 +431,33 @@ fn bytes_text(app: &App) -> &'static str {
     }
 }
 
-fn speed_text(app: &App) -> &'static str {
-    match app.session.speed.label() {
-        "1x" => "1x",
-        "2x" => "2x",
-        "4x" => "4x",
-        "8x" => "8x",
-        "GO" => "go",
-        other => other,
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub(crate) fn state_text(app: &App) -> String {
-    state_label(app).0.to_string()
+    fn halted_toy16() -> App {
+        let mut app =
+            App::new_with_architecture(None, crate::falcon::jit::BackendKind::None, "toy16")
+                .unwrap();
+        for _ in 0..1000 {
+            if matches!(app.machine_snapshot().state, raven_engine::MachineState::Halted) {
+                break;
+            }
+            app.single_step();
+        }
+        app
+    }
+
+    /// A trait-driven backend has no per-hart lifecycle, so the badge reads the
+    /// machine's own state — it used to report `paused` after a program had
+    /// already halted.
+    #[test]
+    fn trait_backend_reports_halted_not_paused() {
+        let app = halted_toy16();
+        assert_eq!(
+            app.machine_snapshot().state,
+            raven_engine::MachineState::Halted
+        );
+        assert_eq!(state_label(&app).0, "halted");
+    }
 }

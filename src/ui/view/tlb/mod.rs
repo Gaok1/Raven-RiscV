@@ -349,17 +349,9 @@ fn btn_style(active: bool, hovered: bool) -> Style {
     }
 }
 
-pub(super) fn replacement_label(r: crate::falcon::cache::ReplacementPolicy) -> &'static str {
-    use crate::falcon::cache::ReplacementPolicy;
-    match r {
-        ReplacementPolicy::Lru => "LRU (Least Recently Used)",
-        ReplacementPolicy::Mru => "MRU (Most Recently Used)",
-        ReplacementPolicy::Fifo => "FIFO (First In First Out)",
-        ReplacementPolicy::Random => "Random",
-        ReplacementPolicy::Lfu => "LFU (Least Frequently Used)",
-        ReplacementPolicy::Clock => "Clock (Second Chance)",
-    }
-}
+// One spelling for a policy, wherever it is shown: the Cache Config pane owns
+// it, and the VM settings pane must not drift onto its own wording.
+pub(super) use crate::ui::view::cache::config::replacement_label;
 
 #[cfg(test)]
 mod tests {

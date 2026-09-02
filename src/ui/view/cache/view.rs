@@ -889,7 +889,7 @@ fn unit_metrics(fmt: CacheDataFmt, group: CacheDataGroup) -> (usize, usize) {
         (CacheDataFmt::DecS, 1) => 5,   // "-NNN " (−128–127)
         (CacheDataFmt::DecS, 2) => 7,   // "-NNNNN " (−32768–32767)
         (CacheDataFmt::DecS, 4) => 12,  // "-NNNNNNNNNN "
-        (CacheDataFmt::Float, _) => 10, // "±NNN.NNN "
+        (CacheDataFmt::Float, _) => 9, // "{f:8.3} " (8 + separator)
         _ => 3,
     };
     (chars, g)

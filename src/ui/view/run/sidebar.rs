@@ -2,7 +2,9 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell, List, ListItem, Paragraph, Row, Table};
 
-use super::formatting::{format_memory_value, format_register_value, format_stale_value};
+use super::formatting::{
+    address_hex_width, format_memory_value, format_register_value, format_stale_value,
+};
 use super::{App, MemRegion};
 use crate::ui::app::{NO_REG_AGE, RunEditTarget};
 use crate::ui::theme;
@@ -49,6 +51,7 @@ fn primary_row_count(app: &App) -> usize {
 }
 
 fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
+    let width = address_hex_width(app);
     // The title's right slot says what the table is *showing*: every bank the
     // backend offers, with the visible one lit. The `[P]=pin` / `[Tab]=Float`
     // key hints that used to live here moved to the footer, so a bracket now
@@ -72,7 +75,7 @@ fn render_register_table(f: &mut Frame, area: Rect, app: &App) {
     }
     if let Some(pc) = cursor_register(app).and_then(|id| app.register_last_write(id)) {
         state.push(Span::styled(
-            format!("  last write 0x{pc:08x}"),
+            format!("  last write 0x{pc:0width$x}"),
             style::label(),
         ));
     }
@@ -500,9 +503,10 @@ fn render_mem_search_bar(f: &mut Frame, area: Rect, app: &App) {
     let q = &app.run.mem_search_query;
 
     let parsed = u32::from_str_radix(q.trim_start_matches("0x").trim_start_matches("0X"), 16).ok();
+    let width = address_hex_width(app);
 
     let valid_span = if let Some(addr) = parsed {
-        Span::styled(format!("  →  0x{addr:08X}"), style::success().bg(bg))
+        Span::styled(format!("  →  0x{addr:0width$X}"), style::success().bg(bg))
     } else if !q.is_empty() {
         Span::styled("  ✗", Style::default().fg(Color::Red).bg(bg))
     } else {
@@ -540,11 +544,12 @@ fn memory_block(app: &App) -> Block<'static> {
     let base_addr = app.visible_memory_base_addr(None);
     let section = memory_title_section(app, base_addr);
     let accent = memory_accent_color(app, section);
+    let width = address_hex_width(app);
     // Region and address are state, so they belong in the title's right slot —
     // and the region loses its brackets, which mean "key" everywhere now.
     panel::panel_state(
         "Memory",
-        format!("{section}  0x{base_addr:08x}"),
+        format!("{section}  0x{base_addr:0width$x}"),
         PanelKind::Custom(accent),
     )
 }
@@ -652,10 +657,11 @@ fn mem_age_style(age: u8) -> Option<Style> {
 const HEAP_COLOR: Color = Color::Rgb(80, 200, 120);
 
 fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
+    let width = address_hex_width(app);
     // When this cell is the open inline editor, paint the buffer + cursor and
     // skip the usual cache/marker decorations (transient while editing).
     if let Some(overlay) = mem_edit_overlay(app, addr) {
-        return ListItem::new(format!("  0x{addr:08x}: {overlay}")).style(edit_value_style());
+        return ListItem::new(format!("  0x{addr:0width$x}: {overlay}")).style(edit_value_style());
     }
 
     let sp = stack_pointer(app);
@@ -750,7 +756,7 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
             .as_deref()
             .map(|label| format!("{label} "))
             .unwrap_or_default();
-        let addr_text = format!("{cache_label}0x{addr:08x}: {val}{trailing_ann}");
+        let addr_text = format!("{cache_label}0x{addr:0width$x}: {val}{trailing_ann}");
         let fg = if is_sp || is_hb {
             marker_fg
         } else if let Some(s) = access_highlight {
@@ -813,7 +819,7 @@ fn memory_line(app: &App, addr: u32) -> ListItem<'static> {
         ));
     }
     spans.push(ratatui::text::Span::styled(
-        format!("{level_label}0x{addr:08x}: "),
+        format!("{level_label}0x{addr:0width$x}: "),
         addr_style,
     ));
     spans.push(ratatui::text::Span::styled(
@@ -900,11 +906,12 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
         area,
         panel::panel("ELF Sections", PanelKind::Plain),
     );
+    let width = address_hex_width(app);
 
     let mut items: Vec<ListItem<'static>> = Vec::new();
     for sec in &app.session.elf_sections {
         // Section header line
-        let header = format!("{:<10} 0x{:08x}  {} B", sec.name, sec.addr, sec.size);
+        let header = format!("{:<10} 0x{:0width$x}  {} B", sec.name, sec.addr, sec.size);
         items.push(
             ListItem::new(header).style(
                 Style::default()
@@ -924,7 +931,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
                 }
             }
             items.push(
-                ListItem::new(format!("  0x{:08x}: (zeroed, {} B)", sec.addr, sec.size))
+                ListItem::new(format!("  0x{:0width$x}: (zeroed, {} B)", sec.addr, sec.size))
                     .style(style::label()),
             );
         } else {
@@ -947,7 +954,7 @@ fn render_elf_sections(f: &mut Frame, area: Rect, app: &App) {
                     .join(" ");
                 let hint = type_hint(chunk);
                 items.push(
-                    ListItem::new(format!("  0x{addr:08x}: {hex:<11} │ {hint}"))
+                    ListItem::new(format!("  0x{addr:0width$x}: {hex:<11} │ {hint}"))
                         .style(style::value()),
                 );
             }

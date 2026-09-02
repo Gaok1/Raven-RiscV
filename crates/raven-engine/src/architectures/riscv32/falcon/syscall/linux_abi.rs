@@ -159,15 +159,13 @@ impl<B: Bus> SyscallAbi<B> for LinuxAbi {
             SYS_WRITEV => linux_writev(cpu, mem, console),
             SYS_BRK => {
                 // brk(0) -> query current break; brk(addr) -> extend break to addr.
+                // The break only grows: a request at or below the current break
+                // (or past the end of memory) returns the break unchanged.
                 let requested = cpu.read(10);
-                if requested == 0 || requested <= cpu.heap_break {
-                    cpu.write(10, cpu.heap_break);
-                } else if requested > mem.mem_len() {
-                    cpu.write(10, cpu.heap_break);
-                } else {
+                if requested > cpu.heap_break && requested <= mem.mem_len() {
                     cpu.heap_break = requested;
-                    cpu.write(10, requested);
                 }
+                cpu.write(10, cpu.heap_break);
                 Ok(true)
             }
             SYS_MMAP => linux_mmap(cpu, mem, console),

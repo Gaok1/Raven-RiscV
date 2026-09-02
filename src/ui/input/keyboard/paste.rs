@@ -84,7 +84,8 @@ pub(super) fn clamp_docs_scroll(app: &mut App) {
                 docs_body_line_count(app, &q, app.docs.type_filter).saturating_sub(vp)
             }
             p => {
-                free_page_line_count(p, app.docs.lang).saturating_sub(viewport_h.saturating_sub(2))
+                free_page_line_count(p, app.docs.lang, app.architecture.descriptor().id)
+                    .saturating_sub(viewport_h.saturating_sub(2))
             }
         };
 

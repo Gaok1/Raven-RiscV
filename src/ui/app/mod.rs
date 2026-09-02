@@ -678,6 +678,16 @@ impl App {
         self.machine.snapshot()
     }
 
+    /// Hex digits a memory address takes, matching the backend's address space
+    /// — a 16-bit toy16 address is 4 digits, not a padded 32-bit `0x00001234`
+    /// that misstates how wide it is. Capped at 8 because the UI stores
+    /// addresses as `u32`.
+    pub(crate) fn address_hex_width(&self) -> usize {
+        usize::from(self.architecture.descriptor().address_bits)
+            .div_ceil(4)
+            .min(8)
+    }
+
     // ── Capability accessors ─────────────────────────────────────────────
     //
     // The one way the view layer reaches backend state. Each answers for the

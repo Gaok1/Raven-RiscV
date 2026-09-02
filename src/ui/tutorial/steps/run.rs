@@ -328,11 +328,11 @@ pub static STEPS: &[TutorialStep] = &[
         title_pt: "Toggles da view de instruções",
         body_en: "Two toggles change what extra information is shown on each instruction line:\
 \n\n[e] — execution count heatmap: shows how many times each instruction ran (×N). Line numbers are coloured by frequency.\
-\n[y] — instruction type badge: shows the format class of each instruction ([R], [I], [S], [B], [U], [J]).\
+\n[y] — instruction type badge: shows the format class of each instruction (R, I, S, B, U, J).\
 \n\nBoth are also available as the Count and Type buttons in the controls bar.",
         body_pt: "Dois toggles mudam quais informações extras aparecem em cada linha de instrução:\
 \n\n[e] — heatmap de contagem de execuções: mostra quantas vezes cada instrução rodou (×N). Os números de linha são coloridos pela frequência.\
-\n[y] — badge de tipo de instrução: exibe a classe de formato de cada instrução ([R], [I], [S], [B], [U], [J]).\
+\n[y] — badge de tipo de instrução: exibe a classe de formato de cada instrução (R, I, S, B, U, J).\
 \n\nAmbos também estão disponíveis como botões Count e Type na barra de controles.",
         target: target_imem,
         setup: None,
@@ -387,11 +387,9 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Breakpoints & Step",
         title_pt: "Breakpoints & step",
         body_en: "Press [F9] on the desired line to add/remove a breakpoint. The simulator stops automatically when it hits one.\
-\n\n[s] executes one instruction at a time (step). [r] starts or stops continuous execution. [p] pauses without resetting.\
-\n\n[R] restarts from the beginning, reloading the program compiled in the Editor.",
+\n\n[s] executes one instruction at a time (step). [p] or [Space] starts or stops continuous execution. [r] restarts from the beginning, reloading the program compiled in the Editor.",
         body_pt: "Pressione [F9] na linha desejada para adicionar/remover um breakpoint. O simulador para automaticamente ao atingi-lo.\
-\n\n[s] executa uma instrução de cada vez (step). [r] inicia ou para a execução contínua. [p] pausa sem resetar.\
-\n\n[R] reinicia do início, recarregando o programa compilado no Editor.",
+\n\n[s] executa uma instrução de cada vez (step). [p] ou [Space] inicia ou para a execução contínua. [r] reinicia do início, recarregando o programa compilado no Editor.",
         target: target_controls,
         setup: None,
     },

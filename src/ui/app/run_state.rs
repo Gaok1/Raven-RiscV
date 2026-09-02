@@ -95,7 +95,7 @@ impl RunSpeed {
             Self::X2 => "2x",
             Self::X4 => "4x",
             Self::X8 => "8x",
-            Self::Instant => "GO",
+            Self::Instant => "go",
         }
     }
 }

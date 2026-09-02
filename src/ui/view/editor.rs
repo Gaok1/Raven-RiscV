@@ -306,7 +306,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
     let content_w = area.width.saturating_sub(3);
     let query_char_len = app.editor.find_query.chars().count();
     let show_hints = app.editor.show_addr_hints;
-    let hint_w: usize = if show_hints { 11 } else { 0 }; // "0x00000000 " = 11 chars
+    let hint_w: usize = if show_hints { app.address_hex_width() + 3 } else { 0 };
 
     // Compute highlight_word: the identifier under the cursor, if it's a known label
     let highlight_word: Option<String> = {
@@ -392,9 +392,9 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         // Optional address hint gutter
         if show_hints {
             let addr_text = if let Some(&addr) = app.editor.line_to_addr.get(&i) {
-                format!("{addr:08x} ")
+                format!("0x{addr:0width$x} ", width = app.address_hex_width())
             } else {
-                "         ".to_string()
+                " ".repeat(hint_w)
             };
             spans.push(Span::styled(
                 addr_text,
@@ -418,9 +418,9 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::DarkGray)
             },
         ));
-        let marker_style = if Some(i) == app.editor.diag_line {
-            Style::default().fg(Color::Red)
-        } else if is_bp {
+        // The gutter marker turns red on a diagnostic line (the underline
+        // already marks the text) and on a breakpoint line.
+        let marker_style = if Some(i) == app.editor.diag_line || is_bp {
             Style::default().fg(Color::Red)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -550,7 +550,7 @@ pub(super) fn render_editor(f: &mut Frame, area: Rect, app: &App) {
         let (query, prefix_len) = if app.editor.goto_open {
             (
                 &app.editor.goto_query,
-                "  Go to line (1-XXXXX): ".len() as u16,
+                format!("  Go to line (1-{}): ", app.editor.buf.lines.len()).chars().count() as u16,
             )
         } else if app.editor.find_in_replace {
             (&app.editor.replace_query, " Repl: ".len() as u16)

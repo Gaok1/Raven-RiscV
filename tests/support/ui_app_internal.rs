@@ -1960,6 +1960,7 @@ fn pipeline_ret_sees_loaded_ra_with_stack_adjust_between() {
 }
 
 #[test]
+#[ignore = "depends on local rust-to-raven debug ELF build artifact"]
 fn loading_elf_resets_pipeline_to_entry_pc() {
     let mut app = App::new(None);
     app.native_mut().pipeline_mut().enabled = true;

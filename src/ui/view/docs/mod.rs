@@ -18,7 +18,7 @@ pub(super) fn render_docs(f: &mut Frame, area: Rect, app: &App) {
             f,
             area,
             app,
-            content::syscalls::syscall_lines(app.docs.lang),
+            content::syscalls::syscall_lines(app.docs.lang, app.architecture.descriptor().id),
         ),
         DocsPage::MemoryMap => free_page::render(
             f,

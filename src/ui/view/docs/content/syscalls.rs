@@ -13,11 +13,169 @@ fn add_row(
     lines.extend(trow_wrapped(a7, name, args, ret, notes));
 }
 
-pub(crate) fn syscall_lines(lang: DocsLang) -> Vec<Line<'static>> {
-    match lang {
-        DocsLang::En => syscall_lines_en(),
-        DocsLang::PtBr => syscall_lines_ptbr(),
+pub(crate) fn syscall_lines(lang: DocsLang, arch_id: &str) -> Vec<Line<'static>> {
+    match arch_id {
+        "x86_64" => match lang {
+            DocsLang::En => x86_64_lines_en(),
+            DocsLang::PtBr => x86_64_lines_ptbr(),
+        },
+        "toy16" => match lang {
+            DocsLang::En => toy16_lines_en(),
+            DocsLang::PtBr => toy16_lines_ptbr(),
+        },
+        _ => match lang {
+            DocsLang::En => syscall_lines_en(),
+            DocsLang::PtBr => syscall_lines_ptbr(),
+        },
     }
+}
+
+/// A small, honest syscall table for a backend whose surface is only
+/// read/write/exit. The RV32 reference above documents a Linux-compatible ABI
+/// plus teaching extensions; x86-64 and Toy16 answer just three calls each, so
+/// this renders their actual ABI instead of recycling the RV32 prose.
+fn simple_table(
+    title: &'static str,
+    convention: &'static str,
+    num_reg: &'static str,
+    rows: &[(&'static str, &'static str, &'static str, &'static str, &'static str)],
+) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        h1(title),
+        blank(),
+        note(convention),
+        blank(),
+        thead(num_reg),
+        tsep(),
+    ];
+    for &(num, name, args, ret, notes) in rows {
+        add_row(&mut lines, num, name, args, ret, notes);
+    }
+    lines
+}
+
+fn x86_64_lines_en() -> Vec<Line<'static>> {
+    simple_table(
+        "RAVEN — Syscall Reference (x86-64)",
+        "Calling convention: rax = syscall number · rdi, rsi, rdx = arguments · rax = return value",
+        "rax",
+        &[
+            (
+                "0",
+                "read",
+                "fd=rdi, buf=rsi, n=rdx",
+                "bytes read",
+                "fd=0 (stdin) only; blocks until line ready",
+            ),
+            (
+                "1",
+                "write",
+                "fd=rdi, buf=rsi, n=rdx",
+                "bytes written",
+                "fd=1 (stdout) or 2 (stderr)",
+            ),
+            (
+                "60",
+                "exit",
+                "code=rdi",
+                "—",
+                "stops the whole program; sets exit code",
+            ),
+        ],
+    )
+}
+
+fn toy16_lines_en() -> Vec<Line<'static>> {
+    simple_table(
+        "RAVEN — Syscall Reference (Toy16)",
+        "Calling convention: r0 = syscall number · r1, r2, r3 = arguments · r0 = return value",
+        "r0",
+        &[
+            (
+                "0",
+                "read",
+                "fd=r1, buf=r2, n=r3",
+                "bytes read",
+                "fd=0 (stdin) only; blocks until line ready",
+            ),
+            (
+                "1",
+                "write",
+                "fd=r1, buf=r2, n=r3",
+                "bytes written",
+                "fd=1 (stdout) or 2 (stderr)",
+            ),
+            (
+                "60",
+                "exit",
+                "code=r1",
+                "—",
+                "stops the whole program; sets exit code",
+            ),
+        ],
+    )
+}
+
+fn x86_64_lines_ptbr() -> Vec<Line<'static>> {
+    simple_table(
+        "RAVEN — Referência de Syscalls (x86-64)",
+        "Convenção: rax = número da syscall · rdi, rsi, rdx = argumentos · rax = retorno",
+        "rax",
+        &[
+            (
+                "0",
+                "read",
+                "fd=rdi, buf=rsi, n=rdx",
+                "bytes lidos",
+                "fd=0 (stdin); bloqueia até linha pronta",
+            ),
+            (
+                "1",
+                "write",
+                "fd=rdi, buf=rsi, n=rdx",
+                "bytes escritos",
+                "fd=1 (stdout) ou 2 (stderr)",
+            ),
+            (
+                "60",
+                "exit",
+                "code=rdi",
+                "—",
+                "encerra o programa; define código de saída",
+            ),
+        ],
+    )
+}
+
+fn toy16_lines_ptbr() -> Vec<Line<'static>> {
+    simple_table(
+        "RAVEN — Referência de Syscalls (Toy16)",
+        "Convenção: r0 = número da syscall · r1, r2, r3 = argumentos · r0 = retorno",
+        "r0",
+        &[
+            (
+                "0",
+                "read",
+                "fd=r1, buf=r2, n=r3",
+                "bytes lidos",
+                "fd=0 (stdin); bloqueia até linha pronta",
+            ),
+            (
+                "1",
+                "write",
+                "fd=r1, buf=r2, n=r3",
+                "bytes escritos",
+                "fd=1 (stdout) ou 2 (stderr)",
+            ),
+            (
+                "60",
+                "exit",
+                "code=r1",
+                "—",
+                "encerra o programa; define código de saída",
+            ),
+        ],
+    )
 }
 
 fn syscall_lines_en() -> Vec<Line<'static>> {
@@ -29,7 +187,7 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         blank(),
         h2("Linux-compatible syscalls"),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ];
     add_row(
@@ -134,7 +292,7 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         blank(),
         h2("RAVEN teaching extensions  (a7 ≥ 1000)"),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ]);
     add_row(
@@ -293,7 +451,7 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         blank(),
         h2("RAVEN memory utilities  (a7 ≥ 1050)"),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ]);
     add_row(
@@ -337,7 +495,7 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         note("OS window (Settings → Screen Output, or `raven run --screen` on the CLI)."),
         note("Colors are 0xRRGGBB. All calls except screen_init return -EINVAL before init."),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ]);
     add_row(
@@ -437,7 +595,7 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         blank(),
         h2("Syscalls compatíveis com Linux"),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ];
     add_row(
@@ -521,7 +679,7 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         blank(),
         h2("Extensões didáticas do RAVEN  (a7 ≥ 1000)"),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ]);
     add_row(
@@ -680,7 +838,7 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         blank(),
         h2("Utilitários de memória do RAVEN  (a7 ≥ 1050)"),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ]);
     add_row(
@@ -724,7 +882,7 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         note("do OS (Settings → Screen Output, ou `raven run --screen` no CLI)."),
         note("Cores são 0xRRGGBB. Tudo exceto screen_init retorna -EINVAL antes do init."),
         blank(),
-        thead(),
+        thead("a7"),
         tsep(),
     ]);
     add_row(

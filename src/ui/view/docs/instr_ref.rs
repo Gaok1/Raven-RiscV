@@ -73,6 +73,8 @@ fn style_for_token(token: &str, assembler: &dyn raven_engine::Assembler) -> Opti
             Some(Style::default().fg(Color::LightGreen))
         }
         "label" => Some(Style::default().fg(Color::Magenta)),
+        "address" | "addr" => Some(Style::default().fg(Color::LightYellow)),
+        "char" | "ascii" => Some(Style::default().fg(Color::LightRed)),
         "rm" => Some(Style::default().fg(Color::LightYellow)),
         "sym" => Some(Style::default().fg(Color::LightBlue)),
         _ if assembler.is_register(token) => Some(Style::default().fg(Color::LightBlue)),
@@ -516,16 +518,28 @@ mod tests {
         let rv32 = visible_pages(&app("riscv32"));
         assert!(rv32.contains(&DocsPage::Syscalls));
         assert!(rv32.contains(&DocsPage::MemoryMap));
+        assert!(rv32.contains(&DocsPage::FcacheRef));
 
-        for id in ["toy16", "sap"] {
-            let pages = visible_pages(&app(id));
-            assert!(pages.contains(&DocsPage::InstrRef), "{id}");
-            assert!(!pages.contains(&DocsPage::Syscalls), "{id}");
-            assert!(!pages.contains(&DocsPage::MemoryMap), "{id}");
-        }
+        // SAP declares no syscalls, no paging, and a fixed cache, so it gets
+        // neither page.
+        let sap = visible_pages(&app("sap"));
+        assert!(sap.contains(&DocsPage::InstrRef), "sap");
+        assert!(!sap.contains(&DocsPage::Syscalls), "sap");
+        assert!(!sap.contains(&DocsPage::MemoryMap), "sap");
+        assert!(!sap.contains(&DocsPage::FcacheRef), "sap");
 
-        // x86-64 has syscalls but no cache and no paging, so it gets a
-        // different set again — which is the whole point of gating per page.
+        // Toy16 answers read/write/exit through the host, so it gets the syscall
+        // page — but never the RV32 memory map (Sv32 prose it does not have) or
+        // the .fcache reference (its cache is a fixed teaching model).
+        let toy16 = visible_pages(&app("toy16"));
+        assert!(toy16.contains(&DocsPage::InstrRef), "toy16");
+        assert!(toy16.contains(&DocsPage::Syscalls), "toy16");
+        assert!(!toy16.contains(&DocsPage::MemoryMap), "toy16");
+        assert!(!toy16.contains(&DocsPage::FcacheRef), "toy16");
+
+        // x86-64 has syscalls but a fixed teaching cache and no paging, so it
+        // gets the syscall page while the RV32 memory map and .fcache reference
+        // stay hidden.
         let x86 = visible_pages(&app("x86_64"));
         assert!(x86.contains(&DocsPage::Syscalls));
         assert!(!x86.contains(&DocsPage::FcacheRef));
