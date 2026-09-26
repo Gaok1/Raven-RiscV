@@ -1668,6 +1668,61 @@ fn f0_result_is_forwarded_like_any_float_register() {
 }
 
 #[test]
+fn parallel_fu_mode_sends_float_loads_and_stores_through_mem() {
+    // flw/fsw are FloatingPoint by class; they used to go from the FPU
+    // straight to WB, so the load read nothing and the store wrote nothing.
+    let asm = r#"
+.data
+tdat:
+.word 0xbf800000
+.word 0x40000000
+.word 0
+.word 0
+.word 0
+.word 0
+.text
+    la   a1, tdat
+    flw  f1, 4(a1)
+    fsw  f1, 20(a1)
+    lw   a0, 20(a1)
+    flw  f2, 0(a1)
+    fadd.s f3, f1, f2
+    fmv.x.w a2, f3
+    halt
+"#;
+    let (_, cpu_seq, _) = run_sequential(asm);
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.mode = crate::falcon::pipeline::PipelineMode::FunctionalUnits;
+    mem.bypass = true;
+    load_program_into_mem(asm, &mut cpu, &mut mem);
+    state.reset_stages(0);
+    for _ in 0..1024 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+        if state.halted || state.faulted {
+            break;
+        }
+    }
+    // 2.0 stored and reloaded; 2.0 + (-1.0) = 1.0.
+    assert_eq!(
+        [cpu_seq.read(10), cpu_seq.read(12)],
+        [0x4000_0000, 0x3F80_0000]
+    );
+    assert_eq!(
+        [cpu.read(10), cpu.read(12)],
+        [cpu_seq.read(10), cpu_seq.read(12)]
+    );
+}
+
+#[test]
 fn branch_after_two_loads_matches_sequential_behavior() {
     let asm = r#"
 .data

@@ -2854,8 +2854,19 @@ fn apply_just_committed_visibility_to_mem(slot: &mut PipeSlot, committed: &PipeS
     }
 }
 
+/// `flw` and `fsw` are FloatingPoint by class but access memory: they must go
+/// through the LSU and MEM, not straight from the FPU to WB.
+fn is_float_memory_slot(slot: &PipeSlot) -> bool {
+    matches!(
+        slot.instr
+            .or_else(|| crate::falcon::decoder::decode(slot.word).ok()),
+        Some(Instruction::Flw { .. } | Instruction::Fsw { .. })
+    )
+}
+
 fn parallel_fu_kind_for_slot(slot: &PipeSlot) -> Option<FuKind> {
     match slot.class {
+        InstrClass::FloatingPoint if is_float_memory_slot(slot) => Some(FuKind::Lsu),
         InstrClass::Alu | InstrClass::Multiply | InstrClass::Divide | InstrClass::FloatingPoint => {
             FuKind::from_class(slot.class)
         }
@@ -2885,7 +2896,9 @@ fn parallel_fu_occupancy(state: &PipelineSimState, kind: FuKind) -> usize {
 }
 
 fn is_memory_slot(slot: &PipeSlot) -> bool {
-    !slot.is_bubble && matches!(slot.class, InstrClass::Load | InstrClass::Store)
+    !slot.is_bubble
+        && (matches!(slot.class, InstrClass::Load | InstrClass::Store)
+            || is_float_memory_slot(slot))
 }
 
 fn lsu_dispatch_blocked_by_older_memory(state: &PipelineSimState) -> bool {
