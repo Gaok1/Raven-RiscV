@@ -1623,6 +1623,51 @@ done:
 }
 
 #[test]
+fn csr_instructions_and_fp_flags_match_sequential_behavior() {
+    // Zicsr used to classify as Unknown in the pipeline and retire as a no-op.
+    let asm = r#"
+.text
+    li   t0, 1
+    fcvt.s.w f1, t0
+    li   t0, 3
+    fcvt.s.w f2, t0
+    fdiv.s f3, f1, f2
+    csrr a0, fflags
+    mv   a4, a0
+    csrw fflags, zero
+    csrr a1, fflags
+    li   t1, 0x1234
+    csrw fcsr, t1
+    csrr a2, fcsr
+    csrr a3, frm
+    halt
+"#;
+    let (_, cpu_seq, _) = run_sequential(asm);
+    let (_, cpu_pipe, _, _) = run_pipeline_prog(asm);
+    let regs = |cpu: &Cpu| [10, 11, 12, 13, 14].map(|r| cpu.read(r));
+    // 1/3 is inexact: NX. fcsr keeps 8 bits; frm is fcsr[7:5].
+    assert_eq!(regs(&cpu_seq), [0x01, 0, 0x34, 1, 0x01]);
+    assert_eq!(regs(&cpu_pipe), regs(&cpu_seq));
+}
+
+#[test]
+fn f0_result_is_forwarded_like_any_float_register() {
+    // f0 is not hardwired to zero; the bypass used to skip it like x0.
+    let asm = r#"
+.text
+    li   a1, 0x12345678
+    li   a2, 0
+    fmv.w.x f1, a1
+    fmv.w.x f2, a2
+    fsgnj.s f0, f1, f2
+    fmv.x.w a0, f0
+    halt
+"#;
+    let (_, cpu_pipe, _, _) = run_pipeline_prog(asm);
+    assert_eq!(cpu_pipe.read(10), 0x12345678);
+}
+
+#[test]
 fn branch_after_two_loads_matches_sequential_behavior() {
     let asm = r#"
 .data

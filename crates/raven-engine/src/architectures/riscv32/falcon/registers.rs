@@ -30,7 +30,7 @@ impl ExecRegion {
 pub struct Cpu {
     pub x: [u32; 32], // x0..x31 (integer registers) â€” write via write()/fwrite() to enforce x0=0
     pub f: [u32; 32], // f0..f31 (float registers, stored as IEEE 754 bits)
-    pub fcsr: u32,    // float control/status register (fflags only; FRM=RNE)
+    pub fcsr: u32,    // float control/status register: fflags = bits 4:0, frm = bits 7:5
     pub pc: u32,
     /// buffer emulado de entrada (STDIN)
     pub stdin: Vec<u8>,

@@ -2052,6 +2052,10 @@ fn parse_csr_name(s: &str) -> Result<u16, String> {
     let s = s.trim();
     // Named CSRs (Privileged spec numbering)
     let known: &[(&str, u16)] = &[
+        // F extension
+        ("fflags", 0x001),
+        ("frm", 0x002),
+        ("fcsr", 0x003),
         // M-mode
         ("mstatus", 0x300),
         ("misa", 0x301),

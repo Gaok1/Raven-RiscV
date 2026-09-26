@@ -255,7 +255,7 @@ fn forward_value(
 ) -> Option<u32> {
     let reg = reg?;
     let reg_file = reg_file?;
-    if reg == 0 {
+    if is_hardwired_zero(reg_file, reg) {
         return None;
     }
     producers
@@ -287,8 +287,13 @@ pub(super) fn ready_fu_producers(state: &PipelineSimState) -> Vec<PipeSlot> {
         .collect()
 }
 
+/// `x0` never carries a dependency. `f0` is an ordinary register.
+pub(super) fn is_hardwired_zero(reg_file: RegFile, reg: u8) -> bool {
+    reg == 0 && reg_file == RegFile::Int
+}
+
 pub(super) fn slot_reads_register(slot: &PipeSlot, reg_file: RegFile, reg: u8) -> bool {
-    if slot.is_bubble || reg == 0 {
+    if slot.is_bubble || is_hardwired_zero(reg_file, reg) {
         return false;
     }
     let instr = match slot
@@ -317,7 +322,7 @@ pub(super) fn slot_reads_register(slot: &PipeSlot, reg_file: RegFile, reg: u8) -
 }
 
 pub(super) fn slot_reads_store_data_register(slot: &PipeSlot, reg_file: RegFile, reg: u8) -> bool {
-    if slot.is_bubble || reg == 0 {
+    if slot.is_bubble || is_hardwired_zero(reg_file, reg) {
         return false;
     }
     let instr = match slot
@@ -546,12 +551,12 @@ fn emit_forward_trace(
     let Some(p_rd) = prod.rd else {
         return;
     };
-    if p_rd == 0 {
-        return;
-    }
     let Some((prod_file, _, _)) = slot_result(prod) else {
         return;
     };
+    if is_hardwired_zero(prod_file, p_rd) {
+        return;
+    }
     if !slot_reads_register(consumer, prod_file, p_rd) {
         return;
     }
@@ -596,12 +601,12 @@ fn emit_forward_trace_for_slot(
     let Some(p_rd) = prod.rd else {
         return;
     };
-    if p_rd == 0 {
-        return;
-    }
     let Some((prod_file, _, _)) = slot_result(prod) else {
         return;
     };
+    if is_hardwired_zero(prod_file, p_rd) {
+        return;
+    }
     if !slot_reads_register(consumer, prod_file, p_rd) {
         return;
     }

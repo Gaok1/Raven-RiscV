@@ -93,6 +93,15 @@ pub fn classify(word: u32) -> InstrClass {
         }
         Ok(Jal { .. } | Jalr { .. }) => InstrClass::Jump,
         Ok(Ecall | Ebreak | Halt | Fence | FenceI) => InstrClass::System,
+        // Zicsr runs entirely at WB, like ecall.
+        Ok(
+            Csrrw { .. }
+            | Csrrs { .. }
+            | Csrrc { .. }
+            | Csrrwi { .. }
+            | Csrrsi { .. }
+            | Csrrci { .. },
+        ) => InstrClass::System,
         Ok(
             Flw { .. }
             | Fsw { .. }
@@ -231,6 +240,11 @@ pub fn operands(word: u32) -> (Option<u8>, Option<u8>, Option<u8>) {
             | FmvWX { rd, rs1, .. }
             | FclassS { rd, rs1, .. },
         ) => (Some(rd), Some(rs1), None),
+        // Zicsr
+        Ok(Csrrw { rd, rs1, .. } | Csrrs { rd, rs1, .. } | Csrrc { rd, rs1, .. }) => {
+            (Some(rd), Some(rs1), None)
+        }
+        Ok(Csrrwi { rd, .. } | Csrrsi { rd, .. } | Csrrci { rd, .. }) => (Some(rd), None, None),
         _ => (None, None, None),
     }
 }
@@ -421,6 +435,10 @@ pub struct PipeSlot {
     /// Static prediction chosen when the instruction first reached ID.
     pub predicted_taken: bool,
     pub predicted_target: Option<u32>,
+    /// Dynamic rounding mode (`fcsr[7:5]`) read at ID for F instructions.
+    pub frm: u8,
+    /// IEEE flags raised at EX; OR-ed into `fflags` at WB.
+    pub fp_flags: u8,
 }
 
 impl PipeSlot {
@@ -451,6 +469,8 @@ impl PipeSlot {
             branch_taken: false,
             predicted_taken: false,
             predicted_target: None,
+            frm: 0,
+            fp_flags: 0,
         }
     }
 
@@ -484,6 +504,8 @@ impl PipeSlot {
             branch_taken: false,
             predicted_taken: false,
             predicted_target: None,
+            frm: 0,
+            fp_flags: 0,
         }
     }
 }

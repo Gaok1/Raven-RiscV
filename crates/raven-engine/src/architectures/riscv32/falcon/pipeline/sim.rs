@@ -226,6 +226,10 @@ pub(super) fn stage_id(slot: &mut PipeSlot, cpu: &Cpu) {
         }
         _ => {}
     }
+
+    // Dynamic rounding mode. A CSR instruction stops the front end until it
+    // commits (frontend_stop_in_flight), so this value is current.
+    slot.frm = ((cpu.fcsr >> 5) & 0x7) as u8;
 }
 
 /// **EX stage** — ALU compute, branch resolve, address calculation.
@@ -377,157 +381,39 @@ pub(super) fn stage_ex(slot: &mut PipeSlot) {
             slot.branch_target = Some((slot.rs1_val.wrapping_add(imm as u32)) & !1);
         }
 
-        // ── FP arithmetic ───────────────────────────────────────────────
-        Instruction::FaddS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            slot.alu_result = (a + b).to_bits();
-        }
-        Instruction::FsubS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            slot.alu_result = (a - b).to_bits();
-        }
-        Instruction::FmulS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            slot.alu_result = (a * b).to_bits();
-        }
-        Instruction::FdivS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            slot.alu_result = (a / b).to_bits();
-        }
-        Instruction::FsqrtS { .. } => {
-            slot.alu_result = f32::from_bits(slot.rs1_val).sqrt().to_bits();
-        }
-        Instruction::FminS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            let r = if a.is_nan() {
-                b
-            } else if b.is_nan() {
-                a
-            } else if a == 0.0 && b == 0.0 {
-                if a.is_sign_negative() { a } else { b }
-            } else {
-                a.min(b)
-            };
-            slot.alu_result = r.to_bits();
-        }
-        Instruction::FmaxS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            let r = if a.is_nan() {
-                b
-            } else if b.is_nan() {
-                a
-            } else if a == 0.0 && b == 0.0 {
-                if a.is_sign_positive() { a } else { b }
-            } else {
-                a.max(b)
-            };
-            slot.alu_result = r.to_bits();
-        }
-        Instruction::FsgnjS { .. } => {
-            slot.alu_result = (slot.rs1_val & 0x7FFF_FFFF) | (slot.rs2_val & 0x8000_0000);
-        }
-        Instruction::FsgnjnS { .. } => {
-            slot.alu_result = (slot.rs1_val & 0x7FFF_FFFF) | (!slot.rs2_val & 0x8000_0000);
-        }
-        Instruction::FsgnjxS { .. } => {
-            slot.alu_result = slot.rs1_val ^ (slot.rs2_val & 0x8000_0000);
-        }
-        Instruction::FeqS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            slot.alu_result = if a == b { 1 } else { 0 };
-        }
-        Instruction::FltS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            slot.alu_result = if a < b { 1 } else { 0 };
-        }
-        Instruction::FleS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            slot.alu_result = if a <= b { 1 } else { 0 };
-        }
-        Instruction::FcvtWS { .. } => {
-            let v = f32::from_bits(slot.rs1_val);
-            slot.alu_result = if v.is_nan() {
-                i32::MAX as u32
-            } else {
-                (v.clamp(i32::MIN as f32, i32::MAX as f32) as i32) as u32
-            };
-        }
-        Instruction::FcvtWuS { .. } => {
-            let v = f32::from_bits(slot.rs1_val);
-            slot.alu_result = if v.is_nan() || v < 0.0 {
-                0
-            } else if v >= u32::MAX as f32 {
-                u32::MAX
-            } else {
-                v as u32
-            };
-        }
-        Instruction::FcvtSW { .. } => {
-            slot.alu_result = (slot.rs1_val as i32 as f32).to_bits();
-        }
-        Instruction::FcvtSWu { .. } => {
-            slot.alu_result = (slot.rs1_val as f32).to_bits();
-        }
-        Instruction::FmvXW { .. } => {
-            slot.alu_result = slot.rs1_val; // float bits → int reg
-        }
-        Instruction::FmvWX { .. } => {
-            slot.alu_result = slot.rs1_val; // int reg → float bits
-        }
-        Instruction::FclassS { .. } => {
-            let bits = slot.rs1_val;
-            let exp = (bits >> 23) & 0xFF;
-            let mant = bits & 0x007F_FFFF;
-            let sign = bits >> 31;
-            slot.alu_result = match (sign, exp, mant) {
-                (1, 0xFF, m) if m != 0 => 0x100,
-                (0, 0xFF, m) if m != 0 => 0x200,
-                (1, 0xFF, 0) => 0x001,
-                (0, 0xFF, 0) => 0x080,
-                (1, 0, 0) => 0x008,
-                (0, 0, 0) => 0x010,
-                (1, 0, _) => 0x004,
-                (0, 0, _) => 0x020,
-                (1, _, _) => 0x002,
-                (0, _, _) => 0x040,
-                _ => 0x000,
-            };
-        }
-        // Fused multiply-add family: rs3 is read at ID and stored in slot.mem_addr
-        // (the FP ALU instructions never use mem_addr for actual addressing).
-        // Forwarding for rs3 is handled in apply_forwarding_to_id (same field).
-        Instruction::FmaddS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            let c = f32::from_bits(slot.mem_addr.unwrap_or(0));
-            slot.alu_result = (a * b + c).to_bits();
-        }
-        Instruction::FmsubS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            let c = f32::from_bits(slot.mem_addr.unwrap_or(0));
-            slot.alu_result = (a * b - c).to_bits();
-        }
-        Instruction::FnmsubS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            let c = f32::from_bits(slot.mem_addr.unwrap_or(0));
-            slot.alu_result = (-(a * b) + c).to_bits();
-        }
-        Instruction::FnmaddS { .. } => {
-            let a = f32::from_bits(slot.rs1_val);
-            let b = f32::from_bits(slot.rs2_val);
-            let c = f32::from_bits(slot.mem_addr.unwrap_or(0));
-            slot.alu_result = (-(a * b) - c).to_bits();
+        // ── FP compute: shared with exec.rs through fpu::execute ───────
+        // The fused multiply-add family reads rs3 at ID into slot.mem_addr
+        // (these instructions never use it for addressing). Forwarding for
+        // rs3 is handled in apply_forwarding_to_id (same field).
+        Instruction::FaddS { .. }
+        | Instruction::FsubS { .. }
+        | Instruction::FmulS { .. }
+        | Instruction::FdivS { .. }
+        | Instruction::FsqrtS { .. }
+        | Instruction::FminS { .. }
+        | Instruction::FmaxS { .. }
+        | Instruction::FsgnjS { .. }
+        | Instruction::FsgnjnS { .. }
+        | Instruction::FsgnjxS { .. }
+        | Instruction::FeqS { .. }
+        | Instruction::FltS { .. }
+        | Instruction::FleS { .. }
+        | Instruction::FcvtWS { .. }
+        | Instruction::FcvtWuS { .. }
+        | Instruction::FcvtSW { .. }
+        | Instruction::FcvtSWu { .. }
+        | Instruction::FmvXW { .. }
+        | Instruction::FmvWX { .. }
+        | Instruction::FclassS { .. }
+        | Instruction::FmaddS { .. }
+        | Instruction::FmsubS { .. }
+        | Instruction::FnmsubS { .. }
+        | Instruction::FnmaddS { .. } => {
+            let rs3_val = slot.mem_addr.unwrap_or(0);
+            let r =
+                crate::falcon::fpu::execute(instr, slot.rs1_val, slot.rs2_val, rs3_val, slot.frm);
+            slot.alu_result = r.bits;
+            slot.fp_flags = r.flags;
         }
 
         // ── Atomics: compute address ────────────────────────────────────
@@ -784,7 +670,7 @@ fn forward_value(
 ) -> Option<u32> {
     let reg = reg?;
     let reg_file = reg_file?;
-    if reg == 0 {
+    if reg == 0 && reg_file == RegFile::Int {
         return None;
     }
     for producer in producers.iter().flatten() {
@@ -801,7 +687,7 @@ fn forward_value(
 }
 
 fn slot_reads_register(slot: &PipeSlot, reg_file: RegFile, reg: u8) -> bool {
-    if slot.is_bubble || reg == 0 {
+    if slot.is_bubble || (reg == 0 && reg_file == RegFile::Int) {
         return false;
     }
     let instr = match slot
@@ -1276,6 +1162,9 @@ fn stage_wb(
         Some(i) => i,
         None => return true,
     };
+
+    // IEEE flags raised at EX accumulate in fflags in program order.
+    cpu.fcsr |= slot.fp_flags as u32;
 
     match instr {
         // ── ALU R-type → write alu_result to int rd ─────────────────────
@@ -2193,7 +2082,8 @@ fn detect_stall(
                             let Some((prod_file, p_rd)) = forwarding::slot_destination(p) else {
                                 continue;
                             };
-                            if p_rd == 0 || !forwarding::slot_reads_register(id_s, prod_file, p_rd)
+                            if forwarding::is_hardwired_zero(prod_file, p_rd)
+                                || !forwarding::slot_reads_register(id_s, prod_file, p_rd)
                             {
                                 continue;
                             }
@@ -2246,7 +2136,9 @@ fn detect_stall(
                         let Some((prod_file, p_rd)) = forwarding::slot_destination(p) else {
                             continue;
                         };
-                        if p_rd == 0 || !forwarding::slot_reads_register(id_s, prod_file, p_rd) {
+                        if forwarding::is_hardwired_zero(prod_file, p_rd)
+                            || !forwarding::slot_reads_register(id_s, prod_file, p_rd)
+                        {
                             continue;
                         }
 
@@ -3254,24 +3146,44 @@ fn branch_in_flight(state: &PipelineSimState) -> bool {
 }
 
 fn frontend_stop_in_flight(state: &PipelineSimState) -> bool {
-    state.stages.iter().flatten().any(|slot| {
-        !slot.is_bubble
-            && matches!(
-                slot.instr,
-                Some(Instruction::Ecall | Instruction::Ebreak | Instruction::Halt)
-            )
-    }) || state
-        .fu_bank
-        .iter()
-        .flat_map(|group| group.iter())
-        .filter_map(|fu| fu.slot.as_ref())
-        .any(|slot| {
-            !slot.is_bubble
-                && matches!(
-                    slot.instr,
-                    Some(Instruction::Ecall | Instruction::Ebreak | Instruction::Halt)
-                )
-        })
+    state.stages.iter().flatten().any(stops_frontend)
+        || state
+            .fu_bank
+            .iter()
+            .flat_map(|group| group.iter())
+            .filter_map(|fu| fu.slot.as_ref())
+            .any(stops_frontend)
+}
+
+/// Instructions that must commit before the front end fetches again: traps,
+/// halt, and Zicsr.
+///
+/// A CSR instruction reads and writes its CSR at WB, and no bypass carries
+/// that value to a younger instruction. Holding the front end until it
+/// commits also keeps `frm`, read at ID, current. A CSR instruction is
+/// recognised from its word while still in IF, before ID decodes it.
+fn stops_frontend(slot: &PipeSlot) -> bool {
+    if slot.is_bubble {
+        return false;
+    }
+    if matches!(
+        slot.instr,
+        Some(Instruction::Ecall | Instruction::Ebreak | Instruction::Halt)
+    ) {
+        return true;
+    }
+    matches!(
+        slot.instr
+            .or_else(|| crate::falcon::decoder::decode(slot.word).ok()),
+        Some(
+            Instruction::Csrrw { .. }
+                | Instruction::Csrrs { .. }
+                | Instruction::Csrrc { .. }
+                | Instruction::Csrrwi { .. }
+                | Instruction::Csrrsi { .. }
+                | Instruction::Csrrci { .. }
+        )
+    )
 }
 
 fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, console: &mut Console) {

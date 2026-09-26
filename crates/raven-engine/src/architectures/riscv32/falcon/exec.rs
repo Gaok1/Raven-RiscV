@@ -1,6 +1,7 @@
 // falcon/exec.rs
 use crate::falcon::{
     errors::FalconError,
+    fpu,
     instruction::Instruction,
     memory::{AmoOp, Bus},
     mmu::PrivMode,
@@ -13,6 +14,7 @@ use crate::ui::Console;
 /// Read a CSR by number. Unknown CSRs read as zero â€” pragmatic for Phase 2.
 pub fn csr_read(cpu: &Cpu, csr: u16) -> u32 {
     match csr {
+        fpu::CSR_FFLAGS | fpu::CSR_FRM | fpu::CSR_FCSR => fpu::csr_read(cpu.fcsr, csr),
         0x100 => cpu.sstatus,
         0x105 => cpu.stvec,
         0x140 => cpu.sscratch,
@@ -35,6 +37,9 @@ pub fn csr_read(cpu: &Cpu, csr: u16) -> u32 {
 /// the TLB so the next translation sees the new root.
 pub fn csr_write<B: Bus>(cpu: &mut Cpu, mem: &mut B, csr: u16, val: u32) {
     match csr {
+        fpu::CSR_FFLAGS | fpu::CSR_FRM | fpu::CSR_FCSR => {
+            cpu.fcsr = fpu::csr_write(cpu.fcsr, csr, val)
+        }
         0x180 => {
             cpu.satp = val;
             mem.set_satp(val);
@@ -666,165 +671,25 @@ fn exec_fp<B: Bus>(
             mem.store32(addr, cpu.fread_bits(rs2))?;
         }
 
-        // Arithmetic
-        Instruction::FaddS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) + cpu.fread(rs2)),
-        Instruction::FsubS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) - cpu.fread(rs2)),
-        Instruction::FmulS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) * cpu.fread(rs2)),
-        Instruction::FdivS { rd, rs1, rs2 } => cpu.fwrite(rd, cpu.fread(rs1) / cpu.fread(rs2)),
-        Instruction::FsqrtS { rd, rs1 } => cpu.fwrite(rd, cpu.fread(rs1).sqrt()),
-        Instruction::FminS { rd, rs1, rs2 } => {
-            // RISC-V fmin: if either is NaN return the other; -0.0 < +0.0
-            let a = cpu.fread(rs1);
-            let b = cpu.fread(rs2);
-            cpu.fwrite(
-                rd,
-                if a.is_nan() {
-                    b
-                } else if b.is_nan() {
-                    a
-                } else if a == 0.0 && b == 0.0 {
-                    if a.is_sign_negative() { a } else { b }
-                } else {
-                    a.min(b)
-                },
-            );
-        }
-        Instruction::FmaxS { rd, rs1, rs2 } => {
-            let a = cpu.fread(rs1);
-            let b = cpu.fread(rs2);
-            cpu.fwrite(
-                rd,
-                if a.is_nan() {
-                    b
-                } else if b.is_nan() {
-                    a
-                } else if a == 0.0 && b == 0.0 {
-                    if a.is_sign_positive() { a } else { b }
-                } else {
-                    a.max(b)
-                },
-            );
-        }
-
-        // Sign injection
-        Instruction::FsgnjS { rd, rs1, rs2 } => {
-            let bits = (cpu.fread_bits(rs1) & 0x7FFF_FFFF) | (cpu.fread_bits(rs2) & 0x8000_0000);
-            cpu.fwrite_bits(rd, bits);
-        }
-        Instruction::FsgnjnS { rd, rs1, rs2 } => {
-            let bits = (cpu.fread_bits(rs1) & 0x7FFF_FFFF) | (!cpu.fread_bits(rs2) & 0x8000_0000);
-            cpu.fwrite_bits(rd, bits);
-        }
-        Instruction::FsgnjxS { rd, rs1, rs2 } => {
-            let bits = cpu.fread_bits(rs1) ^ (cpu.fread_bits(rs2) & 0x8000_0000);
-            cpu.fwrite_bits(rd, bits);
-        }
-
-        // Comparison (result â†’ integer register)
-        Instruction::FeqS { rd, rs1, rs2 } => {
-            cpu.write(
-                rd,
-                if cpu.fread(rs1) == cpu.fread(rs2) {
-                    1
-                } else {
-                    0
-                },
-            );
-        }
-        Instruction::FltS { rd, rs1, rs2 } => {
-            cpu.write(
-                rd,
-                if cpu.fread(rs1) < cpu.fread(rs2) {
-                    1
-                } else {
-                    0
-                },
-            );
-        }
-        Instruction::FleS { rd, rs1, rs2 } => {
-            cpu.write(
-                rd,
-                if cpu.fread(rs1) <= cpu.fread(rs2) {
-                    1
-                } else {
-                    0
-                },
-            );
-        }
-
-        // Conversion
-        Instruction::FcvtWS { rd, rs1, .. } => {
-            let v = cpu.fread(rs1);
-            let result = if v.is_nan() {
-                i32::MAX as u32
+        // Everything else computes in fpu.rs, which also reports the
+        // IEEE flags that accumulate in fflags.
+        other => {
+            let (rd, rs1, rs2, rs3) =
+                fpu::registers(other).expect("exec_fp called with a non-F instruction");
+            let a = if fpu::reads_int(other) {
+                cpu.read(rs1)
             } else {
-                (v.clamp(i32::MIN as f32, i32::MAX as f32) as i32) as u32
+                cpu.fread_bits(rs1)
             };
-            cpu.write(rd, result);
-        }
-        Instruction::FcvtWuS { rd, rs1, .. } => {
-            let v = cpu.fread(rs1);
-            let result = if v.is_nan() || v < 0.0 {
-                0
-            } else if v >= u32::MAX as f32 {
-                u32::MAX
+            let frm = ((cpu.fcsr >> 5) & 0x7) as u8;
+            let r = fpu::execute(other, a, cpu.fread_bits(rs2), cpu.fread_bits(rs3), frm);
+            cpu.fcsr |= r.flags as u32;
+            if fpu::writes_int(other) {
+                cpu.write(rd, r.bits);
             } else {
-                v as u32
-            };
-            cpu.write(rd, result);
+                cpu.fwrite_bits(rd, r.bits);
+            }
         }
-        Instruction::FcvtSW { rd, rs1 } => {
-            cpu.fwrite(rd, cpu.read(rs1) as i32 as f32);
-        }
-        Instruction::FcvtSWu { rd, rs1 } => {
-            cpu.fwrite(rd, cpu.read(rs1) as f32);
-        }
-
-        // Move (bit-pattern transfers)
-        Instruction::FmvXW { rd, rs1 } => {
-            cpu.write(rd, cpu.fread_bits(rs1));
-        }
-        Instruction::FmvWX { rd, rs1 } => {
-            cpu.fwrite_bits(rd, cpu.read(rs1));
-        }
-
-        // Classify
-        Instruction::FclassS { rd, rs1 } => {
-            let bits = cpu.fread_bits(rs1);
-            let exp = (bits >> 23) & 0xFF;
-            let mant = bits & 0x007F_FFFF;
-            let sign = bits >> 31;
-            let result: u32 = match (sign, exp, mant) {
-                (1, 0xFF, m) if m != 0 => 0x100, // signaling NaN (bit 8)
-                (0, 0xFF, m) if m != 0 => 0x200, // quiet NaN (bit 9)
-                (1, 0xFF, 0) => 0x001,           // -infinity
-                (0, 0xFF, 0) => 0x080,           // +infinity
-                (1, 0, 0) => 0x008,              // -zero
-                (0, 0, 0) => 0x010,              // +zero
-                (1, 0, _) => 0x004,              // -subnormal
-                (0, 0, _) => 0x020,              // +subnormal
-                (1, _, _) => 0x002,              // -normal
-                (0, _, _) => 0x040,              // +normal
-                _ => 0x000,
-            };
-            cpu.write(rd, result);
-        }
-
-        // Fused multiply-add
-        Instruction::FmaddS { rd, rs1, rs2, rs3 } => {
-            cpu.fwrite(rd, cpu.fread(rs1) * cpu.fread(rs2) + cpu.fread(rs3));
-        }
-        Instruction::FmsubS { rd, rs1, rs2, rs3 } => {
-            cpu.fwrite(rd, cpu.fread(rs1) * cpu.fread(rs2) - cpu.fread(rs3));
-        }
-        Instruction::FnmsubS { rd, rs1, rs2, rs3 } => {
-            cpu.fwrite(rd, -(cpu.fread(rs1) * cpu.fread(rs2)) + cpu.fread(rs3));
-        }
-        Instruction::FnmaddS { rd, rs1, rs2, rs3 } => {
-            cpu.fwrite(rd, -(cpu.fread(rs1) * cpu.fread(rs2)) - cpu.fread(rs3));
-        }
-
-        _ => unreachable!(),
     }
     Ok(true)
 }

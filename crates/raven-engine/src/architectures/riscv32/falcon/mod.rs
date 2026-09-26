@@ -2,6 +2,7 @@ pub mod arch;
 pub mod cache;
 pub mod errors;
 pub mod exec;
+pub mod fpu;
 pub mod instruction;
 pub mod jit;
 pub mod machine;

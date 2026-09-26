@@ -19,7 +19,7 @@ O RAVEN foca no subconjunto RV32IMAF para que você entenda cada etapa do ciclo 
 - **Registradores:** nomes `x0…x31` com os apelidos tradicionais `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Escritas em `x0/zero` são descartadas.
 
-Ainda não implementados: instruções CSR. O RAVEN cobre RV32IMAF — inteiros base, multiplicação/divisão, atômicos (LR/SC + AMO) e ponto flutuante de precisão simples.
+O RAVEN cobre RV32IMAF — inteiros base, multiplicação/divisão, atômicos (LR/SC + AMO) e ponto flutuante de precisão simples — e as instruções Zicsr (`csrrw`, `csrrs`, `csrrc`, as formas com imediato e as pseudos `csrr`/`csrw`). As instruções de ponto flutuante levantam as flags IEEE em `fflags`; `frm` e `fcsr` também têm nome. A aritmética de ponto flutuante arredonda para o par mais próximo; só `fcvt.w.s` e `fcvt.wu.s` respeitam o campo `rm` e o `frm`.
 
 ## Conjunto de instruções presente no RAVEN
 

@@ -19,7 +19,7 @@ RAVEN focuses on an approachable RV32IMAF subset so you can reason about each pi
 - **Registers:** hardware names `x0…x31` with the usual aliases `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Writes to `x0/zero` are ignored.
 
-Not yet implemented: CSR instructions. RAVEN covers RV32IMAF — base integer, multiply/divide, atomics (LR/SC + AMO), and single-precision float.
+RAVEN covers RV32IMAF — base integer, multiply/divide, atomics (LR/SC + AMO), and single-precision float — plus the Zicsr instructions (`csrrw`, `csrrs`, `csrrc` and their immediate forms, and the `csrr`/`csrw` pseudos). Float instructions raise the IEEE flags in `fflags`; `frm` and `fcsr` are also available by name. Float arithmetic rounds to nearest-even; only `fcvt.w.s` and `fcvt.wu.s` honour the `rm` field and `frm`.
 
 ## Instruction set inside RAVEN
 
