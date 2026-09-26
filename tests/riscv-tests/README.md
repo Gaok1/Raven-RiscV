@@ -85,3 +85,9 @@ on every test, in every version below.
   forwarded.
 - The v1.27.x counts also depend on this environment skipping `csrwi fcsr, 0`.
   With it, `ldst` and `recoding` stop with a fault on those versions.
+- The harness uses the default pipeline mode, `Serialized`. RAVEN has three
+  more: `ParallelUFs`, `Scoreboard` and `TomasuloRob`, set with `mode=` in the
+  `[pipeline]` section of a `--config` file (`raven export-config` writes one).
+  At `253d4ed`, `rv32uf` passed only 4/11 in `ParallelUFs`, because `flw` and
+  `fsw` skipped memory there. `222e26c` fixed that. From `222e26c` on, all four
+  modes match the `253d4ed` column.
