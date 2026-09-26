@@ -38,6 +38,7 @@ raven build <entrada> [saída] [opções]
 | `[saída]` | Caminho de saída para o `.bin` (segundo argumento posicional) |
 | `--out <caminho>` | Equivalente ao acima; tem prioridade sobre o posicional |
 | `--nout` | Apenas verifica — monta mas não escreve nenhum arquivo |
+| `--arch <riscv32\|sap\|toy16\|x86_64>` | Seleciona o backend do assembler (padrão: `riscv32`) |
 
 **Exemplos**
 
@@ -68,12 +69,15 @@ raven run <arquivo> [opções]
 
 | Flag | Padrão | Descrição |
 |---|---|---|
+| `--arch <riscv32\|sap\|toy16\|x86_64>` | `riscv32` | Seleciona o backend do simulador. O Toy16 não aceita opções exclusivas do RV32, como pipeline, configuração de cache, JIT, multicore, ELF ou tela gráfica |
 | `--config <arquivo>` | padrões embutidos | Carrega a config unificada (sim + cache + pipeline) de um `.rcfg` |
 | `--pipeline` | desligado | Executa usando o simulador de pipeline em vez do executor sequencial |
 | `--pipeline-trace-out <arquivo>` | desligado | Grava um JSON por ciclo do pipeline; requer `--pipeline` |
+| `--screen` | desligado | Mostra programas que usam as syscalls gráficas (2000+) em uma janela do SO |
 | `--cores <n>` | settings ou `1` | Máximo de cores físicos disponíveis para `hart_start` durante a execução |
 | `--mem <tamanho>` | sim-settings ou `16mb` | Tamanho da RAM — sufixos `kb`, `mb`, `gb` (ex.: `256kb`, `1gb`) |
 | `--max-cycles <n>` | `1000000000` | Limite de instruções; um aviso é exibido se atingido |
+| `--jit <none\|hot\|full>` | `none` | Backend de execução. `full` exige recompilar com `--features jit`; qualquer modo volta a `none` (com aviso) quando a memória virtual está ativa, pois o JIT ainda não é ciente da TLB |
 | `--expect-exit <código>` | desligado | Falha se o código de saída final for diferente |
 | `--expect-stdout <texto>` | desligado | Falha se o stdout capturado for diferente |
 | `--expect-reg <reg=valor>` | desligado | Verifica valor final de registrador inteiro; repetível |
@@ -245,7 +249,7 @@ raven debug-help-layout [opções]
 |---|---|---|
 | `--width <n>` | `160` | Largura virtual da UI para o dump |
 | `--height <n>` | `40` | Altura virtual da UI para o dump |
-| `--tab editor\|run\|cache\|pipeline\|docs\|config` | `editor` | Aba a inspecionar |
+| `--tab editor\|run\|cache\|tlb\|pipeline\|docs\|config` | `editor` | Aba a inspecionar |
 | `--out <arquivo>` | stdout | Gravar dump em arquivo |
 
 ```bash
@@ -377,8 +381,3 @@ lista completa de campos.
 |---|---|
 | `0` | Sucesso |
 | `1` | Erro de montagem, falha na simulação ou argumento inválido |
-`--arch <riscv32|toy16>` seleciona o assembler; `riscv32` é o padrão.
-
-`--arch <riscv32|toy16>` seleciona o backend em runtime. O Toy16 não aceita
-opções exclusivas do RV32, como pipeline, configuração de cache, JIT, multicore,
-ELF ou tela gráfica.

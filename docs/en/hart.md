@@ -211,4 +211,4 @@ Changes to `max_cores` take effect after the next program reset.
 
 - [Syscall reference](syscalls.md) — full syscall table including `1100` and `1101`
 - [Pipeline simulation](pipeline.md) — per-hart pipeline state and visualization
-- [Memory map](syscalls.md#memory-map) — address layout used by all harts
+- [Memory map](syscalls.md#memory-layout) — address layout used by all harts

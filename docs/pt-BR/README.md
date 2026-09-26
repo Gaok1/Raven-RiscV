@@ -1,6 +1,6 @@
-# RAVEN — Emulador e IDE RISC-V
+# RAVEN — Emulador e IDE Multi-Arquitetura
 
-**RAVEN** é um emulador, montador e IDE RISC-V rodando no terminal, escrito em Rust. Cobre **RV32I + M + A + F** e foi pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa — ideal para estudantes, professores e qualquer um aprendendo assembly.
+**RAVEN** é um emulador, montador e IDE rodando no terminal, escrito em Rust, para estudantes, professores e qualquer um aprendendo arquitetura de computadores. Seu backend principal é o **RISC-V** — cobrindo **RV32I + M + A + F**, com memória virtual, JIT e multicore — pensado para tornar cada etapa do ciclo buscar → decodificar → executar visível e interativa. Três backends didáticos menores — **x86-64**, **SAP** e **Toy16** — também vêm embutidos; veja [Outras Arquiteturas](#outras-arquiteturas).
 
 Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, inspecione registradores e memória, perfile sua hierarquia de cache e leia a documentação — sem sair do terminal.
 
@@ -10,13 +10,17 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 
 ## Funcionalidades
 
-### Cobertura do ISA
+As seções abaixo descrevem a experiência completa com o backend principal, RISC-V (RV32IMAF), carregado. Trocar para x86-64, SAP ou Toy16 (`a` na tela de Configurações, ou `--arch <id>` na CLI) reaproveita o mesmo editor, debugger, cache e pipeline, mas cada backend só acende o que ele de fato modela — veja [Outras Arquiteturas](#outras-arquiteturas).
+
+### Cobertura do ISA — RISC-V (RV32IMAF)
 - **RV32I** — conjunto base completo de instruções inteiras
 - **RV32M** — multiplicação e divisão inteira
 - **RV32A** — operações atômicas de memória (LR/SC, AMO)
 - **RV32F** — ponto flutuante de precisão simples (26 instruções, `f0`–`f31`, `fcsr`)
 - Conjunto rico de pseudoinstruções: `la`, `li`, `call`, `ret`, `push`, `pop`, `mv`, `neg`, `not`, `seqz`, `snez`, `beqz`, `bnez`, `bgt`, `ble`, `fmv.s`, `fneg.s`, `fabs.s`, entre outras
 - Syscalls via `ecall`: imprimir inteiro/string, ler entrada, sair, bytes aleatórios
+
+Os três backends menores têm seus próprios conjuntos de instruções, bem mais enxutos — veja [Outras Arquiteturas](#outras-arquiteturas) mais abaixo, ou a aba de cada backend na documentação embutida.
 
 ### Montador
 - Segmentos `.text`, `.data`, `.bss` com `.byte`, `.half`, `.word`, `.ascii`, `.asciz`, `.space`
@@ -81,6 +85,23 @@ Tudo vive em uma única TUI: escreva código, monte, execute passo a passo, insp
 
 ### Aba Docs (Aba 6)
 - Referência de instruções e guia da aba Run embutidos no app
+
+---
+
+## Outras Arquiteturas
+
+O RISC-V (RV32IMAF) é o backend principal do Raven — hoje o único com memória virtual, JIT, multicore e ponto flutuante. Três backends didáticos menores também vêm embutidos, reaproveitando o mesmo editor, debugger, cache e pipeline. Troque de arquitetura com `a` na tela de Configurações, ou `--arch <id>` na CLI:
+
+| Backend | id (`--arch`) | ELF | Cache | Pipeline | Memória virtual | JIT | Multicore | Float | Syscalls |
+|---|---|---|---|---|---|---|---|---|---|
+| RISC-V (RV32IMAF) | `riscv32` | sim | sim | sim | sim | sim | sim | sim | sim |
+| x86-64 | `x86_64` | sim | sim | sim | não | não | não | não | sim |
+| SAP | `sap` | não | sim | sim | não | não | não | não | não |
+| Toy16 | `toy16` | não | sim | sim | não | não | não | não | sim |
+
+- **x86-64** — núcleo inteiro/sistema em sintaxe Intel: moves, operações de ALU, pilha e controle de fluxo, `hlt`, e syscalls `read`/`write`/`exit` no estilo Linux, com cache I/D própria dividida e visualização de pipeline de 5 estágios. Sem memória virtual, JIT, multicore ou ponto flutuante — propositalmente uma máquina inteira e single-core, para estudar modos de endereçamento x86 e convenção de chamada sem a regularidade do RISC-V.
+- **SAP** — a clássica CPU didática de 8 bits "Simple-As-Possible": um acumulador, espaço de endereçamento de 16 bytes, e `out`/`putc` como E/S. Sem carregamento de ELF e sem syscalls — não sobra largura de operando para uma convenção de chamada — só o suficiente para ensinar buscar-decodificar-executar a partir do zero.
+- **Toy16** — um ISA de 16 bits minúsculo, feito para ser propositalmente diferente do RISC-V, para que o ferramental arquitetura-neutro do Raven não assuma sem querer que toda CPU se parece com RISC-V. Tem registradores, cache e pipeline próprios, além de uma pequena ABI de syscalls `read`/`write`/`exit`, mas sem carregamento de ELF, memória virtual, multicore ou ponto flutuante.
 
 ---
 
@@ -163,6 +184,7 @@ O Raven também pode ser usado pela linha de comando sem interface gráfica — 
 ```bash
 raven build program.s                             # montar
 raven run   program.s --nout                      # executar, sem stats
+raven run   program.toy --arch toy16 --nout       # seleciona outro backend em runtime
 raven run   program.s --out results.json          # executar, salvar stats
 raven run   program.s --config my.rcfg \
                         --format csv --out stats.csv

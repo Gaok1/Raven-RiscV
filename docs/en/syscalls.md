@@ -1,5 +1,7 @@
 # RAVEN — Syscall Reference
 
+> This page documents `riscv32`'s `ecall`-based syscall ABI, the largest and most Linux-compatible surface in Raven. The `x86_64` and `toy16` backends also have syscalls, but a much smaller, different surface — `read`=0, `write`=1, `exit`=60, invoked through the `syscall` instruction (`toy16`'s is the same numbering via opcode `0xA`) — which is not covered on this page.
+
 RAVEN uses the **Linux RISC-V ABI** calling convention for `ecall`.
 
 ```

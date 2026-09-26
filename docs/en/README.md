@@ -1,6 +1,6 @@
-# RAVEN — RISC-V Simulator & IDE
+# RAVEN — Multi-Architecture Assembly Simulator & IDE
 
-**RAVEN** is a free, open-source RISC-V simulator and terminal IDE for students and anyone learning assembly. It covers **RV32IMAF** — the full base integer set, multiply/divide, atomics, and single-precision float — and makes every part of the machine visible while your program runs.
+**RAVEN** is a free, open-source assembly simulator and terminal IDE for students and anyone learning computer architecture. Its flagship backend is **RISC-V (RV32IMAF)** — the full base integer set, multiply/divide, atomics, and single-precision float, with a full virtual-memory/TLB model, JIT, and multicore — and it makes every part of the machine visible while your program runs. Three smaller teaching backends — **x86-64**, **SAP**, and **Toy16** — are also built in; see [Other Architectures](#other-architectures).
 
 Write assembly in the built-in editor, assemble with `Ctrl+Enter`, and step through every instruction watching registers, memory, and the cache update in real time. Nothing is hidden.
 
@@ -23,6 +23,8 @@ Requires Rust 1.75+. No other dependencies.
 ---
 
 ## What you get
+
+The tabs below show the full experience with the flagship RISC-V (RV32IMAF) backend loaded. Switching to x86-64, SAP, or Toy16 (`a` on the Settings screen, or `--arch <id>` on the CLI) reuses the same editor, debugger, cache, and pipeline UI, but each backend only lights up what it actually models — see [Other Architectures](#other-architectures).
 
 ### Editor (Tab 1)
 - Syntax highlighting — instructions, registers, labels, directives, strings
@@ -72,7 +74,7 @@ Requires Rust 1.75+. No other dependencies.
 
 ---
 
-## ISA Coverage
+## ISA Coverage — RISC-V (RV32IMAF)
 
 | Extension | Instructions |
 |-----------|-------------|
@@ -84,6 +86,25 @@ Requires Rust 1.75+. No other dependencies.
 **Pseudo-instructions:** `la`, `li`, `mv`, `neg`, `not`, `ret`, `call`, `push`, `pop`, `seqz`, `snez`, `beqz`, `bnez`, `bgt`, `ble`, `fmv.s`, `fneg.s`, `fabs.s`, and more.
 
 **Syscalls (`ecall`):** print integer/string, read input, exit, random bytes — Linux-compatible ABI (`a7` = syscall number).
+
+The three smaller backends have their own, much smaller instruction sets — see [Other Architectures](#other-architectures) below, or each backend's tab in the in-app Docs reference.
+
+---
+
+## Other Architectures
+
+RISC-V (RV32IMAF) is Raven's flagship backend — currently the only one with virtual memory, a JIT, multicore, and floating point. Three smaller teaching backends are also built in, reusing the same editor, debugger, cache, and pipeline UI. Switch with `a` on the Settings screen, or `--arch <id>` on the CLI:
+
+| Backend | `--arch` id | ELF | Cache | Pipeline | Virtual memory | JIT | Multicore | Float | Syscalls |
+|---|---|---|---|---|---|---|---|---|---|
+| RISC-V (RV32IMAF) | `riscv32` | yes | yes | yes | yes | yes | yes | yes | yes |
+| x86-64 | `x86_64` | yes | yes | yes | no | no | no | no | yes |
+| SAP | `sap` | no | yes | yes | no | no | no | no | no |
+| Toy16 | `toy16` | no | yes | yes | no | no | no | no | yes |
+
+- **x86-64** — an Intel-syntax integer/system core: moves, ALU ops, stack and control flow, `hlt`, and Linux-style `read`/`write`/`exit` syscalls, with its own split I/D cache and a 5-stage pipeline view. No virtual memory, JIT, multicore, or floating point — a deliberately bare, single-core machine for studying x86 addressing modes and calling convention without RISC-V's regularity.
+- **SAP** — the classic 8-bit "Simple-As-Possible" teaching CPU: one accumulator, a 16-byte address space, and `out`/`putc` for I/O. No ELF loading and no syscalls — there's no operand width left to hang a calling convention on — just enough machine to teach fetch-decode-execute from first principles.
+- **Toy16** — a tiny 16-bit ISA built to be deliberately different from RISC-V, so Raven's architecture-neutral tooling isn't accidentally RISC-V-shaped. Has its own registers, cache, and pipeline, plus a small `read`/`write`/`exit` syscall ABI, but no ELF loading, virtual memory, multicore, or floating point.
 
 ---
 
@@ -177,6 +198,7 @@ Raven can also be used headlessly from the command line — assemble, simulate, 
 ```bash
 raven build program.s                             # assemble
 raven run   program.s --nout                      # run, suppress stats
+raven run   program.toy --arch toy16 --nout       # select another backend at runtime
 raven run   program.s --out results.json          # run, save stats
 raven run   program.s --config my.rcfg \
                         --format csv --out stats.csv

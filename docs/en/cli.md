@@ -38,6 +38,7 @@ raven build <input> [output] [options]
 | `[output]` | Output path for the `.bin` file (second positional arg) |
 | `--out <path>` | Same as above; takes priority over the positional arg |
 | `--nout` | Check-only — assemble but write no output file |
+| `--arch <riscv32\|sap\|toy16\|x86_64>` | Select the assembler backend (default: `riscv32`) |
 
 **Examples**
 
@@ -68,12 +69,15 @@ raven run <file> [options]
 
 | Flag | Default | Description |
 |---|---|---|
+| `--arch <riscv32\|sap\|toy16\|x86_64>` | `riscv32` | Select the simulator backend. Toy16 intentionally does not accept RV32-only pipeline, cache config, JIT, multicore, ELF, or screen options |
 | `--config <file>` | built-in defaults | Load the unified config (sim + cache + pipeline) from a `.rcfg` file |
 | `--pipeline` | off | Run with the pipeline simulator instead of the sequential executor |
 | `--pipeline-trace-out <file>` | off | Write a per-cycle pipeline trace JSON file; requires `--pipeline` |
+| `--screen` | off | Show programs that use the graphics syscalls (2000+) in an OS window |
 | `--cores <n>` | settings or `1` | Maximum physical cores available to `hart_start` during the run |
 | `--mem <size>` | sim-settings or `16mb` | RAM size — accepts `kb`, `mb`, `gb` suffix (e.g. `256kb`, `1gb`) |
 | `--max-cycles <n>` | `1000000000` | Instruction limit; a warning is printed if reached |
+| `--jit <none\|hot\|full>` | `none` | Execution backend. `full` requires rebuilding with `--features jit`; either mode is forced back to `none` (with a warning) whenever virtual memory is enabled, since the JIT is not yet TLB-aware |
 | `--expect-exit <code>` | off | Fail if the final exit code differs |
 | `--expect-stdout <text>` | off | Fail if captured stdout differs exactly |
 | `--expect-reg <reg=value>` | off | Assert a final integer register value; repeatable |
@@ -247,7 +251,7 @@ raven debug-help-layout [options]
 |---|---|---|
 | `--width <n>` | `160` | Virtual UI width for the dump |
 | `--height <n>` | `40` | Virtual UI height for the dump |
-| `--tab editor\|run\|cache\|pipeline\|docs\|config` | `editor` | Tab to inspect |
+| `--tab editor\|run\|cache\|tlb\|pipeline\|docs\|config` | `editor` | Tab to inspect |
 | `--out <file>` | stdout | Write dump to file |
 
 ```bash
@@ -379,7 +383,3 @@ list.
 |---|---|
 | `0` | Success |
 | `1` | Assembly error, simulation fault, or bad argument |
-`--arch <riscv32|toy16>` selects the assembler backend; `riscv32` is the default.
-
-`--arch <riscv32|toy16>` selects the runtime backend. Toy16 intentionally does
-not accept RV32-only pipeline, cache config, JIT, multicore, ELF, or screen options.

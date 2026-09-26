@@ -505,10 +505,10 @@ OPTIONS  build:
     [output]                    Output .bin file as second positional arg
     --out <path>                Same as above (takes priority over positional)
     --nout                      Check-only: assemble but don't write any file
-    --arch riscv32|sap|toy16    Select assembler backend             (default: riscv32)
+    --arch riscv32|sap|toy16|x86_64    Select assembler backend      (default: riscv32)
 
 OPTIONS  run:
-    --arch riscv32|sap|toy16    Select simulator backend             (default: riscv32)
+    --arch riscv32|sap|toy16|x86_64    Select simulator backend      (default: riscv32)
     --config <file>             Load unified config (sim + cache + pipeline) from .rcfg
     --pipeline                  Run using the pipeline simulator instead of sequential exec
     --pipeline-trace-out <file> Write per-cycle pipeline trace JSON (requires --pipeline)
@@ -516,6 +516,8 @@ OPTIONS  run:
     --cores <n>                 Max physical cores / harts for the run (default: settings or 1)
     --mem <size>                RAM size, e.g. 16mb, 256kb, 1gb   (default: sim-settings or 16mb)
     --max-cycles <n>            Execution budget: steps (sequential), rounds (multi-hart), or pipeline cycles (default: 1000000000)
+    --jit none|hot|full         Execution backend (default: none); full needs --features jit,
+                                and any mode falls back to none when virtual memory is on
     --expect-exit <code>        Fail if the final exit code differs
     --expect-stdout <text>      Fail if captured stdout differs exactly
     --expect-reg <reg=value>    Fail if a register differs; repeatable
@@ -550,7 +552,7 @@ OPTIONS  debug-pipeline-stage:
 OPTIONS  debug-help-layout:
     --width <n>                 Virtual UI width for the dump          (default: 160)
     --height <n>                Virtual UI height for the dump         (default: 40)
-    --tab editor|run|cache|pipeline|docs|config
+    --tab editor|run|cache|tlb|pipeline|docs|config
                                 Tab to inspect                         (default: editor)
     --out <file>                Write dump to file instead of stdout
 

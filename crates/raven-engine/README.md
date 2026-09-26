@@ -1,8 +1,9 @@
 # raven-engine
 
 Trait-driven assembly and simulation engine used by Raven. The crate ships
-with `riscv32` (RV32IMAF), `sap`, and `toy16`; applications may register more
-architectures without changing the engine or selecting an ISA at compile time.
+with `riscv32` (RV32IMAF), `x86_64`, `sap`, and `toy16`; applications may
+register more architectures without changing the engine or selecting an ISA
+at compile time.
 
 ## Quick start — RV32 only
 
@@ -117,6 +118,7 @@ architectures/
   riscv32/
     mod.rs
     falcon/
+  x86_64/mod.rs
   sap/mod.rs
   toy16/mod.rs
 ```
@@ -125,8 +127,8 @@ Keep its adapter, assembler, concrete machine, instruction codec, and tests in
 that directory. Split those responsibilities into sibling files only when the
 module grows; the public path remains `architectures::<isa>`.
 
-SAP and Toy16 use the shared teaching-cache model, so the same Run and Cache
-tabs exercise their real instruction fetches and data accesses. The public
+SAP, Toy16, and x86_64 use the shared teaching-cache model, so the same Run
+and Cache tabs exercise their real instruction fetches and data accesses. The public
 Toy16 backend is the smallest complete reference implementation — and
 it is deliberately *unlike* RISC-V (one bank of eight 16-bit registers, two-byte
 instructions, no calling convention) so the contract tests in
