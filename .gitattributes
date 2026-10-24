@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# ELF images (such as the loader test fixture) are binary: no line-ending
+# conversion, no text diff
+*.elf binary

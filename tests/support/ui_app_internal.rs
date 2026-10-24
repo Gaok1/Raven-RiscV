@@ -14,6 +14,15 @@ fn rust_to_raven_elf_bytes() -> Vec<u8> {
     std::fs::read(path).expect("failed to read rust-to-raven debug ELF")
 }
 
+/// The small ELF the engine's loader tests use. It is committed (see
+/// crates/raven-engine/tests/fixtures/elf), so a test that only needs some
+/// ELF, rather than the rust-to-raven runtime, can run on every checkout.
+fn elf_fixture_bytes() -> Vec<u8> {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = root.join("crates/raven-engine/tests/fixtures/elf/fixture.elf");
+    std::fs::read(path).expect("failed to read the ELF fixture")
+}
+
 fn console_tail(app: &App) -> String {
     let start = app.console.lines.len().saturating_sub(30);
     app.console.lines[start..]
@@ -1960,18 +1969,67 @@ fn pipeline_ret_sees_loaded_ra_with_stack_adjust_between() {
 }
 
 #[test]
-#[ignore = "depends on local rust-to-raven debug ELF build artifact"]
 fn loading_elf_resets_pipeline_to_entry_pc() {
+    // The fixture's `_start` comes after a helper function, so the entry
+    // point is not `base_pc` (the start of .text).
     let mut app = App::new(None);
     app.native_mut().pipeline_mut().enabled = true;
-    let elf = rust_to_raven_elf_bytes();
+    let elf = elf_fixture_bytes();
     let mut ram = crate::falcon::memory::Ram::new(16 * 1024 * 1024);
-    let info = crate::falcon::program::load_elf(&elf, &mut ram).expect("parse rust-to-raven ELF");
+    let info = crate::falcon::program::load_elf(&elf, &mut ram).expect("parse the ELF fixture");
     app.load_binary(&elf);
 
     assert_eq!(app.native().pipeline().fetch_pc, app.native().cpu().pc);
     assert_eq!(app.native().cpu().pc, info.entry);
     assert_ne!(app.native().cpu().pc, app.session.base_pc);
+}
+
+#[test]
+fn elf_fixture_runs_to_its_exit_code_in_every_mode() {
+    // The fixture prints a line from .rodata, adds one to a word in .data
+    // through a call and exits with it (42). That takes a loaded ELF from
+    // entry to exit, sequentially and in each pipeline model.
+    let modes = std::iter::once(None).chain(crate::ui::pipeline::PipelineMode::all().map(Some));
+    for mode in modes {
+        let label = mode.map_or("sequential", |m| m.label());
+        let mut app = App::new(None);
+        app.max_cores = 1;
+        app.tab = Tab::Run;
+        if let Some(mode) = mode {
+            app.native_mut().pipeline_mut().enabled = true;
+            app.native_mut().pipeline_mut().mode = mode;
+        }
+        app.load_binary(&elf_fixture_bytes());
+
+        for _ in 0..1_000 {
+            if app.session.faulted
+                || app.native().pipeline().faulted
+                || app.native().cpu().exit_code.is_some()
+            {
+                break;
+            }
+            app.single_step();
+        }
+
+        assert!(!app.session.faulted, "{label}: faulted\n{}", console_tail(&app));
+        assert!(
+            !app.native().pipeline().faulted,
+            "{label}: pipeline faulted\n{}",
+            console_tail(&app)
+        );
+        assert_eq!(
+            app.native().cpu().exit_code,
+            Some(42),
+            "{label}\n{}\n{}",
+            console_tail(&app),
+            trace_tail(&app)
+        );
+        assert!(
+            console_tail(&app).contains("hello from the ELF fixture"),
+            "{label}: greeting not printed\n{}",
+            console_tail(&app)
+        );
+    }
 }
 
 #[test]
