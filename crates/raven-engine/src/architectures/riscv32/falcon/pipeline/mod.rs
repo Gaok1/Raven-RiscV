@@ -30,6 +30,7 @@ pub mod predictor;
 pub mod sim;
 
 use crate::falcon::instruction::Instruction;
+use crate::falcon::memory::HostRequest;
 use crate::falcon::registers::ExecRegion;
 use std::collections::VecDeque;
 
@@ -456,6 +457,9 @@ pub struct PipeSlot {
     pub fp_flags: u8,
     /// Set when the fetch failed; raised if, and only if, the slot commits.
     pub(crate) fetch_fault: Option<FetchFault>,
+    /// What this instruction's store to `tohost` asked the host for (set at
+    /// MEM). Like a fetch fault, it is acted on only if the slot commits.
+    pub(crate) host_request: Option<HostRequest>,
 }
 
 impl PipeSlot {
@@ -489,6 +493,7 @@ impl PipeSlot {
             frm: 0,
             fp_flags: 0,
             fetch_fault: None,
+            host_request: None,
         }
     }
 
@@ -525,6 +530,7 @@ impl PipeSlot {
             frm: 0,
             fp_flags: 0,
             fetch_fault: None,
+            host_request: None,
         }
     }
 }

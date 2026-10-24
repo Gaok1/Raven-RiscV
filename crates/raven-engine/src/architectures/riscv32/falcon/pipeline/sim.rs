@@ -1132,6 +1132,12 @@ pub(super) fn stage_mem(
         _ => {} // non-memory instructions
     }
 
+    // A store to `tohost` has just asked the host for something. The request
+    // is this instruction's, and is answered when it commits, not at the
+    // next commit: an older instruction may still be on its way to WB, and
+    // a flushed store never gets there at all.
+    slot.host_request = mem.take_host_request();
+
     (latency, faulted, trap)
 }
 
@@ -1620,6 +1626,16 @@ pub(super) fn writeback(
             state.faulted = true;
             false
         }
+    };
+
+    // The store made its `tohost` request at MEM, and the host answers it now
+    // that the store retires. A request left on the bus by this commit itself
+    // (a system call that wrote the word) is answered here too.
+    let alive = match slot.host_request.or_else(|| mem.take_host_request()) {
+        Some(request) if alive => {
+            crate::falcon::exec::apply_host_request(cpu, console, request, slot.pc)
+        }
+        _ => alive,
     };
 
     if !alive

@@ -36,7 +36,9 @@ mod inner {
     use crate::falcon::registers::Cpu;
     use std::collections::{HashSet, VecDeque};
 
-    use super::super::backend::{BackendKind, ExecCtx, ExecOutcome, ExecutionBackend};
+    use super::super::backend::{
+        BackendKind, ExecCtx, ExecOutcome, ExecutionBackend, answer_host_request,
+    };
     use super::super::block::{BasicBlock, BlockTerminator, scan_block};
     use super::super::cache::{CompiledBlockCache, exit};
     use super::super::codegen::compile_block;
@@ -78,7 +80,8 @@ mod inner {
                     let f = block.as_fn();
                     f(ctx.cpu as *mut _, ctx.mem as *mut _, ctx.console as *mut _)
                 };
-                return map_exit(exit_code, block.instruction_count);
+                return map_exit(exit_code, block.instruction_count)
+                    .map(|outcome| answer_host_request(ctx, outcome));
             }
 
             // Miss (JALR dinÃ¢mico ou bloco nÃ£o alcanÃ§ado no scan inicial):

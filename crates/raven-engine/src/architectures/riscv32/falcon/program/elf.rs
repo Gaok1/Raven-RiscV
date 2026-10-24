@@ -30,6 +30,11 @@ pub struct ElfInfo {
     pub symbols: HashMap<u32, Vec<String>>,
     /// Data/rodata/bss sections for the sections viewer.
     pub sections: Vec<ElfSection>,
+    /// Address of the `tohost` symbol, the word through which programs built
+    /// for an HTIF host (riscv-tests' standard environment among them) ask
+    /// it to end the run. Hand it to the bus with
+    /// [`crate::falcon::CacheController::set_tohost`].
+    pub tohost: Option<u32>,
 }
 
 /// Parse and load an ELF32 LE RISC-V executable into `mem`.
@@ -139,6 +144,10 @@ pub fn load_elf<B: Bus>(bytes: &[u8], mem: &mut B) -> Result<ElfInfo, FalconErro
 
     // â”€â”€ Parse section headers (best-effort, non-fatal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let (symbols, sections) = parse_sections(bytes, e_shoff, e_shentsize, e_shnum, e_shstrndx);
+    let tohost = symbols
+        .iter()
+        .find(|(_, names)| names.iter().any(|name| name == "tohost"))
+        .map(|(&addr, _)| addr);
 
     Ok(ElfInfo {
         entry: e_entry,
@@ -149,6 +158,7 @@ pub fn load_elf<B: Bus>(bytes: &[u8], mem: &mut B) -> Result<ElfInfo, FalconErro
         heap_start,
         symbols,
         sections,
+        tohost,
     })
 }
 

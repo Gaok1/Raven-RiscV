@@ -3,7 +3,7 @@ use crate::falcon::{
     errors::FalconError,
     fpu,
     instruction::Instruction,
-    memory::{AmoOp, Bus},
+    memory::{AmoOp, Bus, HostRequest},
     mmu::PrivMode,
     registers::Cpu,
 };
@@ -134,11 +134,50 @@ pub fn step<B: Bus>(
     console: &mut Console,
 ) -> Result<bool, FalconError> {
     let entry_pc = cpu.pc;
-    match step_inner(cpu, mem, console) {
+    let alive = match step_inner(cpu, mem, console) {
         Err(FalconError::Trap { cause, tval, vaddr }) => {
-            handle_trap(cpu, mem, console, entry_pc, cause, tval, vaddr)
+            return handle_trap(cpu, mem, console, entry_pc, cause, tval, vaddr);
         }
-        other => other,
+        other => other?,
+    };
+    // The instruction is done, so this is the boundary where the host answers
+    // a store it made to `tohost`.
+    match mem.take_host_request() {
+        Some(request) if alive => Ok(apply_host_request(cpu, console, request, entry_pc)),
+        _ => Ok(alive),
+    }
+}
+
+/// Answer a [`HostRequest`] the instruction at `pc` made by storing to
+/// `tohost`. Returns whether the hart keeps running.
+///
+/// An exit ends the program exactly as the exit syscall does: the code goes in
+/// `exit_code`, and the PC stays on the instruction that asked, so the Run
+/// view points at it and a later manual step cannot run on past the end of
+/// the program. Shared by every execution path, which each call it at their
+/// own instruction boundary.
+pub fn apply_host_request(
+    cpu: &mut Cpu,
+    console: &mut Console,
+    request: HostRequest,
+    pc: u32,
+) -> bool {
+    match request {
+        HostRequest::Exit(code) => {
+            cpu.exit_code = Some(code);
+            cpu.pc = pc;
+            console.push_error(format!("Exit {} (tohost)", code as i32));
+            false
+        }
+        HostRequest::Unsupported(value) => {
+            console.push_colored(
+                format!(
+                    "tohost: HTIF system call 0x{value:08X} at 0x{pc:08X} is not supported; ignored"
+                ),
+                crate::ui::console::ConsoleColor::Warning,
+            );
+            true
+        }
     }
 }
 

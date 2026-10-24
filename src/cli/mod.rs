@@ -267,6 +267,8 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         cpu.pc = info.entry;
         cpu.heap_break = info.heap_start;
         cpu.write(2, mem_size as u32); // restore SP after ELF load
+        // A program built for an HTIF host ends by storing to `tohost`.
+        mem.set_tohost(info.tohost);
     } else if is_falc(&file_bytes) {
         load_falc(&file_bytes, &mut cpu, &mut mem, mem_size)?;
     } else if looks_like_text(&file_bytes) {

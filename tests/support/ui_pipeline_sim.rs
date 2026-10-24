@@ -4140,6 +4140,96 @@ fn every_execution_model() -> Vec<Option<crate::falcon::pipeline::PipelineMode>>
         .collect()
 }
 
+fn label_address(prog: &crate::falcon::asm::Program, label: &str) -> u32 {
+    prog.labels
+        .iter()
+        .find(|(_, names)| names.iter().any(|name| name == label))
+        .map(|(&addr, _)| addr)
+        .unwrap_or_else(|| panic!("no label {label}"))
+}
+
+// The first `.data` word stands in for an ELF's `tohost` symbol.
+const TOHOST_EXIT: &str = r#"
+.data
+tohost:
+    .word 0
+    .word 0
+.text
+    li   a0, 5
+    la   t0, tohost
+    sw   zero, 0(t0)    # clearing the word asks nothing
+    li   t1, 7          # (3 << 1) | 1: exit with code 3
+    sw   t1, 4(t0)      # the upper half carries no request
+report:
+    sw   t1, 0(t0)      # MEM while the store above is still in WB
+    li   a0, 1
+    halt
+"#;
+
+#[test]
+fn a_store_to_tohost_exits_in_every_mode() {
+    // riscv-tests' standard environment, and any program built for an HTIF
+    // host, ends by storing to `tohost`; RAVEN used to run on past it.
+    for model in every_execution_model() {
+        let (prog, cpu, mem, console) = run_until_stopped(TOHOST_EXIT, model, |prog, _, mem| {
+            mem.set_tohost(Some(prog.data_base))
+        });
+        assert_eq!(cpu.exit_code, Some(3), "{model:?}");
+        assert_eq!(cpu.read(10), 5, "{model:?}: ran past the exit");
+        assert_eq!(
+            cpu.pc,
+            label_address(&prog, "report"),
+            "{model:?}: the hart parks on the store that exited"
+        );
+        assert_eq!(mem.load32(prog.data_base).unwrap(), 7, "{model:?}");
+        assert!(
+            console.lines.iter().any(|l| l.text.contains("Exit 3")),
+            "{model:?}"
+        );
+    }
+}
+
+#[test]
+fn without_tohost_the_same_store_is_plain_memory() {
+    for model in every_execution_model() {
+        let (prog, cpu, mem, _) = run_until_stopped(TOHOST_EXIT, model, |_, _, _| {});
+        assert_eq!(cpu.exit_code, None, "{model:?}");
+        assert_eq!(cpu.read(10), 1, "{model:?}");
+        assert_eq!(mem.load32(prog.data_base).unwrap(), 7, "{model:?}");
+    }
+}
+
+#[test]
+fn an_htif_system_call_through_tohost_is_reported_once_and_ignored() {
+    // An even value points at a system-call block for the host to run.
+    let asm = r#"
+.data
+tohost:
+    .word 0
+    .word 0
+.text
+    la   t0, tohost
+    li   t1, 0x100
+    sw   t1, 0(t0)
+    sw   t1, 0(t0)
+    li   a0, 4
+    halt
+"#;
+    for model in every_execution_model() {
+        let (_, cpu, _, console) = run_until_stopped(asm, model, |prog, _, mem| {
+            mem.set_tohost(Some(prog.data_base))
+        });
+        assert_eq!(cpu.exit_code, None, "{model:?}");
+        assert_eq!(cpu.read(10), 4, "{model:?}");
+        let reports = console
+            .lines
+            .iter()
+            .filter(|l| l.text.contains("not supported"))
+            .count();
+        assert_eq!(reports, 1, "{model:?}");
+    }
+}
+
 #[test]
 fn mhartid_reads_the_hart_id_in_every_mode() {
     // riscv-tests' environment parks every hart that does not read 0 here.

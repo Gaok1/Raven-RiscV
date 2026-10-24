@@ -16,6 +16,23 @@ pub enum AmoOp {
     MinU,
 }
 
+/// What a program asked the host for by storing to the HTIF `tohost` word.
+///
+/// HTIF is how riscv-tests' standard environment, and bare-metal programs
+/// built like it, talk to the machine they run on: the program stores a
+/// value to `tohost` and the host acts on it. RAVEN answers the one request
+/// such a program needs to finish, exit; the rest of the protocol asks the
+/// host to run a system call from a block of memory, which RAVEN's own
+/// `ecall` already does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostRequest {
+    /// An odd value `v`: exit with code `v >> 1` (so `1` is a pass).
+    Exit(u32),
+    /// An even, non-zero value: a pointer to a system-call block. Not
+    /// supported; the store is reported once and otherwise ignored.
+    Unsupported(u32),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Reservation {
     addr: u32,
@@ -182,6 +199,15 @@ pub trait Bus {
 
     /// Update the hart's current privilege level (used by `mret`/trap entry).
     fn set_priv_mode(&mut self, _mode: PrivMode) {}
+
+    /// Take the request a store to `tohost` left for the host, if any.
+    ///
+    /// The store only records it; every execution path collects it at the
+    /// next instruction boundary, where an exit stops the hart the way the
+    /// exit syscall does. Default `None` for buses without a `tohost` word.
+    fn take_host_request(&mut self) -> Option<HostRequest> {
+        None
+    }
 }
 
 pub struct Ram {

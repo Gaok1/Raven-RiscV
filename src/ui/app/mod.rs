@@ -1402,6 +1402,11 @@ impl App {
             }
         };
 
+        // A program built for an HTIF host ends by storing to `tohost`. Every
+        // other load rebuilds the memory hierarchy, which drops the address.
+        self.native_mut()
+            .mem_mut_unjournaled()
+            .set_tohost(info.tohost);
         self.native_mut().cpu_mut_unjournaled().pc = info.entry;
         self.session.prev_pc = info.entry;
         self.session.base_pc = info.text_base;
