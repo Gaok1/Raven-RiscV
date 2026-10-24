@@ -93,6 +93,8 @@ pub fn classify(word: u32) -> InstrClass {
         }
         Ok(Jal { .. } | Jalr { .. }) => InstrClass::Jump,
         Ok(Ecall | Ebreak | Halt | Fence | FenceI) => InstrClass::System,
+        // Privileged returns and the TLB fence also run at WB, like ecall.
+        Ok(Mret | Sret | SfenceVma { .. }) => InstrClass::System,
         // Zicsr runs entirely at WB, like ecall.
         Ok(
             Csrrw { .. }
@@ -245,6 +247,7 @@ pub fn operands(word: u32) -> (Option<u8>, Option<u8>, Option<u8>) {
             (Some(rd), Some(rs1), None)
         }
         Ok(Csrrwi { rd, .. } | Csrrsi { rd, .. } | Csrrci { rd, .. }) => (Some(rd), None, None),
+        Ok(SfenceVma { rs1, rs2 }) => (None, Some(rs1), Some(rs2)),
         _ => (None, None, None),
     }
 }
@@ -398,6 +401,18 @@ pub type FuBank = [Vec<FuState>; FuKind::COUNT];
 
 // ── Pipeline slot ─────────────────────────────────────────────────────────────
 
+/// Why an instruction could not be fetched, held in its slot until it reaches
+/// commit. The front end runs ahead of branches, so a fetch can fail on a path
+/// the program never takes — past the last `ret`, say — and only an
+/// instruction that actually retires may stop the program or enter a handler.
+#[derive(Clone, Debug)]
+pub(crate) enum FetchFault {
+    /// The word could not be read or decoded. Fatal, as in sequential mode.
+    Fatal(String),
+    /// A page fault, which goes through the trap handler.
+    Trap(sim::MemTrap),
+}
+
 #[derive(Clone)]
 pub struct PipeSlot {
     pub seq: u64,
@@ -439,6 +454,8 @@ pub struct PipeSlot {
     pub frm: u8,
     /// IEEE flags raised at EX; OR-ed into `fflags` at WB.
     pub fp_flags: u8,
+    /// Set when the fetch failed; raised if, and only if, the slot commits.
+    pub(crate) fetch_fault: Option<FetchFault>,
 }
 
 impl PipeSlot {
@@ -471,6 +488,7 @@ impl PipeSlot {
             predicted_target: None,
             frm: 0,
             fp_flags: 0,
+            fetch_fault: None,
         }
     }
 
@@ -506,6 +524,7 @@ impl PipeSlot {
             predicted_target: None,
             frm: 0,
             fp_flags: 0,
+            fetch_fault: None,
         }
     }
 }
@@ -599,7 +618,6 @@ pub struct PipelineSimState {
     pub hazard_msgs: Vec<(HazardType, String)>,
     pub hazard_traces: Vec<HazardTrace>,
     pub last_cycle_cache_only: bool,
-    pub pending_fetch_trap: Option<(u32, u32, u32, u32)>,
 }
 
 pub struct PipelineExecSnapshot {
@@ -611,7 +629,6 @@ pub struct PipelineExecSnapshot {
     fu_bank: FuBank,
     fu_busy: [u8; 7],
     predictor: predictor::PredictorState,
-    pending_fetch_trap: Option<(u32, u32, u32, u32)>,
     cycle_count: u64,
     instr_committed: u64,
     stall_count: u64,
@@ -640,7 +657,6 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
             fu_bank: self.fu_bank.clone(),
             fu_busy: self.fu_busy,
             predictor: self.predictor.clone(),
-            pending_fetch_trap: self.pending_fetch_trap,
             cycle_count: self.cycle_count,
             instr_committed: self.instr_committed,
             stall_count: self.stall_count,
@@ -666,7 +682,6 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
         self.fu_bank = s.fu_bank;
         self.fu_busy = s.fu_busy;
         self.predictor = s.predictor;
-        self.pending_fetch_trap = s.pending_fetch_trap;
         self.cycle_count = s.cycle_count;
         self.instr_committed = s.instr_committed;
         self.stall_count = s.stall_count;
@@ -759,7 +774,6 @@ impl PipelineSimState {
             hazard_msgs: Vec::new(),
             hazard_traces: Vec::new(),
             last_cycle_cache_only: false,
-            pending_fetch_trap: None,
         }
     }
 

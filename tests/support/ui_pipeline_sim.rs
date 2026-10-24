@@ -508,7 +508,10 @@ fn invalid_instruction_faults_pipeline_with_console_error() {
     mem.store32(0, 0xFFFF_FFFF).unwrap();
 
     state.reset_stages(0);
-    pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+    // The fault is raised when the instruction commits, not when it is fetched.
+    for _ in 0..8 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+    }
 
     assert!(state.faulted, "invalid opcode should fault pipeline");
     assert!(
@@ -534,7 +537,9 @@ fn fetch_fault_reports_if_error_in_console() {
 
     mem.bypass = true;
     state.reset_stages(0x8000_0000);
-    pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+    for _ in 0..8 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+    }
 
     assert!(state.faulted, "fetch fault should fault pipeline");
     assert!(
@@ -1116,7 +1121,7 @@ fn fetch_slot_tracks_icache_latency() {
         .store32(0, encode(Instruction::Halt).unwrap())
         .unwrap();
 
-    let slot = fetch_slot(0, &mut mem).0.expect("fetch slot");
+    let slot = fetch_slot(0, &mut mem);
     assert_eq!(slot.word, encode(Instruction::Halt).unwrap());
     assert_eq!(slot.if_stall_cycles, 3);
 }
@@ -1131,7 +1136,7 @@ fn fetch_slot_tracks_l1_l2_icache_latency() {
         .store32(0, encode(Instruction::Halt).unwrap())
         .unwrap();
 
-    let slot = fetch_slot(0, &mut mem).0.expect("fetch slot");
+    let slot = fetch_slot(0, &mut mem);
     assert_eq!(slot.word, encode(Instruction::Halt).unwrap());
     assert_eq!(slot.if_stall_cycles, 7);
 }
@@ -1147,7 +1152,7 @@ fn fetch_slot_tracks_l1_l2_l3_icache_latency() {
         .store32(0, encode(Instruction::Halt).unwrap())
         .unwrap();
 
-    let slot = fetch_slot(0, &mut mem).0.expect("fetch slot");
+    let slot = fetch_slot(0, &mut mem);
     assert_eq!(slot.word, encode(Instruction::Halt).unwrap());
     assert_eq!(slot.if_stall_cycles, 17);
 }
@@ -1170,7 +1175,7 @@ fn pipeline_fetch_does_not_count_as_retired_instruction() {
         .store32(0, encode(Instruction::Halt).unwrap())
         .unwrap();
 
-    let _ = fetch_slot(0, &mut mem).0.expect("fetch slot");
+    let _ = fetch_slot(0, &mut mem);
     assert_eq!(mem.instruction_count, 0);
 }
 
@@ -4076,4 +4081,334 @@ fn branch_flush_clears_speculative_work_already_dispatched_to_fu_bank() {
             .all(|fu| fu.slot.as_ref().is_none_or(|slot| !slot.is_speculative)),
         "branch flush must not leave speculative work alive in any FU bank"
     );
+}
+
+/// Run `asm` under `mode` until it halts, with the caches on (`bypass` off) so
+/// the D-cache and I-cache really are separate.
+fn run_pipeline_mode_cached(
+    asm: &str,
+    mode: crate::falcon::pipeline::PipelineMode,
+    console: &mut Console,
+) -> (Cpu, PipelineSimState) {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.set_mode(mode, &cpi);
+    load_program_into_mem(asm, &mut cpu, &mut mem);
+    state.reset_stages(0);
+    if let Some(engine) = state.ooo.as_mut() {
+        crate::capability::PipelineControl::reset(engine, 0);
+    }
+    for _ in 0..4096 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, console);
+        if state.halted || state.faulted || console.reading {
+            break;
+        }
+    }
+    (cpu, state)
+}
+
+#[test]
+fn mret_and_sret_jump_to_the_saved_pc_in_every_mode() {
+    // Both used to classify as Unknown and retire as no-ops.
+    for (csr, ret) in [("mepc", "mret"), ("sepc", "sret")] {
+        let asm = format!(
+            r#"
+.text
+    la   t0, target
+    csrw {csr}, t0
+    {ret}
+    li   a0, 1
+    halt
+target:
+    li   a0, 7
+    halt
+"#
+        );
+        for mode in crate::falcon::pipeline::PipelineMode::all() {
+            let mut console = Console::default();
+            let (cpu, state) = run_pipeline_mode_cached(&asm, mode, &mut console);
+            assert!(
+                state.halted && !state.faulted,
+                "{ret} under {mode:?} did not halt"
+            );
+            assert_eq!(cpu.read(10), 7, "{ret} under {mode:?} fell through");
+        }
+    }
+}
+
+#[test]
+fn sfence_vma_runs_in_the_pipeline() {
+    let asm = r#"
+.text
+    li   t0, 0x1000
+    sfence.vma t0, zero
+    sfence.vma
+    li   a0, 3
+    halt
+"#;
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let mut console = Console::default();
+        let (cpu, state) = run_pipeline_mode_cached(asm, mode, &mut console);
+        assert!(state.halted && !state.faulted, "{mode:?}");
+        assert_eq!(cpu.read(10), 3, "{mode:?}");
+    }
+}
+
+#[test]
+fn fence_i_makes_stored_code_visible_in_every_mode() {
+    // riscv-tests rv32ui-p-fence_i, case 2: copy `addi a3, a3, 333` over the
+    // first instruction at `patch`, fence.i, and run it. The store sits dirty
+    // in the write-back D-cache, and the I-cache fills from RAM.
+    let asm = r#"
+.data
+insn:
+    .word 0
+.text
+    li   a3, 111
+    la   t0, new_insn
+    lw   a0, 0(t0)
+    la   t1, patch
+    sw   a0, 0(t1)
+    fence.i
+    jalr ra, t1, 0
+    mv   a0, a3
+    halt
+new_insn:
+    addi a3, a3, 333
+patch:
+    addi a3, a3, 222
+    ret
+"#;
+    let (_, cpu_seq, _) = run_sequential(asm);
+    assert_eq!(cpu_seq.read(10), 444);
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    load_program_into_mem(asm, &mut cpu, &mut mem);
+    // Warm the I-cache with the old code first, the way the test does.
+    let patch = cpu.pc + 4 * 12;
+    let _ = mem.fetch32(patch);
+    for _ in 0..64 {
+        if !exec::step(&mut cpu, &mut mem, &mut console).expect("step") {
+            break;
+        }
+    }
+    assert_eq!(cpu.read(10), 444, "sequential, caches on");
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let mut console = Console::default();
+        let (cpu, state) = run_pipeline_mode_cached(asm, mode, &mut console);
+        assert!(
+            state.halted && !state.faulted,
+            "{mode:?} pc={:#x} halted={} faulted={} a0={} a3={} cycles={} console={:?}",
+            cpu.pc,
+            state.halted,
+            state.faulted,
+            cpu.read(10),
+            cpu.read(13),
+            state.cycle_count,
+            console
+                .lines
+                .iter()
+                .map(|l| l.text.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(cpu.read(10), 444, "{mode:?} ran the stale instruction");
+    }
+}
+
+#[test]
+fn blocking_read_parks_the_ecall_until_input_arrives_in_every_mode() {
+    // The ecall used to retire with no line read, and the program went on
+    // past it with an empty buffer.
+    let asm = r#"
+.data
+buf: .space 16
+.text
+    la   a0, buf
+    li   a7, 1003
+    ecall
+    la   t0, buf
+    lbu  a1, 0(t0)
+    halt
+"#;
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let mut console = Console::default();
+        let mut cpu = Cpu::default();
+        let mut mem = CacheController::new(
+            CacheConfig::default(),
+            CacheConfig::default(),
+            vec![],
+            0x4000,
+        );
+        let cpi = CpiConfig::default();
+        let mut state = PipelineSimState::new();
+        state.set_mode(mode, &cpi);
+        load_program_into_mem(asm, &mut cpu, &mut mem);
+        state.reset_stages(0);
+        if let Some(engine) = state.ooo.as_mut() {
+            crate::capability::PipelineControl::reset(engine, 0);
+        }
+        let mut tick = |cpu: &mut Cpu, console: &mut Console| {
+            for _ in 0..512 {
+                pipeline_tick(&mut state, cpu, &mut mem, &cpi, console);
+                if state.halted || state.faulted || console.reading {
+                    break;
+                }
+            }
+        };
+        tick(&mut cpu, &mut console);
+        assert!(console.reading, "{mode:?} never blocked on the read");
+        let committed_while_blocked = cpu.read(11);
+        // The host keeps ticking while it waits; the ecall stays parked.
+        console.reading = false;
+        tick(&mut cpu, &mut console);
+        assert!(console.reading, "{mode:?} ran past the parked ecall");
+        assert_eq!(cpu.read(11), committed_while_blocked);
+        console.push_input("A");
+        console.reading = false;
+        tick(&mut cpu, &mut console);
+        assert_eq!(cpu.read(11), u32::from(b'A'), "{mode:?}");
+    }
+}
+
+#[test]
+fn a_failed_fetch_on_the_wrong_path_does_not_fault_in_any_mode() {
+    // The front end runs past `ret` into the zero word after it before the
+    // return resolves. That fetch used to fault the whole pipeline.
+    let asm = r#"
+.text
+    jal  ra, last
+    li   a0, 9
+    halt
+last:
+    ret
+"#;
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let mut console = Console::default();
+        let (cpu, state) = run_pipeline_mode_cached(asm, mode, &mut console);
+        assert!(
+            state.halted && !state.faulted,
+            "{mode:?}: {:?}",
+            console.lines.iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+        assert_eq!(cpu.read(10), 9, "{mode:?}");
+    }
+}
+
+/// Run hand-placed code in U-mode under Sv32, with VA 0 → PA 0 mapped RX+U
+/// and nothing else. The M-mode handler at 0x3000 sets a0 = 99 and halts.
+fn run_user_code_under_sv32(
+    code: &[(u32, Instruction)],
+    mode: crate::falcon::pipeline::PipelineMode,
+) -> (Cpu, PipelineSimState) {
+    use crate::falcon::mmu::PrivMode;
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x10000,
+    );
+    let mut console = Console::default();
+    let cpi = CpiConfig::default();
+    let (root, leaf) = (0x6000u32, 0x7000u32);
+    mem.ram.store32(root, ((leaf >> 12) << 10) | 0x1).unwrap();
+    mem.ram.store32(leaf, (0x2 | 0x8 | 0x10) | 0x1).unwrap();
+    let satp = (1u32 << 31) | (root >> 12);
+    mem.mmu_mut().enabled = true;
+    mem.set_satp(satp);
+    cpu.satp = satp;
+    for &(addr, instr) in code {
+        mem.ram.store32(addr, encode(instr).unwrap()).unwrap();
+    }
+    mem.ram
+        .store32(
+            0x3000,
+            encode(Instruction::Addi {
+                rd: 10,
+                rs1: 0,
+                imm: 99,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    mem.ram
+        .store32(0x3004, encode(Instruction::Halt).unwrap())
+        .unwrap();
+    cpu.mtvec = 0x3000;
+    cpu.priv_mode = PrivMode::U;
+    mem.set_priv_mode(PrivMode::U);
+
+    let mut state = PipelineSimState::new();
+    state.set_mode(mode, &cpi);
+    state.reset_stages(0);
+    if let Some(engine) = state.ooo.as_mut() {
+        crate::capability::PipelineControl::reset(engine, 0);
+    }
+    for _ in 0..4096 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+        if state.halted || state.faulted {
+            break;
+        }
+    }
+    (cpu, state)
+}
+
+#[test]
+fn a_fetch_page_fault_enters_the_handler_only_when_the_program_gets_there() {
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        // `jalr` at the end of the only mapped page: the front end fetches
+        // the unmapped VA 0x1000 behind it before the jump resolves.
+        let wrong_path = [
+            (
+                0x000,
+                Instruction::Addi {
+                    rd: 6,
+                    rs1: 0,
+                    imm: 0x100,
+                },
+            ),
+            (0x004, Instruction::Jal { rd: 0, imm: 0xFF8 }),
+            (
+                0xFFC,
+                Instruction::Jalr {
+                    rd: 0,
+                    rs1: 6,
+                    imm: 0,
+                },
+            ),
+            (
+                0x100,
+                Instruction::Addi {
+                    rd: 10,
+                    rs1: 0,
+                    imm: 5,
+                },
+            ),
+            (0x104, Instruction::Halt),
+        ];
+        let (cpu, state) = run_user_code_under_sv32(&wrong_path, mode);
+        assert!(state.halted && !state.faulted, "{mode:?}");
+        assert_eq!(cpu.read(10), 5, "{mode:?}: a wrong-path fetch trapped");
+        assert_eq!(cpu.mcause, 0, "{mode:?}");
+
+        let reached = [(0x000, Instruction::Jal { rd: 0, imm: 0x5000 })];
+        let (cpu, state) = run_user_code_under_sv32(&reached, mode);
+        assert!(state.halted && !state.faulted, "{mode:?}");
+        assert_eq!(cpu.read(10), 99, "{mode:?}: the handler did not run");
+        assert_eq!(cpu.mcause, 12, "{mode:?}: instruction page fault");
+        assert_eq!(cpu.mepc, 0x5000, "{mode:?}");
+    }
 }

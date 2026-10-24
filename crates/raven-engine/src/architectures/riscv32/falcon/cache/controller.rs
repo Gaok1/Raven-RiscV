@@ -1328,7 +1328,32 @@ impl Bus for CacheController {
         self.total_program_cycles()
     }
 
+    /// Make this hart's stores visible to its own instruction fetch.
+    ///
+    /// The I-cache fills from L2 or RAM and never looks at the D-cache, so
+    /// code a store just wrote stays invisible to fetch while its line sits
+    /// dirty in the D-cache. Write every dirty line to the next level — the
+    /// path an eviction takes, counted as a writeback the same way — keep it
+    /// valid and clean, and drop whatever the I-cache held.
     fn fence_i(&mut self) -> Result<(), FalconError> {
+        if !self.bypass && self.dcache.config.is_valid_config() {
+            let offset_bits = self.dcache.config.offset_bits();
+            let index_bits = self.dcache.config.index_bits();
+            let mut dirty = Vec::new();
+            for (set_idx, set) in self.dcache.sets.iter_mut().enumerate() {
+                for line in &mut set.lines {
+                    if line.valid && line.dirty {
+                        let base = (line.tag << (offset_bits + index_bits))
+                            | ((set_idx as u32) << offset_bits);
+                        dirty.push((base, line.data.clone()));
+                        line.dirty = false;
+                    }
+                }
+            }
+            for (base, data) in dirty {
+                self.propagate_line_to_next_level(WritebackSource::L1D, base, &data)?;
+            }
+        }
         self.icache.invalidate();
         Ok(())
     }

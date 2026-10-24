@@ -27,10 +27,10 @@ use crate::falcon::cache::CacheController;
 use crate::pipeline::{PipelineEngine, PipelineMode, PipelineOp, PipelineShape, PipelineTiming};
 use crate::ui::Console;
 
-use super::sim::{self, CommitInfo};
+use super::sim::{self, CommitInfo, Writeback};
 use super::{
-    FuKind, InstrClass, OooEngine, PipeSlot, PipelineSimState, STAGES, Stage, UNITS, classify,
-    operands,
+    FetchFault, FuKind, InstrClass, OooEngine, PipeSlot, PipelineSimState, STAGES, Stage, UNITS,
+    classify, operands,
 };
 
 /// RV32's datapath as the shared engines see it.
@@ -87,16 +87,44 @@ pub fn ooo_tick(
     let mut redirect = None;
 
     if let Some(op) = committing {
-        if let Some(message) = op.fault.clone() {
+        if op.fault.is_some() {
             // A fetch that could not happen faults where the program reached
-            // it, not where the front end ran ahead to.
-            console.push_error(message);
-            engine.halt();
-            state.faulted = true;
+            // it, not where the front end ran ahead to. Fetching again now,
+            // with every older instruction retired, says what really happens
+            // there: a page fault enters the handler, anything else is fatal.
+            let pc = op.address as u32;
+            match sim::fetch_slot(pc, mem).fetch_fault {
+                Some(FetchFault::Fatal(message)) => {
+                    console.push_error(message);
+                    engine.halt();
+                    state.faulted = true;
+                }
+                Some(FetchFault::Trap(trap)) => {
+                    sim::pipeline_enter_trap(state, cpu, mem, console, pc, trap);
+                    engine.retire(&op);
+                    redirect = Some(u64::from(cpu.pc));
+                }
+                // The older instructions made it fetchable after all.
+                None => {
+                    engine.retire(&op);
+                    redirect = Some(u64::from(pc));
+                }
+            }
         } else {
-            commit = execute(&op, state, cpu, mem, console);
-            engine.retire(&op);
-            redirect = engine.resolve(&op, u64::from(cpu.pc));
+            match execute(&op, state, cpu, mem, console) {
+                // Still the oldest entry: it runs again once the host
+                // resumes, exactly as the in-order model refetches it.
+                Writeback::Parked => engine.retry(op, "awaiting input"),
+                outcome => {
+                    if let Writeback::Retired(info) = outcome {
+                        commit = Some(info);
+                    }
+                    engine.retire(&op);
+                    redirect = engine
+                        .resolve(&op, u64::from(cpu.pc))
+                        .or_else(|| refetch_after(&op, cpu.pc));
+                }
+            }
         }
     }
 
@@ -113,10 +141,25 @@ pub fn ooo_tick(
     commit
 }
 
+/// Where the front end has to start over after an instruction that is not a
+/// branch, if anywhere.
+///
+/// The engine fetches down the sequential path behind every such
+/// instruction. That path is wrong when the instruction moved the PC anyway —
+/// a trap, `mret`, `sret` — and stale when it changed what fetching means: the
+/// code (`fence.i`), the translations (`sfence.vma`, a write to `satp`) or the
+/// privilege level. Every system instruction is one of those or cheap enough
+/// to treat as one, so the front end refetches after all of them, the way an
+/// in-order core drains behind a serialising instruction.
+fn refetch_after(op: &PipelineOp<u32>, pc: u32) -> Option<u64> {
+    let sequential = op.address.wrapping_add(4);
+    (op.class == InstrClass::System || u64::from(pc) != sequential).then_some(u64::from(pc))
+}
+
 /// Run one instruction all the way through, in one piece.
 ///
 /// ID reads the registers, EX computes and resolves the branch, MEM touches
-/// memory, and `commit_wb` writes back and moves the PC. Nothing younger has
+/// memory, and `writeback` writes back and moves the PC. Nothing younger has
 /// touched the machine — the engine only ever hands back its oldest entry — so
 /// a trap raised here lands on exactly the state program order says it should.
 fn execute(
@@ -125,7 +168,7 @@ fn execute(
     cpu: &mut Cpu,
     mem: &mut CacheController,
     console: &mut Console,
-) -> Option<CommitInfo> {
+) -> Writeback {
     let pc = op.address as u32;
     let mut slot = PipeSlot::from_word(pc, op.payload);
     slot.instr = crate::falcon::decoder::decode(op.payload).ok();
@@ -135,17 +178,17 @@ fn execute(
     let (_latency, faulted, trap) = sim::stage_mem(&mut slot, cpu, mem, console);
     if faulted {
         state.faulted = true;
-        return None;
+        return Writeback::Empty;
     }
     if let Some(trap) = trap {
         sim::pipeline_enter_trap(state, cpu, mem, console, pc, trap);
-        return None;
+        return Writeback::Empty;
     }
 
-    // `commit_wb` takes its instruction from the writeback slot, which is the
+    // `writeback` takes its instruction from the writeback slot, which is the
     // one place both models agree on.
     state.stages[Stage::WB as usize] = Some(slot);
-    sim::commit_wb(state, cpu, mem, console)
+    sim::writeback(state, cpu, mem, console)
 }
 
 /// Decode at `address` into an op the engine can schedule.
@@ -155,14 +198,16 @@ fn execute(
 /// registers it reads and writes, and whether it can change the next fetch
 /// address.
 fn fetch(address: u32, mem: &mut CacheController) -> PipelineOp<u32> {
-    let (slot, error) = sim::fetch_slot(address, mem);
-    let Some(slot) = slot else {
-        let message = match error {
-            Some(Err(message)) => message,
-            _ => format!("fetch fault at 0x{address:08X}"),
+    let slot = sim::fetch_slot(address, mem);
+    if let Some(fault) = &slot.fetch_fault {
+        let message = match fault {
+            FetchFault::Fatal(message) => message.clone(),
+            FetchFault::Trap(trap) => {
+                format!("fetch page fault at 0x{address:08X} (cause {})", trap.cause)
+            }
         };
         return PipelineOp::faulted(u64::from(address), message, 0);
-    };
+    }
 
     let word = slot.word;
     let class = classify(word);

@@ -113,20 +113,6 @@ pub fn pipeline_tick(
     // ── 5. Detect WAW/WAR (informational) ────────────────────────────────
     detect_name_hazards(state);
 
-    // Drain any IF-stage page fault recorded during fetch_into_if. We do it
-    // here, after advance/stall, so the trap handler observes a consistent
-    // state. The faulting fetch slot is discarded by pipeline_enter_trap.
-    if let Some((entry_pc, cause, tval, vaddr)) = state.pending_fetch_trap.take() {
-        pipeline_enter_trap(
-            state,
-            cpu,
-            mem,
-            console,
-            entry_pc,
-            MemTrap { cause, tval, vaddr },
-        );
-    }
-
     // ── 6. Update Gantt ──────────────────────────────────────────────────
     update_gantt(state);
 
@@ -879,7 +865,7 @@ fn resolve_control_in_id(slot: &mut PipeSlot) {
 /// Page-fault info captured during the MEM stage. When `Some`, the caller
 /// must vector through `mtvec` via [`pipeline_enter_trap`]; the pipeline is
 /// *not* fatally faulted in that case — execution continues from the handler.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct MemTrap {
     pub cause: u32,
     pub tval: u32,
@@ -1366,7 +1352,17 @@ fn stage_wb(
             return false;
         }
 
-        Instruction::Fence | Instruction::FenceI => {} // ordering handled by shared memory backend
+        // A single hart sees its own loads and stores in order, so `fence`
+        // has nothing to wait for. `fence.i` makes this hart's stores visible
+        // to its own fetch; the front end has held still since it was fetched,
+        // so nothing younger was read from the stale I-cache.
+        Instruction::Fence => {}
+        Instruction::FenceI => {
+            if let Err(e) = mem.fence_i() {
+                console.push_error(format!("fence.i at 0x{:08X}: {e}", slot.pc));
+                return false;
+            }
+        }
 
         Instruction::Csrrw { rd, rs1, csr } => {
             let src = cpu.read(rs1);
@@ -1542,19 +1538,71 @@ pub(super) fn pipeline_enter_trap(
 // ── Commit (WB) ──────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
+/// What leaving WB did to the instruction there.
+pub(super) enum Writeback {
+    /// WB held nothing, or a bubble.
+    Empty,
+    /// The instruction retired.
+    Retired(CommitInfo),
+    /// An `ecall` that cannot finish yet — waiting for a line of input, or
+    /// sleeping on `screen_sleep_ms` — is parked on itself, as in sequential
+    /// mode: it has not retired, and it runs again once the host resumes.
+    Parked,
+}
+
 pub(super) fn commit_wb(
     state: &mut PipelineSimState,
     cpu: &mut Cpu,
     mem: &mut CacheController,
     console: &mut Console,
 ) -> Option<CommitInfo> {
+    match writeback(state, cpu, mem, console) {
+        Writeback::Retired(info) => Some(info),
+        Writeback::Empty | Writeback::Parked => None,
+    }
+}
+
+/// Throw away whatever is in flight and resume fetch at `pc`.
+///
+/// Only ever called on behalf of the instruction that just left WB, which was
+/// the oldest one in flight, so everything this discards is younger and has
+/// not touched the machine.
+fn refetch_from(state: &mut PipelineSimState, pc: u32) {
+    state.stages = Default::default();
+    for group in state.fu_bank.iter_mut() {
+        group.clear();
+    }
+    state.fetch_pc = pc;
+}
+
+pub(super) fn writeback(
+    state: &mut PipelineSimState,
+    cpu: &mut Cpu,
+    mem: &mut CacheController,
+    console: &mut Console,
+) -> Writeback {
     let slot = match state.stages[Stage::WB as usize].take() {
         Some(s) => s,
-        None => return None,
+        None => return Writeback::Empty,
     };
 
     if slot.is_bubble {
-        return None;
+        return Writeback::Empty;
+    }
+
+    // The fetch failed and the program really did get here.
+    if let Some(fault) = slot.fetch_fault.clone() {
+        cpu.pc = slot.pc;
+        match fault {
+            super::FetchFault::Fatal(message) => {
+                console.push_error(message);
+                state.faulted = true;
+            }
+            super::FetchFault::Trap(trap) => {
+                pipeline_enter_trap(state, cpu, mem, console, slot.pc, trap)
+            }
+        }
+        return Writeback::Empty;
     }
 
     // Set cpu.pc to this instruction's PC (needed for ecall handlers)
@@ -1573,6 +1621,17 @@ pub(super) fn commit_wb(
             false
         }
     };
+
+    if !alive
+        && matches!(slot.instr, Some(Instruction::Ecall))
+        && cpu.exit_code.is_none()
+        && !cpu.local_exit
+        && (console.reading || cpu.sleep_until.is_some())
+    {
+        cpu.pc = slot.pc;
+        refetch_from(state, slot.pc);
+        return Writeback::Parked;
+    }
 
     if !alive && !console.reading && cpu.sleep_until.is_none() {
         state.halted = true;
@@ -1642,11 +1701,16 @@ pub(super) fn commit_wb(
     // the Run view highlights the instruction that stopped the hart.
     // halt is a pseudo-instruction: advance PC like sequential mode so cpu.pc
     // is consistent with exec::step (which pre-increments before executing).
+    // `mret` and `sret` already moved the PC to `mepc`/`sepc`; the front end
+    // has been holding still behind them and resumes there.
+    let returns_from_trap = matches!(slot.instr, Some(Instruction::Mret | Instruction::Sret));
     if !alive
         && (cpu.local_exit || cpu.exit_code.is_some())
         && !matches!(slot.instr, Some(Instruction::Halt))
     {
         cpu.pc = slot.pc;
+    } else if returns_from_trap {
+        refetch_from(state, cpu.pc);
     } else {
         cpu.pc = committed_next_pc(&slot);
     }
@@ -1657,7 +1721,7 @@ pub(super) fn commit_wb(
         state.branches_executed += 1;
     }
 
-    Some(CommitInfo {
+    Writeback::Retired(CommitInfo {
         pc: slot.pc,
         class: slot.class,
     })
@@ -3169,15 +3233,23 @@ fn frontend_stop_in_flight(state: &PipelineSimState) -> bool {
 }
 
 /// Instructions that must commit before the front end fetches again: traps,
-/// halt, and Zicsr.
+/// halt, Zicsr, and everything that changes what fetching means.
 ///
 /// A CSR instruction reads and writes its CSR at WB, and no bypass carries
 /// that value to a younger instruction. Holding the front end until it
-/// commits also keeps `frm`, read at ID, current. A CSR instruction is
-/// recognised from its word while still in IF, before ID decodes it.
+/// commits also keeps `frm`, read at ID, current. `mret` and `sret` move the
+/// PC and the privilege level, `fence.i` makes stored code visible and
+/// `sfence.vma` drops stale translations: whatever the front end fetched
+/// behind them would be the wrong instruction. All of these are recognised
+/// from their word while still in IF, before ID decodes them.
 fn stops_frontend(slot: &PipeSlot) -> bool {
     if slot.is_bubble {
         return false;
+    }
+    // Nothing sensible lies past a fetch that failed; wait to see whether the
+    // program really goes there.
+    if slot.fetch_fault.is_some() {
+        return true;
     }
     if matches!(
         slot.instr,
@@ -3195,6 +3267,10 @@ fn stops_frontend(slot: &PipeSlot) -> bool {
                 | Instruction::Csrrwi { .. }
                 | Instruction::Csrrsi { .. }
                 | Instruction::Csrrci { .. }
+                | Instruction::Mret
+                | Instruction::Sret
+                | Instruction::FenceI
+                | Instruction::SfenceVma { .. }
         )
     )
 }
@@ -3206,24 +3282,7 @@ fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, consol
     let branch_in_flight = branch_in_flight(state);
 
     if pc_in_program_range(state, state.fetch_pc) {
-        let entry_pc = state.fetch_pc;
-        let (fetched, fetch_error) = fetch_slot(entry_pc, mem);
-        if let Some(err) = fetch_error {
-            match err {
-                Ok(trap) => {
-                    // Page-fault on fetch — route through mtvec. fetch_into_if
-                    // does not receive &mut Cpu, so we stash the trap on the
-                    // state and pipeline_tick consumes it once it owns the
-                    // CPU borrow again.
-                    state.pending_fetch_trap = Some((entry_pc, trap.cause, trap.tval, trap.vaddr));
-                }
-                Err(msg) => {
-                    console.push_error(msg);
-                    state.faulted = true;
-                }
-            }
-        }
-        state.stages[0] = fetched;
+        state.stages[0] = Some(fetch_slot(state.fetch_pc, mem));
         if let Some(ref mut slot) = state.stages[0] {
             if slot.seq == 0 {
                 slot.seq = state.next_seq;
@@ -3382,34 +3441,43 @@ fn insert_stall(
 // ── Fetch ────────────────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Returned by [`fetch_slot`] alongside the slot:
-/// - `None`: normal empty cycle or successful fetch.
-/// - `Some(Err(msg))`: fatal bus / decode error, stop the pipeline.
-/// - `Some(Ok(trap))`: instruction-fetch page fault — route via `mtvec`.
-pub(super) type FetchError = Option<Result<MemTrap, String>>;
-
-pub(super) fn fetch_slot(pc: u32, mem: &mut CacheController) -> (Option<PipeSlot>, FetchError) {
+/// Fetch the instruction at `pc` into a fresh slot.
+///
+/// A fetch that fails still yields a slot, carrying a [`FetchFault`] that is
+/// raised only if the slot reaches commit.
+///
+/// [`FetchFault`]: super::FetchFault
+pub(super) fn fetch_slot(pc: u32, mem: &mut CacheController) -> PipeSlot {
     let (result, latency) = mem.fetch32_timed_no_count(pc);
-    match result {
-        Ok(word) => {
-            if let Err(e) = crate::falcon::decoder::decode(word) {
-                return (
-                    None,
-                    Some(Err(format!(
-                        "Invalid instruction 0x{word:08X} at 0x{pc:08X}: {e}"
-                    ))),
-                );
-            }
-            let mut slot = PipeSlot::from_word(pc, word);
-            slot.seq = 0;
-            slot.if_stall_cycles = latency.saturating_sub(1).min(255) as u8;
-            (Some(slot), None)
-        }
-        Err(crate::falcon::errors::FalconError::Trap { cause, tval, vaddr }) => {
-            (None, Some(Ok(MemTrap { cause, tval, vaddr })))
-        }
-        Err(e) => (None, Some(Err(format!("IF fault at 0x{pc:08X}: {e}")))),
+    let (word, fault) = match result {
+        Ok(word) => match crate::falcon::decoder::decode(word) {
+            Ok(_) => (word, None),
+            Err(e) => (
+                word,
+                Some(super::FetchFault::Fatal(format!(
+                    "Invalid instruction 0x{word:08X} at 0x{pc:08X}: {e}"
+                ))),
+            ),
+        },
+        Err(crate::falcon::errors::FalconError::Trap { cause, tval, vaddr }) => (
+            0,
+            Some(super::FetchFault::Trap(MemTrap { cause, tval, vaddr })),
+        ),
+        Err(e) => (
+            0,
+            Some(super::FetchFault::Fatal(format!(
+                "IF fault at 0x{pc:08X}: {e}"
+            ))),
+        ),
+    };
+    let mut slot = PipeSlot::from_word(pc, word);
+    if fault.is_some() {
+        slot.disasm = "fetch fault".to_string();
     }
+    slot.fetch_fault = fault;
+    slot.seq = 0;
+    slot.if_stall_cycles = latency.saturating_sub(1).min(255) as u8;
+    slot
 }
 
 fn pc_in_program_range(state: &PipelineSimState, pc: u32) -> bool {
