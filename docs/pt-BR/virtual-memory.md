@@ -443,7 +443,7 @@ A instrução **`sfence.vma`** sinaliza pro hardware: "invalide as traduções c
 - `sfence.vma rs1=x0, rs2=asid` → flush só o ASID dado.
 - `sfence.vma rs1=vaddr, rs2=asid` → flush a entrada específica.
 
-O Raven implementa `sfence.vma` como **flush total** nessa fase (`rs1`/`rs2` ignorados), o que é correto mas não otimizado. Escrever em `satp` também flusha, já que troca de tabela invalida tudo.
+O Raven respeita o `rs1`: `sfence.vma` com `rs1 = x0` esvazia a TLB inteira e, com um registrador, descarta só as entradas que traduzem aquele endereço (em qualquer ASID — o `rs2` é ignorado, o que é correto, só menos seletivo). Escrever em `satp` também esvazia tudo, já que trocar de tabela invalida todas as traduções.
 
 ---
 

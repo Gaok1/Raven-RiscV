@@ -443,7 +443,7 @@ The **`sfence.vma`** instruction signals the hardware: "invalidate the cached tr
 - `sfence.vma rs1=x0, rs2=asid` → flush only the given ASID.
 - `sfence.vma rs1=vaddr, rs2=asid` → flush the specific entry.
 
-Raven implements `sfence.vma` as a **full flush** in this release (`rs1`/`rs2` ignored), which is correct but not optimized. Writing `satp` also flushes, since switching tables invalidates everything.
+Raven honours `rs1`: `sfence.vma` with `rs1 = x0` flushes the whole TLB, and with a register it drops only the entries that translate that address (in every ASID — `rs2` is ignored, which is correct, just less selective). Writing `satp` also flushes everything, since switching tables invalidates every translation.
 
 ---
 

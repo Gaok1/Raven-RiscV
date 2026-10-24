@@ -335,7 +335,7 @@ bypass.ex_to_ex=true
 bypass.mem_to_ex=true
 bypass.wb_to_id=true
 bypass.store_to_load=false
-mode=SingleCycle
+mode=Serialized
 fu.alu=1
 fu.mul=1
 fu.div=1
@@ -369,8 +369,8 @@ list.
 
 - `enabled` — pipeline enabled in the TUI
 - `bypass.ex_to_ex` / `bypass.mem_to_ex` / `bypass.wb_to_id` / `bypass.store_to_load` — forwarding paths
-- `mode` — mapped in the UI as `Serialized` or `Parallel UFs`
-- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — functional-unit counts used by `Parallel UFs` mode
+- `mode` — `Serialized`, `ParallelUFs`, `Scoreboard` or `TomasuloRob` (shown in the UI as `Serialized`, `Parallel UFs`, `Scoreboard` and `Tomasulo + ROB`; `SingleCycle` and `FunctionalUnits` are accepted as aliases)
+- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — functional-unit counts used by `Parallel UFs`, `Scoreboard` and `Tomasulo + ROB`
 - `branch_resolve` — `Id`, `Ex`, or `Mem`
 - `predict` — `NotTaken`, `Taken`, `Btfnt`, or `TwoBit`
 - `speed` — TUI playback speed (`Slow`, `Normal`, `Fast`, `Instant`)

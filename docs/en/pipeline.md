@@ -59,6 +59,15 @@ Each visible pipeline step corresponds to exactly one CPU clock cycle. Cache lat
 - Handles `ecall`, `halt`, and `ebreak`
   `exit/exit_group` stop the whole program; `halt` stops the current hart permanently, while `ebreak`
   is a resumable debug stop
+- Runs the system instructions whose effect younger instructions must see: Zicsr (`csrrw`, `csrrs`,
+  `csrrc` and the immediate forms), `mret`, `sret`, `fence.i` and `sfence.vma`. Fetch holds still from the
+  moment one of them is fetched until it retires, then resumes at the right place — `mepc`/`sepc` after a
+  return, freshly stored code after `fence.i`, fresh translations after `sfence.vma` or a `satp` write
+- Raises a failed fetch (an invalid word, a bus error, an instruction page fault) only if that
+  instruction gets here: the front end runs ahead of branches, and a fetch on a path the program never
+  takes — past the last `ret`, say — is flushed without a trace. A page fault enters the trap handler
+- An `ecall` that has to wait — for a line of input, or on `screen_sleep_ms` — does not retire: it stays
+  parked and runs again when the run resumes, exactly as in sequential mode
 - Counts the instruction as retired only here
 
 ---
@@ -163,26 +172,18 @@ Visual markers:
 
 ## Execution model
 
-The pipeline config currently exposes two execution models:
+The pipeline config exposes four execution models (`mode=` in the `[pipeline]` section of a config file):
 
-- `Serialized`
-- `Parallel UFs`
+| Mode | Config tag | What it models |
+|---|---|---|
+| `Serialized` | `Serialized` | One instruction in `EX` at a time. A long-latency instruction holds `EX` for its configured latency and the front of the pipe waits behind it. |
+| `Parallel UFs` | `ParallelUFs` | `ID` dispatches into the functional-unit bank (ALU, MUL, DIV, FPU, LSU, SYS, each with a configurable number of instances), so independent instructions overlap in different units. Issue and retirement stay in program order. Loads and stores — including `flw`/`fsw` — go through the LSU and `MEM`. |
+| `Scoreboard` | `Scoreboard` | CDC 6600-style dynamic scheduling without renaming: a WAW stalls at issue and a WAR is guarded at write-result. |
+| `Tomasulo + ROB` | `TomasuloRob` | Reservation stations with register renaming and a reorder buffer: execution runs out of order, commit stays in order, exceptions stay precise. |
 
-Both use the same functional-unit panel in the UI. The difference is semantic, not cosmetic.
+All four use the same functional-unit declaration and latencies (`CPIConfig`), so switching model changes the scheduling, not the machine. Under `Scoreboard` and `Tomasulo + ROB` an instruction changes the machine in one piece when it commits, in program order — which is what keeps their exceptions precise — and the front end starts over after any instruction that moved the PC without being a branch (a trap, `mret`, `sret`) and after every system instruction.
 
-In the current implementation, execution still behaves like a single in-order EX path, and `EX` can remain busy for multiple cycles depending on class:
-
-- `ALU`
-- `MUL`
-- `DIV`
-- `LOAD`
-- `STORE`
-- `BRANCH`
-- `JUMP`
-- `SYSTEM`
-- `FP`
-
-While a long-latency instruction holds `EX`, the front of the pipe remains blocked and Raven keeps that state visible without letting unrelated IF latency progress incorrectly. The functional-unit panel breaks that latency down by FU so the user can see which resource is active and where parallelism could exist once the execution model allows it.
+While a long-latency instruction holds a unit, the panel shows which resource is busy and for how long, so the user can see where parallelism exists and which model exploits it.
 
 ---
 

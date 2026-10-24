@@ -333,7 +333,7 @@ bypass.ex_to_ex=true
 bypass.mem_to_ex=true
 bypass.wb_to_id=true
 bypass.store_to_load=false
-mode=SingleCycle
+mode=Serialized
 fu.alu=1
 fu.mul=1
 fu.div=1
@@ -367,8 +367,8 @@ lista completa de campos.
 
 - `enabled` — pipeline habilitado na TUI
 - `bypass.ex_to_ex` / `bypass.mem_to_ex` / `bypass.wb_to_id` / `bypass.store_to_load` — caminhos de forwarding
-- `mode` — mapeado na UI como `Serialized` ou `Parallel UFs`
-- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — quantidade de unidades funcionais usada no modo `Parallel UFs`
+- `mode` — `Serialized`, `ParallelUFs`, `Scoreboard` ou `TomasuloRob` (mostrados na UI como `Serialized`, `Parallel UFs`, `Scoreboard` e `Tomasulo + ROB`; `SingleCycle` e `FunctionalUnits` também são aceitos)
+- `fu.alu` / `fu.mul` / `fu.div` / `fu.fpu` / `fu.lsu` / `fu.sys` — quantidade de unidades funcionais usada em `Parallel UFs`, `Scoreboard` e `Tomasulo + ROB`
 - `branch_resolve` — `Id`, `Ex` ou `Mem`
 - `predict` — `NotTaken`, `Taken`, `Btfnt` ou `TwoBit`
 - `speed` — velocidade de reprodução na TUI (`Slow`, `Normal`, `Fast`, `Instant`)

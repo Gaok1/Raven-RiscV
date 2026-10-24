@@ -59,6 +59,17 @@ Cada passo visível no pipeline corresponde exatamente a um ciclo de clock da CP
 - Trata `ecall`, `halt` e `ebreak`
   `exit/exit_group` param o programa inteiro; `halt` para o hart atual permanentemente, enquanto `ebreak`
   é uma pausa de debug resumível
+- Executa as instruções de sistema cujo efeito as instruções mais novas precisam ver: Zicsr (`csrrw`,
+  `csrrs`, `csrrc` e as formas com imediato), `mret`, `sret`, `fence.i` e `sfence.vma`. A busca fica parada
+  desde que uma delas é buscada até ela ser retirada, e retoma no lugar certo — `mepc`/`sepc` depois de um
+  retorno, o código recém-escrito depois de `fence.i`, traduções novas depois de `sfence.vma` ou de uma
+  escrita em `satp`
+- Só levanta uma busca que falhou (palavra inválida, erro de barramento, page fault de instrução) se essa
+  instrução chegar aqui: o front end corre à frente dos desvios, e uma busca num caminho que o programa
+  nunca toma — depois do último `ret`, por exemplo — é descartada sem deixar rastro. Um page fault entra no
+  tratador de trap
+- Um `ecall` que precisa esperar — por uma linha de entrada, ou em `screen_sleep_ms` — não é retirado: fica
+  estacionado e executa de novo quando a execução continua, exatamente como no modo sequencial
 - Conta a instrução como retirada apenas aqui
 
 ---
@@ -170,26 +181,18 @@ Marcadores visuais:
 
 ## Modelo de execução
 
-A configuração do pipeline atualmente expõe dois modelos de execução:
+A configuração do pipeline expõe quatro modelos de execução (`mode=` na seção `[pipeline]` de um arquivo de configuração):
 
-- `Serialized`
-- `Parallel UFs`
+| Modo | Tag na configuração | O que modela |
+|---|---|---|
+| `Serialized` | `Serialized` | Uma instrução em `EX` por vez. Uma instrução de longa latência ocupa o `EX` pela latência configurada e a frente do pipeline espera atrás dela. |
+| `Parallel UFs` | `ParallelUFs` | O `ID` despacha para o banco de unidades funcionais (ALU, MUL, DIV, FPU, LSU, SYS, cada uma com um número configurável de instâncias), então instruções independentes se sobrepõem em unidades diferentes. A emissão e a retirada continuam em ordem de programa. Loads e stores — incluindo `flw`/`fsw` — passam pela LSU e pelo `MEM`. |
+| `Scoreboard` | `Scoreboard` | Escalonamento dinâmico ao estilo do CDC 6600, sem renomeação: um WAW para na emissão e um WAR é protegido na escrita do resultado. |
+| `Tomasulo + ROB` | `TomasuloRob` | Estações de reserva com renomeação de registradores e um buffer de reordenação: a execução corre fora de ordem, o commit continua em ordem e as exceções continuam precisas. |
 
-Ambos usam o mesmo painel de unidades funcionais na UI. A diferença é semântica, não cosmética.
+Os quatro usam a mesma declaração de unidades funcionais e as mesmas latências (`CPIConfig`), então trocar de modelo muda o escalonamento, não a máquina. Em `Scoreboard` e `Tomasulo + ROB` uma instrução altera a máquina de uma vez, no commit, em ordem de programa — é isso que mantém as exceções precisas — e o front end recomeça depois de qualquer instrução que moveu o PC sem ser um desvio (um trap, `mret`, `sret`) e depois de toda instrução de sistema.
 
-Na implementação atual, a execução ainda se comporta como um único caminho EX in-order, e `EX` pode permanecer ocupado por múltiplos ciclos dependendo da classe:
-
-- `ALU`
-- `MUL`
-- `DIV`
-- `LOAD`
-- `STORE`
-- `BRANCH`
-- `JUMP`
-- `SYSTEM`
-- `FP`
-
-Enquanto uma instrução de longa latência mantém o `EX` ocupado, a frente do pipeline permanece bloqueada e o Raven mantém esse estado visível sem deixar a latência de IF não relacionada progredir incorretamente. O painel de unidades funcionais decompõe essa latência por UF para que o usuário possa ver qual recurso está ativo e onde o paralelismo poderia existir quando o modelo de execução permitir.
+Enquanto uma instrução de longa latência ocupa uma unidade, o painel mostra qual recurso está ocupado e por quanto tempo, para que o usuário veja onde existe paralelismo e qual modelo o aproveita.
 
 ---
 
