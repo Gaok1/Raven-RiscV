@@ -610,6 +610,29 @@ fn the_machine_a_user_built_survives_a_model_change() {
     assert_eq!(engine.shape().timing.div, 9);
 }
 
+/// For a backend that keeps the predictor in its own settings rather than in
+/// the engine's rows.
+#[test]
+fn a_predictor_set_by_the_backend_reaches_the_model_running() {
+    let branch = || op(0, PipelineInstructionClass::Branch).branching_to(Some(0x40));
+
+    let mut tomasulo = engine(PipelineMode::TomasuloRob);
+    tomasulo.set_predict(BranchPredict::Taken);
+    tomasulo.fetched(branch());
+    assert_eq!(tomasulo.fetch_pc(), 0x40, "speculated down the taken path");
+
+    // A scoreboard has no predictor, so it goes on fetching the fall-through,
+    // but the next model it becomes has one and uses the choice.
+    let mut scoreboard = engine(PipelineMode::Scoreboard);
+    scoreboard.set_predict(BranchPredict::Taken);
+    scoreboard.fetched(branch());
+    assert_eq!(scoreboard.fetch_pc(), 4);
+    assert!(scoreboard.set_mode(PipelineMode::TomasuloRob));
+    assert_eq!(scoreboard.shape().predict, BranchPredict::Taken);
+    scoreboard.fetched(branch());
+    assert_eq!(scoreboard.fetch_pc(), 0x40);
+}
+
 #[test]
 fn the_model_row_is_the_first_row_of_every_engine() {
     let mut engine = engine(PipelineMode::SingleCycle);

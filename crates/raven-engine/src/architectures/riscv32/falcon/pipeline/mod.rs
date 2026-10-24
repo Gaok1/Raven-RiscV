@@ -878,7 +878,7 @@ impl PipelineSimState {
         self.fu_busy = [0; 7];
         self.hazard_msgs.clear();
         self.hazard_traces.clear();
-        self.ooo = ooo::engine_for(mode, timing, &self.fu_capacity, self.fetch_pc);
+        self.ooo = ooo::engine_for(mode, timing, self.predict, &self.fu_capacity, self.fetch_pc);
         if let Some(engine) = &mut self.ooo {
             crate::capability::PipelineControl::set_enabled(engine, self.enabled);
         }

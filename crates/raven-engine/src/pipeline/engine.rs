@@ -31,7 +31,7 @@ use crate::capability::{
     PipelineTraceView, PipelineTuning, PipelineUnitView,
 };
 
-use super::config::{PipelineMode, PipelineShape};
+use super::config::{BranchPredict, PipelineMode, PipelineShape};
 use super::ooo::{ScoreboardPipeline, TomasuloPipeline};
 use super::op::PipelineOp;
 use super::scalar::ScalarPipeline;
@@ -122,6 +122,25 @@ impl<P> PipelineEngine<P> {
     /// somewhere other than this package's own settings screen.
     pub fn set_timing(&mut self, timing: super::config::PipelineTiming) {
         dispatch!(self, |inner| inner.shape_mut().timing = timing);
+    }
+
+    /// Change how the front end guesses a branch, for a backend whose user
+    /// picks the predictor somewhere other than this package's own settings
+    /// screen.
+    ///
+    /// A scoreboard has no predictor to change. It keeps the choice in its
+    /// shape all the same, so a later change of model hands it to one that
+    /// does.
+    pub fn set_predict(&mut self, predict: BranchPredict) {
+        match self {
+            Self::InOrder(inner) => {
+                inner.set_predict(predict);
+            }
+            Self::Scoreboard(inner) => inner.shape_mut().predict = predict,
+            Self::Tomasulo(inner) => {
+                inner.set_predict(predict);
+            }
+        }
     }
 
     /// Change the execution model, swapping the engine when the new model is

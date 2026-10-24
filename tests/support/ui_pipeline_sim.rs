@@ -4625,3 +4625,98 @@ fn an_ecall_waits_for_the_argument_it_is_passed() {
         }
     }
 }
+
+/// Run `asm` under `mode` with the branch predictor set to `predict`, the way
+/// a config file or the settings screen sets it: after the mode.
+fn run_pipeline_mode_predicting(
+    asm: &str,
+    mode: crate::falcon::pipeline::PipelineMode,
+    predict: super::super::BranchPredict,
+) -> (Cpu, PipelineSimState) {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.set_mode(mode, &cpi);
+    state.set_predict(predict);
+    mem.bypass = true;
+    load_program_into_mem(asm, &mut cpu, &mut mem);
+    state.reset_stages(0);
+    for _ in 0..2048 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+        if state.halted || state.faulted {
+            break;
+        }
+    }
+    (cpu, state)
+}
+
+#[test]
+fn tomasulo_follows_the_branch_predictor_a_user_picks() {
+    // Two things kept the out-of-order front end on the fall-through path.
+    // The engine was built with the not-taken predictor whatever `predict`
+    // said, and a branch it did guess taken, and guessed right, was squashed
+    // anyway: the PC was compared with the fall-through rather than with the
+    // path the front end had fetched. The loop below is taken 19 times.
+    use super::super::BranchPredict;
+    let asm = r#"
+.text
+    li   a0, 20
+top:
+    addi a0, a0, -1
+    addi a1, a1, 2
+    bne  a0, zero, top
+    halt
+"#;
+    let (_, cpu_seq, _) = run_sequential(asm);
+    assert_eq!([cpu_seq.read(10), cpu_seq.read(11)], [0, 40]);
+    let predictors = [
+        BranchPredict::NotTaken,
+        BranchPredict::Taken,
+        BranchPredict::Btfnt,
+        BranchPredict::TwoBit,
+    ];
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let runs = predictors.map(|predict| {
+            let (cpu, state) = run_pipeline_mode_predicting(asm, mode, predict);
+            assert!(state.halted && !state.faulted, "{mode:?} {predict:?}");
+            assert_eq!(
+                [cpu.read(10), cpu.read(11)],
+                [0, 40],
+                "{mode:?} {predict:?}"
+            );
+            let flushes = state
+                .ooo
+                .as_ref()
+                .map(|engine| crate::capability::PipelineInspect::stats(engine).flushes);
+            (state.cycle_count, flushes)
+        });
+        let (not_taken_cycles, not_taken_flushes) = runs[0];
+        match mode {
+            crate::falcon::pipeline::PipelineMode::TomasuloRob => {
+                for (predict, (cycles, flushes)) in predictors.iter().zip(runs).skip(1) {
+                    assert!(
+                        flushes < not_taken_flushes && cycles < not_taken_cycles,
+                        "{predict:?} gained nothing over not-taken: {cycles} cycles and \
+                         {flushes:?} flushes, against {not_taken_cycles} and \
+                         {not_taken_flushes:?}"
+                    );
+                }
+            }
+            // A scoreboard machine had no predictor: it stops issuing behind
+            // every branch, whatever a user picks.
+            crate::falcon::pipeline::PipelineMode::Scoreboard => {
+                for (predict, run) in predictors.iter().zip(runs) {
+                    assert_eq!(run, runs[0], "{predict:?}");
+                }
+            }
+            _ => {}
+        }
+    }
+}

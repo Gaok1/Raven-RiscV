@@ -24,7 +24,9 @@
 use crate::capability::PipelineInspect;
 use crate::falcon::Cpu;
 use crate::falcon::cache::CacheController;
-use crate::pipeline::{PipelineEngine, PipelineMode, PipelineOp, PipelineShape, PipelineTiming};
+use crate::pipeline::{
+    BranchPredict, PipelineEngine, PipelineMode, PipelineOp, PipelineShape, PipelineTiming,
+};
 use crate::ui::Console;
 
 use super::forwarding::{RegFile, is_hardwired_zero, operand_reg_file, slot_destination};
@@ -35,13 +37,14 @@ use super::{
 
 /// RV32's datapath as the shared engines see it.
 ///
-/// The same five stages and six units the in-order model declares, so the
-/// unit bank a user configured means the same thing under either — switching
-/// model changes the scheduling, not the machine.
-fn shape(mode: PipelineMode, timing: &PipelineTiming) -> PipelineShape {
+/// The same five stages and six units the in-order model declares, and the
+/// same branch predictor, so what a user configured means the same thing under
+/// either — switching model changes the scheduling, not the machine.
+fn shape(mode: PipelineMode, timing: &PipelineTiming, predict: BranchPredict) -> PipelineShape {
     let mut shape = PipelineShape::scalar(&STAGES, Some(4))
         .with_units(&UNITS)
-        .with_timing(timing.clone());
+        .with_timing(timing.clone())
+        .with_predict(predict);
     shape.mode = mode;
     shape
 }
@@ -51,13 +54,14 @@ fn shape(mode: PipelineMode, timing: &PipelineTiming) -> PipelineShape {
 pub fn engine_for(
     mode: PipelineMode,
     timing: &PipelineTiming,
+    predict: BranchPredict,
     capacity: &[u8; FuKind::COUNT],
     entry: u32,
 ) -> Option<OooEngine> {
     if !mode.is_out_of_order() {
         return None;
     }
-    let mut engine = PipelineEngine::new(shape(mode, timing), u64::from(entry));
+    let mut engine = PipelineEngine::new(shape(mode, timing, predict), u64::from(entry));
     for (unit, instances) in capacity.iter().enumerate() {
         engine.set_capacity(unit, (*instances).max(1) as usize);
     }
@@ -79,8 +83,11 @@ pub fn ooo_tick(
     // Taken out for the cycle: executing an instruction needs the rest of
     // `state`, and the engine is part of it.
     let mut engine = state.ooo.take()?;
-    // Latency edits on the settings screen reach the shape a user is running.
+    // Latency edits on the settings screen reach the shape a user is running,
+    // and so does the predictor picked there: it is `state`'s, which the
+    // in-order model reads too, and the engine only follows it.
     engine.set_timing(timing.clone());
+    engine.set_predict(state.predict);
 
     let committing = engine.start_cycle();
     let mut commit = None;
@@ -141,19 +148,23 @@ pub fn ooo_tick(
     commit
 }
 
-/// Where the front end has to start over after an instruction that is not a
-/// branch, if anywhere.
+/// Where the front end has to start over after an instruction, if anywhere.
 ///
-/// The engine fetches down the sequential path behind every such
-/// instruction. That path is wrong when the instruction moved the PC anyway —
-/// a trap, `mret`, `sret` — and stale when it changed what fetching means: the
-/// code (`fence.i`), the translations (`sfence.vma`, a write to `satp`) or the
-/// privilege level. Every system instruction is one of those or cheap enough
-/// to treat as one, so the front end refetches after all of them, the way an
-/// in-order core drains behind a serialising instruction.
+/// The engine fetched down the path it predicted behind every instruction:
+/// the sequential one, or for a branch the way it guessed. That path is wrong
+/// when the PC went anywhere else — a trap, `mret`, `sret` — and stale when the
+/// instruction changed what fetching means: the code (`fence.i`), the
+/// translations (`sfence.vma`, a write to `satp`) or the privilege level.
+/// Every system instruction is one of those or cheap enough to treat as one,
+/// so the front end refetches after all of them, the way an in-order core
+/// drains behind a serialising instruction.
+///
+/// Measuring against the prediction rather than the fall-through is what lets
+/// a branch the front end guessed taken, and guessed right, keep the path it
+/// fetched.
 fn refetch_after(op: &PipelineOp<u32>, pc: u32) -> Option<u64> {
-    let sequential = op.address.wrapping_add(4);
-    (op.class == InstrClass::System || u64::from(pc) != sequential).then_some(u64::from(pc))
+    (op.class == InstrClass::System || u64::from(pc) != op.predicted_next())
+        .then_some(u64::from(pc))
 }
 
 /// Run one instruction all the way through, in one piece.
@@ -508,8 +519,11 @@ top:
     halt
 "#,
         );
-        let shape = shape(PipelineMode::TomasuloRob, &PipelineTiming::default())
-            .with_predict(BranchPredict::Taken);
+        let shape = shape(
+            PipelineMode::TomasuloRob,
+            &PipelineTiming::default(),
+            BranchPredict::Taken,
+        );
         let mut engine = PipelineEngine::new(shape, 0);
         engine.fetched(fetch(0x4, &mut mem));
         assert_eq!(engine.fetch_pc(), 0x0, "fetch went down the fall-through");
