@@ -29,6 +29,9 @@ pub fn csr_read(cpu: &Cpu, csr: u16) -> u32 {
         0x341 => cpu.mepc,
         0x342 => cpu.mcause,
         0x343 => cpu.mtval,
+        // mhartid: read-only, and what tells harts apart at reset — riscv-tests'
+        // environment parks every hart that does not read 0 here.
+        0xF14 => cpu.hart_id,
         _ => 0,
     }
 }

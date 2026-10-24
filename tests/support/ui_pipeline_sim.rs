@@ -4083,6 +4083,82 @@ fn branch_flush_clears_speculative_work_already_dispatched_to_fu_bank() {
     );
 }
 
+/// Run `asm` with the caches on until the hart stops: sequentially when
+/// `mode` is `None`, otherwise under that pipeline mode. `setup` sees the
+/// machine after the load and before the first instruction.
+fn run_until_stopped(
+    asm: &str,
+    mode: Option<crate::falcon::pipeline::PipelineMode>,
+    setup: impl FnOnce(&crate::falcon::asm::Program, &mut Cpu, &mut CacheController),
+) -> (crate::falcon::asm::Program, Cpu, CacheController, Console) {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    let prog = load_program_into_mem(asm, &mut cpu, &mut mem);
+    setup(&prog, &mut cpu, &mut mem);
+    match mode {
+        None => {
+            for _ in 0..256 {
+                if !exec::step(&mut cpu, &mut mem, &mut console).expect("sequential step") {
+                    break;
+                }
+            }
+        }
+        Some(mode) => {
+            let cpi = CpiConfig::default();
+            let mut state = PipelineSimState::new();
+            state.set_mode(mode, &cpi);
+            state.reset_stages(0);
+            if let Some(engine) = state.ooo.as_mut() {
+                crate::capability::PipelineControl::reset(engine, 0);
+            }
+            for _ in 0..4096 {
+                pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+                if state.halted || state.faulted {
+                    break;
+                }
+            }
+            assert!(
+                state.halted && !state.faulted,
+                "{mode:?} did not stop cleanly: {:?}",
+                console.lines.iter().map(|l| &l.text).collect::<Vec<_>>()
+            );
+        }
+    }
+    (prog, cpu, mem, console)
+}
+
+/// Sequential mode, then every pipeline mode.
+fn every_execution_model() -> Vec<Option<crate::falcon::pipeline::PipelineMode>> {
+    std::iter::once(None)
+        .chain(crate::falcon::pipeline::PipelineMode::all().into_iter().map(Some))
+        .collect()
+}
+
+#[test]
+fn mhartid_reads_the_hart_id_in_every_mode() {
+    // riscv-tests' environment parks every hart that does not read 0 here.
+    let asm = r#"
+.text
+    csrr a0, mhartid
+    li   t0, 9
+    csrw mhartid, t0    # read-only
+    csrr a1, mhartid
+    halt
+"#;
+    for model in every_execution_model() {
+        let (_, cpu, _, _) = run_until_stopped(asm, model, |_, cpu, _| cpu.hart_id = 2);
+        assert_eq!(cpu.read(10), 2, "{model:?}");
+        assert_eq!(cpu.read(11), 2, "{model:?}");
+        assert_eq!(cpu.hart_id, 2, "{model:?}");
+    }
+}
+
 /// Run `asm` under `mode` until it halts, with the caches on (`bypass` off) so
 /// the D-cache and I-cache really are separate.
 fn run_pipeline_mode_cached(
