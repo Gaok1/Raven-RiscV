@@ -11,6 +11,7 @@ use super::{Machine, NoPipeline};
 use crate::falcon::cache::{CacheConfig, CacheController};
 use crate::falcon::encoder::encode;
 use crate::falcon::instruction::Instruction;
+use crate::falcon::jit::ExecOutcome;
 use crate::falcon::memory::Bus;
 use crate::falcon::registers::Cpu;
 use crate::ui::Console;
@@ -295,6 +296,76 @@ fn stepback_reports_what_it_undid() {
     assert_eq!(m.stepback(), Some(StepbackKind::Edit));
     assert_eq!(m.stepback(), Some(StepbackKind::Step));
     assert_eq!(m.stepback(), None, "journal is empty");
+}
+
+#[test]
+fn an_edit_of_tohost_asks_the_host_for_nothing() {
+    // The cell editor stores through the bus as the program does, but what it
+    // writes there is the user's. An odd value used to end the run at the next
+    // instruction, with the PC put back on it after it had run; an even one
+    // used up the single report of an unsupported request.
+    let program = [
+        Instruction::Addi {
+            rd: 2,
+            rs1: 0,
+            imm: DATA_ADDR as i32,
+        },
+        Instruction::Addi {
+            rd: 1,
+            rs1: 0,
+            imm: 0x100,
+        },
+        Instruction::Sw {
+            rs2: 1,
+            rs1: 2,
+            imm: 0,
+        }, // the program's own system call through `tohost`
+    ];
+    let mut m = machine_with(&program, write_through_dcache());
+    m.mem_mut_unjournaled().set_tohost(Some(DATA_ADDR));
+    let mut console = Console::default();
+
+    m.write_mem(DATA_ADDR, MemWidth::B4, 7).unwrap(); // exit(3)
+    m.write_mem(DATA_ADDR, MemWidth::B4, 0x200).unwrap(); // a system call
+    m.stepback();
+    for _ in 0..program.len() {
+        let outcome = m.step_interpreted(&mut console).unwrap();
+        assert!(
+            matches!(outcome, ExecOutcome::Stepped { .. }),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(m.cpu().exit_code, None);
+    assert_eq!(m.cpu().pc, 12);
+    let reports: Vec<_> = console
+        .lines
+        .iter()
+        .filter(|l| l.text.contains("not supported"))
+        .map(|l| l.text.as_str())
+        .collect();
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert!(reports[0].contains("0x00000100"), "{reports:?}");
+}
+
+#[test]
+fn stepback_drops_a_tohost_request_made_after_the_snapshot() {
+    // Every path answers a request at its next instruction boundary, where
+    // snapshots are taken, so one still waiting at a step-back was made by a
+    // store being rewound — say, in a compiled block that went on to fault.
+    let mut m = machine_with(&load_store_program(), write_through_dcache());
+    m.mem_mut_unjournaled().set_tohost(Some(DATA_ADDR));
+    m.checkpoint();
+    m.mem_mut_unjournaled().store32(DATA_ADDR, 7).unwrap();
+    m.stepback();
+
+    let mut console = Console::default();
+    let outcome = m.step_interpreted(&mut console).unwrap();
+    assert!(
+        matches!(outcome, ExecOutcome::Stepped { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(m.cpu().exit_code, None);
+    assert_eq!(m.cpu().pc, 4);
 }
 
 #[test]

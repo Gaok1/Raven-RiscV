@@ -121,6 +121,19 @@ impl CacheController {
         self.tohost
     }
 
+    /// Run `edit` with `tohost` unwatched.
+    ///
+    /// For writes the program did not make — a debugger edit of a memory
+    /// cell. Those are not the program talking to the host: one landing on
+    /// `tohost` must neither end the run at whatever instruction comes next
+    /// nor use up the one report of an unsupported request.
+    pub fn with_tohost_unwatched<R>(&mut self, edit: impl FnOnce(&mut Self) -> R) -> R {
+        let tohost = self.tohost.take();
+        let result = edit(self);
+        self.tohost = tohost;
+        result
+    }
+
     /// Note what a word store of `val` at `paddr` asks of the host, if it
     /// landed on `tohost`. Zero is the program clearing the word.
     fn observe_tohost_store(&mut self, paddr: u32, val: u32) {
@@ -257,6 +270,9 @@ impl CacheController {
         self.step_count = snap.step_count;
         self.bypass = snap.bypass;
         self.reservations = snap.reservations;
+        // A snapshot is taken between instructions, where no request is left
+        // waiting: one still here was made after it, by a store this rewinds.
+        self.host_request = None;
     }
 
     pub fn reset_stats(&mut self) {

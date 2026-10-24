@@ -331,17 +331,18 @@ impl<P: JournaledPipeline> Machine<P> {
 
     /// Write a `width`-byte cell at `addr` through the normal cache-aware store
     /// path, so subsequent loads see the edit. `value` is the little-endian
-    /// payload (already range-checked by [`parse::parse_cell`]).
+    /// payload (already range-checked by [`parse::parse_cell`]). An edit of the
+    /// `tohost` word is only an edit: it asks the host for nothing.
     pub fn write_mem(&mut self, addr: u32, width: MemWidth, value: u64) -> Result<(), FalconError> {
         let cpu_before = self.cpu.clone();
         let cache_before = self.mem.snapshot_state();
         self.mem.ram_mut().begin_recording();
 
-        let result = match width {
-            MemWidth::B1 => self.mem.store8(addr, value as u8),
-            MemWidth::B2 => self.mem.store16(addr, value as u16),
-            MemWidth::B4 => self.mem.store32(addr, value as u32),
-        };
+        let result = self.mem.with_tohost_unwatched(|mem| match width {
+            MemWidth::B1 => mem.store8(addr, value as u8),
+            MemWidth::B2 => mem.store16(addr, value as u16),
+            MemWidth::B4 => mem.store32(addr, value as u32),
+        });
 
         let ram_log = self.mem.ram_mut().take_recording();
         self.record(
