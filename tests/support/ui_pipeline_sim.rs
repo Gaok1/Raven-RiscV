@@ -4469,3 +4469,159 @@ fn set_mode_builds_the_engine_even_if_mode_was_assigned_directly() {
     state.set_mode(crate::falcon::pipeline::PipelineMode::TomasuloRob, &cpi);
     assert!(state.ooo.is_some());
 }
+
+/// Run `asm` under `mode` with four FPUs, enough that no float instruction in
+/// a short program waits for a unit. With fewer, one can wait for the unit
+/// whether or not it needs the result, and in-order issue holds everything
+/// behind it, which hides the register dependency a timing test looks for.
+fn run_pipeline_mode_spare_fpus(
+    asm: &str,
+    mode: crate::falcon::pipeline::PipelineMode,
+) -> (Cpu, PipelineSimState) {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.fu_capacity[FuKind::Fpu.index()] = 4;
+    state.set_mode(mode, &cpi);
+    mem.bypass = true;
+    load_program_into_mem(asm, &mut cpu, &mut mem);
+    state.reset_stages(0);
+    for _ in 0..1024 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+        if state.halted || state.faulted {
+            break;
+        }
+    }
+    (cpu, state)
+}
+
+#[test]
+fn a_reader_of_f0_waits_for_its_producer_in_every_mode() {
+    // The out-of-order models dropped f0 as a destination, as if it were x0,
+    // so the fadd did not wait for the fdiv. Tomasulo executes at commit, in
+    // program order, so there only the cycle count was wrong; the scoreboard
+    // executes an instruction when its unit writes, so there the fadd ran
+    // first and read a stale f0.
+    let program = |rd: &str, read: &str| {
+        format!(
+            r#"
+.text
+    li   t0, 1
+    li   t1, 3
+    fcvt.s.w f5, t0
+    fcvt.s.w f6, t1
+    fdiv.s {rd}, f5, f6
+    fadd.s f7, {read}, {read}
+    fmv.x.w a0, f7
+    halt
+"#
+        )
+    };
+    let (_, cpu_seq, _) = run_sequential(&program("f0", "f0"));
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let (cpu_f0, f0) = run_pipeline_mode_spare_fpus(&program("f0", "f0"), mode);
+        let (cpu_f1, f1) = run_pipeline_mode_spare_fpus(&program("f1", "f1"), mode);
+        assert!(f0.halted && !f0.faulted, "{mode:?} f0");
+        assert!(f1.halted && !f1.faulted, "{mode:?} f1");
+        assert_eq!(cpu_f0.read(10), cpu_seq.read(10), "{mode:?} f0");
+        assert_eq!(cpu_f1.read(10), cpu_seq.read(10), "{mode:?} f1");
+        assert_eq!(
+            f0.cycle_count, f1.cycle_count,
+            "{mode:?}: the same program took a different time through f0"
+        );
+        if mode.is_out_of_order() {
+            // The fadd reading a register nothing writes is what the f0
+            // program used to cost; the dependency has to show against it.
+            let (_, apart) = run_pipeline_mode_spare_fpus(&program("f0", "f2"), mode);
+            assert!(
+                f0.cycle_count > apart.cycle_count,
+                "{mode:?}: the fadd did not wait for the fdiv ({} vs {} cycles)",
+                f0.cycle_count,
+                apart.cycle_count,
+            );
+        }
+    }
+}
+
+#[test]
+fn float_instructions_wait_for_their_integer_operands_in_every_mode() {
+    // Every operand of a float instruction used to be named in the float
+    // file. The scoreboard executes an instruction when its unit writes, so
+    // flw ran before the div computing its base, fcvt.s.w before the div
+    // computing its source, and the addi before the fmv.x.w it reads, each
+    // on a stale value.
+    let asm = r#"
+.data
+val: .word 0x40490fdb
+.text
+    la   t5, val
+    li   t6, 1
+    li   t0, 84
+    li   t1, 2
+    div  t4, t5, t6
+    flw  f2, 0(t4)
+    div  t2, t0, t1
+    fcvt.s.w f1, t2
+    fmv.x.w a0, f1
+    addi a1, a0, 1
+    fmv.x.w a2, f2
+    halt
+"#;
+    let (_, cpu_seq, _) = run_sequential(asm);
+    let regs = |cpu: &Cpu| [10, 11, 12].map(|r| cpu.read(r));
+    assert_eq!(regs(&cpu_seq), [0x4228_0000, 0x4228_0001, 0x4049_0fdb]);
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let mut console = Console::default();
+        let (cpu, state) = run_pipeline_mode_cached(asm, mode, &mut console);
+        assert!(state.halted && !state.faulted, "{mode:?}");
+        assert_eq!(regs(&cpu), regs(&cpu_seq), "{mode:?}");
+    }
+}
+
+#[test]
+fn an_ecall_waits_for_the_argument_it_is_passed() {
+    // The ecall named no registers, so under the scoreboard it ran alongside
+    // the div computing its argument and only waited at the end, for the
+    // machine to drain. Tomasulo runs a system instruction alone at the head
+    // of the buffer, which orders it against the div regardless.
+    let program = |arg: &str, other: &str| {
+        format!(
+            r#"
+.text
+    li   t0, 84
+    li   t1, 2
+    li   a7, 1000
+    li   {other}, 42
+    div  {arg}, t0, t1
+    ecall
+    halt
+"#
+        )
+    };
+    let passed = program("a0", "t3");
+    let unrelated = program("t3", "a0");
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let mut console = Console::default();
+        let (cpu, waited) = run_pipeline_mode_cached(&passed, mode, &mut console);
+        assert!(waited.halted && !waited.faulted, "{mode:?}");
+        assert_eq!(cpu.stdout, b"42", "{mode:?}");
+        if mode == crate::falcon::pipeline::PipelineMode::Scoreboard {
+            let mut console = Console::default();
+            let (cpu, apart) = run_pipeline_mode_cached(&unrelated, mode, &mut console);
+            assert_eq!(cpu.stdout, b"42", "{mode:?}");
+            assert!(
+                waited.cycle_count > apart.cycle_count,
+                "the ecall did not wait for a0 ({} vs {} cycles)",
+                waited.cycle_count,
+                apart.cycle_count,
+            );
+        }
+    }
+}
