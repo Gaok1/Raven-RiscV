@@ -132,7 +132,7 @@ pub fn ooo_tick(
         engine.halt();
     }
     if let Some(address) = engine.advance(redirect) {
-        engine.fetched(fetch(address as u32, mem));
+        engine.fetched(as_memory_access(fetch(address as u32, mem)));
     }
 
     state.fetch_pc = engine.fetch_pc() as u32;
@@ -154,6 +154,24 @@ pub fn ooo_tick(
 fn refetch_after(op: &PipelineOp<u32>, pc: u32) -> Option<u64> {
     let sequential = op.address.wrapping_add(4);
     (op.class == InstrClass::System || u64::from(pc) != sequential).then_some(u64::from(pc))
+}
+
+/// Schedule `flw` and `fsw` as the memory accesses they are.
+///
+/// Their class says float work, and the class picks the unit: on the FPU they
+/// would run outside the program order memory keeps in the load/store unit,
+/// and the scoreboard, which writes results out of order, let a `lw` read a
+/// word before the `fsw` ahead of it had stored it. The in-order model's unit
+/// bank sends them to the LSU for the same reason. Only the scheduling
+/// changes; the registers are still the ones `fetch` named.
+fn as_memory_access(mut op: PipelineOp<u32>) -> PipelineOp<u32> {
+    use crate::falcon::instruction::Instruction::{Flw, Fsw};
+    match crate::falcon::decoder::decode(op.payload) {
+        Ok(Flw { .. }) => op.class = InstrClass::Load,
+        Ok(Fsw { .. }) => op.class = InstrClass::Store,
+        _ => {}
+    }
+    op
 }
 
 /// Run one instruction all the way through, in one piece.

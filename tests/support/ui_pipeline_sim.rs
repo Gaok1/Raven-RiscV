@@ -4231,6 +4231,34 @@ tohost:
 }
 
 #[test]
+fn flw_and_fsw_keep_memory_order_in_every_mode() {
+    // riscv-tests rv32uf ldst, case 2. The out-of-order models sent `flw` and
+    // `fsw` to the FPU as float work, outside the order the load/store unit
+    // keeps, and the scoreboard let the `lw` read the word before the `fsw`
+    // had stored it. The nops give `la` time to finish, so the base address
+    // is ready whether or not `flw` names it (#86).
+    let asm = r#"
+.data
+two:  .float 2.0
+copy: .word 0
+.text
+    la   a1, two
+    nop
+    nop
+    nop
+    nop
+    flw  ft1, 0(a1)
+    fsw  ft1, 4(a1)
+    lw   a2, 4(a1)
+    halt
+"#;
+    for model in every_execution_model() {
+        let (_, cpu, _, _) = run_until_stopped(asm, model, |_, _, _| {});
+        assert_eq!(cpu.read(12), 2.0f32.to_bits(), "{model:?}: lw ran before fsw");
+    }
+}
+
+#[test]
 fn mhartid_reads_the_hart_id_in_every_mode() {
     // riscv-tests' environment parks every hart that does not read 0 here.
     let asm = r#"
