@@ -98,6 +98,14 @@ impl<P> PipelineEngine<P> {
         dispatch!(self, |inner| inner.resume_pc())
     }
 
+    /// Whether anything older than the instruction numbered `seq` (see
+    /// [`PipelineOp::seq`]) is still in flight. Only the scoreboard ever says
+    /// yes about an instruction it has handed back: it is the one model that
+    /// writes results out of program order.
+    pub fn in_flight_before(&self, seq: u64) -> bool {
+        dispatch!(self, |inner| inner.in_flight_before(seq))
+    }
+
     /// The structures a dynamically scheduled model runs on, when the model
     /// running has any.
     ///

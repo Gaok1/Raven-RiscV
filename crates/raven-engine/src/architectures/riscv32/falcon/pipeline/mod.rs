@@ -30,6 +30,7 @@ pub mod predictor;
 pub mod sim;
 
 use crate::falcon::instruction::Instruction;
+use crate::falcon::memory::HostRequest;
 use crate::falcon::registers::ExecRegion;
 use std::collections::VecDeque;
 
@@ -459,6 +460,9 @@ pub struct PipeSlot {
     /// Set when the fetch failed or ID found the instruction illegal; raised
     /// if, and only if, the slot commits, and the slot then writes nothing.
     pub(crate) fault: Option<Fault>,
+    /// What this instruction's store to `tohost` asked the host for (set at
+    /// MEM). Like a fault, it is acted on only if the slot commits.
+    pub(crate) host_request: Option<HostRequest>,
 }
 
 impl PipeSlot {
@@ -492,6 +496,7 @@ impl PipeSlot {
             frm: 0,
             fp_flags: 0,
             fault: None,
+            host_request: None,
         }
     }
 
@@ -528,6 +533,7 @@ impl PipeSlot {
             frm: 0,
             fp_flags: 0,
             fault: None,
+            host_request: None,
         }
     }
 }
@@ -605,6 +611,10 @@ pub struct PipelineSimState {
     pub fetch_pc: u32,
     pub halted: bool,
     pub faulted: bool,
+    /// An exit through `tohost` that waits for older instructions to finish
+    /// first, under a model that let the store finish ahead of them. See
+    /// [`ooo::ooo_tick`].
+    pub(crate) pending_exit: Option<ooo::PendingExit>,
     pub stages: [Option<PipeSlot>; 5],
     pub fu_bank: FuBank,
     pub fu_capacity: [u8; FuKind::COUNT],
@@ -629,6 +639,7 @@ pub struct PipelineExecSnapshot {
     fetch_pc: u32,
     halted: bool,
     faulted: bool,
+    pending_exit: Option<ooo::PendingExit>,
     ooo: Option<OooEngine>,
     stages: [Option<PipeSlot>; 5],
     fu_bank: FuBank,
@@ -657,6 +668,7 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
             fetch_pc: self.fetch_pc,
             halted: self.halted,
             faulted: self.faulted,
+            pending_exit: self.pending_exit,
             ooo: self.ooo.clone(),
             stages: self.stages.clone(),
             fu_bank: self.fu_bank.clone(),
@@ -682,6 +694,7 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
         self.fetch_pc = s.fetch_pc;
         self.halted = s.halted;
         self.faulted = s.faulted;
+        self.pending_exit = s.pending_exit;
         self.ooo = s.ooo;
         self.stages = s.stages;
         self.fu_bank = s.fu_bank;
@@ -764,6 +777,7 @@ impl PipelineSimState {
             fetch_pc: 0,
             halted: false,
             faulted: false,
+            pending_exit: None,
             stages: Default::default(),
             fu_bank: std::array::from_fn(|_| Vec::new()),
             fu_capacity: [1; FuKind::COUNT],
@@ -803,6 +817,7 @@ impl PipelineSimState {
         self.fetch_pc = new_pc;
         self.halted = false;
         self.faulted = false;
+        self.pending_exit = None;
         self.hazard_msgs.clear();
         self.hazard_traces.clear();
         self.last_cycle_cache_only = false;
@@ -845,6 +860,7 @@ impl PipelineSimState {
         self.predictor.clear();
         self.halted = false;
         self.faulted = false;
+        self.pending_exit = None;
     }
 
     pub fn cpi(&self) -> f64 {
@@ -883,6 +899,9 @@ impl PipelineSimState {
         self.fu_busy = [0; 7];
         self.hazard_msgs.clear();
         self.hazard_traces.clear();
+        // Its place in program order is the old engine's. The front end is
+        // parked on the store, so the new model runs it again and asks again.
+        self.pending_exit = None;
         self.ooo = ooo::engine_for(mode, timing, self.predict, &self.fu_capacity, self.fetch_pc);
         if let Some(engine) = &mut self.ooo {
             crate::capability::PipelineControl::set_enabled(engine, self.enabled);

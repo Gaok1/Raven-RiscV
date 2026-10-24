@@ -142,6 +142,45 @@ fn independent_work_overtakes_a_long_operation() {
     assert_eq!(board.stats().committed, 3);
 }
 
+/// What a backend asks before it lets an instruction that finished early end
+/// the run: is anything older still owed? Only the scoreboard can say yes.
+#[test]
+fn only_the_scoreboard_hands_back_work_with_older_work_in_flight() {
+    let program = [divide(0, "q", &["a", "b"]), alu(4, "s", &["c", "d"])];
+
+    let mut board = scoreboard();
+    PipelineControl::set_enabled(&mut board, true);
+    let mut older_owed = Vec::new();
+    for _ in 0..20 {
+        if let Some(written) = board.start_cycle() {
+            older_owed.push((written.address, board.in_flight_before(written.seq())));
+            board.retire(&written);
+        }
+        if let Some(address) = board.advance(None) {
+            if let Some(next) = program.iter().find(|op| op.address == address) {
+                board.fetched(next.clone());
+            }
+        }
+    }
+    assert_eq!(older_owed, [(4, true), (0, false)], "the divide was still running");
+
+    let mut rob = tomasulo();
+    PipelineControl::set_enabled(&mut rob, true);
+    let mut older_owed = Vec::new();
+    for _ in 0..20 {
+        if let Some(head) = rob.start_cycle() {
+            older_owed.push((head.address, rob.in_flight_before(head.seq())));
+            rob.retire(&head);
+        }
+        if let Some(address) = rob.advance(None) {
+            if let Some(next) = program.iter().find(|op| op.address == address) {
+                rob.fetched(next.clone());
+            }
+        }
+    }
+    assert_eq!(older_owed, [(0, false), (4, false)], "the buffer commits in order");
+}
+
 #[test]
 fn a_second_writer_of_a_live_register_waits_at_issue() {
     let mut board = scoreboard();

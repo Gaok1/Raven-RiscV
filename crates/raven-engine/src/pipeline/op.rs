@@ -140,6 +140,13 @@ impl<P> PipelineOp<P> {
         self.predicted_taken
     }
 
+    /// Where this instruction stands in program order: the engine numbers
+    /// instructions as they are fetched, so of two in flight the lower number
+    /// came first. Meaningful only within one engine's run.
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
     pub fn with_length(mut self, length: u64) -> Self {
         self.length = length;
         self

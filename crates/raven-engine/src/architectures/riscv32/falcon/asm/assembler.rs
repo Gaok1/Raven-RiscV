@@ -2065,6 +2065,7 @@ fn parse_csr_name(s: &str) -> Result<u16, String> {
         ("mcause", 0x342),
         ("mtval", 0x343),
         ("mip", 0x344),
+        ("mhartid", 0xF14), // read-only
         // S-mode
         ("sstatus", 0x100),
         ("sie", 0x104),

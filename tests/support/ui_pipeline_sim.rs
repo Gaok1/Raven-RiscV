@@ -4084,6 +4084,365 @@ fn branch_flush_clears_speculative_work_already_dispatched_to_fu_bank() {
     );
 }
 
+/// Run `asm` with the caches on until the hart stops: sequentially when
+/// `mode` is `None`, otherwise under that pipeline mode. `setup` sees the
+/// machine after the load and before the first instruction.
+fn run_until_stopped(
+    asm: &str,
+    mode: Option<crate::falcon::pipeline::PipelineMode>,
+    setup: impl FnOnce(&crate::falcon::asm::Program, &mut Cpu, &mut CacheController),
+) -> (crate::falcon::asm::Program, Cpu, CacheController, Console) {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    let prog = load_program_into_mem(asm, &mut cpu, &mut mem);
+    setup(&prog, &mut cpu, &mut mem);
+    match mode {
+        None => {
+            for _ in 0..256 {
+                if !exec::step(&mut cpu, &mut mem, &mut console).expect("sequential step") {
+                    break;
+                }
+            }
+        }
+        Some(mode) => {
+            let cpi = CpiConfig::default();
+            let mut state = PipelineSimState::new();
+            state.set_mode(mode, &cpi);
+            state.reset_stages(0);
+            if let Some(engine) = state.ooo.as_mut() {
+                crate::capability::PipelineControl::reset(engine, 0);
+            }
+            for _ in 0..4096 {
+                pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+                if state.halted || state.faulted {
+                    break;
+                }
+            }
+            assert!(
+                state.halted && !state.faulted,
+                "{mode:?} did not stop cleanly: {:?}",
+                console.lines.iter().map(|l| &l.text).collect::<Vec<_>>()
+            );
+        }
+    }
+    (prog, cpu, mem, console)
+}
+
+/// Sequential mode, then every pipeline mode.
+fn every_execution_model() -> Vec<Option<crate::falcon::pipeline::PipelineMode>> {
+    std::iter::once(None)
+        .chain(crate::falcon::pipeline::PipelineMode::all().into_iter().map(Some))
+        .collect()
+}
+
+fn label_address(prog: &crate::falcon::asm::Program, label: &str) -> u32 {
+    prog.labels
+        .iter()
+        .find(|(_, names)| names.iter().any(|name| name == label))
+        .map(|(&addr, _)| addr)
+        .unwrap_or_else(|| panic!("no label {label}"))
+}
+
+// The first `.data` word stands in for an ELF's `tohost` symbol. The third,
+// at `data_base + 8`, is plain memory for the store behind the exit.
+const TOHOST_EXIT: &str = r#"
+.data
+tohost:
+    .word 0
+    .word 0
+after:
+    .word 0
+.text
+    li   a0, 5
+    la   t0, tohost
+    sw   zero, 0(t0)    # clearing the word asks nothing
+    li   t1, 7          # (3 << 1) | 1: exit with code 3
+    sw   t1, 4(t0)      # the upper half carries no request
+report:
+    sw   t1, 0(t0)      # MEM while the store above is still in WB
+    sw   t1, 8(t0)      # never runs: the run ends at the store above
+    li   a0, 1
+    halt
+"#;
+
+#[test]
+fn a_store_to_tohost_exits_in_every_mode() {
+    // riscv-tests' standard environment, and any program built for an HTIF
+    // host, ends by storing to `tohost`; RAVEN used to run on past it. With
+    // the caches bypassed a store spends a single cycle in MEM, and the
+    // serialized datapath then has the store behind the exit in MEM while
+    // the exit is still in WB.
+    for bypass in [false, true] {
+        for model in every_execution_model() {
+            let (prog, cpu, mem, console) =
+                run_until_stopped(TOHOST_EXIT, model, |prog, _, mem| {
+                    mem.bypass = bypass;
+                    mem.set_tohost(Some(prog.data_base))
+                });
+            let run = format!("{model:?}, bypass {bypass}");
+            assert_eq!(cpu.exit_code, Some(3), "{run}");
+            assert_eq!(cpu.read(10), 5, "{run}: ran past the exit");
+            assert_eq!(
+                cpu.pc,
+                label_address(&prog, "report"),
+                "{run}: the hart parks on the store that exited"
+            );
+            assert_eq!(mem.load32(prog.data_base).unwrap(), 7, "{run}");
+            assert_eq!(
+                mem.load32(prog.data_base + 8).unwrap(),
+                0,
+                "{run}: the store behind the exit wrote memory"
+            );
+            assert!(
+                console.lines.iter().any(|l| l.text.contains("Exit 3")),
+                "{run}"
+            );
+            assert!(
+                !console
+                    .lines
+                    .iter()
+                    .any(|l| l.text.contains("not supported")),
+                "{run}: clearing the word was taken for a request"
+            );
+        }
+    }
+}
+
+#[test]
+fn without_tohost_the_same_store_is_plain_memory() {
+    for model in every_execution_model() {
+        let (prog, cpu, mem, _) = run_until_stopped(TOHOST_EXIT, model, |_, _, _| {});
+        assert_eq!(cpu.exit_code, None, "{model:?}");
+        assert_eq!(cpu.read(10), 1, "{model:?}");
+        assert_eq!(mem.load32(prog.data_base).unwrap(), 7, "{model:?}");
+        assert_eq!(mem.load32(prog.data_base + 8).unwrap(), 7, "{model:?}");
+    }
+}
+
+// A `div` that is still running when the store to `tohost` finishes, under
+// a model that writes results in the order units finish.
+const TOHOST_EXIT_AFTER_DIV: &str = r#"
+.data
+tohost:
+    .word 0
+    .word 0
+after:
+    .word 0
+.text
+    la   t0, tohost
+    li   t1, 7
+    li   t3, 100
+    li   t4, 7
+    div  a1, t3, t4
+report:
+    sw   t1, 0(t0)
+    mul  a2, t3, t4     # behind the end of the run: may issue, never writes
+    sw   t1, 8(t0)      # nor stores
+    li   a0, 1
+    halt
+"#;
+
+#[test]
+fn a_tohost_exit_waits_for_older_work_in_every_mode() {
+    // The scoreboard let the store finish ahead of the older `div` and ended
+    // the run there, so the quotient was never written: `a1` read 0 under
+    // the scoreboard and 14 everywhere else, the exit syscall included. The
+    // `mul` behind the store issues before the store finishes, and must not
+    // write while the run waits for the `div`.
+    for model in every_execution_model() {
+        let (prog, cpu, mem, console) =
+            run_until_stopped(TOHOST_EXIT_AFTER_DIV, model, |prog, _, mem| {
+                mem.set_tohost(Some(prog.data_base))
+            });
+        assert_eq!(cpu.exit_code, Some(3), "{model:?}");
+        assert_eq!(cpu.pc, label_address(&prog, "report"), "{model:?}");
+        assert_eq!(cpu.read(11), 14, "{model:?}: the older div was dropped");
+        assert_eq!(cpu.read(12), 0, "{model:?}: the younger mul wrote");
+        assert_eq!(cpu.read(10), 0, "{model:?}: ran past the exit");
+        assert_eq!(
+            mem.load32(prog.data_base + 8).unwrap(),
+            0,
+            "{model:?}: the store behind the exit wrote memory"
+        );
+        let exits = console
+            .lines
+            .iter()
+            .filter(|l| l.text.contains("Exit 3 (tohost)"))
+            .count();
+        assert_eq!(exits, 1, "{model:?}");
+    }
+}
+
+#[test]
+fn a_tohost_exit_waiting_for_older_work_survives_a_step_back() {
+    // The wait spans cycles, so it is part of what a step-back restores.
+    use crate::falcon::machine::JournaledPipeline;
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    let prog = load_program_into_mem(TOHOST_EXIT_AFTER_DIV, &mut cpu, &mut mem);
+    mem.set_tohost(Some(prog.data_base));
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.set_mode(crate::falcon::pipeline::PipelineMode::Scoreboard, &cpi);
+    state.reset_stages(0);
+
+    for _ in 0..4096 {
+        if state.halted || state.pending_exit.is_some() {
+            break;
+        }
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+    }
+    assert!(state.pending_exit.is_some(), "the store finished first");
+    assert!(!state.halted);
+    let snapshot = state.exec_snapshot();
+    let cpu_before = cpu.clone();
+
+    let mut finish = |state: &mut PipelineSimState, cpu: &mut Cpu| {
+        for _ in 0..64 {
+            if state.halted {
+                break;
+            }
+            pipeline_tick(state, cpu, &mut mem, &cpi, &mut console);
+        }
+        assert!(state.halted && state.pending_exit.is_none());
+        assert_eq!(cpu.exit_code, Some(3));
+        assert_eq!(cpu.read(11), 14);
+        assert_eq!(cpu.pc, label_address(&prog, "report"));
+    };
+    finish(&mut state, &mut cpu);
+
+    state.restore_exec(snapshot);
+    cpu = cpu_before;
+    assert!(state.pending_exit.is_some() && !state.halted);
+    finish(&mut state, &mut cpu);
+}
+
+#[test]
+fn only_the_scoreboard_lets_a_younger_result_beat_a_tohost_exit() {
+    // The store waits for the `div` it stores, and the scoreboard writes the
+    // younger `li` meanwhile: by the time the store ends the run, `a0` is
+    // already 1. That is the imprecision the model has by design, and the
+    // exit code and the PC are still right. Every other model stops with
+    // exactly what program order says.
+    let asm = r#"
+.data
+tohost:
+    .word 0
+    .word 0
+.text
+    la   t0, tohost
+    li   t3, 21
+    li   t4, 3
+    div  t1, t3, t4
+report:
+    sw   t1, 0(t0)
+    li   a0, 1
+    halt
+"#;
+    let scoreboard = Some(crate::falcon::pipeline::PipelineMode::Scoreboard);
+    for model in every_execution_model() {
+        let (prog, cpu, _, _) = run_until_stopped(asm, model, |prog, _, mem| {
+            mem.set_tohost(Some(prog.data_base))
+        });
+        assert_eq!(cpu.exit_code, Some(3), "{model:?}");
+        assert_eq!(cpu.pc, label_address(&prog, "report"), "{model:?}");
+        let a0 = if model == scoreboard { 1 } else { 0 };
+        assert_eq!(cpu.read(10), a0, "{model:?}: a0");
+    }
+}
+
+#[test]
+fn an_htif_system_call_through_tohost_is_reported_once_and_ignored() {
+    // An even value points at a system-call block for the host to run.
+    let asm = r#"
+.data
+tohost:
+    .word 0
+    .word 0
+.text
+    la   t0, tohost
+    li   t1, 0x100
+    sw   t1, 0(t0)
+    sw   t1, 0(t0)
+    li   a0, 4
+    halt
+"#;
+    for model in every_execution_model() {
+        let (_, cpu, _, console) = run_until_stopped(asm, model, |prog, _, mem| {
+            mem.set_tohost(Some(prog.data_base))
+        });
+        assert_eq!(cpu.exit_code, None, "{model:?}");
+        assert_eq!(cpu.read(10), 4, "{model:?}");
+        let reports: Vec<_> = console
+            .lines
+            .iter()
+            .filter(|l| l.text.contains("not supported"))
+            .collect();
+        assert_eq!(reports.len(), 1, "{model:?}");
+        // Headless `raven run`, where riscv-tests run, prints only errors.
+        assert!(reports[0].is_error(), "{model:?}: not shown by `raven run`");
+    }
+}
+
+#[test]
+fn flw_and_fsw_keep_memory_order_in_every_mode() {
+    // riscv-tests rv32uf ldst, case 2. The out-of-order models sent `flw` and
+    // `fsw` to the FPU as float work, outside the order the load/store unit
+    // keeps, and the scoreboard let the `lw` read the word before the `fsw`
+    // had stored it. The nops give `la` time to finish, so the base address
+    // is ready whether or not `flw` names it (#86).
+    let asm = r#"
+.data
+two:  .float 2.0
+copy: .word 0
+.text
+    la   a1, two
+    nop
+    nop
+    nop
+    nop
+    flw  ft1, 0(a1)
+    fsw  ft1, 4(a1)
+    lw   a2, 4(a1)
+    halt
+"#;
+    for model in every_execution_model() {
+        let (_, cpu, _, _) = run_until_stopped(asm, model, |_, _, _| {});
+        assert_eq!(cpu.read(12), 2.0f32.to_bits(), "{model:?}: lw ran before fsw");
+    }
+}
+
+#[test]
+fn mhartid_reads_the_hart_id_in_every_mode() {
+    // riscv-tests' environment parks every hart that does not read 0 here.
+    let asm = r#"
+.text
+    csrr a0, mhartid
+    li   t0, 9
+    csrw mhartid, t0    # read-only
+    csrr a1, mhartid
+    halt
+"#;
+    for model in every_execution_model() {
+        let (_, cpu, _, _) = run_until_stopped(asm, model, |_, cpu, _| cpu.hart_id = 2);
+        assert_eq!(cpu.read(10), 2, "{model:?}");
+        assert_eq!(cpu.read(11), 2, "{model:?}");
+        assert_eq!(cpu.hart_id, 2, "{model:?}");
+    }
+}
+
 /// Run `asm` under `mode` until it halts, with the caches on (`bypass` off) so
 /// the D-cache and I-cache really are separate.
 fn run_pipeline_mode_cached(

@@ -5,6 +5,7 @@ use crate::falcon::jit::{
     BackendKind, BlockTerminator, ExecCtx, ExecOutcome, ExecutionBackend, InterpreterBackend,
     make_backend, scan_block,
 };
+use crate::falcon::memory::Bus;
 use crate::falcon::program::load_words;
 use crate::falcon::{Cpu, Ram};
 use crate::ui::console::Console;
@@ -286,4 +287,80 @@ fn scan_block_start_pc_respected() {
     assert_eq!(block.end_pc, 8, "halt está em PC=8");
     assert_eq!(block.terminator, BlockTerminator::Halt);
     assert_eq!(block.words.len(), 2, "addi x2 + halt");
+}
+
+// ---------------------------------------------------------------------------
+// tohost at the end of a compiled block
+// ---------------------------------------------------------------------------
+
+/// A bus with `tohost` at 0x100 and a store to it already made, the way a
+/// compiled block's `sw` leaves it when the block returns to the dispatcher.
+fn bus_after_tohost_store(value: u32) -> CacheController {
+    let mut mem = make_cc(&[]);
+    mem.set_tohost(Some(0x100));
+    mem.store32(0x100, value).expect("store to tohost");
+    mem
+}
+
+#[test]
+fn a_tohost_exit_in_a_compiled_block_wins_however_the_block_ended() {
+    // The block stored exit(3) to `tohost` and went on: to its end, to a
+    // `halt` or exit `ecall`, to a blocking read, or to a fault. Only the
+    // first was answered; the request was dropped on a halt or a read, and
+    // on a fault left on the bus for whichever hart stepped next.
+    use crate::falcon::jit::backend::answer_host_request;
+    let outcomes = [
+        Ok(ExecOutcome::Stepped { instructions: 4 }),
+        Ok(ExecOutcome::Halted),
+        Ok(ExecOutcome::AwaitingInput),
+        Err(FalconError::Bus("JIT fault: invalid memory access".into())),
+    ];
+    for outcome in outcomes {
+        let ended = format!("{outcome:?}");
+        let mut mem = bus_after_tohost_store(7);
+        let mut cpu = Cpu::default();
+        cpu.pc = 0x40;
+        let mut console = Console::default();
+        console.reading = matches!(outcome, Ok(ExecOutcome::AwaitingInput));
+
+        let mut ctx = ExecCtx::new(&mut cpu, &mut mem, &mut console);
+        let answered = answer_host_request(&mut ctx, outcome);
+
+        assert!(
+            matches!(answered, Ok(ExecOutcome::Halted)),
+            "{ended}: {answered:?}"
+        );
+        assert_eq!(cpu.exit_code, Some(3), "{ended}");
+        assert_eq!(cpu.pc, 0x40, "{ended}: where the block left it");
+        assert!(!console.reading, "{ended}: still waiting for input");
+        assert!(mem.take_host_request().is_none(), "{ended}: left on the bus");
+    }
+}
+
+#[test]
+fn an_unsupported_tohost_request_in_a_compiled_block_leaves_its_outcome_alone() {
+    use crate::falcon::jit::backend::answer_host_request;
+    let outcomes = [
+        Ok(ExecOutcome::Stepped { instructions: 4 }),
+        Err(FalconError::Bus("JIT fault: invalid memory access".into())),
+    ];
+    for outcome in outcomes {
+        let ended = format!("{outcome:?}");
+        let mut mem = bus_after_tohost_store(0x200);
+        let mut cpu = Cpu::default();
+        let mut console = Console::default();
+
+        let mut ctx = ExecCtx::new(&mut cpu, &mut mem, &mut console);
+        let answered = answer_host_request(&mut ctx, outcome);
+
+        assert_eq!(format!("{answered:?}"), ended);
+        assert_eq!(cpu.exit_code, None, "{ended}");
+        assert!(mem.take_host_request().is_none(), "{ended}: left on the bus");
+        let reports = console
+            .lines
+            .iter()
+            .filter(|line| line.text.contains("not supported"))
+            .count();
+        assert_eq!(reports, 1, "{ended}");
+    }
 }

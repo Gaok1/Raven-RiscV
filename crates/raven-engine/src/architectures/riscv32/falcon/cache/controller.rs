@@ -8,7 +8,7 @@ use crate::capability::{
 };
 use crate::falcon::{
     errors::FalconError,
-    memory::{AmoOp, Bus, Ram},
+    memory::{AmoOp, Bus, HostRequest, Ram},
     mmu::{AccessType, Mmu, PageFault, TlbConfig},
 };
 use std::collections::HashMap;
@@ -42,6 +42,14 @@ pub struct CacheController {
     /// MMU / TLB. When `mmu.enabled == false` (default), translation is pure
     /// identity and zero-overhead. See `falcon::mmu`.
     pub mmu: Mmu,
+    /// Physical address of the HTIF `tohost` word, when the loaded program
+    /// has one. See [`CacheController::set_tohost`].
+    tohost: Option<u32>,
+    /// What the last store to `tohost` asked for, until the hart's next
+    /// instruction boundary takes it ([`Bus::take_host_request`]).
+    host_request: Option<HostRequest>,
+    /// An unsupported request is reported once per program, not per store.
+    host_request_reported: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -87,6 +95,56 @@ impl CacheController {
             bypass: false,
             reservations: HashMap::new(),
             mmu: Mmu::new(TlbConfig::default()),
+            tohost: None,
+            host_request: None,
+            host_request_reported: false,
+        }
+    }
+
+    /// Give the bus the physical address of the program's HTIF `tohost` word
+    /// (an ELF's `tohost` symbol), or `None` for a program without one.
+    ///
+    /// The word stays ordinary RAM. What changes is that a 32-bit store to it
+    /// is also a request to the host — see [`HostRequest`]. Stores to the
+    /// upper half, `tohost + 4`, are ignored: RV32 programs write the 64-bit
+    /// word in two halves and only the lower one carries a request RAVEN
+    /// answers. Every load must set this anew, so a program never inherits the
+    /// previous one's address.
+    pub fn set_tohost(&mut self, paddr: Option<u32>) {
+        self.tohost = paddr;
+        self.host_request = None;
+        self.host_request_reported = false;
+    }
+
+    /// The `tohost` address the loaded program gave, if any.
+    pub fn tohost(&self) -> Option<u32> {
+        self.tohost
+    }
+
+    /// Run `edit` with `tohost` unwatched.
+    ///
+    /// For writes the program did not make — a debugger edit of a memory
+    /// cell. Those are not the program talking to the host: one landing on
+    /// `tohost` must neither end the run at whatever instruction comes next
+    /// nor use up the one report of an unsupported request.
+    pub fn with_tohost_unwatched<R>(&mut self, edit: impl FnOnce(&mut Self) -> R) -> R {
+        let tohost = self.tohost.take();
+        let result = edit(self);
+        self.tohost = tohost;
+        result
+    }
+
+    /// Note what a word store of `val` at `paddr` asks of the host, if it
+    /// landed on `tohost`. Zero is the program clearing the word.
+    fn observe_tohost_store(&mut self, paddr: u32, val: u32) {
+        if self.tohost != Some(paddr) || val == 0 {
+            return;
+        }
+        if val & 1 == 1 {
+            self.host_request = Some(HostRequest::Exit(val >> 1));
+        } else if !self.host_request_reported {
+            self.host_request_reported = true;
+            self.host_request = Some(HostRequest::Unsupported(val));
         }
     }
 
@@ -212,6 +270,9 @@ impl CacheController {
         self.step_count = snap.step_count;
         self.bypass = snap.bypass;
         self.reservations = snap.reservations;
+        // A snapshot is taken between instructions, where no request is left
+        // waiting: one still here was made after it, by a store this rewinds.
+        self.host_request = None;
     }
 
     pub fn reset_stats(&mut self) {
@@ -997,9 +1058,13 @@ impl CacheController {
     }
 
     /// Word-sized D-cache store at an already-translated physical address.
-    /// Counterpart to `dcache_read_pa32` for `sc_w` / `amo_w`.
+    /// Counterpart to `dcache_read_pa32` for `sc_w` / `amo_w`, and where
+    /// `store32` ends up once it has translated: every word store passes
+    /// here, which makes it the one place that watches `tohost`.
     pub fn store_pa32(&mut self, paddr: u32, val: u32) -> Result<(), FalconError> {
-        self.dcache_store_bytes(paddr, &val.to_le_bytes())
+        self.dcache_store_bytes(paddr, &val.to_le_bytes())?;
+        self.observe_tohost_store(paddr, val);
+        Ok(())
     }
 
     /// Effective read: returns the most-recent dirty byte from the cache hierarchy,
@@ -1224,7 +1289,7 @@ impl Bus for CacheController {
     }
     fn store32(&mut self, addr: u32, val: u32) -> Result<(), FalconError> {
         let addr = self.translate_for_access(addr, AccessType::Store)?;
-        self.dcache_store_bytes(addr, &val.to_le_bytes())
+        self.store_pa32(addr, val)
     }
 
     // I-cache tracked fetch â€” hierarchical: L1 hit â†’ return; miss â†’ L2+/RAM fill
@@ -1377,6 +1442,10 @@ impl Bus for CacheController {
 
     fn set_priv_mode(&mut self, mode: crate::falcon::mmu::PrivMode) {
         self.mmu.priv_mode = mode;
+    }
+
+    fn take_host_request(&mut self) -> Option<HostRequest> {
+        self.host_request.take()
     }
 
     fn lr_w(&mut self, hart_id: u32, addr: u32) -> Result<u32, FalconError> {

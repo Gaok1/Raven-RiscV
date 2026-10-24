@@ -118,3 +118,32 @@ pub trait ExecutionBackend<B: Bus>: Send {
         None
     }
 }
+
+/// Answer a store to `tohost` made inside a compiled block.
+///
+/// A block runs all its instructions in one call, past the boundaries where
+/// the interpreter answers such a store (see
+/// [`crate::falcon::exec::apply_host_request`]), so the block's end is the
+/// first boundary there is, however the block ended. An exit wins over
+/// whatever the block went on to do — halt, exit through `ecall`, wait for
+/// input, fault — because the store came first; it stops the hart with the PC
+/// where the block left it. Either way the request leaves the bus: one left
+/// there would be taken at the next boundary anyone reaches, another hart's
+/// included.
+pub fn answer_host_request<B: Bus>(
+    ctx: &mut ExecCtx<'_, B>,
+    outcome: Result<ExecOutcome, FalconError>,
+) -> Result<ExecOutcome, FalconError> {
+    let Some(request) = ctx.mem.take_host_request() else {
+        return outcome;
+    };
+    let pc = ctx.cpu.pc;
+    if crate::falcon::exec::apply_host_request(ctx.cpu, ctx.console, request, pc) {
+        return outcome;
+    }
+    // In program order the run ended before the read the block started.
+    if matches!(outcome, Ok(ExecOutcome::AwaitingInput)) {
+        ctx.console.reading = false;
+    }
+    Ok(ExecOutcome::Halted)
+}

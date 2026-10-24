@@ -123,6 +123,17 @@ impl<P> ScalarPipeline<P> {
             .map_or(self.fetch_pc, |op| op.address)
     }
 
+    /// Whether anything older than the instruction numbered `seq` has yet to
+    /// retire. Never, for the instruction retiring: an in-order datapath
+    /// retires its oldest.
+    pub fn in_flight_before(&self, seq: u64) -> bool {
+        self.stages
+            .iter()
+            .flatten()
+            .chain(self.units.iter().flatten())
+            .any(|op| op.seq < seq)
+    }
+
     /// How many instructions a declared unit may hold at once.
     pub fn set_capacity(&mut self, unit: usize, instances: usize) -> bool {
         let Some(slot) = self.unit_capacity.get_mut(unit) else {

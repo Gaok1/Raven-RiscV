@@ -35,7 +35,9 @@ mod inner {
     use crate::falcon::CacheController;
     use crate::falcon::errors::FalconError;
 
-    use super::super::backend::{BackendKind, ExecCtx, ExecOutcome, ExecutionBackend};
+    use super::super::backend::{
+        BackendKind, ExecCtx, ExecOutcome, ExecutionBackend, answer_host_request,
+    };
     use super::super::block::scan_block;
     use super::super::cache::{CompiledBlockCache, exit};
     use super::super::codegen::compile_block;
@@ -92,7 +94,7 @@ mod inner {
                     let f = block.as_fn();
                     f(ctx.cpu as *mut _, ctx.mem as *mut _, ctx.console as *mut _)
                 };
-                return map_exit(exit_code, block.instruction_count);
+                return answer_host_request(ctx, map_exit(exit_code, block.instruction_count));
             }
 
             // --- Threshold atingido: compilar se nÃ£o estiver na skip list ---
@@ -107,7 +109,10 @@ mod inner {
                                 let f = block.as_fn();
                                 f(ctx.cpu as *mut _, ctx.mem as *mut _, ctx.console as *mut _)
                             };
-                            return map_exit(exit_code, block.instruction_count);
+                            return answer_host_request(
+                                ctx,
+                                map_exit(exit_code, block.instruction_count),
+                            );
                         }
                     }
                 } else {
