@@ -725,6 +725,9 @@ impl crate::falcon::machine::JournaledPipeline for PipelineSimState {
 impl crate::capability::PipelineControl for PipelineSimState {
     fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+        if let Some(engine) = &mut self.ooo {
+            crate::capability::PipelineControl::set_enabled(engine, enabled);
+        }
     }
 
     /// Start a fresh run from `address`: stages, units, counters and history
@@ -782,7 +785,13 @@ impl PipelineSimState {
         self.exec_regions.extend_from_slice(regions);
     }
 
+    /// Follow a jump the host made. Under a dynamically scheduled model the
+    /// engine owns the front end, so it is told too; otherwise it would go on
+    /// fetching where it was.
     pub fn redirect_pc(&mut self, new_pc: u32) {
+        if let Some(engine) = &mut self.ooo {
+            crate::capability::PipelineControl::redirect(engine, u64::from(new_pc));
+        }
         self.stages = Default::default();
         self.fu_bank = std::array::from_fn(|_| Vec::new());
         self.fu_busy = [0; 7];
@@ -805,7 +814,18 @@ impl PipelineSimState {
         self.class_counts = [0; InstrClass::COUNT];
     }
 
+    /// Start a fresh run from `base_pc`.
+    ///
+    /// A dynamically scheduled engine starts over too — with the unit counts
+    /// configured now, which may have changed since it was built — or it would
+    /// keep the old program's front end, buffer and statistics.
     pub fn reset_stages(&mut self, base_pc: u32) {
+        if let Some(engine) = &mut self.ooo {
+            for (unit, instances) in self.fu_capacity.iter().enumerate() {
+                engine.set_capacity(unit, (*instances).max(1) as usize);
+            }
+            crate::capability::PipelineControl::reset(engine, u64::from(base_pc));
+        }
         self.fetch_pc = base_pc;
         self.stages = Default::default();
         self.fu_bank = std::array::from_fn(|_| Vec::new());
@@ -844,8 +864,12 @@ impl PipelineSimState {
     /// nothing had executed — an instruction changes the machine at commit and
     /// nowhere else — so refetching from the current PC loses nothing, and the
     /// counters start over because they describe a model.
+    ///
+    /// This is the only way to change [`Self::mode`]: assigning the field
+    /// directly leaves a dynamic mode with no engine, and the in-order
+    /// datapath quietly runs in its place.
     pub fn set_mode(&mut self, mode: PipelineMode, timing: &PipelineTiming) {
-        if self.mode == mode {
+        if self.mode == mode && self.ooo.is_some() == mode.is_out_of_order() {
             return;
         }
         self.mode = mode;

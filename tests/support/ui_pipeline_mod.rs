@@ -1,6 +1,7 @@
 use super::{
     BranchPredict, BranchResolve, GanttCell, GanttRow, InstrClass, PipelineBypassConfig,
-    PipelineConfig, PipelineMode, PipelineSimState, PipelineSpeed, Stage, gantt_max_scroll,
+    PipelineConfig, PipelineMode, PipelineSimState, PipelineSpeed, PipelineTiming, Stage,
+    gantt_max_scroll,
     gantt_view_rows, gantt_window_bounds, parse_pipeline_config, serialize_pipeline_config,
 };
 use std::collections::VecDeque;
@@ -197,4 +198,24 @@ fn gantt_max_scroll_matches_visible_history_capacity() {
         .collect();
 
     assert_eq!(gantt_max_scroll(&state, 7), 7);
+}
+
+#[test]
+fn applying_a_dynamic_mode_builds_its_engine() {
+    // apply_to_state assigned the mode field directly, so a config file (CLI
+    // --config, or an import in the TUI) asking for Scoreboard or Tomasulo got
+    // the in-order datapath instead, with no warning.
+    for mode in [PipelineMode::Scoreboard, PipelineMode::TomasuloRob] {
+        let cfg = PipelineConfig {
+            mode,
+            ..PipelineConfig::default()
+        };
+        let mut state = PipelineSimState::new();
+        cfg.apply_to_state(&mut state, &PipelineTiming::default());
+        assert_eq!(state.mode, mode);
+        assert!(state.ooo.is_some(), "{mode:?} has no engine");
+    }
+    let mut state = PipelineSimState::new();
+    PipelineConfig::default().apply_to_state(&mut state, &PipelineTiming::default());
+    assert!(state.ooo.is_none());
 }

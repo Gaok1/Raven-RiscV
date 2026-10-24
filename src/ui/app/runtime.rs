@@ -4,15 +4,17 @@ impl App {
     fn copy_pipeline_config_to_hart(
         src: &raven_engine::falcon::pipeline::PipelineSimState,
         dst: &mut raven_engine::falcon::pipeline::PipelineSimState,
+        timing: &CpiConfig,
     ) {
         dst.enabled = src.enabled;
         dst.sequential_mode = src.sequential_mode;
         dst.bypass = src.bypass;
         dst.branch_resolve = src.branch_resolve;
-        dst.mode = src.mode;
+        dst.fu_capacity = src.fu_capacity;
+        // Through `set_mode`, so a dynamically scheduled model gets its engine.
+        dst.set_mode(src.mode, timing);
         dst.set_predict(src.predict);
         dst.exec_regions = src.exec_regions.clone();
-        dst.fu_capacity = src.fu_capacity;
     }
 
     fn generic_pipeline_snapshot(&self, scope: &str) -> Option<PipelineResultsSnapshot> {
@@ -383,7 +385,7 @@ impl App {
             if let Some(p) = hart.pipeline.as_mut()
                 && let Some(model) = rv32_runtime(&*self.machine)
             {
-                Self::copy_pipeline_config_to_hart(model.pipeline(), p);
+                Self::copy_pipeline_config_to_hart(model.pipeline(), p, &self.session.cpi_config);
                 p.reset_stages(hart.cpu.pc);
             }
         }
@@ -447,7 +449,7 @@ impl App {
             } else if let Some(p) = runtime.pipeline.as_mut()
                 && let Some(model) = self.rv32()
             {
-                Self::copy_pipeline_config_to_hart(model.pipeline(), p);
+                Self::copy_pipeline_config_to_hart(model.pipeline(), p, &self.session.cpi_config);
                 p.reset_stages(runtime.cpu.pc);
             }
             self.harts.push(runtime);
@@ -511,7 +513,11 @@ impl App {
                 .take()
                 .unwrap_or_else(raven_engine::falcon::pipeline::PipelineSimState::new);
             if let Some(model) = self.rv32() {
-                Self::copy_pipeline_config_to_hart(model.pipeline(), &mut pipeline);
+                Self::copy_pipeline_config_to_hart(
+                    model.pipeline(),
+                    &mut pipeline,
+                    &self.session.cpi_config,
+                );
             }
             if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
                 pipeline.reset_stages(self.program_counter() as u32);
@@ -651,7 +657,11 @@ impl App {
         child.cpu.heap_break = self.rv32().map_or(0, |rv32| rv32.cpu().heap_break);
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            Self::copy_pipeline_config_to_hart(&self.native().pipeline(), p);
+            Self::copy_pipeline_config_to_hart(
+                &self.native().pipeline(),
+                p,
+                &self.session.cpi_config,
+            );
             p.reset_stages(child.cpu.pc);
         }
 
@@ -742,7 +752,11 @@ impl App {
         child.cpu.heap_break = self.harts[core_idx].cpu.heap_break;
         child.prev_pc = child.cpu.pc;
         if let Some(p) = child.pipeline.as_mut() {
-            Self::copy_pipeline_config_to_hart(&self.native().pipeline(), p);
+            Self::copy_pipeline_config_to_hart(
+                &self.native().pipeline(),
+                p,
+                &self.session.cpi_config,
+            );
             p.reset_stages(child.cpu.pc);
         }
 

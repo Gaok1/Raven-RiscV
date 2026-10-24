@@ -4102,9 +4102,6 @@ fn run_pipeline_mode_cached(
     state.set_mode(mode, &cpi);
     load_program_into_mem(asm, &mut cpu, &mut mem);
     state.reset_stages(0);
-    if let Some(engine) = state.ooo.as_mut() {
-        crate::capability::PipelineControl::reset(engine, 0);
-    }
     for _ in 0..4096 {
         pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, console);
         if state.halted || state.faulted || console.reading {
@@ -4257,9 +4254,6 @@ buf: .space 16
         state.set_mode(mode, &cpi);
         load_program_into_mem(asm, &mut cpu, &mut mem);
         state.reset_stages(0);
-        if let Some(engine) = state.ooo.as_mut() {
-            crate::capability::PipelineControl::reset(engine, 0);
-        }
         let mut tick = |cpu: &mut Cpu, console: &mut Console| {
             for _ in 0..512 {
                 pipeline_tick(&mut state, cpu, &mut mem, &cpi, console);
@@ -4354,9 +4348,6 @@ fn run_user_code_under_sv32(
     let mut state = PipelineSimState::new();
     state.set_mode(mode, &cpi);
     state.reset_stages(0);
-    if let Some(engine) = state.ooo.as_mut() {
-        crate::capability::PipelineControl::reset(engine, 0);
-    }
     for _ in 0..4096 {
         pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
         if state.halted || state.faulted {
@@ -4411,4 +4402,70 @@ fn a_fetch_page_fault_enters_the_handler_only_when_the_program_gets_there() {
         assert_eq!(cpu.mcause, 12, "{mode:?}: instruction page fault");
         assert_eq!(cpu.mepc, 0x5000, "{mode:?}");
     }
+}
+
+#[test]
+fn reset_and_redirect_reach_the_out_of_order_engine() {
+    // reset_stages and redirect_pc used to touch only the in-order latches,
+    // so under Scoreboard or Tomasulo a reload, a reset or a PC edit left the
+    // engine fetching where the old program was.
+    let asm = r#"
+.text
+    li   a0, 1
+    li   a0, 2
+    li   a0, 3
+    halt
+"#;
+    for mode in [
+        crate::falcon::pipeline::PipelineMode::Scoreboard,
+        crate::falcon::pipeline::PipelineMode::TomasuloRob,
+    ] {
+        let mut console = Console::default();
+        let (mut cpu, mut state) = run_pipeline_mode_cached(asm, mode, &mut console);
+        assert!(state.halted, "{mode:?}");
+        let engine = |state: &PipelineSimState| {
+            let engine = state.ooo.as_ref().expect("a dynamic mode has an engine");
+            (
+                crate::capability::PipelineInspect::stats(engine).cycles,
+                engine.fetch_pc(),
+            )
+        };
+        assert_ne!(engine(&state).0, 0, "{mode:?}");
+
+        state.reset_stages(0);
+        assert_eq!(engine(&state), (0, 0), "{mode:?}: reset left the engine running");
+
+        state.redirect_pc(8);
+        assert_eq!(engine(&state).1, 8, "{mode:?}: redirect left the engine behind");
+
+        // And a fresh run from the reset really runs the program again.
+        let mut mem = CacheController::new(
+            CacheConfig::default(),
+            CacheConfig::default(),
+            vec![],
+            0x4000,
+        );
+        load_program_into_mem(asm, &mut cpu, &mut mem);
+        cpu.write(10, 0);
+        state.reset_stages(0);
+        let cpi = CpiConfig::default();
+        for _ in 0..256 {
+            pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+            if state.halted || state.faulted {
+                break;
+            }
+        }
+        assert!(state.halted && !state.faulted, "{mode:?}");
+        assert_eq!(cpu.read(10), 3, "{mode:?}");
+    }
+}
+
+#[test]
+fn set_mode_builds_the_engine_even_if_mode_was_assigned_directly() {
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.mode = crate::falcon::pipeline::PipelineMode::TomasuloRob;
+    assert!(state.ooo.is_none());
+    state.set_mode(crate::falcon::pipeline::PipelineMode::TomasuloRob, &cpi);
+    assert!(state.ooo.is_some());
 }

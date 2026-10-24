@@ -298,8 +298,9 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
             .tlb
             .reconfigure(cfg.tlb);
     }
+    let timing = app.session.cpi_config.clone();
     if let Some(pipeline) = app.pipeline_config_mut() {
-        cfg.pipeline.apply_to_state(pipeline);
+        cfg.pipeline.apply_to_state(pipeline, &timing);
     }
     app.run.pipeline_view_mut().speed = cfg.pipeline.speed;
     // Sim settings applied last: may trigger a simulation restart.

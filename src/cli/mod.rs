@@ -1032,7 +1032,7 @@ fn run_headless_pipeline(
     capture_trace: bool,
 ) -> (Result<PipelineReport, String>, Vec<PipelineTraceStep>) {
     let mut state = raven_engine::falcon::pipeline::PipelineSimState::new();
-    pcfg.apply_to_state(&mut state);
+    pcfg.apply_to_state(&mut state, cpi);
     state.reset_stages(cpu.pc);
     let mut trace_steps = Vec::new();
 

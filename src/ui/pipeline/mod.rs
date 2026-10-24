@@ -142,12 +142,15 @@ impl PipelineConfig {
         }
     }
 
-    pub fn apply_to_state(self, state: &mut PipelineSimState) {
+    /// Configure `state` as this config says. The mode goes through
+    /// [`PipelineSimState::set_mode`], which builds the engine a dynamically
+    /// scheduled model needs — with the unit counts set just before it.
+    pub fn apply_to_state(self, state: &mut PipelineSimState, timing: &PipelineTiming) {
         state.enabled = self.enabled;
         state.bypass = self.bypass;
         state.branch_resolve = self.branch_resolve;
-        state.mode = self.mode;
         state.fu_capacity = self.fu_capacity;
+        state.set_mode(self.mode, timing);
         state.set_predict(self.predict);
     }
 }
