@@ -35,9 +35,14 @@ the word through which a program asks an HTIF host for something. RAVEN takes
 its address from the ELF's `tohost` symbol (`env/link.ld` gives it a section
 of its own, as the official linker script does). A 32-bit store of an odd
 value `v` to it ends the run with exit code `v >> 1`, the way the exit syscall
-does. An even value asks the host to run a system call; RAVEN does not support
-that, reports it once on the console and ignores it. The harness reports an
-exit through `tohost` as `FAIL` with "unexpected trap".
+does: the run stops on the store, and nothing after it runs. `Scoreboard` is
+the exception, by design: it writes results in the order they finish, so the
+store can end the run while an older instruction is still unfinished (its
+result is never written) or after a younger one has written its own. The
+exit code is right in every mode. An even value asks the host to run a system
+call; RAVEN does not support that, reports it once on the console and ignores
+it. The harness reports an exit through `tohost` as `FAIL` with "unexpected
+trap".
 
 ### `--env raven`: the minimal environment
 

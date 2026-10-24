@@ -18,7 +18,7 @@ use super::{
 use crate::falcon::Cpu;
 use crate::falcon::cache::CacheController;
 use crate::falcon::instruction::Instruction;
-use crate::falcon::memory::{AmoOp, Bus};
+use crate::falcon::memory::{AmoOp, Bus, HostRequest};
 use crate::host::Console;
 use std::collections::VecDeque;
 
@@ -104,6 +104,7 @@ pub fn pipeline_tick(
             console,
         );
     }
+    discard_behind_host_exit(state);
 
     // ── 4. Report forwarding hazards (informational) ─────────────────────
     if state.bypass.ex_to_ex || state.bypass.mem_to_ex || state.bypass.wb_to_id {
@@ -3267,6 +3268,11 @@ fn stops_frontend(slot: &PipeSlot) -> bool {
     if slot.fetch_fault.is_some() {
         return true;
     }
+    // Nor past a store that asked the host to end the run: it is the last
+    // instruction the program executes (see `discard_behind_host_exit`).
+    if matches!(slot.host_request, Some(HostRequest::Exit(_))) {
+        return true;
+    }
     if matches!(
         slot.instr,
         Some(Instruction::Ecall | Instruction::Ebreak | Instruction::Halt)
@@ -3289,6 +3295,40 @@ fn stops_frontend(slot: &PipeSlot) -> bool {
                 | Instruction::SfenceVma { .. }
         )
     )
+}
+
+/// Throw away everything in flight behind a store that asked the host to end
+/// the run, and point fetch past it.
+///
+/// The store makes its request at MEM and the run ends when it commits. In
+/// between, the instruction behind it reaches MEM — in the serialized model
+/// it gets there in the very cycle the store moves on to WB — and would store,
+/// or take a trap, before the run is over. Sequential mode, and the exit
+/// syscall, which holds the front end, never run anything past the end of
+/// the program. Nothing behind the store would ever commit, so nothing is
+/// lost; [`stops_frontend`] keeps the front end from fetching more meanwhile.
+fn discard_behind_host_exit(state: &mut PipelineSimState) {
+    let Some((seq, pc)) = state
+        .stages
+        .iter()
+        .flatten()
+        .filter(|slot| !slot.is_bubble && matches!(slot.host_request, Some(HostRequest::Exit(_))))
+        .map(|slot| (slot.seq, slot.pc))
+        .min()
+    else {
+        return;
+    };
+    let younger = |slot: &PipeSlot| !slot.is_bubble && slot.seq > seq;
+    for stage in state.stages.iter_mut() {
+        if stage.as_ref().is_some_and(younger) {
+            *stage = None;
+        }
+    }
+    for group in state.fu_bank.iter_mut() {
+        group.retain(|fu| fu.slot.as_ref().is_some_and(|slot| !younger(slot)));
+    }
+    refresh_fu_busy(state);
+    state.fetch_pc = pc.wrapping_add(4);
 }
 
 fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, console: &mut Console) {

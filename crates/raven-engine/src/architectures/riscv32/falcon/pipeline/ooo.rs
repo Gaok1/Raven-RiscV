@@ -128,6 +128,15 @@ pub fn ooo_tick(
         }
     }
 
+    // The run is over, and whatever is still in flight is dropped. Under the
+    // scoreboard a store to `tohost` gets here when it finishes, not when its
+    // turn comes: an older, slower instruction may still be in its unit, and
+    // its result is never written, while a younger one may already have
+    // written its own. The exit code and the PC are still right. This is the
+    // imprecision the model has by design (see `ScoreboardPipeline`); the exit
+    // syscall does not show it only because a system instruction waits for
+    // the machine to drain and holds issue behind it. Tomasulo commits in
+    // program order and never shows it.
     if state.halted {
         engine.halt();
     }

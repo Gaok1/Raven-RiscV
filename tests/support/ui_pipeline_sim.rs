@@ -4148,11 +4148,14 @@ fn label_address(prog: &crate::falcon::asm::Program, label: &str) -> u32 {
         .unwrap_or_else(|| panic!("no label {label}"))
 }
 
-// The first `.data` word stands in for an ELF's `tohost` symbol.
+// The first `.data` word stands in for an ELF's `tohost` symbol. The third,
+// at `data_base + 8`, is plain memory for the store behind the exit.
 const TOHOST_EXIT: &str = r#"
 .data
 tohost:
     .word 0
+    .word 0
+after:
     .word 0
 .text
     li   a0, 5
@@ -4162,6 +4165,7 @@ tohost:
     sw   t1, 4(t0)      # the upper half carries no request
 report:
     sw   t1, 0(t0)      # MEM while the store above is still in WB
+    sw   t1, 8(t0)      # never runs: the run ends at the store above
     li   a0, 1
     halt
 "#;
@@ -4169,23 +4173,36 @@ report:
 #[test]
 fn a_store_to_tohost_exits_in_every_mode() {
     // riscv-tests' standard environment, and any program built for an HTIF
-    // host, ends by storing to `tohost`; RAVEN used to run on past it.
-    for model in every_execution_model() {
-        let (prog, cpu, mem, console) = run_until_stopped(TOHOST_EXIT, model, |prog, _, mem| {
-            mem.set_tohost(Some(prog.data_base))
-        });
-        assert_eq!(cpu.exit_code, Some(3), "{model:?}");
-        assert_eq!(cpu.read(10), 5, "{model:?}: ran past the exit");
-        assert_eq!(
-            cpu.pc,
-            label_address(&prog, "report"),
-            "{model:?}: the hart parks on the store that exited"
-        );
-        assert_eq!(mem.load32(prog.data_base).unwrap(), 7, "{model:?}");
-        assert!(
-            console.lines.iter().any(|l| l.text.contains("Exit 3")),
-            "{model:?}"
-        );
+    // host, ends by storing to `tohost`; RAVEN used to run on past it. With
+    // the caches bypassed a store spends a single cycle in MEM, and the
+    // serialized datapath then has the store behind the exit in MEM while
+    // the exit is still in WB.
+    for bypass in [false, true] {
+        for model in every_execution_model() {
+            let (prog, cpu, mem, console) =
+                run_until_stopped(TOHOST_EXIT, model, |prog, _, mem| {
+                    mem.bypass = bypass;
+                    mem.set_tohost(Some(prog.data_base))
+                });
+            let run = format!("{model:?}, bypass {bypass}");
+            assert_eq!(cpu.exit_code, Some(3), "{run}");
+            assert_eq!(cpu.read(10), 5, "{run}: ran past the exit");
+            assert_eq!(
+                cpu.pc,
+                label_address(&prog, "report"),
+                "{run}: the hart parks on the store that exited"
+            );
+            assert_eq!(mem.load32(prog.data_base).unwrap(), 7, "{run}");
+            assert_eq!(
+                mem.load32(prog.data_base + 8).unwrap(),
+                0,
+                "{run}: the store behind the exit wrote memory"
+            );
+            assert!(
+                console.lines.iter().any(|l| l.text.contains("Exit 3")),
+                "{run}"
+            );
+        }
     }
 }
 
@@ -4196,6 +4213,58 @@ fn without_tohost_the_same_store_is_plain_memory() {
         assert_eq!(cpu.exit_code, None, "{model:?}");
         assert_eq!(cpu.read(10), 1, "{model:?}");
         assert_eq!(mem.load32(prog.data_base).unwrap(), 7, "{model:?}");
+        assert_eq!(mem.load32(prog.data_base + 8).unwrap(), 7, "{model:?}");
+    }
+}
+
+#[test]
+fn a_tohost_exit_is_imprecise_only_under_the_scoreboard() {
+    // The scoreboard writes results in the order they finish, not in program
+    // order. A store to `tohost` can then end the run while an older `div` is
+    // still in its unit, so `a1` is never written, or after a younger `li`
+    // has already written `a0`. That is the model's imprecision, not a lost
+    // exit: the exit code and the PC are right. Every other model stops with
+    // exactly what program order says.
+    let program = |body: &str| {
+        format!(
+            r#"
+.data
+tohost:
+    .word 0
+    .word 0
+.text
+    la   t0, tohost
+    li   t1, 7
+    li   t3, 100
+    li   t4, 7
+{body}
+    li   a0, 1
+    halt
+"#
+        )
+    };
+    let older_unfinished = program("    div  a1, t3, t4\nreport:\n    sw   t1, 0(t0)");
+    let younger_first = program(
+        "    li   t3, 21\n    li   t4, 3\n    div  t1, t3, t4\nreport:\n    sw   t1, 0(t0)",
+    );
+    let scoreboard = Some(crate::falcon::pipeline::PipelineMode::Scoreboard);
+    for model in every_execution_model() {
+        let (prog, cpu, _, _) = run_until_stopped(&older_unfinished, model, |prog, _, mem| {
+            mem.set_tohost(Some(prog.data_base))
+        });
+        assert_eq!(cpu.exit_code, Some(3), "{model:?}");
+        assert_eq!(cpu.pc, label_address(&prog, "report"), "{model:?}");
+        assert_eq!(cpu.read(10), 0, "{model:?}");
+        let quotient = if model == scoreboard { 0 } else { 14 };
+        assert_eq!(cpu.read(11), quotient, "{model:?}: a1");
+
+        let (prog, cpu, _, _) = run_until_stopped(&younger_first, model, |prog, _, mem| {
+            mem.set_tohost(Some(prog.data_base))
+        });
+        assert_eq!(cpu.exit_code, Some(3), "{model:?}");
+        assert_eq!(cpu.pc, label_address(&prog, "report"), "{model:?}");
+        let a0 = if model == scoreboard { 1 } else { 0 };
+        assert_eq!(cpu.read(10), a0, "{model:?}: a0");
     }
 }
 
