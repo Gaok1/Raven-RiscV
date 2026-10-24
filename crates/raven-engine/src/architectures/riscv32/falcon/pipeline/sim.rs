@@ -3298,7 +3298,7 @@ fn stops_frontend(slot: &PipeSlot) -> bool {
 }
 
 /// Throw away everything in flight behind a store that asked the host to end
-/// the run, and point fetch past it.
+/// the run, and park fetch on the store.
 ///
 /// The store makes its request at MEM and the run ends when it commits. In
 /// between, the instruction behind it reaches MEM — in the serialized model
@@ -3307,6 +3307,9 @@ fn stops_frontend(slot: &PipeSlot) -> bool {
 /// syscall, which holds the front end, never run anything past the end of
 /// the program. Nothing behind the store would ever commit, so nothing is
 /// lost; [`stops_frontend`] keeps the front end from fetching more meanwhile.
+/// Fetch points at the store itself rather than past it, so a datapath
+/// rebuilt from it before the commit — a change of model — runs the store
+/// again instead of the code after the end.
 fn discard_behind_host_exit(state: &mut PipelineSimState) {
     let Some((seq, pc)) = state
         .stages
@@ -3328,7 +3331,7 @@ fn discard_behind_host_exit(state: &mut PipelineSimState) {
         group.retain(|fu| fu.slot.as_ref().is_some_and(|slot| !younger(slot)));
     }
     refresh_fu_busy(state);
-    state.fetch_pc = pc.wrapping_add(4);
+    state.fetch_pc = pc;
 }
 
 fn fetch_into_if(state: &mut PipelineSimState, mem: &mut CacheController, console: &mut Console) {

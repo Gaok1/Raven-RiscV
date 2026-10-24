@@ -4224,48 +4224,135 @@ fn without_tohost_the_same_store_is_plain_memory() {
     }
 }
 
-#[test]
-fn a_tohost_exit_is_imprecise_only_under_the_scoreboard() {
-    // The scoreboard writes results in the order they finish, not in program
-    // order. A store to `tohost` can then end the run while an older `div` is
-    // still in its unit, so `a1` is never written, or after a younger `li`
-    // has already written `a0`. That is the model's imprecision, not a lost
-    // exit: the exit code and the PC are right. Every other model stops with
-    // exactly what program order says.
-    let program = |body: &str| {
-        format!(
-            r#"
+// A `div` that is still running when the store to `tohost` finishes, under
+// a model that writes results in the order units finish.
+const TOHOST_EXIT_AFTER_DIV: &str = r#"
 .data
 tohost:
     .word 0
+    .word 0
+after:
     .word 0
 .text
     la   t0, tohost
     li   t1, 7
     li   t3, 100
     li   t4, 7
-{body}
+    div  a1, t3, t4
+report:
+    sw   t1, 0(t0)
+    mul  a2, t3, t4     # behind the end of the run: may issue, never writes
+    sw   t1, 8(t0)      # nor stores
     li   a0, 1
     halt
-"#
-        )
-    };
-    let older_unfinished = program("    div  a1, t3, t4\nreport:\n    sw   t1, 0(t0)");
-    let younger_first = program(
-        "    li   t3, 21\n    li   t4, 3\n    div  t1, t3, t4\nreport:\n    sw   t1, 0(t0)",
-    );
-    let scoreboard = Some(crate::falcon::pipeline::PipelineMode::Scoreboard);
+"#;
+
+#[test]
+fn a_tohost_exit_waits_for_older_work_in_every_mode() {
+    // The scoreboard let the store finish ahead of the older `div` and ended
+    // the run there, so the quotient was never written: `a1` read 0 under
+    // the scoreboard and 14 everywhere else, the exit syscall included. The
+    // `mul` behind the store issues before the store finishes, and must not
+    // write while the run waits for the `div`.
     for model in every_execution_model() {
-        let (prog, cpu, _, _) = run_until_stopped(&older_unfinished, model, |prog, _, mem| {
-            mem.set_tohost(Some(prog.data_base))
-        });
+        let (prog, cpu, mem, console) =
+            run_until_stopped(TOHOST_EXIT_AFTER_DIV, model, |prog, _, mem| {
+                mem.set_tohost(Some(prog.data_base))
+            });
         assert_eq!(cpu.exit_code, Some(3), "{model:?}");
         assert_eq!(cpu.pc, label_address(&prog, "report"), "{model:?}");
-        assert_eq!(cpu.read(10), 0, "{model:?}");
-        let quotient = if model == scoreboard { 0 } else { 14 };
-        assert_eq!(cpu.read(11), quotient, "{model:?}: a1");
+        assert_eq!(cpu.read(11), 14, "{model:?}: the older div was dropped");
+        assert_eq!(cpu.read(12), 0, "{model:?}: the younger mul wrote");
+        assert_eq!(cpu.read(10), 0, "{model:?}: ran past the exit");
+        assert_eq!(
+            mem.load32(prog.data_base + 8).unwrap(),
+            0,
+            "{model:?}: the store behind the exit wrote memory"
+        );
+        let exits = console
+            .lines
+            .iter()
+            .filter(|l| l.text.contains("Exit 3 (tohost)"))
+            .count();
+        assert_eq!(exits, 1, "{model:?}");
+    }
+}
 
-        let (prog, cpu, _, _) = run_until_stopped(&younger_first, model, |prog, _, mem| {
+#[test]
+fn a_tohost_exit_waiting_for_older_work_survives_a_step_back() {
+    // The wait spans cycles, so it is part of what a step-back restores.
+    use crate::falcon::machine::JournaledPipeline;
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    let mut console = Console::default();
+    let prog = load_program_into_mem(TOHOST_EXIT_AFTER_DIV, &mut cpu, &mut mem);
+    mem.set_tohost(Some(prog.data_base));
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.set_mode(crate::falcon::pipeline::PipelineMode::Scoreboard, &cpi);
+    state.reset_stages(0);
+
+    for _ in 0..4096 {
+        if state.halted || state.pending_exit.is_some() {
+            break;
+        }
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+    }
+    assert!(state.pending_exit.is_some(), "the store finished first");
+    assert!(!state.halted);
+    let snapshot = state.exec_snapshot();
+    let cpu_before = cpu.clone();
+
+    let mut finish = |state: &mut PipelineSimState, cpu: &mut Cpu| {
+        for _ in 0..64 {
+            if state.halted {
+                break;
+            }
+            pipeline_tick(state, cpu, &mut mem, &cpi, &mut console);
+        }
+        assert!(state.halted && state.pending_exit.is_none());
+        assert_eq!(cpu.exit_code, Some(3));
+        assert_eq!(cpu.read(11), 14);
+        assert_eq!(cpu.pc, label_address(&prog, "report"));
+    };
+    finish(&mut state, &mut cpu);
+
+    state.restore_exec(snapshot);
+    cpu = cpu_before;
+    assert!(state.pending_exit.is_some() && !state.halted);
+    finish(&mut state, &mut cpu);
+}
+
+#[test]
+fn only_the_scoreboard_lets_a_younger_result_beat_a_tohost_exit() {
+    // The store waits for the `div` it stores, and the scoreboard writes the
+    // younger `li` meanwhile: by the time the store ends the run, `a0` is
+    // already 1. That is the imprecision the model has by design, and the
+    // exit code and the PC are still right. Every other model stops with
+    // exactly what program order says.
+    let asm = r#"
+.data
+tohost:
+    .word 0
+    .word 0
+.text
+    la   t0, tohost
+    li   t3, 21
+    li   t4, 3
+    div  t1, t3, t4
+report:
+    sw   t1, 0(t0)
+    li   a0, 1
+    halt
+"#;
+    let scoreboard = Some(crate::falcon::pipeline::PipelineMode::Scoreboard);
+    for model in every_execution_model() {
+        let (prog, cpu, _, _) = run_until_stopped(asm, model, |prog, _, mem| {
             mem.set_tohost(Some(prog.data_base))
         });
         assert_eq!(cpu.exit_code, Some(3), "{model:?}");

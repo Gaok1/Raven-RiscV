@@ -238,6 +238,17 @@ impl<P> TomasuloPipeline<P> {
             .map_or(self.fetch_pc, |op| op.address)
     }
 
+    /// Whether anything older than the instruction numbered `seq` has yet to
+    /// commit. Never, for the instruction being committed: the buffer hands
+    /// back only its head.
+    pub fn in_flight_before(&self, seq: u64) -> bool {
+        self.buffer
+            .iter()
+            .filter_map(|entry| entry.op.as_ref())
+            .chain(self.queue.iter())
+            .any(|op| op.seq < seq)
+    }
+
     /// Change how the front end guesses, forgetting what the old policy learnt.
     pub fn set_predict(&mut self, predict: BranchPredict) -> bool {
         if self.shape.predict == predict {

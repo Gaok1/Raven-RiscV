@@ -24,6 +24,7 @@
 use crate::capability::{PipelineInspect, PipelineInstructionClass};
 use crate::falcon::Cpu;
 use crate::falcon::cache::CacheController;
+use crate::falcon::memory::HostRequest;
 use crate::pipeline::{PipelineEngine, PipelineMode, PipelineOp, PipelineShape, PipelineTiming};
 use crate::ui::Console;
 
@@ -87,7 +88,11 @@ pub fn ooo_tick(
     let mut redirect = None;
 
     if let Some(op) = committing {
-        if op.fault.is_some() {
+        if state.pending_exit.is_some_and(|exit| op.seq() > exit.seq) {
+            // Younger than a store that has ended the run: in program order it
+            // never runs, so it is dropped without executing, and its unit is
+            // free again once the engine advances.
+        } else if op.fault.is_some() {
             // A fetch that could not happen faults where the program reached
             // it, not where the front end ran ahead to. Fetching again now,
             // with every older instruction retired, says what really happens
@@ -123,24 +128,48 @@ pub fn ooo_tick(
                     redirect = engine
                         .resolve(&op, u64::from(cpu.pc))
                         .or_else(|| refetch_after(&op, cpu.pc));
+                    if state.pending_exit.is_some_and(|exit| exit.seq == op.seq()) {
+                        // This store ended the run. Nothing behind it may
+                        // issue: the fetch queue goes, and the front end waits
+                        // on the store itself.
+                        redirect = Some(op.address);
+                    }
                 }
             }
         }
     }
 
-    // The run is over, and whatever is still in flight is dropped. Under the
-    // scoreboard a store to `tohost` gets here when it finishes, not when its
-    // turn comes: an older, slower instruction may still be in its unit, and
-    // its result is never written, while a younger one may already have
-    // written its own. The exit code and the PC are still right. This is the
-    // imprecision the model has by design (see `ScoreboardPipeline`); the exit
-    // syscall does not show it only because a system instruction waits for
-    // the machine to drain and holds issue behind it. Tomasulo commits in
-    // program order and never shows it.
+    // A store to `tohost` that asked to end the run ends it once nothing older
+    // is left to write its result. Tomasulo commits in program order, so that
+    // is at once. The scoreboard writes results in the order units finish, and
+    // the store may finish while an older, slower instruction is still in its
+    // unit; that one still writes, as it would have before the store in
+    // program order. What the scoreboard cannot take back is a younger result
+    // written before the store's: the imprecision the model has by design (see
+    // `ScoreboardPipeline`). The exit syscall shows neither, because a system
+    // instruction waits for the machine to drain and holds issue behind it.
+    if let Some(exit) = state.pending_exit
+        && !engine.in_flight_before(exit.seq)
+    {
+        state.pending_exit = None;
+        if !crate::falcon::exec::apply_host_request(
+            cpu,
+            console,
+            HostRequest::Exit(exit.code),
+            exit.pc,
+        ) {
+            state.halted = true;
+        }
+    }
+
     if state.halted {
         engine.halt();
     }
-    if let Some(address) = engine.advance(redirect) {
+    let next = engine.advance(redirect);
+    // While a run that has ended drains, nothing new comes in.
+    if let Some(address) = next
+        && state.pending_exit.is_none()
+    {
         engine.fetched(as_memory_access(fetch(address as u32, mem)));
     }
 
@@ -148,6 +177,23 @@ pub fn ooo_tick(
     state.cycle_count = engine.stats().cycles;
     state.ooo = Some(engine);
     commit
+}
+
+/// A store to `tohost` that asked to end the run, waiting for the instructions
+/// older than it to finish.
+///
+/// The store asks at MEM, which here is when the engine hands it back, and in
+/// a model that writes results out of order that can be before older work is
+/// done. Held in [`PipelineSimState`] so a step-back takes it back with the
+/// cycle that made it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingExit {
+    /// The exit code the store asked for.
+    code: u32,
+    /// Where the store is: the hart stops there, as on the exit syscall.
+    pc: u32,
+    /// The store's place in the engine's program order.
+    seq: u64,
 }
 
 /// Where the front end has to start over after an instruction that is not a
@@ -210,6 +256,17 @@ fn execute(
     if let Some(trap) = trap {
         sim::pipeline_enter_trap(state, cpu, mem, console, pc, trap);
         return Writeback::Empty;
+    }
+    // The store still retires, but the run it ends is over only once the
+    // older instructions are too, which is the tick's to see. A request the
+    // host answers without stopping is left for `writeback`.
+    if let Some(HostRequest::Exit(code)) = slot.host_request {
+        slot.host_request = None;
+        state.pending_exit = Some(PendingExit {
+            code,
+            pc,
+            seq: op.seq(),
+        });
     }
 
     // `writeback` takes its instruction from the writeback slot, which is the

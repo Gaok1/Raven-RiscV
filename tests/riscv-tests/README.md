@@ -35,10 +35,11 @@ the word through which a program asks an HTIF host for something. RAVEN takes
 its address from the ELF's `tohost` symbol (`env/link.ld` gives it a section
 of its own, as the official linker script does). A 32-bit store of an odd
 value `v` to it ends the run with exit code `v >> 1`, the way the exit syscall
-does: the run stops on the store, and nothing after it runs. `Scoreboard` is
-the exception, by design: it writes results in the order they finish, so the
-store can end the run while an older instruction is still unfinished (its
-result is never written) or after a younger one has written its own. The
+does: the run stops on the store, every instruction before it finishes, and
+nothing after it runs. `Scoreboard` writes results in the order they finish,
+so the store can finish while an older instruction is still running; the run
+then ends once that one has written its result too. What the model cannot
+take back, by design, is a younger result written before the store's. The
 exit code is right in every mode. An even value asks the host to run a system
 call; RAVEN does not support that, reports it once as an error (`raven run`
 prints it on stderr) and ignores it. The harness reports an exit through

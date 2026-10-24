@@ -240,6 +240,20 @@ impl<P> ScoreboardPipeline<P> {
             .map_or(self.fetch_pc, |op| op.address)
     }
 
+    /// Whether anything older than the instruction numbered `seq` (see
+    /// [`PipelineOp::seq`]) has yet to write its result.
+    ///
+    /// Here it can be: results are written in the order units finish, so an
+    /// instruction can be handed back while older, slower ones are still in
+    /// their units.
+    pub fn in_flight_before(&self, seq: u64) -> bool {
+        self.units
+            .iter()
+            .filter_map(|unit| unit.op.as_ref())
+            .chain(self.queue.iter())
+            .any(|op| op.seq < seq)
+    }
+
     /// How many instances of a declared unit exist. Raising it is the
     /// experiment the model is for: a second divider is a second thing that can
     /// be in flight, and the stalls that vanish say what the first one cost.
