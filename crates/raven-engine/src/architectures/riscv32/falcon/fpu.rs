@@ -10,8 +10,9 @@
 // The sequential executor and the pipeline's EX stage both call `execute`,
 // so the two modes cannot disagree on a result or a flag.
 //
-// Arithmetic instructions carry no `rm` field in `Instruction`, so they round
-// to nearest-even. Only the float-to-integer conversions honor `rm` and `frm`.
+// Every instruction that rounds carries its `rm` field. `execute` resolves it
+// against `frm` and refuses a reserved mode, which both callers then raise as
+// an illegal-instruction exception.
 
 use crate::falcon::instruction::Instruction;
 
@@ -45,16 +46,18 @@ pub enum Rm {
 }
 
 impl Rm {
-    /// Resolve an instruction's `rm` field; 7 (dynamic) reads `frm`.
-    /// Reserved encodings fall back to RNE instead of raising an
-    /// illegal-instruction exception.
-    pub fn resolve(rm: u8, frm: u8) -> Rm {
+    /// The mode an instruction rounds in: its `rm` field, or `frm` when `rm`
+    /// is 7 (dynamic). `None` when that mode is reserved, which makes the
+    /// instruction illegal: `rm` is 5 or 6, or `rm` is dynamic and `frm`
+    /// holds 5, 6 or 7.
+    pub fn resolve(rm: u8, frm: u8) -> Option<Rm> {
         match if rm == 7 { frm } else { rm } {
-            1 => Rm::Rtz,
-            2 => Rm::Rdn,
-            3 => Rm::Rup,
-            4 => Rm::Rmm,
-            _ => Rm::Rne,
+            0 => Some(Rm::Rne),
+            1 => Some(Rm::Rtz),
+            2 => Some(Rm::Rdn),
+            3 => Some(Rm::Rup),
+            4 => Some(Rm::Rmm),
+            _ => None,
         }
     }
 }
@@ -557,10 +560,10 @@ pub fn classify(a: u32) -> u32 {
 pub fn registers(instr: Instruction) -> Option<(u8, u8, u8, u8)> {
     use Instruction::*;
     Some(match instr {
-        FaddS { rd, rs1, rs2 }
-        | FsubS { rd, rs1, rs2 }
-        | FmulS { rd, rs1, rs2 }
-        | FdivS { rd, rs1, rs2 }
+        FaddS { rd, rs1, rs2, .. }
+        | FsubS { rd, rs1, rs2, .. }
+        | FmulS { rd, rs1, rs2, .. }
+        | FdivS { rd, rs1, rs2, .. }
         | FminS { rd, rs1, rs2 }
         | FmaxS { rd, rs1, rs2 }
         | FsgnjS { rd, rs1, rs2 }
@@ -569,18 +572,26 @@ pub fn registers(instr: Instruction) -> Option<(u8, u8, u8, u8)> {
         | FeqS { rd, rs1, rs2 }
         | FltS { rd, rs1, rs2 }
         | FleS { rd, rs1, rs2 } => (rd, rs1, rs2, 0),
-        FsqrtS { rd, rs1 }
-        | FcvtSW { rd, rs1 }
-        | FcvtSWu { rd, rs1 }
+        FsqrtS { rd, rs1, .. }
+        | FcvtSW { rd, rs1, .. }
+        | FcvtSWu { rd, rs1, .. }
         | FmvXW { rd, rs1 }
         | FmvWX { rd, rs1 }
         | FclassS { rd, rs1 }
         | FcvtWS { rd, rs1, .. }
         | FcvtWuS { rd, rs1, .. } => (rd, rs1, 0, 0),
-        FmaddS { rd, rs1, rs2, rs3 }
-        | FmsubS { rd, rs1, rs2, rs3 }
-        | FnmsubS { rd, rs1, rs2, rs3 }
-        | FnmaddS { rd, rs1, rs2, rs3 } => (rd, rs1, rs2, rs3),
+        FmaddS {
+            rd, rs1, rs2, rs3, ..
+        }
+        | FmsubS {
+            rd, rs1, rs2, rs3, ..
+        }
+        | FnmsubS {
+            rd, rs1, rs2, rs3, ..
+        }
+        | FnmaddS {
+            rd, rs1, rs2, rs3, ..
+        } => (rd, rs1, rs2, rs3),
         _ => return None,
     })
 }
@@ -607,17 +618,55 @@ pub fn writes_int(instr: Instruction) -> bool {
     )
 }
 
-/// Compute one OP-FP or R4 instruction from its operand bits. `frm` is the
-/// dynamic rounding mode (`fcsr[7:5]`).
-pub fn execute(instr: Instruction, rs1: u32, rs2: u32, rs3: u32, frm: u8) -> FpResult {
+/// The `rm` field of an instruction that rounds. `None` for the ones that do
+/// not: fmin/fmax, the sign injections, the compares, the moves and fclass
+/// use funct3 to pick the operation instead.
+pub fn rm_field(instr: Instruction) -> Option<u8> {
     use Instruction::*;
-    let rne = Rm::Rne;
     match instr {
-        FaddS { .. } => add(rs1, rs2, rne),
-        FsubS { .. } => sub(rs1, rs2, rne),
-        FmulS { .. } => mul(rs1, rs2, rne),
-        FdivS { .. } => div(rs1, rs2, rne),
-        FsqrtS { .. } => sqrt(rs1, rne),
+        FaddS { rm, .. }
+        | FsubS { rm, .. }
+        | FmulS { rm, .. }
+        | FdivS { rm, .. }
+        | FsqrtS { rm, .. }
+        | FcvtWS { rm, .. }
+        | FcvtWuS { rm, .. }
+        | FcvtSW { rm, .. }
+        | FcvtSWu { rm, .. }
+        | FmaddS { rm, .. }
+        | FmsubS { rm, .. }
+        | FnmsubS { rm, .. }
+        | FnmaddS { rm, .. } => Some(rm),
+        _ => None,
+    }
+}
+
+/// Whether `instr` is an illegal instruction under `frm` because the mode it
+/// would round in is reserved. Decided by the encoding and `frm` alone, so
+/// the pipeline can tell at decode, before any operand is ready.
+pub fn reserved_rm(instr: Instruction, frm: u8) -> bool {
+    rm_field(instr).is_some_and(|rm| Rm::resolve(rm, frm).is_none())
+}
+
+/// Compute one OP-FP or R4 instruction from its operand bits. `frm` is the
+/// dynamic rounding mode (`fcsr[7:5]`), used when the instruction's `rm` is 7.
+///
+/// `None` when the rounding mode is reserved (see [`reserved_rm`]). The
+/// instruction is then illegal: the caller raises the exception and writes
+/// neither `rd` nor `fflags`.
+pub fn execute(instr: Instruction, rs1: u32, rs2: u32, rs3: u32, frm: u8) -> Option<FpResult> {
+    use Instruction::*;
+    // The instructions without an `rm` field never look at this mode.
+    let rm = match rm_field(instr) {
+        Some(rm) => Rm::resolve(rm, frm)?,
+        None => Rm::Rne,
+    };
+    Some(match instr {
+        FaddS { .. } => add(rs1, rs2, rm),
+        FsubS { .. } => sub(rs1, rs2, rm),
+        FmulS { .. } => mul(rs1, rs2, rm),
+        FdivS { .. } => div(rs1, rs2, rm),
+        FsqrtS { .. } => sqrt(rs1, rm),
         FminS { .. } => min(rs1, rs2),
         FmaxS { .. } => max(rs1, rs2),
         FsgnjS { .. } => ok((rs1 & !SIGN) | (rs2 & SIGN)),
@@ -626,18 +675,18 @@ pub fn execute(instr: Instruction, rs1: u32, rs2: u32, rs3: u32, frm: u8) -> FpR
         FeqS { .. } => feq(rs1, rs2),
         FltS { .. } => flt(rs1, rs2),
         FleS { .. } => fle(rs1, rs2),
-        FcvtWS { rm, .. } => to_int(rs1, true, Rm::resolve(rm, frm)),
-        FcvtWuS { rm, .. } => to_int(rs1, false, Rm::resolve(rm, frm)),
-        FcvtSW { .. } => from_int(rs1, true, rne),
-        FcvtSWu { .. } => from_int(rs1, false, rne),
+        FcvtWS { .. } => to_int(rs1, true, rm),
+        FcvtWuS { .. } => to_int(rs1, false, rm),
+        FcvtSW { .. } => from_int(rs1, true, rm),
+        FcvtSWu { .. } => from_int(rs1, false, rm),
         FmvXW { .. } | FmvWX { .. } => ok(rs1),
         FclassS { .. } => ok(classify(rs1)),
-        FmaddS { .. } => fma(rs1, rs2, rs3, false, false, rne),
-        FmsubS { .. } => fma(rs1, rs2, rs3, false, true, rne),
-        FnmsubS { .. } => fma(rs1, rs2, rs3, true, false, rne),
-        FnmaddS { .. } => fma(rs1, rs2, rs3, true, true, rne),
+        FmaddS { .. } => fma(rs1, rs2, rs3, false, false, rm),
+        FmsubS { .. } => fma(rs1, rs2, rs3, false, true, rm),
+        FnmsubS { .. } => fma(rs1, rs2, rs3, true, false, rm),
+        FnmaddS { .. } => fma(rs1, rs2, rs3, true, true, rm),
         other => unreachable!("not an F compute instruction: {other:?}"),
-    }
+    })
 }
 
 /// Read one of the floating-point CSRs out of `fcsr`.
@@ -997,5 +1046,204 @@ mod tests {
         assert_eq!(csr_read(fcsr, CSR_FRM), 1);
         fcsr = csr_write(fcsr, CSR_FRM, 2);
         assert_eq!(fcsr, 0x54);
+    }
+
+    #[test]
+    fn rm_resolves_against_frm() {
+        assert_eq!(Rm::resolve(1, 3), Some(Rm::Rtz)); // a static mode wins
+        assert_eq!(Rm::resolve(7, 3), Some(Rm::Rup)); // dyn reads frm
+        for frm in 0..8 {
+            assert_eq!(Rm::resolve(5, frm), None);
+            assert_eq!(Rm::resolve(6, frm), None);
+        }
+        for frm in [5, 6, 7] {
+            assert_eq!(Rm::resolve(7, frm), None);
+        }
+    }
+
+    /// `execute` rounds in the instruction's own mode. Every case is inexact,
+    /// and its expected bits, for rne, rtz, rdn, rup and rmm in turn, follow
+    /// the rule `directed` checks above: rtz, rdn and rup take the neighbour
+    /// their direction says, and rmm parts from rne only on a tie.
+    #[test]
+    fn execute_rounds_in_the_instruction_mode() {
+        use Instruction::*;
+        const ONE: u32 = 0x3F80_0000;
+        const TWO: u32 = 0x4000_0000;
+        const THREE: u32 = 0x4040_0000;
+        const HALF: u32 = 0x3F00_0000;
+        const THIRD: u32 = 0x3EAA_AAAB; // 1/3 rounded up: THIRD * 3 = 1 + 2^-25
+        const TINY: u32 = 0x3380_0000; // 2^-24, half an ulp of 1.0
+        type Build = fn(u8) -> Instruction;
+        #[rustfmt::skip]
+        let cases: &[(Build, [u32; 3], [u32; 5])] = &[
+            // 1 + 2^-24, a tie.
+            (
+                |rm| FaddS { rd: 0, rs1: 0, rs2: 0, rm },
+                [ONE, TINY, 0],
+                [0x3F80_0000, 0x3F80_0000, 0x3F80_0000, 0x3F80_0001, 0x3F80_0001],
+            ),
+            // -(1 + 2^-24), a tie.
+            (
+                |rm| FsubS { rd: 0, rs1: 0, rs2: 0, rm },
+                [ONE | SIGN, TINY, 0],
+                [0xBF80_0000, 0xBF80_0000, 0xBF80_0001, 0xBF80_0000, 0xBF80_0001],
+            ),
+            // -(1 + 2^-25), a quarter ulp past -1.
+            (
+                |rm| FmulS { rd: 0, rs1: 0, rs2: 0, rm },
+                [THIRD, THREE | SIGN, 0],
+                [0xBF80_0000, 0xBF80_0000, 0xBF80_0001, 0xBF80_0000, 0xBF80_0000],
+            ),
+            // MAX_FINITE * 2 overflows: to infinity or to MAX_FINITE.
+            (
+                |rm| FmulS { rd: 0, rs1: 0, rs2: 0, rm },
+                [MAX_FINITE, TWO, 0],
+                [INF, MAX_FINITE, MAX_FINITE, INF, INF],
+            ),
+            // 2^-149 * 0.5 = 2^-150, a tie between 0 and the least subnormal.
+            (
+                |rm| FmulS { rd: 0, rs1: 0, rs2: 0, rm },
+                [1, HALF, 0],
+                [0, 0, 0, 1, 1],
+            ),
+            // 1/3 = 0x3EAAAAAA plus two thirds of an ulp.
+            (
+                |rm| FdivS { rd: 0, rs1: 0, rs2: 0, rm },
+                [ONE, THREE, 0],
+                [0x3EAA_AAAB, 0x3EAA_AAAA, 0x3EAA_AAAA, 0x3EAA_AAAB, 0x3EAA_AAAB],
+            ),
+            (
+                |rm| FdivS { rd: 0, rs1: 0, rs2: 0, rm },
+                [ONE | SIGN, THREE, 0],
+                [0xBEAA_AAAB, 0xBEAA_AAAA, 0xBEAA_AAAB, 0xBEAA_AAAA, 0xBEAA_AAAB],
+            ),
+            // sqrt(2) = 0x3FB504F3 plus a fifth of an ulp.
+            (
+                |rm| FsqrtS { rd: 0, rs1: 0, rm },
+                [TWO, 0, 0],
+                [0x3FB5_04F3, 0x3FB5_04F3, 0x3FB5_04F3, 0x3FB5_04F4, 0x3FB5_04F3],
+            ),
+            // THIRD * 3 + 2^-24 = 1 + 3 * 2^-25, rounded once; rounding the
+            // product first would give 1.0 in rne.
+            (
+                |rm| FmaddS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+                [THIRD, THREE, TINY],
+                [0x3F80_0001, 0x3F80_0000, 0x3F80_0000, 0x3F80_0001, 0x3F80_0001],
+            ),
+            // THIRD * 3 - 2^-24 = 1 - 2^-25, a tie below 1.0.
+            (
+                |rm| FmsubS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+                [THIRD, THREE, TINY],
+                [0x3F80_0000, 0x3F7F_FFFF, 0x3F7F_FFFF, 0x3F80_0000, 0x3F80_0000],
+            ),
+            (
+                |rm| FnmsubS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+                [THIRD, THREE, TINY],
+                [0xBF80_0000, 0xBF7F_FFFF, 0xBF80_0000, 0xBF7F_FFFF, 0xBF80_0000],
+            ),
+            (
+                |rm| FnmaddS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+                [THIRD, THREE, TINY],
+                [0xBF80_0001, 0xBF80_0000, 0xBF80_0001, 0xBF80_0000, 0xBF80_0001],
+            ),
+            // 2^24 + 1, a tie between 2^24 and 2^24 + 2.
+            (
+                |rm| FcvtSW { rd: 0, rs1: 0, rm },
+                [16_777_217, 0, 0],
+                [0x4B80_0000, 0x4B80_0000, 0x4B80_0000, 0x4B80_0001, 0x4B80_0001],
+            ),
+            (
+                |rm| FcvtSW { rd: 0, rs1: 0, rm },
+                [-16_777_217i32 as u32, 0, 0],
+                [0xCB80_0000, 0xCB80_0000, 0xCB80_0001, 0xCB80_0000, 0xCB80_0001],
+            ),
+            // 2^32 - 1 is 255/256 of an ulp above 2^32 - 256.
+            (
+                |rm| FcvtSWu { rd: 0, rs1: 0, rm },
+                [u32::MAX, 0, 0],
+                [0x4F80_0000, 0x4F7F_FFFF, 0x4F7F_FFFF, 0x4F80_0000, 0x4F80_0000],
+            ),
+            // -2.5, a tie between -2 and -3.
+            (
+                |rm| FcvtWS { rd: 0, rs1: 0, rm },
+                [0xC020_0000, 0, 0],
+                [-2i32 as u32, -2i32 as u32, -3i32 as u32, -2i32 as u32, -3i32 as u32],
+            ),
+        ];
+        for &(build, [a, b, c], want) in cases {
+            for rm in 0..5u8 {
+                // A static mode ignores frm; dyn rounds as frm says.
+                let fixed = execute(build(rm), a, b, c, (rm + 1) % 5).unwrap();
+                let dynamic = execute(build(7), a, b, c, rm).unwrap();
+                let instr = build(rm);
+                assert_eq!(
+                    fixed.bits, want[rm as usize],
+                    "{instr:?} {a:08x} {b:08x} {c:08x}"
+                );
+                assert_eq!(dynamic, fixed, "{instr:?} as dyn with frm = {rm}");
+                assert!(fixed.flags & NX != 0, "{instr:?} is inexact");
+            }
+        }
+    }
+
+    #[test]
+    fn a_reserved_rounding_mode_is_refused() {
+        use Instruction::*;
+        #[rustfmt::skip]
+        let rounding: [fn(u8) -> Instruction; 13] = [
+            |rm| FaddS { rd: 0, rs1: 0, rs2: 0, rm },
+            |rm| FsubS { rd: 0, rs1: 0, rs2: 0, rm },
+            |rm| FmulS { rd: 0, rs1: 0, rs2: 0, rm },
+            |rm| FdivS { rd: 0, rs1: 0, rs2: 0, rm },
+            |rm| FsqrtS { rd: 0, rs1: 0, rm },
+            |rm| FcvtWS { rd: 0, rs1: 0, rm },
+            |rm| FcvtWuS { rd: 0, rs1: 0, rm },
+            |rm| FcvtSW { rd: 0, rs1: 0, rm },
+            |rm| FcvtSWu { rd: 0, rs1: 0, rm },
+            |rm| FmaddS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+            |rm| FmsubS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+            |rm| FnmsubS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+            |rm| FnmaddS { rd: 0, rs1: 0, rs2: 0, rs3: 0, rm },
+        ];
+        let one = 0x3F80_0000;
+        for build in rounding {
+            for rm in [5, 6] {
+                assert!(reserved_rm(build(rm), 0), "{:?}", build(rm));
+                assert_eq!(execute(build(rm), one, one, one, 0), None);
+            }
+            for frm in [5, 6, 7] {
+                assert!(reserved_rm(build(7), frm), "{:?}", build(7));
+                assert_eq!(execute(build(7), one, one, one, frm), None);
+                // A static mode never looks at frm.
+                assert!(!reserved_rm(build(0), frm));
+                assert!(execute(build(0), one, one, one, frm).is_some());
+            }
+        }
+        // Without an `rm` field, funct3 picks the operation and frm is moot.
+        for frm in [5, 6, 7] {
+            for instr in [
+                FminS {
+                    rd: 0,
+                    rs1: 0,
+                    rs2: 0,
+                },
+                FsgnjxS {
+                    rd: 0,
+                    rs1: 0,
+                    rs2: 0,
+                },
+                FleS {
+                    rd: 0,
+                    rs1: 0,
+                    rs2: 0,
+                },
+                FmvXW { rd: 0, rs1: 0 },
+                FclassS { rd: 0, rs1: 0 },
+            ] {
+                assert!(!reserved_rm(instr, frm), "{instr:?}");
+                assert!(execute(instr, one, one, 0, frm).is_some(), "{instr:?}");
+            }
+        }
     }
 }

@@ -378,29 +378,39 @@ pub enum Instruction {
     },
 
     // Arithmetic (R-type, operate on f registers)
+    //
+    // Every instruction that rounds carries `rm`, the rounding mode in
+    // funct3: 0=rne, 1=rtz, 2=rdn, 3=rup, 4=rmm, 7=dyn (use `frm`). 5 and 6
+    // are reserved. They still decode, because the spec makes a reserved
+    // mode an illegal instruction when it executes, not an invalid encoding.
     FaddS {
         rd: u8,
         rs1: u8,
         rs2: u8,
+        rm: u8,
     },
     FsubS {
         rd: u8,
         rs1: u8,
         rs2: u8,
+        rm: u8,
     },
     FmulS {
         rd: u8,
         rs1: u8,
         rs2: u8,
+        rm: u8,
     },
     FdivS {
         rd: u8,
         rs1: u8,
         rs2: u8,
+        rm: u8,
     },
     FsqrtS {
         rd: u8,
         rs1: u8,
+        rm: u8,
     },
     FminS {
         rd: u8,
@@ -461,10 +471,12 @@ pub enum Instruction {
     FcvtSW {
         rd: u8,
         rs1: u8,
+        rm: u8,
     }, // i32 â†’ f32
     FcvtSWu {
         rd: u8,
         rs1: u8,
+        rm: u8,
     }, // u32 â†’ f32
 
     // Move (bit-pattern, between int and float register files)
@@ -489,23 +501,27 @@ pub enum Instruction {
         rs1: u8,
         rs2: u8,
         rs3: u8,
+        rm: u8,
     }, //  rs1*rs2 + rs3
     FmsubS {
         rd: u8,
         rs1: u8,
         rs2: u8,
         rs3: u8,
+        rm: u8,
     }, //  rs1*rs2 - rs3
     FnmsubS {
         rd: u8,
         rs1: u8,
         rs2: u8,
         rs3: u8,
+        rm: u8,
     }, // -rs1*rs2 + rs3
     FnmaddS {
         rd: u8,
         rs1: u8,
         rs2: u8,
         rs3: u8,
+        rm: u8,
     }, // -rs1*rs2 - rs3
 }

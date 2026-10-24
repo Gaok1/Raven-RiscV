@@ -19,7 +19,7 @@ RAVEN focuses on an approachable RV32IMAF subset so you can reason about each pi
 - **Registers:** hardware names `x0…x31` with the usual aliases `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Writes to `x0/zero` are ignored.
 
-RAVEN covers RV32IMAF — base integer, multiply/divide, atomics (LR/SC + AMO), and single-precision float — plus the Zicsr instructions (`csrrw`, `csrrs`, `csrrc` and their immediate forms, and the `csrr`/`csrw` pseudos). Float instructions raise the IEEE flags in `fflags`; `frm` and `fcsr` are also available by name. Float arithmetic rounds to nearest-even; only `fcvt.w.s` and `fcvt.wu.s` honour the `rm` field and `frm`.
+RAVEN covers RV32IMAF — base integer, multiply/divide, atomics (LR/SC + AMO), and single-precision float — plus the Zicsr instructions (`csrrw`, `csrrs`, `csrrc` and their immediate forms, and the `csrr`/`csrw` pseudos). Float instructions raise the IEEE flags in `fflags`; `frm` and `fcsr` are also available by name. Every float instruction that rounds honours its rounding mode, written as an optional last operand or taken from `frm`; see [Floating-point rounding modes](#floating-point-rounding-modes).
 
 ## Instruction set inside RAVEN
 
@@ -204,6 +204,42 @@ The table below documents the pseudo forms implemented by RAVEN and the exact ex
 > `jal` accepts both `jal label` (implicit `rd=ra`) and `jal rd, label`.
 
 If you want to inspect the final expansion in practice, assemble with `cargo run` and check the decoded instruction trace in the RAVEN run view.
+
+### Floating-point rounding modes
+
+The float instructions that round take an optional last operand that names the rounding mode, as in GNU as:
+
+```asm
+fadd.s  frd, frs1, frs2[, rm]          # also fsub.s, fmul.s, fdiv.s
+fsqrt.s frd, frs1[, rm]
+fmadd.s frd, frs1, frs2, frs3[, rm]    # also fmsub.s, fnmsub.s, fnmadd.s
+fcvt.w.s  rd, frs1[, rm]               # also fcvt.wu.s
+fcvt.s.w  frd, rs1[, rm]               # also fcvt.s.wu
+```
+
+The mode goes into `funct3` (the `rm` field):
+
+| `rm` | Name | Rounds |
+| --- | --- | --- |
+| `0` | `rne` | to nearest, ties to even |
+| `1` | `rtz` | toward zero |
+| `2` | `rdn` | down, toward −∞ |
+| `3` | `rup` | up, toward +∞ |
+| `4` | `rmm` | to nearest, ties away from zero |
+| `7` | `dyn` | as `frm` (`fcsr[7:5]`) says |
+
+- Without a mode, the assembler writes `rne`, as RAVEN always has, so existing programs assemble to the same words. GNU as writes `dyn` there instead: add `, dyn` to follow `frm`.
+- The disassembler prints every mode except `rne`, so a listing assembles back to the same words.
+- `fmin.s`, `fmax.s`, the sign injections, the compares, `fmv.x.w`, `fmv.w.x` and `fclass.s` use `funct3` to pick the operation. They take no rounding operand.
+- `rm` = 5 or 6, or `dyn` while `frm` holds 5, 6 or 7, is reserved. The instruction then raises an illegal-instruction exception: `mcause` = 2, `mtval` = the instruction word, `mepc` = its address. Neither `rd` nor `fflags` changes. With no handler (`mtvec` = 0), the run stops on the instruction and reports the trap. The assembler has no name for 5 or 6; the disassembler shows them as `rm5` and `rm6`.
+- In the pipeline the exception is taken when the instruction commits, so an instruction on a path a branch discards never traps. The Scoreboard model has no reorder buffer, so its exceptions are imprecise: the instructions that issued behind the faulting one still run, some before the trap is taken and some after the handler has been entered. A handler that returns to the faulting instruction can then run them twice, and a younger `halt` can stop the hart before the handler runs.
+
+```asm
+    fdiv.s  ft0, ft1, ft2, rtz   # toward zero, whatever frm says
+    csrrwi  zero, frm, 3         # frm = rup
+    fdiv.s  ft3, ft1, ft2, dyn   # rounds up
+    fdiv.s  ft4, ft1, ft2        # rne: no mode written
+```
 
 ## Syscalls you can try
 

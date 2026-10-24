@@ -1108,6 +1108,7 @@ fn push_description(lines: &mut Vec<Line<'static>>, word: u32, _format: EncForma
 // ── Disassembly pretty-printer ────────────────────────────────────────────────
 
 fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
+    use falcon::decoder::rm_operand;
     use falcon::instruction::Instruction::*;
     match *instruction {
         Add { rd, rs1, rs2 } => fmt3("add", rd, rs1, rs2),
@@ -1180,11 +1181,17 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
         Fsw { rs2, rs1, imm } => {
             format!("{:<9} {}, {imm}({})", "fsw", freg_name(rs2), reg_name(rs1))
         }
-        FaddS { rd, rs1, rs2 } => fmt3f("fadd.s", rd, rs1, rs2),
-        FsubS { rd, rs1, rs2 } => fmt3f("fsub.s", rd, rs1, rs2),
-        FmulS { rd, rs1, rs2 } => fmt3f("fmul.s", rd, rs1, rs2),
-        FdivS { rd, rs1, rs2 } => fmt3f("fdiv.s", rd, rs1, rs2),
-        FsqrtS { rd, rs1 } => format!("{:<9} {}, {}", "fsqrt.s", freg_name(rd), freg_name(rs1)),
+        FaddS { rd, rs1, rs2, rm } => fmt3f("fadd.s", rd, rs1, rs2) + &rm_operand(rm),
+        FsubS { rd, rs1, rs2, rm } => fmt3f("fsub.s", rd, rs1, rs2) + &rm_operand(rm),
+        FmulS { rd, rs1, rs2, rm } => fmt3f("fmul.s", rd, rs1, rs2) + &rm_operand(rm),
+        FdivS { rd, rs1, rs2, rm } => fmt3f("fdiv.s", rd, rs1, rs2) + &rm_operand(rm),
+        FsqrtS { rd, rs1, rm } => format!(
+            "{:<9} {}, {}{}",
+            "fsqrt.s",
+            freg_name(rd),
+            freg_name(rs1),
+            rm_operand(rm)
+        ),
         FminS { rd, rs1, rs2 } => fmt3f("fmin.s", rd, rs1, rs2),
         FmaxS { rd, rs1, rs2 } => fmt3f("fmax.s", rd, rs1, rs2),
         FsgnjS { rd, rs1, rs2 } => fmt3f("fsgnj.s", rd, rs1, rs2),
@@ -1211,19 +1218,65 @@ fn pretty_instr(instruction: &falcon::instruction::Instruction) -> String {
             freg_name(rs1),
             freg_name(rs2)
         ),
-        FcvtWS { rd, rs1, .. } => format!("{:<9} {}, {}", "fcvt.w.s", reg_name(rd), freg_name(rs1)),
-        FcvtWuS { rd, rs1, .. } => {
-            format!("{:<9} {}, {}", "fcvt.wu.s", reg_name(rd), freg_name(rs1))
-        }
-        FcvtSW { rd, rs1 } => format!("{:<9} {}, {}", "fcvt.s.w", freg_name(rd), reg_name(rs1)),
-        FcvtSWu { rd, rs1 } => format!("{:<9} {}, {}", "fcvt.s.wu", freg_name(rd), reg_name(rs1)),
+        FcvtWS { rd, rs1, rm } => format!(
+            "{:<9} {}, {}{}",
+            "fcvt.w.s",
+            reg_name(rd),
+            freg_name(rs1),
+            rm_operand(rm)
+        ),
+        FcvtWuS { rd, rs1, rm } => format!(
+            "{:<9} {}, {}{}",
+            "fcvt.wu.s",
+            reg_name(rd),
+            freg_name(rs1),
+            rm_operand(rm)
+        ),
+        FcvtSW { rd, rs1, rm } => format!(
+            "{:<9} {}, {}{}",
+            "fcvt.s.w",
+            freg_name(rd),
+            reg_name(rs1),
+            rm_operand(rm)
+        ),
+        FcvtSWu { rd, rs1, rm } => format!(
+            "{:<9} {}, {}{}",
+            "fcvt.s.wu",
+            freg_name(rd),
+            reg_name(rs1),
+            rm_operand(rm)
+        ),
         FmvXW { rd, rs1 } => format!("{:<9} {}, {}", "fmv.x.w", reg_name(rd), freg_name(rs1)),
         FmvWX { rd, rs1 } => format!("{:<9} {}, {}", "fmv.w.x", freg_name(rd), reg_name(rs1)),
         FclassS { rd, rs1 } => format!("{:<9} {}, {}", "fclass.s", reg_name(rd), freg_name(rs1)),
-        FmaddS { rd, rs1, rs2, rs3 } => fmt4f("fmadd.s", rd, rs1, rs2, rs3),
-        FmsubS { rd, rs1, rs2, rs3 } => fmt4f("fmsub.s", rd, rs1, rs2, rs3),
-        FnmsubS { rd, rs1, rs2, rs3 } => fmt4f("fnmsub.s", rd, rs1, rs2, rs3),
-        FnmaddS { rd, rs1, rs2, rs3 } => fmt4f("fnmadd.s", rd, rs1, rs2, rs3),
+        FmaddS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => fmt4f("fmadd.s", rd, rs1, rs2, rs3) + &rm_operand(rm),
+        FmsubS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => fmt4f("fmsub.s", rd, rs1, rs2, rs3) + &rm_operand(rm),
+        FnmsubS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => fmt4f("fnmsub.s", rd, rs1, rs2, rs3) + &rm_operand(rm),
+        FnmaddS {
+            rd,
+            rs1,
+            rs2,
+            rs3,
+            rm,
+        } => fmt4f("fnmadd.s", rd, rs1, rs2, rs3) + &rm_operand(rm),
 
         FenceI => "fence.i".into(),
 

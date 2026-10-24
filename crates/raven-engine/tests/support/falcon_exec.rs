@@ -590,3 +590,234 @@ fn linux_exit_sets_exit_code() {
         "exit should keep PC parked on the terminal ecall"
     );
 }
+
+/// Assemble `asm` at 0, give the instruction at label `bad` the reserved
+/// rounding mode `rm` if one is asked for (the assembler has no name to write
+/// it with), and step the program until it stops. Returns the RAM and the
+/// address and final word of `bad`, if there is such a label.
+fn run_fp_asm(
+    asm: &str,
+    reserved_rm: Option<u32>,
+    cpu: &mut Cpu,
+    console: &mut crate::ui::Console,
+) -> (Ram, u32, u32) {
+    let prog = crate::falcon::asm::assemble(asm, 0).expect("assemble");
+    let mut text = prog.text.clone();
+    let bad = prog
+        .labels
+        .iter()
+        .find(|(_, names)| names.iter().any(|name| name == "bad"))
+        .map_or(0, |(addr, _)| *addr);
+    if let Some(rm) = reserved_rm {
+        let word = &mut text[(bad / 4) as usize];
+        *word = (*word & !(0x7 << 12)) | (rm << 12);
+    }
+    let mut mem = Ram::new(0x4000);
+    for (i, word) in text.iter().enumerate() {
+        mem.store32(i as u32 * 4, *word).unwrap();
+    }
+    for _ in 0..256 {
+        if !step(cpu, &mut mem, console).unwrap() {
+            break;
+        }
+    }
+    (mem, bad, text[(bad / 4) as usize])
+}
+
+#[test]
+fn fp_arithmetic_rounds_as_rm_and_frm_say() {
+    // 1 + 2^-24 is a tie, and 1/3 lies two thirds of an ulp above 0x3EAAAAAA.
+    let asm = r#"
+.text
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+    li   t0, 0x33800000
+    fmv.w.x f2, t0
+    li   t0, 0x40400000
+    fmv.w.x f3, t0
+    fadd.s f10, f1, f2
+    fadd.s f11, f1, f2, rup
+    fadd.s f12, f1, f2, rmm
+    fdiv.s f13, f1, f3, rtz
+    csrrwi zero, frm, 2
+    fdiv.s f14, f1, f3, dyn
+    fdiv.s f15, f1, f3, rup
+    fdiv.s f16, f1, f3
+    halt
+"#;
+    let mut cpu = Cpu::default();
+    let mut console = crate::ui::Console::default();
+    run_fp_asm(asm, None, &mut cpu, &mut console);
+    let got: Vec<u32> = (10..=16).map(|r| cpu.fread_bits(r)).collect();
+    assert_eq!(
+        got,
+        [
+            0x3F80_0000, // rne, written as no mode: the tie stays even
+            0x3F80_0001, // rup
+            0x3F80_0001, // rmm: ties away from zero
+            0x3EAA_AAAA, // rtz
+            0x3EAA_AAAA, // dyn with frm = rdn
+            0x3EAA_AAAB, // a static rup wins over frm
+            0x3EAA_AAAB, // so does the static rne of no mode at all
+        ]
+    );
+    assert_eq!(cpu.fcsr & 0x1F, 0x01, "every result was inexact");
+}
+
+/// Load 1.0 and 3.0, poison f10, set frm, then divide at `bad`: 1/3 is inexact,
+/// so had the division run it would have changed f10 and raised NX. The handler
+/// reports mcause, mtval, mepc and fflags in a1..a4.
+fn reserved_rm_program(frm: u8, rm: &str) -> String {
+    format!(
+        r#"
+.text
+    la   t0, handler
+    csrw mtvec, t0
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+    li   t0, 0x40400000
+    fmv.w.x f2, t0
+    li   t0, 0x12345678
+    fmv.w.x f10, t0
+    csrrwi zero, frm, {frm}
+bad:
+    fdiv.s f10, f1, f2{rm}
+    li   a0, 1
+    halt
+handler:
+    csrr a1, mcause
+    csrr a2, mtval
+    csrr a3, mepc
+    csrr a4, fflags
+    halt
+"#
+    )
+}
+
+#[test]
+fn a_reserved_rounding_mode_raises_illegal_instruction() {
+    // A static rm of 5 or 6, or a dynamic one with frm at 5, 6 or 7.
+    let cases = [
+        (0, "", Some(5)),
+        (0, "", Some(6)),
+        (5, ", dyn", None),
+        (6, ", dyn", None),
+        (7, ", dyn", None),
+    ];
+    for (frm, rm, reserved) in cases {
+        let mut cpu = Cpu::default();
+        let mut console = crate::ui::Console::default();
+        let asm = reserved_rm_program(frm, rm);
+        let (_, bad, word) = run_fp_asm(&asm, reserved, &mut cpu, &mut console);
+        let case = format!("frm={frm} rm={rm:?} reserved={reserved:?}");
+        assert_eq!(
+            cpu.read(10),
+            0,
+            "{case}: fell through the illegal instruction"
+        );
+        assert_eq!(cpu.read(11), ILLEGAL_INSTRUCTION, "{case}: mcause");
+        assert_eq!(
+            cpu.read(12),
+            word,
+            "{case}: mtval holds the instruction word"
+        );
+        assert_eq!(cpu.read(13), bad, "{case}: mepc");
+        assert_eq!(cpu.read(14), 0, "{case}: fflags must not change");
+        assert_eq!(
+            cpu.fread_bits(10),
+            0x1234_5678,
+            "{case}: rd must not change"
+        );
+    }
+
+    // The same division with a mode that is not reserved runs.
+    let mut cpu = Cpu::default();
+    let mut console = crate::ui::Console::default();
+    run_fp_asm(
+        &reserved_rm_program(5, ", rtz"),
+        None,
+        &mut cpu,
+        &mut console,
+    );
+    assert_eq!(cpu.read(10), 1);
+    assert_eq!(cpu.mcause, 0);
+    assert_eq!(cpu.fread_bits(10), 0x3EAA_AAAA);
+}
+
+#[test]
+fn a_reserved_rounding_mode_without_a_handler_stops_the_hart() {
+    let asm = r#"
+.text
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+    csrrwi zero, frm, 6
+bad:
+    fadd.s f10, f1, f1, dyn
+    li   a0, 1
+    halt
+"#;
+    let mut cpu = Cpu::default();
+    let mut console = crate::ui::Console::default();
+    let (_, bad, word) = run_fp_asm(asm, None, &mut cpu, &mut console);
+    assert_eq!(
+        cpu.read(10),
+        0,
+        "the hart ran on past the illegal instruction"
+    );
+    assert_eq!(
+        (cpu.mcause, cpu.mtval, cpu.mepc),
+        (ILLEGAL_INSTRUCTION, word, bad)
+    );
+    assert_eq!(
+        cpu.pc, bad,
+        "the hart must stop on the instruction that trapped"
+    );
+    assert_eq!(cpu.fread_bits(10), 0);
+    assert!(
+        console
+            .lines
+            .iter()
+            .any(|line| line.text.contains("trap (no mtvec handler): cause=2")),
+        "the trap was not reported"
+    );
+}
+
+#[test]
+fn a_delegated_trap_without_a_handler_stops_on_the_instruction_too() {
+    // In S-mode with illegal instructions delegated and no stvec, the trap is
+    // just as fatal, and the hart stops in the same place.
+    let asm = r#"
+.text
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+bad:
+    fadd.s f10, f1, f1
+    li   a0, 1
+    halt
+"#;
+    let mut cpu = Cpu::default();
+    cpu.priv_mode = PrivMode::S;
+    cpu.medeleg = 1 << ILLEGAL_INSTRUCTION;
+    let mut console = crate::ui::Console::default();
+    let (_, bad, word) = run_fp_asm(asm, Some(5), &mut cpu, &mut console);
+    assert_eq!(
+        cpu.read(10),
+        0,
+        "the hart ran on past the illegal instruction"
+    );
+    assert_eq!(
+        (cpu.scause, cpu.stval, cpu.sepc),
+        (ILLEGAL_INSTRUCTION, word, bad)
+    );
+    assert_eq!(cpu.mcause, 0, "the trap was not delegated");
+    assert_eq!(
+        cpu.pc, bad,
+        "the hart must stop on the instruction that trapped"
+    );
+    assert!(
+        console.lines.iter().any(|line| line
+            .text
+            .contains("delegated trap (no stvec handler): cause=2")),
+        "the trap was not reported"
+    );
+}

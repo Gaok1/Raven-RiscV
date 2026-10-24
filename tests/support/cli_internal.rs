@@ -1,7 +1,8 @@
 use super::{
     HeadlessHart, PipelineReport, format_csv, format_json, format_rstats, load_falc,
     parse_expect_mem_spec, parse_expect_reg_spec, run_headless_multihart_sequential,
-    run_headless_sequential, service_pending_hart_start, validate_expectations,
+    run_headless_pipeline, run_headless_sequential, service_pending_hart_start,
+    validate_expectations,
 };
 use crate::falcon::asm::assemble;
 use crate::falcon::cache::{CacheConfig, CacheController};
@@ -291,6 +292,74 @@ fn headless_invalid_instruction_is_reported_as_fault() {
     )
     .expect_err("invalid instruction should fault");
     assert!(err.contains("fault at PC"));
+}
+
+#[test]
+fn headless_trap_without_a_handler_names_the_same_pc_in_both_modes() {
+    // A reserved rounding mode with no mtvec: the trap is fatal, its reason is
+    // on the console for `run_headless` to print, and both runs stop on the
+    // illegal instruction rather than on the one after it.
+    let prog = assemble(
+        ".text\n    li t0, 0x3F800000\n    fmv.w.x f1, t0\n    csrrwi zero, frm, 6\nbad:\n    fadd.s f10, f1, f1, dyn\n    halt",
+        0,
+    )
+    .expect("assemble");
+    let bad = prog
+        .labels
+        .iter()
+        .find(|(_, names)| names.iter().any(|name| name == "bad"))
+        .map(|(addr, _)| *addr)
+        .expect("label bad");
+    for pipeline in [false, true] {
+        let mut cpu = Cpu::default();
+        let mut mem =
+            CacheController::new(CacheConfig::default(), CacheConfig::default(), vec![], 4096);
+        let mut console = Console::default();
+        load_words(&mut mem.ram, 0, &prog.text).expect("load text");
+        cpu.pc = 0;
+        cpu.write(2, 4096);
+
+        let outcome = if pipeline {
+            run_headless_pipeline(
+                &mut cpu,
+                &mut mem,
+                &mut console,
+                &crate::ui::CpiConfig::default(),
+                &crate::ui::pipeline::PipelineConfig::default(),
+                4096,
+                false,
+            )
+            .0
+            .map(|_| ())
+        } else {
+            let mut stdout = Vec::new();
+            let mut backend =
+                crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None)
+                    .expect("backend");
+            run_headless_sequential(
+                &mut cpu,
+                &mut mem,
+                &mut console,
+                64,
+                &mut stdout,
+                1,
+                backend.as_mut(),
+            )
+        };
+        let err = outcome.expect_err("the trap should fault");
+        assert!(
+            err.contains(&format!("fault at PC=0x{bad:08X}")),
+            "pipeline={pipeline}: {err}"
+        );
+        assert!(
+            console
+                .lines
+                .iter()
+                .any(|line| line.is_error()
+                    && line.text.contains("trap (no mtvec handler): cause=2")),
+            "pipeline={pipeline}: the trap was not reported"
+        );
+    }
 }
 
 #[test]

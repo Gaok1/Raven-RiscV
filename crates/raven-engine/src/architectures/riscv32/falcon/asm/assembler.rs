@@ -1575,52 +1575,47 @@ fn parse_instr(
 
         // Arithmetic (3 float regs)
         "fadd.s" => {
-            if ops.len() != 3 {
-                return Err("fadd.s: expected 'frd, frs1, frs2'".into());
-            }
+            let rm = fp_rm("fadd.s", "frd, frs1, frs2", &ops, 3)?;
             Ok(FaddS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
+                rm,
             })
         }
         "fsub.s" => {
-            if ops.len() != 3 {
-                return Err("fsub.s: expected 'frd, frs1, frs2'".into());
-            }
+            let rm = fp_rm("fsub.s", "frd, frs1, frs2", &ops, 3)?;
             Ok(FsubS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
+                rm,
             })
         }
         "fmul.s" => {
-            if ops.len() != 3 {
-                return Err("fmul.s: expected 'frd, frs1, frs2'".into());
-            }
+            let rm = fp_rm("fmul.s", "frd, frs1, frs2", &ops, 3)?;
             Ok(FmulS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
+                rm,
             })
         }
         "fdiv.s" => {
-            if ops.len() != 3 {
-                return Err("fdiv.s: expected 'frd, frs1, frs2'".into());
-            }
+            let rm = fp_rm("fdiv.s", "frd, frs1, frs2", &ops, 3)?;
             Ok(FdivS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
+                rm,
             })
         }
         "fsqrt.s" => {
-            if ops.len() != 2 {
-                return Err("fsqrt.s: expected 'frd, frs1'".into());
-            }
+            let rm = fp_rm("fsqrt.s", "frd, frs1", &ops, 2)?;
             Ok(FsqrtS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
+                rm,
             })
         }
         "fmin.s" => {
@@ -1710,15 +1705,7 @@ fn parse_instr(
 
         // Conversion
         "fcvt.w.s" => {
-            if ops.len() < 2 || ops.len() > 3 {
-                return Err("fcvt.w.s: expected 'rd, frs1[, rm]'".into());
-            }
-            let rm = if ops.len() == 3 {
-                parse_rm(&ops[2])
-                    .ok_or("fcvt.w.s: unknown rounding mode; expected rne|rtz|rdn|rup|rmm|dyn")?
-            } else {
-                0
-            };
+            let rm = fp_rm("fcvt.w.s", "rd, frs1", &ops, 2)?;
             Ok(FcvtWS {
                 rd: get_reg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
@@ -1726,15 +1713,7 @@ fn parse_instr(
             })
         }
         "fcvt.wu.s" => {
-            if ops.len() < 2 || ops.len() > 3 {
-                return Err("fcvt.wu.s: expected 'rd, frs1[, rm]'".into());
-            }
-            let rm = if ops.len() == 3 {
-                parse_rm(&ops[2])
-                    .ok_or("fcvt.wu.s: unknown rounding mode; expected rne|rtz|rdn|rup|rmm|dyn")?
-            } else {
-                0
-            };
+            let rm = fp_rm("fcvt.wu.s", "rd, frs1", &ops, 2)?;
             Ok(FcvtWuS {
                 rd: get_reg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
@@ -1742,21 +1721,19 @@ fn parse_instr(
             })
         }
         "fcvt.s.w" => {
-            if ops.len() != 2 {
-                return Err("fcvt.s.w: expected 'frd, rs1'".into());
-            }
+            let rm = fp_rm("fcvt.s.w", "frd, rs1", &ops, 2)?;
             Ok(FcvtSW {
                 rd: get_freg(&ops[0])?,
                 rs1: get_reg(&ops[1])?,
+                rm,
             })
         }
         "fcvt.s.wu" => {
-            if ops.len() != 2 {
-                return Err("fcvt.s.wu: expected 'frd, rs1'".into());
-            }
+            let rm = fp_rm("fcvt.s.wu", "frd, rs1", &ops, 2)?;
             Ok(FcvtSWu {
                 rd: get_freg(&ops[0])?,
                 rs1: get_reg(&ops[1])?,
+                rm,
             })
         }
 
@@ -1791,49 +1768,45 @@ fn parse_instr(
             })
         }
 
-        // Fused multiply-add (R4-type): fmadd.s frd, frs1, frs2, frs3
+        // Fused multiply-add (R4-type): fmadd.s frd, frs1, frs2, frs3[, rm]
         "fmadd.s" => {
-            if ops.len() != 4 {
-                return Err("fmadd.s: expected 'frd, frs1, frs2, frs3'".into());
-            }
+            let rm = fp_rm("fmadd.s", "frd, frs1, frs2, frs3", &ops, 4)?;
             Ok(FmaddS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
                 rs3: get_freg(&ops[3])?,
+                rm,
             })
         }
         "fmsub.s" => {
-            if ops.len() != 4 {
-                return Err("fmsub.s: expected 'frd, frs1, frs2, frs3'".into());
-            }
+            let rm = fp_rm("fmsub.s", "frd, frs1, frs2, frs3", &ops, 4)?;
             Ok(FmsubS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
                 rs3: get_freg(&ops[3])?,
+                rm,
             })
         }
         "fnmsub.s" => {
-            if ops.len() != 4 {
-                return Err("fnmsub.s: expected 'frd, frs1, frs2, frs3'".into());
-            }
+            let rm = fp_rm("fnmsub.s", "frd, frs1, frs2, frs3", &ops, 4)?;
             Ok(FnmsubS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
                 rs3: get_freg(&ops[3])?,
+                rm,
             })
         }
         "fnmadd.s" => {
-            if ops.len() != 4 {
-                return Err("fnmadd.s: expected 'frd, frs1, frs2, frs3'".into());
-            }
+            let rm = fp_rm("fnmadd.s", "frd, frs1, frs2, frs3", &ops, 4)?;
             Ok(FnmaddS {
                 rd: get_freg(&ops[0])?,
                 rs1: get_freg(&ops[1])?,
                 rs2: get_freg(&ops[2])?,
                 rs3: get_freg(&ops[3])?,
+                rm,
             })
         }
 
@@ -2044,6 +2017,29 @@ fn parse_instr(
 
         _ => Err(format!("unsupported mnemonic: {mnemonic}")),
     }
+}
+
+/// The rounding mode of an F instruction that rounds: an optional last operand
+/// after its `regs` register operands, as GNU as accepts it
+/// (`fadd.s frd, frs1, frs2[, rm]`). `usage` names the register operands for
+/// the error message.
+///
+/// Without one the mode is `rne` (0), which is what RAVEN has always encoded,
+/// so programs written without a mode keep assembling to the same words. GNU
+/// as encodes `dyn` (7) there instead; write `dyn` to round as `frm` says.
+fn fp_rm(mnemonic: &str, usage: &str, ops: &[String], regs: usize) -> Result<u8, String> {
+    if ops.len() == regs {
+        return Ok(0);
+    }
+    if ops.len() != regs + 1 {
+        return Err(format!("{mnemonic}: expected '{usage}[, rm]'"));
+    }
+    parse_rm(&ops[regs]).ok_or_else(|| {
+        format!(
+            "{mnemonic}: unknown rounding mode '{}'; expected rne, rtz, rdn, rup, rmm or dyn",
+            ops[regs]
+        )
+    })
 }
 
 /// Resolve a CSR name (e.g. "satp", "mstatus") or a numeric literal (decimal/hex)

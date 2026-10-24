@@ -401,15 +401,17 @@ pub type FuBank = [Vec<FuState>; FuKind::COUNT];
 
 // ── Pipeline slot ─────────────────────────────────────────────────────────────
 
-/// Why an instruction could not be fetched, held in its slot until it reaches
-/// commit. The front end runs ahead of branches, so a fetch can fail on a path
-/// the program never takes — past the last `ret`, say — and only an
-/// instruction that actually retires may stop the program or enter a handler.
+/// Why an instruction cannot retire, held in its slot until it reaches
+/// commit. The front end runs ahead of branches, so a fetch can fail, or an
+/// instruction turn out to be illegal, on a path the program never takes —
+/// past the last `ret`, say — and only an instruction that actually reaches
+/// commit may stop the program or enter a handler.
 #[derive(Clone, Debug)]
-pub(crate) enum FetchFault {
+pub(crate) enum Fault {
     /// The word could not be read or decoded. Fatal, as in sequential mode.
     Fatal(String),
-    /// A page fault, which goes through the trap handler.
+    /// A trap that goes through the handler: a page fault on the fetch, or
+    /// an illegal instruction found at ID (a reserved rounding mode).
     Trap(sim::MemTrap),
 }
 
@@ -454,8 +456,9 @@ pub struct PipeSlot {
     pub frm: u8,
     /// IEEE flags raised at EX; OR-ed into `fflags` at WB.
     pub fp_flags: u8,
-    /// Set when the fetch failed; raised if, and only if, the slot commits.
-    pub(crate) fetch_fault: Option<FetchFault>,
+    /// Set when the fetch failed or ID found the instruction illegal; raised
+    /// if, and only if, the slot commits, and the slot then writes nothing.
+    pub(crate) fault: Option<Fault>,
 }
 
 impl PipeSlot {
@@ -488,7 +491,7 @@ impl PipeSlot {
             predicted_target: None,
             frm: 0,
             fp_flags: 0,
-            fetch_fault: None,
+            fault: None,
         }
     }
 
@@ -524,7 +527,7 @@ impl PipeSlot {
             predicted_target: None,
             frm: 0,
             fp_flags: 0,
-            fetch_fault: None,
+            fault: None,
         }
     }
 }

@@ -36,7 +36,7 @@ use crate::ui::Console;
 use super::forwarding::{RegFile, is_hardwired_zero, operand_reg_file, slot_destination};
 use super::sim::{self, CommitInfo, Writeback};
 use super::{
-    FetchFault, FuKind, InstrClass, OooEngine, PipeSlot, PipelineSimState, STAGES, Stage, UNITS,
+    Fault, FuKind, InstrClass, OooEngine, PipeSlot, PipelineSimState, STAGES, Stage, UNITS,
 };
 
 /// RV32's datapath as the shared engines see it.
@@ -104,13 +104,13 @@ pub fn ooo_tick(
             // with every older instruction retired, says what really happens
             // there: a page fault enters the handler, anything else is fatal.
             let pc = op.address as u32;
-            match sim::fetch_slot(pc, mem).fetch_fault {
-                Some(FetchFault::Fatal(message)) => {
+            match sim::fetch_slot(pc, mem).fault {
+                Some(Fault::Fatal(message)) => {
                     console.push_error(message);
                     engine.halt();
                     state.faulted = true;
                 }
-                Some(FetchFault::Trap(trap)) => {
+                Some(Fault::Trap(trap)) => {
                     sim::pipeline_enter_trap(state, cpu, mem, console, pc, trap);
                     engine.retire(&op);
                     redirect = Some(u64::from(cpu.pc));
@@ -192,6 +192,8 @@ fn execute(
     let mut slot = PipeSlot::from_word(pc, op.payload);
     slot.instr = crate::falcon::decoder::decode(op.payload).ok();
 
+    // An illegal instruction leaves ID carrying its trap, and `writeback`
+    // raises it before anything is written.
     sim::stage_id(&mut slot, cpu);
     sim::stage_ex(&mut slot);
     let (_latency, faulted, trap) = sim::stage_mem(&mut slot, cpu, mem, console);
@@ -222,10 +224,10 @@ fn execute(
 /// told to wait for its producer runs on a stale value.
 fn fetch(address: u32, mem: &mut CacheController) -> PipelineOp<u32> {
     let mut slot = sim::fetch_slot(address, mem);
-    if let Some(fault) = &slot.fetch_fault {
+    if let Some(fault) = &slot.fault {
         let message = match fault {
-            FetchFault::Fatal(message) => message.clone(),
-            FetchFault::Trap(trap) => {
+            Fault::Fatal(message) => message.clone(),
+            Fault::Trap(trap) => {
                 format!("fetch page fault at 0x{address:08X} (cause {})", trap.cause)
             }
         };

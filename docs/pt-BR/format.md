@@ -19,7 +19,7 @@ O RAVEN foca no subconjunto RV32IMAF para que você entenda cada etapa do ciclo 
 - **Registradores:** nomes `x0…x31` com os apelidos tradicionais `zero`, `ra`, `sp`, `gp`, `tp`, `t0…t6`, `s0/fp`, `s1`, `a0…a7`,
   `s2…s11`. Escritas em `x0/zero` são descartadas.
 
-O RAVEN cobre RV32IMAF — inteiros base, multiplicação/divisão, atômicos (LR/SC + AMO) e ponto flutuante de precisão simples — e as instruções Zicsr (`csrrw`, `csrrs`, `csrrc`, as formas com imediato e as pseudos `csrr`/`csrw`). As instruções de ponto flutuante levantam as flags IEEE em `fflags`; `frm` e `fcsr` também têm nome. A aritmética de ponto flutuante arredonda para o par mais próximo; só `fcvt.w.s` e `fcvt.wu.s` respeitam o campo `rm` e o `frm`.
+O RAVEN cobre RV32IMAF — inteiros base, multiplicação/divisão, atômicos (LR/SC + AMO) e ponto flutuante de precisão simples — e as instruções Zicsr (`csrrw`, `csrrs`, `csrrc`, as formas com imediato e as pseudos `csrr`/`csrw`). As instruções de ponto flutuante levantam as flags IEEE em `fflags`; `frm` e `fcsr` também têm nome. Toda instrução de ponto flutuante que arredonda respeita o seu modo de arredondamento, escrito como último operando opcional ou tirado do `frm`; veja [Modos de arredondamento de ponto flutuante](#modos-de-arredondamento-de-ponto-flutuante).
 
 ## Conjunto de instruções presente no RAVEN
 
@@ -205,6 +205,43 @@ A tabela abaixo documenta os formatos aceitos no RAVEN e a forma exata (conceitu
 > Em `jal`, você pode usar `jal label` (com `rd=ra` implícito) ou `jal rd, label`.
 
 Para observar a expansão final em execução, rode `cargo run`, monte o programa e acompanhe o traço de instruções decodificadas na interface.
+
+<a id="modos-de-arredondamento-de-ponto-flutuante"></a>
+### Modos de arredondamento de ponto flutuante
+
+As instruções de ponto flutuante que arredondam aceitam um último operando opcional com o nome do modo de arredondamento, como no GNU as:
+
+```asm
+fadd.s  frd, frs1, frs2[, rm]          # também fsub.s, fmul.s, fdiv.s
+fsqrt.s frd, frs1[, rm]
+fmadd.s frd, frs1, frs2, frs3[, rm]    # também fmsub.s, fnmsub.s, fnmadd.s
+fcvt.w.s  rd, frs1[, rm]               # também fcvt.wu.s
+fcvt.s.w  frd, rs1[, rm]               # também fcvt.s.wu
+```
+
+O modo vai para o `funct3` (o campo `rm`):
+
+| `rm` | Nome | Arredonda |
+| --- | --- | --- |
+| `0` | `rne` | para o mais próximo, empate para o par |
+| `1` | `rtz` | em direção a zero |
+| `2` | `rdn` | para baixo, em direção a −∞ |
+| `3` | `rup` | para cima, em direção a +∞ |
+| `4` | `rmm` | para o mais próximo, empate para longe de zero |
+| `7` | `dyn` | como manda o `frm` (`fcsr[7:5]`) |
+
+- Sem modo, o assembler escreve `rne`, como o RAVEN sempre fez, e os programas existentes continuam gerando as mesmas palavras. O GNU as escreve `dyn` nesse caso: acrescente `, dyn` para seguir o `frm`.
+- O desmontador mostra todo modo, exceto `rne`, então uma listagem volta a gerar as mesmas palavras.
+- `fmin.s`, `fmax.s`, as injeções de sinal, as comparações, `fmv.x.w`, `fmv.w.x` e `fclass.s` usam o `funct3` para escolher a operação. Elas não aceitam operando de arredondamento.
+- `rm` = 5 ou 6, ou `dyn` com o `frm` valendo 5, 6 ou 7, é reservado. A instrução levanta então uma exceção de instrução ilegal: `mcause` = 2, `mtval` = a palavra da instrução, `mepc` = o seu endereço. Nem `rd` nem `fflags` mudam. Sem tratador (`mtvec` = 0), a execução para na instrução e informa o trap. O assembler não tem nome para 5 nem 6; o desmontador os mostra como `rm5` e `rm6`.
+- No pipeline a exceção é tomada quando a instrução faz commit, então uma instrução num caminho que um branch descarta nunca gera trap. O modelo Scoreboard não tem reorder buffer, então as suas exceções são imprecisas: as instruções emitidas depois da que falhou executam mesmo assim, umas antes de o trap ser tomado e outras depois de o tratador já ter começado. Um tratador que volta para a instrução que falhou pode então executá-las duas vezes, e um `halt` mais novo pode parar o hart antes de o tratador rodar.
+
+```asm
+    fdiv.s  ft0, ft1, ft2, rtz   # em direção a zero, seja qual for o frm
+    csrrwi  zero, frm, 3         # frm = rup
+    fdiv.s  ft3, ft1, ft2, dyn   # arredonda para cima
+    fdiv.s  ft4, ft1, ft2        # rne: nenhum modo escrito
+```
 
 ## Syscalls disponíveis
 

@@ -125,6 +125,9 @@ pub fn apply_sret<B: Bus>(cpu: &mut Cpu, mem: &mut B) {
     cpu.sstatus = (cpu.sstatus & !((1 << 1) | (1 << 5) | (1 << 8))) | (spie << 1) | (1 << 5);
 }
 
+/// `mcause` of an illegal-instruction exception; `mtval` holds the word.
+pub const ILLEGAL_INSTRUCTION: u32 = 2;
+
 pub fn step<B: Bus>(
     cpu: &mut Cpu,
     mem: &mut B,
@@ -143,6 +146,9 @@ pub fn step<B: Bus>(
 /// `mepc`, `cause`/`tval` in their CSRs, swaps `mstatus.MPP` â† prior priv,
 /// switches to M-mode, and sets `pc = mtvec & ~3`. With `mtvec == 0` we have
 /// no handler to dispatch to â€” surface a fatal error so the harness halts.
+/// The hart then stops with `pc` on the instruction that trapped rather than on
+/// the next one, where `step` had already moved it, so a report names the right
+/// instruction and sequential and pipelined runs stop in the same place.
 ///
 /// Public so the pipeline simulator can route memory-stage page faults
 /// through the same handler that sequential execution uses.
@@ -167,6 +173,7 @@ pub fn handle_trap<B: Bus>(
             console.push_error(format!(
                 "delegated trap (no stvec handler): cause={cause} tval=0x{tval:08X} vaddr=0x{vaddr:08X} pc=0x{entry_pc:08X}"
             ));
+            cpu.pc = entry_pc;
             return Ok(false);
         }
         // sstatus: SPP â† prior priv (S=1, U=0); SPIE â† SIE; SIE â† 0.
@@ -188,6 +195,7 @@ pub fn handle_trap<B: Bus>(
         console.push_error(format!(
             "trap (no mtvec handler): cause={cause} tval=0x{tval:08X} vaddr=0x{vaddr:08X} pc=0x{entry_pc:08X}"
         ));
+        cpu.pc = entry_pc;
         return Ok(false);
     }
     let mpp = match cpu.priv_mode {
@@ -452,7 +460,7 @@ fn step_inner<B: Bus>(
         | Instruction::FmsubS { .. }
         | Instruction::FnmsubS { .. }
         | Instruction::FnmaddS { .. }) => {
-            return exec_fp(i, cpu, mem, console);
+            return exec_fp(i, word, cpu, mem, console);
         }
 
         _ => {}
@@ -655,6 +663,7 @@ fn exec_stores<B: Bus>(
 
 fn exec_fp<B: Bus>(
     instr: Instruction,
+    word: u32,
     cpu: &mut Cpu,
     mem: &mut B,
     _console: &mut Console,
@@ -681,8 +690,17 @@ fn exec_fp<B: Bus>(
             } else {
                 cpu.fread_bits(rs1)
             };
+            let (b, c) = (cpu.fread_bits(rs2), cpu.fread_bits(rs3));
             let frm = ((cpu.fcsr >> 5) & 0x7) as u8;
-            let r = fpu::execute(other, a, cpu.fread_bits(rs2), cpu.fread_bits(rs3), frm);
+            // A reserved rounding mode makes the instruction illegal. `step`
+            // takes the trap at this instruction, before rd or fflags change.
+            let Some(r) = fpu::execute(other, a, b, c, frm) else {
+                return Err(FalconError::Trap {
+                    cause: ILLEGAL_INSTRUCTION,
+                    tval: word,
+                    vaddr: 0,
+                });
+            };
             cpu.fcsr |= r.flags as u32;
             if fpu::writes_int(other) {
                 cpu.write(rd, r.bits);

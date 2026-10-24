@@ -1036,6 +1036,7 @@ fn flw_use_stalls_until_fp_load_data_is_ready() {
             rd: 2,
             rs1: 1,
             rs2: 1,
+            rm: 0,
         })
         .unwrap(),
         encode(Instruction::Halt).unwrap(),
@@ -4758,6 +4759,320 @@ top:
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// How to run a program: sequentially (`None`) or under a pipeline model, and
+/// with the caches on (`true`) or bypassed.
+type Setup = (Option<crate::falcon::pipeline::PipelineMode>, bool);
+
+/// Sequential mode and every pipeline model, each with the caches on and
+/// bypassed. Cache misses stretch the gaps between instructions, so the two
+/// line a pipeline up differently: only with fast fetch does the instruction
+/// behind a slow one reach MEM before that one commits.
+fn every_setup() -> Vec<Setup> {
+    std::iter::once(None)
+        .chain(crate::falcon::pipeline::PipelineMode::all().map(Some))
+        .flat_map(|mode| [(mode, true), (mode, false)])
+        .collect()
+}
+
+/// Run `asm` as `setup` says and expect it to halt. When `reserved_rm` is
+/// given, the instruction at label `bad` gets that rounding mode first: the
+/// assembler has no name for 5 or 6. Returns the CPU, the pipeline's state,
+/// and the address and final word of `bad` (0 and the first word if there is
+/// no such label).
+fn run_fp_program(
+    asm: &str,
+    reserved_rm: Option<u32>,
+    setup: Setup,
+) -> (Cpu, Option<PipelineSimState>, u32, u32) {
+    let mut console = Console::default();
+    let run = run_fp_until_it_stops(asm, reserved_rm, setup, &mut console);
+    if let Some(state) = &run.1 {
+        assert!(
+            state.halted && !state.faulted,
+            "{setup:?}: {:?}",
+            console.lines.iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+    }
+    run
+}
+
+/// [`run_fp_program`], for a program that may stop on a fault rather than
+/// halt. What the run reports is left on `console`.
+fn run_fp_until_it_stops(
+    asm: &str,
+    reserved_rm: Option<u32>,
+    (mode, caches): Setup,
+    console: &mut Console,
+) -> (Cpu, Option<PipelineSimState>, u32, u32) {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        0x4000,
+    );
+    mem.bypass = !caches;
+    let prog = load_program_into_mem(asm, &mut cpu, &mut mem);
+    let bad = prog
+        .labels
+        .iter()
+        .find(|(_, names)| names.iter().any(|name| name == "bad"))
+        .map_or(0, |(addr, _)| *addr);
+    let mut word = prog.text[(bad / 4) as usize];
+    if let Some(rm) = reserved_rm {
+        word = (word & !(0x7 << 12)) | (rm << 12);
+        mem.ram.store32(bad, word).unwrap();
+    }
+    let Some(mode) = mode else {
+        for _ in 0..512 {
+            if !exec::step(&mut cpu, &mut mem, console).expect("sequential step") {
+                break;
+            }
+        }
+        return (cpu, None, bad, word);
+    };
+    let cpi = CpiConfig::default();
+    let mut state = PipelineSimState::new();
+    state.set_mode(mode, &cpi);
+    state.reset_stages(0);
+    if let Some(engine) = state.ooo.as_mut() {
+        crate::capability::PipelineControl::reset(engine, 0);
+    }
+    for _ in 0..4096 {
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, console);
+        if state.halted || state.faulted {
+            break;
+        }
+    }
+    (cpu, Some(state), bad, word)
+}
+
+#[test]
+fn fp_rounding_modes_agree_in_every_mode() {
+    // The operands put each exact result off the grid or on a tie; the
+    // expected bits are the ones fpu.rs's own rounding tests pin down. Every
+    // constant has an integer register of its own, so no move into the float
+    // file waits on a register that gets overwritten.
+    let asm = r#"
+.text
+    li   t0, 0x3F800000
+    li   t1, 0x33800000
+    li   t2, 0x40400000
+    li   t3, 0x3EAAAAAB
+    li   t4, 0x40000000
+    li   t5, 0xC0200000
+    li   t6, 0xBF800000
+    li   s2, -16777217
+    li   s3, -1
+    fmv.w.x f1, t0
+    fmv.w.x f2, t1
+    fmv.w.x f3, t2
+    fmv.w.x f4, t3
+    fmv.w.x f5, t4
+    fmv.w.x f6, t5
+    fmv.w.x f7, t6
+    fadd.s  f10, f1, f2
+    fadd.s  f11, f1, f2, rup
+    fsub.s  f12, f7, f2, rdn
+    fmul.s  f13, f4, f3, rup
+    fdiv.s  f14, f1, f3, rtz
+    fsqrt.s f15, f5, rup
+    fmadd.s  f16, f4, f3, f2, rtz
+    fmsub.s  f17, f4, f3, f2, rmm
+    fnmadd.s f18, f4, f3, f2, rdn
+    fnmsub.s f19, f4, f3, f2, rtz
+    fcvt.s.w f20, s2, rdn
+    csrrwi zero, frm, 1
+    fcvt.s.wu f21, s3, dyn
+    fdiv.s  f22, f1, f3, dyn
+    fdiv.s  f23, f1, f3, rup
+    fdiv.s  f24, f1, f3
+    fcvt.w.s a0, f6, dyn
+    fcvt.w.s a1, f6, rmm
+    csrr a2, fflags
+    halt
+"#;
+    let want_f = [
+        0x3F80_0000, // f10: 1 + 2^-24 is a tie; no mode is rne, which keeps it even
+        0x3F80_0001, // f11: rup
+        0xBF80_0001, // f12: -1 - 2^-24, rdn
+        0x3F80_0001, // f13: (1/3 rounded up) * 3 = 1 + 2^-25, rup
+        0x3EAA_AAAA, // f14: 1/3, rtz
+        0x3FB5_04F4, // f15: sqrt(2), rup
+        0x3F80_0000, // f16: 1 + 3 * 2^-25, rtz
+        0x3F80_0000, // f17: 1 - 2^-25 is a tie, rmm rounds it away from zero
+        0xBF80_0001, // f18: -(1 + 3 * 2^-25), rdn
+        0xBF7F_FFFF, // f19: -(1 - 2^-25), rtz
+        0xCB80_0001, // f20: -(2^24 + 1), rdn
+        0x4F7F_FFFF, // f21: 2^32 - 1 under frm = rtz
+        0x3EAA_AAAA, // f22: dyn, so rtz
+        0x3EAA_AAAB, // f23: a static rup wins over frm
+        0x3EAA_AAAB, // f24: and so does the rne of no mode at all
+    ];
+    for setup in every_setup() {
+        let (cpu, _, _, _) = run_fp_program(asm, None, setup);
+        let got: Vec<u32> = (10..=24).map(|r| cpu.fread_bits(r)).collect();
+        assert_eq!(got, want_f, "{setup:?}");
+        // fcvt.w.s of -2.5: -2 toward zero, -3 away from it.
+        assert_eq!(cpu.read(10), -2i32 as u32, "{setup:?}");
+        assert_eq!(cpu.read(11), -3i32 as u32, "{setup:?}");
+        assert_eq!(cpu.read(12), 0x01, "{setup:?}: NX, and nothing else");
+    }
+}
+
+#[test]
+fn a_reserved_rounding_mode_traps_precisely_in_every_mode() {
+    // `bad` divides 1 by 3, which is inexact: had it run, f10 and fflags
+    // would have changed. The store, fadd and li behind it are younger and
+    // must not happen either. The handler reports what it was given.
+    let program = |frm: u8, rm: &str| {
+        format!(
+            r#"
+.data
+slot: .word 0
+.text
+    la   t0, handler
+    csrw mtvec, t0
+    la   t3, slot
+    li   t2, 0x55
+    li   t4, 0x3F800000
+    li   t5, 0x40400000
+    li   t6, 0x12345678
+    fmv.w.x f1, t4
+    fmv.w.x f2, t5
+    fmv.w.x f10, t6
+    csrrwi zero, frm, {frm}
+bad:
+    fdiv.s f10, f1, f2{rm}
+    sw   t2, 0(t3)
+    fadd.s f11, f1, f1
+    li   a0, 1
+    halt
+handler:
+    csrr a1, mcause
+    csrr a2, mtval
+    csrr a3, mepc
+    csrr a4, fflags
+    lw   a5, 0(t3)
+    halt
+"#
+        )
+    };
+    let cases = [
+        (0, "", Some(5)),
+        (0, "", Some(6)),
+        (5, ", dyn", None),
+        (6, ", dyn", None),
+        (7, ", dyn", None),
+    ];
+    for (frm, rm, reserved) in cases {
+        let asm = program(frm, rm);
+        for setup in every_setup() {
+            let (cpu, _, bad, word) = run_fp_program(&asm, reserved, setup);
+            let case = format!("{setup:?} frm={frm} rm={rm:?} reserved={reserved:?}");
+            assert_eq!(cpu.read(11), 2, "{case}: mcause");
+            assert_eq!(cpu.read(12), word, "{case}: mtval");
+            assert_eq!(cpu.read(13), bad, "{case}: mepc");
+            assert_eq!(cpu.read(14), 0, "{case}: fflags changed");
+            assert_eq!(cpu.fread_bits(10), 0x1234_5678, "{case}: rd changed");
+            // A scoreboard has no reorder buffer, so its exceptions are
+            // imprecise: what issued behind `bad` still runs, some of it
+            // before the trap is taken and some once the handler has been
+            // entered. Every other model must not have let any of it run.
+            if setup.0 == Some(crate::falcon::pipeline::PipelineMode::Scoreboard) {
+                continue;
+            }
+            assert_eq!(cpu.read(10), 0, "{case}: ran past the illegal instruction");
+            assert_eq!(cpu.read(15), 0, "{case}: the younger store happened");
+            assert_eq!(cpu.fread_bits(11), 0, "{case}: the younger fadd ran");
+        }
+    }
+}
+
+#[test]
+fn a_reserved_rounding_mode_without_a_handler_stops_on_it_in_every_mode() {
+    // With no mtvec the trap is fatal. Every run has to report it and stop
+    // with the PC on the illegal instruction, which is where the pipeline's
+    // writeback leaves it, and not on the one after it.
+    let asm = r#"
+.text
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+    csrrwi zero, frm, 6
+bad:
+    fadd.s f10, f1, f1, dyn
+    li   a0, 1
+    halt
+"#;
+    for setup in every_setup() {
+        let mut console = Console::default();
+        let (cpu, state, bad, word) = run_fp_until_it_stops(asm, None, setup, &mut console);
+        if let Some(state) = state {
+            assert!(state.faulted && !state.halted, "{setup:?}");
+        }
+        assert_eq!(cpu.pc, bad, "{setup:?}: stopped somewhere else");
+        assert_eq!(
+            (cpu.mcause, cpu.mtval, cpu.mepc),
+            (2, word, bad),
+            "{setup:?}"
+        );
+        assert_eq!(cpu.fread_bits(10), 0, "{setup:?}: rd changed");
+        assert!(
+            console
+                .lines
+                .iter()
+                .any(|line| line.text.contains("trap (no mtvec handler): cause=2")),
+            "{setup:?}: the trap was not reported"
+        );
+    }
+}
+
+#[test]
+fn a_reserved_rounding_mode_on_the_wrong_path_does_not_trap_in_any_mode() {
+    // The branch is taken but predicted not taken, so the front end runs into
+    // `bad` before the branch resolves.
+    let program = |frm: u8, rm: &str| {
+        format!(
+            r#"
+.text
+    la   t0, handler
+    csrw mtvec, t0
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+    csrrwi zero, frm, {frm}
+    beq  zero, zero, over
+bad:
+    fadd.s f10, f1, f1{rm}
+over:
+    li   a0, 9
+    halt
+handler:
+    li   a0, 99
+    halt
+"#
+        )
+    };
+    for (frm, rm, reserved) in [(5, ", dyn", None), (0, "", Some(5))] {
+        let asm = program(frm, rm);
+        for setup in every_setup() {
+            let (cpu, state, _, _) = run_fp_program(&asm, reserved, setup);
+            assert_eq!(
+                cpu.read(10),
+                9,
+                "{setup:?}: a wrong-path instruction trapped"
+            );
+            assert_eq!(cpu.mcause, 0, "{setup:?}");
+            assert_eq!(cpu.fread_bits(10), 0, "{setup:?}");
+            if let Some(state) = state.filter(|_| !setup.0.unwrap().is_out_of_order()) {
+                assert!(
+                    state.flush_count > 0,
+                    "{setup:?} never went down the wrong path"
+                );
+            }
         }
     }
 }

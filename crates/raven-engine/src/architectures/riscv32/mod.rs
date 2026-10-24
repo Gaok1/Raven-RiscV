@@ -115,14 +115,20 @@ impl Assembler for RiscV32Assembler {
             "random_bytes" | "randombytes" => &["label, n"],
             "flw" => &["frd, imm(rs1)"],
             "fsw" => &["frs2, imm(rs1)"],
-            "fadd.s" | "fsub.s" | "fmul.s" | "fdiv.s" | "fmin.s" | "fmax.s" | "fsgnj.s"
-            | "fsgnjn.s" | "fsgnjx.s" => &["frd, frs1, frs2"],
-            "fsqrt.s" | "fmv.s" | "fneg.s" | "fabs.s" => &["frd, frs"],
+            "fadd.s" | "fsub.s" | "fmul.s" | "fdiv.s" => {
+                &["frd, frs1, frs2", "frd, frs1, frs2, rm"]
+            }
+            "fmin.s" | "fmax.s" | "fsgnj.s" | "fsgnjn.s" | "fsgnjx.s" => &["frd, frs1, frs2"],
+            "fsqrt.s" => &["frd, frs", "frd, frs, rm"],
+            "fmv.s" | "fneg.s" | "fabs.s" => &["frd, frs"],
             "feq.s" | "flt.s" | "fle.s" => &["rd, frs1, frs2"],
             "fcvt.w.s" | "fcvt.wu.s" => &["rd, frs1", "rd, frs1, rm"],
-            "fcvt.s.w" | "fcvt.s.wu" | "fmv.w.x" => &["frd, rs1"],
+            "fcvt.s.w" | "fcvt.s.wu" => &["frd, rs1", "frd, rs1, rm"],
+            "fmv.w.x" => &["frd, rs1"],
             "fmv.x.w" | "fclass.s" => &["rd, frs1"],
-            "fmadd.s" | "fmsub.s" | "fnmsub.s" | "fnmadd.s" => &["frd, frs1, frs2, frs3"],
+            "fmadd.s" | "fmsub.s" | "fnmsub.s" | "fnmadd.s" => {
+                &["frd, frs1, frs2, frs3", "frd, frs1, frs2, frs3, rm"]
+            }
             _ => &[],
         }
     }
