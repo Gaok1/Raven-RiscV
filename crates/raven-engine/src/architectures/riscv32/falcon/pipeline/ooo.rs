@@ -29,7 +29,7 @@ use crate::ui::Console;
 
 use super::sim::{self, CommitInfo, Writeback};
 use super::{
-    FetchFault, FuKind, InstrClass, OooEngine, PipeSlot, PipelineSimState, STAGES, Stage, UNITS,
+    Fault, FuKind, InstrClass, OooEngine, PipeSlot, PipelineSimState, STAGES, Stage, UNITS,
     classify, operands,
 };
 
@@ -93,13 +93,13 @@ pub fn ooo_tick(
             // with every older instruction retired, says what really happens
             // there: a page fault enters the handler, anything else is fatal.
             let pc = op.address as u32;
-            match sim::fetch_slot(pc, mem).fetch_fault {
-                Some(FetchFault::Fatal(message)) => {
+            match sim::fetch_slot(pc, mem).fault {
+                Some(Fault::Fatal(message)) => {
                     console.push_error(message);
                     engine.halt();
                     state.faulted = true;
                 }
-                Some(FetchFault::Trap(trap)) => {
+                Some(Fault::Trap(trap)) => {
                     sim::pipeline_enter_trap(state, cpu, mem, console, pc, trap);
                     engine.retire(&op);
                     redirect = Some(u64::from(cpu.pc));
@@ -199,10 +199,10 @@ fn execute(
 /// address.
 fn fetch(address: u32, mem: &mut CacheController) -> PipelineOp<u32> {
     let slot = sim::fetch_slot(address, mem);
-    if let Some(fault) = &slot.fetch_fault {
+    if let Some(fault) = &slot.fault {
         let message = match fault {
-            FetchFault::Fatal(message) => message.clone(),
-            FetchFault::Trap(trap) => {
+            Fault::Fatal(message) => message.clone(),
+            Fault::Trap(trap) => {
                 format!("fetch page fault at 0x{address:08X} (cause {})", trap.cause)
             }
         };

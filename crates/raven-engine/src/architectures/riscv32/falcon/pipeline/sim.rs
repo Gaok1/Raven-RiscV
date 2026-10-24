@@ -1591,14 +1591,14 @@ pub(super) fn writeback(
     }
 
     // The fetch failed and the program really did get here.
-    if let Some(fault) = slot.fetch_fault.clone() {
+    if let Some(fault) = slot.fault.clone() {
         cpu.pc = slot.pc;
         match fault {
-            super::FetchFault::Fatal(message) => {
+            super::Fault::Fatal(message) => {
                 console.push_error(message);
                 state.faulted = true;
             }
-            super::FetchFault::Trap(trap) => {
+            super::Fault::Trap(trap) => {
                 pipeline_enter_trap(state, cpu, mem, console, slot.pc, trap)
             }
         }
@@ -3248,7 +3248,7 @@ fn stops_frontend(slot: &PipeSlot) -> bool {
     }
     // Nothing sensible lies past a fetch that failed; wait to see whether the
     // program really goes there.
-    if slot.fetch_fault.is_some() {
+    if slot.fault.is_some() {
         return true;
     }
     if matches!(
@@ -3443,10 +3443,10 @@ fn insert_stall(
 
 /// Fetch the instruction at `pc` into a fresh slot.
 ///
-/// A fetch that fails still yields a slot, carrying a [`FetchFault`] that is
+/// A fetch that fails still yields a slot, carrying a [`Fault`] that is
 /// raised only if the slot reaches commit.
 ///
-/// [`FetchFault`]: super::FetchFault
+/// [`Fault`]: super::Fault
 pub(super) fn fetch_slot(pc: u32, mem: &mut CacheController) -> PipeSlot {
     let (result, latency) = mem.fetch32_timed_no_count(pc);
     let (word, fault) = match result {
@@ -3454,27 +3454,24 @@ pub(super) fn fetch_slot(pc: u32, mem: &mut CacheController) -> PipeSlot {
             Ok(_) => (word, None),
             Err(e) => (
                 word,
-                Some(super::FetchFault::Fatal(format!(
+                Some(super::Fault::Fatal(format!(
                     "Invalid instruction 0x{word:08X} at 0x{pc:08X}: {e}"
                 ))),
             ),
         },
-        Err(crate::falcon::errors::FalconError::Trap { cause, tval, vaddr }) => (
-            0,
-            Some(super::FetchFault::Trap(MemTrap { cause, tval, vaddr })),
-        ),
+        Err(crate::falcon::errors::FalconError::Trap { cause, tval, vaddr }) => {
+            (0, Some(super::Fault::Trap(MemTrap { cause, tval, vaddr })))
+        }
         Err(e) => (
             0,
-            Some(super::FetchFault::Fatal(format!(
-                "IF fault at 0x{pc:08X}: {e}"
-            ))),
+            Some(super::Fault::Fatal(format!("IF fault at 0x{pc:08X}: {e}"))),
         ),
     };
     let mut slot = PipeSlot::from_word(pc, word);
     if fault.is_some() {
         slot.disasm = "fetch fault".to_string();
     }
-    slot.fetch_fault = fault;
+    slot.fault = fault;
     slot.seq = 0;
     slot.if_stall_cycles = latency.saturating_sub(1).min(255) as u8;
     slot
