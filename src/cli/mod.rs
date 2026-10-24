@@ -335,7 +335,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         } else {
             PipelineConfig::default()
         };
-        let (report, trace_steps) = run_headless_pipeline(
+        let (outcome, trace_steps) = run_headless_pipeline(
             &mut cpu,
             &mut mem,
             &mut console,
@@ -343,12 +343,19 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
             &pcfg,
             args.max_cycles,
             args.pipeline_trace_out.is_some(),
-        )?;
+        );
+        // A trace is most useful for the run that faulted, so it is written
+        // either way.
         if let Some(path) = &args.pipeline_trace_out {
             std::fs::write(path, format_pipeline_trace_json(&trace_steps))
                 .map_err(|e| format!("Cannot write '{}': {e}", path))?;
         }
-        Some(report)
+        if outcome.is_err() {
+            // The fault's reason is on the console; say it before the summary.
+            flush_cpu_stdout(&mut cpu, &mut captured_stdout);
+            print_console_errors(&console);
+        }
+        Some(outcome?)
     } else {
         if args.pipeline_trace_out.is_some() {
             return Err("--pipeline-trace-out requires --pipeline".to_string());
@@ -367,12 +374,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
 
     // Print remaining program stdout
     flush_cpu_stdout(&mut cpu, &mut captured_stdout);
-    // Print any console errors from the simulation
-    for line in &console.lines {
-        if line.is_error() {
-            eprintln!("raven: {}", line.text);
-        }
-    }
+    print_console_errors(&console);
 
     // --screen: keep the final frame visible until the user closes the window.
     if let Some(screen) = &console.screen {
@@ -1011,6 +1013,15 @@ fn service_pending_hart_start(
     Ok(())
 }
 
+/// Print the errors the simulation left on the console.
+fn print_console_errors(console: &Console) {
+    for line in &console.lines {
+        if line.is_error() {
+            eprintln!("raven: {}", line.text);
+        }
+    }
+}
+
 fn run_headless_pipeline(
     cpu: &mut Cpu,
     mem: &mut CacheController,
@@ -1019,7 +1030,7 @@ fn run_headless_pipeline(
     pcfg: &PipelineConfig,
     max_cycles: u64,
     capture_trace: bool,
-) -> Result<(PipelineReport, Vec<PipelineTraceStep>), String> {
+) -> (Result<PipelineReport, String>, Vec<PipelineTraceStep>) {
     let mut state = raven_engine::falcon::pipeline::PipelineSimState::new();
     pcfg.apply_to_state(&mut state);
     state.reset_stages(cpu.pc);
@@ -1041,20 +1052,23 @@ fn run_headless_pipeline(
     }
 
     if state.faulted {
-        return Err(format!("raven: pipeline fault at PC=0x{:08X}", cpu.pc));
+        return (
+            Err(format!("raven: pipeline fault at PC=0x{:08X}", cpu.pc)),
+            trace_steps,
+        );
     }
 
-    Ok((
-        PipelineReport {
+    (
+        Ok(PipelineReport {
             enabled: true,
             committed: state.instr_committed,
             cycles: state.cycle_count,
             stalls: state.stall_count,
             flushes: state.flush_count,
             cpi: state.cpi(),
-        },
+        }),
         trace_steps,
-    ))
+    )
 }
 
 // ── Build helpers ─────────────────────────────────────────────────────────────
