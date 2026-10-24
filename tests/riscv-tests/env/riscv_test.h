@@ -1,16 +1,18 @@
-// Minimal environment to run the official riscv-tests suite on RAVEN.
+// Minimal environment to run the official riscv-tests suite on RAVEN
+// (run_riscv_tests.py --env raven).
 //
-// Replaces env/p/riscv_test.h. The official "p" environment initialises the
-// registers, parks every hart but hart 0, sets up the trap vector, PMP, satp
-// and delegation, enables F and clears fcsr (RVTEST_RV32UF), enters the test
-// through mret and signals the end by writing to `tohost`. RAVEN has no HTIF
-// host; it ends the simulation through the exit syscall (a7 = 93) and reports
-// the exit code on the CLI (`raven run --expect-exit`). So this environment:
+// Stands in for env/p/riscv_test.h, which the harness uses by default. The
+// official "p" environment initialises the registers, parks every hart but
+// hart 0, sets up the trap vector, PMP, satp and delegation, enables F and
+// clears fcsr (RVTEST_RV32UF), and enters the test through mret; an
+// unexpected trap ends the run by writing to `tohost`. This environment
+// checks the test bodies without any of that setup:
 //   - starts straight in the test body, with NO initialisation or privileged
 //     transition (fcsr is not cleared either; see README, note on F);
-//   - keeps RVTEST_PASS and RVTEST_FAIL identical to the official ones: pass
-//     is exit(0); fail is exit((TESTNUM << 1) | 1), where TESTNUM is the
-//     number of the failing case.
+//   - keeps RVTEST_PASS and RVTEST_FAIL identical to the official ones, which
+//     end in the exit syscall (a7 = 93): pass is exit(0); fail is
+//     exit((TESTNUM << 1) | 1), where TESTNUM is the number of the failing
+//     case.
 // The tests themselves (isa/rv*/*.S and isa/macros/scalar/test_macros.h) are
 // not modified.
 
