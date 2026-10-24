@@ -13,13 +13,17 @@
 //! are read in ID, the result computed in EX, memory touched in MEM. That is
 //! what lets RV32 forward real values and take an MMU trap from the middle of
 //! the pipeline, and it is exactly what an out-of-order model may not do —
-//! there, an instruction must change the machine in one piece, at commit, in
-//! program order, or the precise exceptions the reorder buffer exists for are
-//! not precise.
+//! there, an instruction must change the machine in one piece, when the engine
+//! hands it back. Tomasulo hands back the oldest entry of its reorder buffer,
+//! at commit, in program order, which is what keeps its exceptions precise.
+//! The scoreboard hands back the oldest unit that has finished and may write
+//! its result. A younger instruction can get there before an older one that is
+//! still running, so the scoreboard's exceptions are imprecise, as they are on
+//! any machine without a reorder buffer.
 //!
-//! So a commit here runs ID, EX, MEM and WB back to back for one instruction,
-//! reusing [`sim`]'s own stage functions. The semantics are RV32's, down to the
-//! trap handling; only *when* they happen is the engine's.
+//! So when an instruction's turn comes, ID, EX, MEM and WB run back to back for
+//! it, reusing [`sim`]'s own stage functions. The semantics are RV32's, down to
+//! the trap handling; only *when* they happen is the engine's.
 
 use crate::capability::PipelineInspect;
 use crate::falcon::Cpu;
@@ -170,9 +174,13 @@ fn refetch_after(op: &PipelineOp<u32>, pc: u32) -> Option<u64> {
 /// Run one instruction all the way through, in one piece.
 ///
 /// ID reads the registers, EX computes and resolves the branch, MEM touches
-/// memory, and `writeback` writes back and moves the PC. Nothing younger has
-/// touched the machine — the engine only ever hands back its oldest entry — so
-/// a trap raised here lands on exactly the state program order says it should.
+/// memory, and `writeback` writes back and moves the PC. Under Tomasulo nothing
+/// younger has touched the machine — the engine only ever hands back its
+/// oldest entry — so a trap raised here lands on exactly the state program
+/// order says it should. The scoreboard hands back the oldest unit that has
+/// finished, and a younger instruction may already have written its result:
+/// its traps are imprecise, which is what a machine without a reorder buffer
+/// does.
 fn execute(
     op: &PipelineOp<u32>,
     state: &mut PipelineSimState,

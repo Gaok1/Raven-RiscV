@@ -580,8 +580,10 @@ pub fn fu_latency_for_class(class: InstrClass, timing: &PipelineTiming) -> u8 {
 /// and writes, where a branch goes. The stage-by-stage model below stays for
 /// the in-order modes, where live operand values, cache stalls and MMU traps
 /// mid-datapath are the whole point; under an out-of-order model an instruction
-/// executes in one piece at commit, which is the contract the package
-/// documents and what makes its exceptions precise.
+/// executes in one piece when the engine hands it back, which is the contract
+/// the package documents. Tomasulo does that at commit, in program order, which
+/// makes its exceptions precise; the scoreboard does it when a unit writes its
+/// result, which makes its exceptions imprecise.
 pub type OooEngine = crate::pipeline::PipelineEngine<u32>;
 
 /// Reversible execution state plus physical pipeline configuration and telemetry.
