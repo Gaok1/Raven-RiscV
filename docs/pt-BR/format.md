@@ -233,8 +233,8 @@ O modo vai para o `funct3` (o campo `rm`):
 - Sem modo, o assembler escreve `rne`, como o RAVEN sempre fez, e os programas existentes continuam gerando as mesmas palavras. O GNU as escreve `dyn` nesse caso: acrescente `, dyn` para seguir o `frm`.
 - O desmontador mostra todo modo, exceto `rne`, então uma listagem volta a gerar as mesmas palavras.
 - `fmin.s`, `fmax.s`, as injeções de sinal, as comparações, `fmv.x.w`, `fmv.w.x` e `fclass.s` usam o `funct3` para escolher a operação. Elas não aceitam operando de arredondamento.
-- `rm` = 5 ou 6, ou `dyn` com o `frm` valendo 5, 6 ou 7, é reservado. A instrução levanta então uma exceção de instrução ilegal: `mcause` = 2, `mtval` = a palavra da instrução, `mepc` = o seu endereço. Nem `rd` nem `fflags` mudam. Sem tratador (`mtvec` = 0), a execução para e informa o trap. O assembler não tem nome para 5 nem 6; o desmontador os mostra como `rm5` e `rm6`.
-- No pipeline a exceção é tomada quando a instrução faz commit, então uma instrução num caminho que um branch descarta nunca gera trap. O modelo Scoreboard não tem reorder buffer e as suas exceções são imprecisas: uma instrução mais nova e independente pode já ter terminado.
+- `rm` = 5 ou 6, ou `dyn` com o `frm` valendo 5, 6 ou 7, é reservado. A instrução levanta então uma exceção de instrução ilegal: `mcause` = 2, `mtval` = a palavra da instrução, `mepc` = o seu endereço. Nem `rd` nem `fflags` mudam. Sem tratador (`mtvec` = 0), a execução para na instrução e informa o trap. O assembler não tem nome para 5 nem 6; o desmontador os mostra como `rm5` e `rm6`.
+- No pipeline a exceção é tomada quando a instrução faz commit, então uma instrução num caminho que um branch descarta nunca gera trap. O modelo Scoreboard não tem reorder buffer, então as suas exceções são imprecisas: as instruções emitidas depois da que falhou executam mesmo assim, umas antes de o trap ser tomado e outras depois de o tratador já ter começado. Um tratador que volta para a instrução que falhou pode então executá-las duas vezes, e um `halt` mais novo pode parar o hart antes de o tratador rodar.
 
 ```asm
     fdiv.s  ft0, ft1, ft2, rtz   # em direção a zero, seja qual for o frm

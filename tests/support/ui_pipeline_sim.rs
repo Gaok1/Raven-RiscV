@@ -4631,8 +4631,9 @@ handler:
             assert_eq!(cpu.read(14), 0, "{case}: fflags changed");
             assert_eq!(cpu.fread_bits(10), 0x1234_5678, "{case}: rd changed");
             // A scoreboard has no reorder buffer, so its exceptions are
-            // imprecise by design: younger independent work may already be
-            // done. Every other model must not have let it happen.
+            // imprecise: what issued behind `bad` still runs, some of it
+            // before the trap is taken and some once the handler has been
+            // entered. Every other model must not have let any of it run.
             if setup.0 == Some(crate::falcon::pipeline::PipelineMode::Scoreboard) {
                 continue;
             }
