@@ -146,6 +146,9 @@ pub fn step<B: Bus>(
 /// `mepc`, `cause`/`tval` in their CSRs, swaps `mstatus.MPP` â† prior priv,
 /// switches to M-mode, and sets `pc = mtvec & ~3`. With `mtvec == 0` we have
 /// no handler to dispatch to â€” surface a fatal error so the harness halts.
+/// The hart then stops with `pc` on the instruction that trapped rather than on
+/// the next one, where `step` had already moved it, so a report names the right
+/// instruction and sequential and pipelined runs stop in the same place.
 ///
 /// Public so the pipeline simulator can route memory-stage page faults
 /// through the same handler that sequential execution uses.
@@ -170,6 +173,7 @@ pub fn handle_trap<B: Bus>(
             console.push_error(format!(
                 "delegated trap (no stvec handler): cause={cause} tval=0x{tval:08X} vaddr=0x{vaddr:08X} pc=0x{entry_pc:08X}"
             ));
+            cpu.pc = entry_pc;
             return Ok(false);
         }
         // sstatus: SPP â† prior priv (S=1, U=0); SPIE â† SIE; SIE â† 0.
@@ -191,6 +195,7 @@ pub fn handle_trap<B: Bus>(
         console.push_error(format!(
             "trap (no mtvec handler): cause={cause} tval=0x{tval:08X} vaddr=0x{vaddr:08X} pc=0x{entry_pc:08X}"
         ));
+        cpu.pc = entry_pc;
         return Ok(false);
     }
     let mpp = match cpu.priv_mode {

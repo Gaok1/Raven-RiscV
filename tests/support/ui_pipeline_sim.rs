@@ -4437,7 +4437,27 @@ fn every_setup() -> Vec<Setup> {
 fn run_fp_program(
     asm: &str,
     reserved_rm: Option<u32>,
+    setup: Setup,
+) -> (Cpu, Option<PipelineSimState>, u32, u32) {
+    let mut console = Console::default();
+    let run = run_fp_until_it_stops(asm, reserved_rm, setup, &mut console);
+    if let Some(state) = &run.1 {
+        assert!(
+            state.halted && !state.faulted,
+            "{setup:?}: {:?}",
+            console.lines.iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+    }
+    run
+}
+
+/// [`run_fp_program`], for a program that may stop on a fault rather than
+/// halt. What the run reports is left on `console`.
+fn run_fp_until_it_stops(
+    asm: &str,
+    reserved_rm: Option<u32>,
     (mode, caches): Setup,
+    console: &mut Console,
 ) -> (Cpu, Option<PipelineSimState>, u32, u32) {
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(
@@ -4447,7 +4467,6 @@ fn run_fp_program(
         0x4000,
     );
     mem.bypass = !caches;
-    let mut console = Console::default();
     let prog = load_program_into_mem(asm, &mut cpu, &mut mem);
     let bad = prog
         .labels
@@ -4461,7 +4480,7 @@ fn run_fp_program(
     }
     let Some(mode) = mode else {
         for _ in 0..512 {
-            if !exec::step(&mut cpu, &mut mem, &mut console).expect("sequential step") {
+            if !exec::step(&mut cpu, &mut mem, console).expect("sequential step") {
                 break;
             }
         }
@@ -4475,16 +4494,11 @@ fn run_fp_program(
         crate::capability::PipelineControl::reset(engine, 0);
     }
     for _ in 0..4096 {
-        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, &mut console);
+        pipeline_tick(&mut state, &mut cpu, &mut mem, &cpi, console);
         if state.halted || state.faulted {
             break;
         }
     }
-    assert!(
-        state.halted && !state.faulted,
-        "{mode:?} caches={caches}: {:?}",
-        console.lines.iter().map(|l| &l.text).collect::<Vec<_>>()
-    );
     (cpu, Some(state), bad, word)
 }
 
@@ -4626,6 +4640,44 @@ handler:
             assert_eq!(cpu.read(15), 0, "{case}: the younger store happened");
             assert_eq!(cpu.fread_bits(11), 0, "{case}: the younger fadd ran");
         }
+    }
+}
+
+#[test]
+fn a_reserved_rounding_mode_without_a_handler_stops_on_it_in_every_mode() {
+    // With no mtvec the trap is fatal. Every run has to report it and stop
+    // with the PC on the illegal instruction, which is where the pipeline's
+    // writeback leaves it, and not on the one after it.
+    let asm = r#"
+.text
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+    csrrwi zero, frm, 6
+bad:
+    fadd.s f10, f1, f1, dyn
+    li   a0, 1
+    halt
+"#;
+    for setup in every_setup() {
+        let mut console = Console::default();
+        let (cpu, state, bad, word) = run_fp_until_it_stops(asm, None, setup, &mut console);
+        if let Some(state) = state {
+            assert!(state.faulted && !state.halted, "{setup:?}");
+        }
+        assert_eq!(cpu.pc, bad, "{setup:?}: stopped somewhere else");
+        assert_eq!(
+            (cpu.mcause, cpu.mtval, cpu.mepc),
+            (2, word, bad),
+            "{setup:?}"
+        );
+        assert_eq!(cpu.fread_bits(10), 0, "{setup:?}: rd changed");
+        assert!(
+            console
+                .lines
+                .iter()
+                .any(|line| line.text.contains("trap (no mtvec handler): cause=2")),
+            "{setup:?}: the trap was not reported"
+        );
     }
 }
 

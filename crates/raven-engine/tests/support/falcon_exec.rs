@@ -768,12 +768,56 @@ bad:
         (cpu.mcause, cpu.mtval, cpu.mepc),
         (ILLEGAL_INSTRUCTION, word, bad)
     );
+    assert_eq!(
+        cpu.pc, bad,
+        "the hart must stop on the instruction that trapped"
+    );
     assert_eq!(cpu.fread_bits(10), 0);
     assert!(
         console
             .lines
             .iter()
             .any(|line| line.text.contains("trap (no mtvec handler): cause=2")),
+        "the trap was not reported"
+    );
+}
+
+#[test]
+fn a_delegated_trap_without_a_handler_stops_on_the_instruction_too() {
+    // In S-mode with illegal instructions delegated and no stvec, the trap is
+    // just as fatal, and the hart stops in the same place.
+    let asm = r#"
+.text
+    li   t0, 0x3F800000
+    fmv.w.x f1, t0
+bad:
+    fadd.s f10, f1, f1
+    li   a0, 1
+    halt
+"#;
+    let mut cpu = Cpu::default();
+    cpu.priv_mode = PrivMode::S;
+    cpu.medeleg = 1 << ILLEGAL_INSTRUCTION;
+    let mut console = crate::ui::Console::default();
+    let (_, bad, word) = run_fp_asm(asm, Some(5), &mut cpu, &mut console);
+    assert_eq!(
+        cpu.read(10),
+        0,
+        "the hart ran on past the illegal instruction"
+    );
+    assert_eq!(
+        (cpu.scause, cpu.stval, cpu.sepc),
+        (ILLEGAL_INSTRUCTION, word, bad)
+    );
+    assert_eq!(cpu.mcause, 0, "the trap was not delegated");
+    assert_eq!(
+        cpu.pc, bad,
+        "the hart must stop on the instruction that trapped"
+    );
+    assert!(
+        console.lines.iter().any(|line| line
+            .text
+            .contains("delegated trap (no stvec handler): cause=2")),
         "the trap was not reported"
     );
 }
