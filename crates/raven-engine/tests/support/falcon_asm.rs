@@ -425,3 +425,130 @@ fn sfence_vma_assembles() {
     // rs1=0, rs2=0, funct7=0b0001001
     assert_eq!(prog.text[0], (0b0001001u32 << 25) | 0b1110011);
 }
+
+/// Every F instruction that rounds, with its register operands.
+const ROUNDING_INSTRUCTIONS: &[&str] = &[
+    "fadd.s ft0, ft1, ft2",
+    "fsub.s fa0, fa1, fs2",
+    "fmul.s ft3, ft4, ft5",
+    "fdiv.s fs0, fs1, ft11",
+    "fsqrt.s ft6, ft7",
+    "fcvt.w.s a0, ft0",
+    "fcvt.wu.s t1, fa5",
+    "fcvt.s.w fa0, a1",
+    "fcvt.s.wu ft0, zero",
+    "fmadd.s ft0, ft1, ft2, ft3",
+    "fmsub.s fa0, fa1, fa2, fa3",
+    "fnmsub.s fs4, fs5, fs6, fs7",
+    "fnmadd.s ft8, ft9, ft10, ft11",
+];
+
+fn assemble_one(line: &str) -> u32 {
+    let prog =
+        assemble(&format!(".text\n{line}"), 0).unwrap_or_else(|e| panic!("{line}: {}", e.msg));
+    assert_eq!(prog.text.len(), 1, "{line}");
+    prog.text[0]
+}
+
+#[test]
+fn fp_rounding_mode_operand_goes_into_funct3() {
+    let modes = [
+        ("rne", 0),
+        ("rtz", 1),
+        ("rdn", 2),
+        ("rup", 3),
+        ("rmm", 4),
+        ("dyn", 7),
+    ];
+    for line in ROUNDING_INSTRUCTIONS {
+        let plain = assemble_one(line);
+        // Without a mode the word is what RAVEN always emitted: funct3 = rne.
+        assert_eq!((plain >> 12) & 0x7, 0, "{line}");
+        for (name, rm) in modes {
+            for spelled in [name.to_string(), name.to_uppercase()] {
+                let word = assemble_one(&format!("{line}, {spelled}"));
+                assert_eq!((word >> 12) & 0x7, rm, "{line}, {spelled}");
+                assert_eq!(word & !(0x7 << 12), plain, "{line}, {spelled}");
+            }
+        }
+    }
+    // The same words as before rounding modes were kept.
+    assert_eq!(assemble_one("fadd.s ft0, ft1, ft2"), 0x0020_8053);
+    assert_eq!(assemble_one("fsqrt.s ft0, ft1"), 0x5800_8053);
+    assert_eq!(assemble_one("fcvt.s.w ft0, a0"), 0xD005_0053);
+    assert_eq!(assemble_one("fcvt.w.s a0, ft0"), 0xC000_0553);
+    assert_eq!(assemble_one("fmadd.s ft0, ft1, ft2, ft3"), 0x1820_8043);
+    // What GNU as emits when no mode is written.
+    assert_eq!(assemble_one("fadd.s ft0, ft1, ft2, dyn"), 0x0020_F053);
+}
+
+#[test]
+fn fp_rounding_mode_errors_name_the_problem() {
+    let err = |line: &str| {
+        assemble(&format!(".text\n{line}"), 0)
+            .err()
+            .unwrap_or_else(|| panic!("{line} assembled"))
+            .msg
+    };
+    for line in ROUNDING_INSTRUCTIONS {
+        let msg = err(&format!("{line}, nearest"));
+        let mnemonic = line.split_whitespace().next().unwrap();
+        assert!(
+            msg.contains(&format!("{mnemonic}: unknown rounding mode 'nearest'")),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("expected rne, rtz, rdn, rup, rmm or dyn"),
+            "{msg}"
+        );
+        assert!(
+            err(&format!("{line}, rtz, rtz")).contains("[, rm]'"),
+            "{line}"
+        );
+    }
+    assert!(err("fadd.s ft0, ft1").contains("fadd.s: expected 'frd, frs1, frs2[, rm]'"));
+    assert!(err("fsqrt.s ft0").contains("fsqrt.s: expected 'frd, frs1[, rm]'"));
+    // The reserved encodings have no name to write.
+    assert!(err("fadd.s ft0, ft1, ft2, 5").contains("unknown rounding mode '5'"));
+    // Operations that do not round use funct3 for something else.
+    assert!(err("fmin.s ft0, ft1, ft2, rtz").contains("fmin.s: expected"));
+    assert!(err("fsgnj.s ft0, ft1, ft2, rne").contains("fsgnj.s: expected"));
+}
+
+#[test]
+fn fp_rounding_modes_survive_a_disassembly_round_trip() {
+    use crate::falcon::decoder::{decode, disasm};
+    const MODES: [&str; 6] = ["rne", "rtz", "rdn", "rup", "rmm", "dyn"];
+    for line in ROUNDING_INSTRUCTIONS {
+        for mode in ["", ", rne", ", rtz", ", rdn", ", rup", ", rmm", ", dyn"] {
+            let source = format!("{line}{mode}");
+            let word = assemble_one(&source);
+            let instr = decode(word).expect("decode");
+            assert_eq!(encode(instr).expect("encode"), word, "{source}");
+            let text = disasm(word);
+            assert_eq!(assemble_one(&text), word, "{source} -> {text}");
+            // The listing leaves out rne, the mode the assembler fills in.
+            let last = text.rsplit(", ").next().unwrap();
+            match mode {
+                "" | ", rne" => assert!(!MODES.contains(&last), "{text}"),
+                _ => assert_eq!(last, &mode[2..], "{text}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn fp_disassembly_shows_the_rounding_mode() {
+    use crate::falcon::decoder::disasm;
+    // fadd.s ft0, ft1, ft2 with funct3 = rne, rtz, dyn and the reserved 5
+    // and 6.
+    assert_eq!(disasm(0x0020_8053), "fadd.s    ft0, ft1, ft2");
+    assert_eq!(disasm(0x0020_9053), "fadd.s    ft0, ft1, ft2, rtz");
+    assert_eq!(disasm(0x0020_F053), "fadd.s    ft0, ft1, ft2, dyn");
+    assert_eq!(disasm(0x0020_D053), "fadd.s    ft0, ft1, ft2, rm5");
+    assert_eq!(disasm(0x0020_E053), "fadd.s    ft0, ft1, ft2, rm6");
+    assert_eq!(disasm(0x1820_C043), "fmadd.s   ft0, ft1, ft2, ft3, rmm");
+    assert_eq!(disasm(0xC000_1553), "fcvt.w.s  a0, ft0, rtz");
+    // No `rm` field: funct3 picks the operation and nothing is appended.
+    assert_eq!(disasm(0x2820_8053), "fmin.s    ft0, ft1, ft2");
+}

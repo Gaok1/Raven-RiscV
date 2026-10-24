@@ -216,6 +216,19 @@ pub(super) fn stage_id(slot: &mut PipeSlot, cpu: &Cpu) {
     // Dynamic rounding mode. A CSR instruction stops the front end until it
     // commits (frontend_stop_in_flight), so this value is current.
     slot.frm = ((cpu.fcsr >> 5) & 0x7) as u8;
+
+    // A reserved rounding mode makes the instruction illegal, which the
+    // encoding and frm already say here. The slot carries the trap from now
+    // on and raises it only if it commits. Until then it holds the front end
+    // (stops_frontend), and since nothing has been fetched behind it yet,
+    // nothing younger can store to memory before the trap is taken.
+    if crate::falcon::fpu::reserved_rm(instr, slot.frm) {
+        slot.fault = Some(super::Fault::Trap(MemTrap {
+            cause: crate::falcon::exec::ILLEGAL_INSTRUCTION,
+            tval: slot.word,
+            vaddr: 0,
+        }));
+    }
 }
 
 /// **EX stage** — ALU compute, branch resolve, address calculation.
@@ -396,10 +409,14 @@ pub(super) fn stage_ex(slot: &mut PipeSlot) {
         | Instruction::FnmsubS { .. }
         | Instruction::FnmaddS { .. } => {
             let rs3_val = slot.mem_addr.unwrap_or(0);
-            let r =
-                crate::falcon::fpu::execute(instr, slot.rs1_val, slot.rs2_val, rs3_val, slot.frm);
-            slot.alu_result = r.bits;
-            slot.fp_flags = r.flags;
+            // `None` is a reserved rounding mode: stage_id has already given
+            // the slot the trap it raises instead of writing back.
+            if let Some(r) =
+                crate::falcon::fpu::execute(instr, slot.rs1_val, slot.rs2_val, rs3_val, slot.frm)
+            {
+                slot.alu_result = r.bits;
+                slot.fp_flags = r.flags;
+            }
         }
 
         // ── Atomics: compute address ────────────────────────────────────
@@ -862,9 +879,9 @@ fn resolve_control_in_id(slot: &mut PipeSlot) {
 
 // Branch prediction lives in predictor.rs.
 
-/// Page-fault info captured during the MEM stage. When `Some`, the caller
-/// must vector through `mtvec` via [`pipeline_enter_trap`]; the pipeline is
-/// *not* fatally faulted in that case — execution continues from the handler.
+/// A trap to vector through `mtvec` via [`pipeline_enter_trap`]: a page fault
+/// in MEM or on a fetch, or an illegal instruction. The pipeline is *not*
+/// fatally faulted in that case — execution continues from the handler.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct MemTrap {
     pub cause: u32,
@@ -1496,10 +1513,10 @@ fn classify_mem_err(
     }
 }
 
-/// Vector a MEM-stage page fault through the M-mode trap handler:
-/// drain every stage, push cause/tval/mepc via the same helper used in
-/// sequential mode, and resume fetch at `mtvec`. With no installed handler
-/// (`mtvec == 0`), the pipeline is marked faulted instead.
+/// Vector a trap — a page fault, or an illegal instruction — through the
+/// M-mode trap handler: drain every stage, push cause/tval/mepc via the same
+/// helper used in sequential mode, and resume fetch at `mtvec`. With no
+/// installed handler (`mtvec == 0`), the pipeline is marked faulted instead.
 pub(super) fn pipeline_enter_trap(
     state: &mut PipelineSimState,
     cpu: &mut Cpu,
@@ -1590,7 +1607,8 @@ pub(super) fn writeback(
         return Writeback::Empty;
     }
 
-    // The fetch failed and the program really did get here.
+    // The fetch failed, or ID found the instruction illegal, and the program
+    // really did get here. Nothing is written back.
     if let Some(fault) = slot.fault.clone() {
         cpu.pc = slot.pc;
         match fault {
@@ -3241,13 +3259,16 @@ fn frontend_stop_in_flight(state: &PipelineSimState) -> bool {
 /// PC and the privilege level, `fence.i` makes stored code visible and
 /// `sfence.vma` drops stale translations: whatever the front end fetched
 /// behind them would be the wrong instruction. All of these are recognised
-/// from their word while still in IF, before ID decodes them.
+/// from their word while still in IF, before ID decodes them. An instruction
+/// with a reserved rounding mode is known to be illegal only once ID has read
+/// `frm`, but ID runs before the front end fetches again in the same cycle,
+/// so nothing gets fetched behind it either.
 fn stops_frontend(slot: &PipeSlot) -> bool {
     if slot.is_bubble {
         return false;
     }
-    // Nothing sensible lies past a fetch that failed; wait to see whether the
-    // program really goes there.
+    // Nothing sensible lies past a fetch that failed or an illegal
+    // instruction; wait to see whether the program really goes there.
     if slot.fault.is_some() {
         return true;
     }

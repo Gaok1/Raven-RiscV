@@ -125,6 +125,9 @@ pub fn apply_sret<B: Bus>(cpu: &mut Cpu, mem: &mut B) {
     cpu.sstatus = (cpu.sstatus & !((1 << 1) | (1 << 5) | (1 << 8))) | (spie << 1) | (1 << 5);
 }
 
+/// `mcause` of an illegal-instruction exception; `mtval` holds the word.
+pub const ILLEGAL_INSTRUCTION: u32 = 2;
+
 pub fn step<B: Bus>(
     cpu: &mut Cpu,
     mem: &mut B,
@@ -452,7 +455,7 @@ fn step_inner<B: Bus>(
         | Instruction::FmsubS { .. }
         | Instruction::FnmsubS { .. }
         | Instruction::FnmaddS { .. }) => {
-            return exec_fp(i, cpu, mem, console);
+            return exec_fp(i, word, cpu, mem, console);
         }
 
         _ => {}
@@ -655,6 +658,7 @@ fn exec_stores<B: Bus>(
 
 fn exec_fp<B: Bus>(
     instr: Instruction,
+    word: u32,
     cpu: &mut Cpu,
     mem: &mut B,
     _console: &mut Console,
@@ -681,8 +685,17 @@ fn exec_fp<B: Bus>(
             } else {
                 cpu.fread_bits(rs1)
             };
+            let (b, c) = (cpu.fread_bits(rs2), cpu.fread_bits(rs3));
             let frm = ((cpu.fcsr >> 5) & 0x7) as u8;
-            let r = fpu::execute(other, a, cpu.fread_bits(rs2), cpu.fread_bits(rs3), frm);
+            // A reserved rounding mode makes the instruction illegal. `step`
+            // takes the trap at this instruction, before rd or fflags change.
+            let Some(r) = fpu::execute(other, a, b, c, frm) else {
+                return Err(FalconError::Trap {
+                    cause: ILLEGAL_INSTRUCTION,
+                    tval: word,
+                    vaddr: 0,
+                });
+            };
             cpu.fcsr |= r.flags as u32;
             if fpu::writes_int(other) {
                 cpu.write(rd, r.bits);

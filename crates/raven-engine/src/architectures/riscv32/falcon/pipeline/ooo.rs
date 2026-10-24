@@ -173,6 +173,8 @@ fn execute(
     let mut slot = PipeSlot::from_word(pc, op.payload);
     slot.instr = crate::falcon::decoder::decode(op.payload).ok();
 
+    // An illegal instruction leaves ID carrying its trap, and `writeback`
+    // raises it before anything is written.
     sim::stage_id(&mut slot, cpu);
     sim::stage_ex(&mut slot);
     let (_latency, faulted, trap) = sim::stage_mem(&mut slot, cpu, mem, console);
