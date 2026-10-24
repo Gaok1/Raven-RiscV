@@ -1988,18 +1988,31 @@ fn loading_elf_resets_pipeline_to_entry_pc() {
 fn elf_fixture_runs_to_its_exit_code_in_every_mode() {
     // The fixture prints a line from .rodata, adds one to a word in .data
     // through a call and exits with it (42). That takes a loaded ELF from
-    // entry to exit, sequentially and in each pipeline model.
+    // entry to exit, sequentially and in each pipeline model. The model is
+    // chosen before the load, as a user would, so the load has to start the
+    // out-of-order engines at the ELF's entry point too.
     let modes = std::iter::once(None).chain(crate::ui::pipeline::PipelineMode::all().map(Some));
     for mode in modes {
         let label = mode.map_or("sequential", |m| m.label());
         let mut app = App::new(None);
         app.max_cores = 1;
         app.tab = Tab::Run;
+        // The pipeline starts out enabled, so the sequential pass turns it off;
+        // otherwise single_step would run it as the Serialized model.
+        app.native_mut().pipeline_mut().enabled = mode.is_some();
         if let Some(mode) = mode {
-            app.native_mut().pipeline_mut().enabled = true;
-            app.native_mut().pipeline_mut().mode = mode;
+            // Through set_mode, as the settings screen does it: assigning the
+            // field builds no engine for Scoreboard or Tomasulo + ROB, and the
+            // in-order datapath quietly runs in their place.
+            let timing = app.session.cpi_config.clone();
+            app.native_mut().pipeline_mut().set_mode(mode, &timing);
         }
         app.load_binary(&elf_fixture_bytes());
+        assert_eq!(
+            app.native().pipeline().ooo.is_some(),
+            mode.is_some_and(|m| m.is_out_of_order()),
+            "{label}: out-of-order engine"
+        );
 
         for _ in 0..1_000 {
             if app.session.faulted
@@ -2016,6 +2029,12 @@ fn elf_fixture_runs_to_its_exit_code_in_every_mode() {
             !app.native().pipeline().faulted,
             "{label}: pipeline faulted\n{}",
             console_tail(&app)
+        );
+        // Only the pipeline passes went through the pipeline.
+        assert_eq!(
+            app.native().pipeline().cycle_count > 0,
+            mode.is_some(),
+            "{label}: pipeline cycles"
         );
         assert_eq!(
             app.native().cpu().exit_code,
