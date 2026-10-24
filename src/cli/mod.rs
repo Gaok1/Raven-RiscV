@@ -360,7 +360,7 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         if args.pipeline_trace_out.is_some() {
             return Err("--pipeline-trace-out requires --pipeline".to_string());
         }
-        run_headless_sequential(
+        let outcome = run_headless_sequential(
             &mut cpu,
             &mut mem,
             &mut console,
@@ -368,7 +368,14 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
             &mut captured_stdout,
             max_cores,
             backend.as_mut(),
-        )?;
+        );
+        if outcome.is_err() {
+            // As in the pipeline: a trap with no handler, or an instruction
+            // that does not decode, left its reason on the console.
+            flush_cpu_stdout(&mut cpu, &mut captured_stdout);
+            print_console_errors(&console);
+        }
+        outcome?;
         None
     };
 
