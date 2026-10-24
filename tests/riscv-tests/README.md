@@ -40,9 +40,9 @@ the exception, by design: it writes results in the order they finish, so the
 store can end the run while an older instruction is still unfinished (its
 result is never written) or after a younger one has written its own. The
 exit code is right in every mode. An even value asks the host to run a system
-call; RAVEN does not support that, reports it once on the console and ignores
-it. The harness reports an exit through `tohost` as `FAIL` with "unexpected
-trap".
+call; RAVEN does not support that, reports it once as an error (`raven run`
+prints it on stderr) and ignores it. The harness reports an exit through
+`tohost` as `FAIL` with "unexpected trap".
 
 ### `--env raven`: the minimal environment
 

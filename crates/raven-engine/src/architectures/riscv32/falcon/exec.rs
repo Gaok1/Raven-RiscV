@@ -170,12 +170,12 @@ pub fn apply_host_request(
             false
         }
         HostRequest::Unsupported(value) => {
-            console.push_colored(
-                format!(
-                    "tohost: HTIF system call 0x{value:08X} at 0x{pc:08X} is not supported; ignored"
-                ),
-                crate::ui::console::ConsoleColor::Warning,
-            );
+            // An error line, like the other requests RAVEN cannot serve, so
+            // that headless `raven run` — which prints only those — says it
+            // too: the program usually goes on to wait on `fromhost` forever.
+            console.push_error(format!(
+                "tohost: HTIF system call 0x{value:08X} at 0x{pc:08X} is not supported; ignored"
+            ));
             true
         }
     }

@@ -4202,6 +4202,13 @@ fn a_store_to_tohost_exits_in_every_mode() {
                 console.lines.iter().any(|l| l.text.contains("Exit 3")),
                 "{run}"
             );
+            assert!(
+                !console
+                    .lines
+                    .iter()
+                    .any(|l| l.text.contains("not supported")),
+                "{run}: clearing the word was taken for a request"
+            );
         }
     }
 }
@@ -4290,12 +4297,14 @@ tohost:
         });
         assert_eq!(cpu.exit_code, None, "{model:?}");
         assert_eq!(cpu.read(10), 4, "{model:?}");
-        let reports = console
+        let reports: Vec<_> = console
             .lines
             .iter()
             .filter(|l| l.text.contains("not supported"))
-            .count();
-        assert_eq!(reports, 1, "{model:?}");
+            .collect();
+        assert_eq!(reports.len(), 1, "{model:?}");
+        // Headless `raven run`, where riscv-tests run, prints only errors.
+        assert!(reports[0].is_error(), "{model:?}: not shown by `raven run`");
     }
 }
 
