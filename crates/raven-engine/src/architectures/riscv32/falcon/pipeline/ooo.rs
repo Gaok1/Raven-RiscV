@@ -298,9 +298,13 @@ fn sources(slot: &PipeSlot) -> Vec<(RegFile, u8)> {
     };
     if matches!(instr, Ecall) {
         // RAVEN's syscall ABI: a7 picks the call and a0..a6 carry its
-        // arguments. Which of them a call reads is not known until a7 is, so
-        // all eight are named, as the in-order model's hazard check does.
-        return (10..=17).map(|index| (RegFile::Int, index)).collect();
+        // arguments, as the in-order model's hazard check knows, and
+        // print_float takes its argument in fa0. Which of them a call reads
+        // is not known until a7 is, so all nine are named.
+        return (10..=17)
+            .map(|index| (RegFile::Int, index))
+            .chain([(RegFile::Float, 10)])
+            .collect();
     }
     let rs3 = match instr {
         FmaddS { rs3, .. } | FmsubS { rs3, .. } | FnmsubS { rs3, .. } | FnmaddS { rs3, .. } => {
@@ -447,14 +451,17 @@ mod tests {
 
     #[test]
     fn ecall_reads_the_syscall_arguments_and_writes_the_result() {
-        // a7 picks the call and a0..a6 carry its arguments; the answer comes
-        // back in a0, and in a1 too for the calls that return a 64-bit count.
+        // a7 picks the call and a0..a6 carry its arguments, or fa0 for
+        // print_float; the answer comes back in a0, and in a1 too for the
+        // calls that return a 64-bit count.
         assert_eq!(
             registers(&op_for("ecall")),
             (
                 Some("x10"),
                 vec!["x10", "x11"],
-                vec!["x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17"]
+                vec![
+                    "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "f10"
+                ]
             )
         );
     }

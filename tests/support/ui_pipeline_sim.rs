@@ -4626,6 +4626,47 @@ fn an_ecall_waits_for_the_argument_it_is_passed() {
     }
 }
 
+#[test]
+fn an_ecall_waits_for_a_float_argument_in_fa0() {
+    // print_float takes its argument in fa0, which the ecall did not name, so
+    // under the scoreboard it ran alongside the fdiv.s computing it, as it
+    // used to with a0 and the div.
+    let program = |arg: &str, other: &str| {
+        format!(
+            r#"
+.text
+    li   t0, 1
+    li   t1, 3
+    li   t2, 0x3eaaaaab
+    fcvt.s.w f5, t0
+    fcvt.s.w f6, t1
+    fmv.w.x {other}, t2
+    li   a7, 1015
+    fdiv.s {arg}, f5, f6
+    ecall
+    halt
+"#
+        )
+    };
+    let passed = program("fa0", "f7");
+    let unrelated = program("f7", "fa0");
+    for mode in crate::falcon::pipeline::PipelineMode::all() {
+        let (cpu, waited) = run_pipeline_mode_spare_fpus(&passed, mode);
+        assert!(waited.halted && !waited.faulted, "{mode:?}");
+        assert_eq!(cpu.stdout, b"0.333333", "{mode:?}");
+        if mode == crate::falcon::pipeline::PipelineMode::Scoreboard {
+            let (cpu, apart) = run_pipeline_mode_spare_fpus(&unrelated, mode);
+            assert_eq!(cpu.stdout, b"0.333333", "{mode:?}");
+            assert!(
+                waited.cycle_count > apart.cycle_count,
+                "the ecall did not wait for fa0 ({} vs {} cycles)",
+                waited.cycle_count,
+                apart.cycle_count,
+            );
+        }
+    }
+}
+
 /// Run `asm` under `mode` with the branch predictor set to `predict`, the way
 /// a config file or the settings screen sets it: after the mode.
 fn run_pipeline_mode_predicting(
