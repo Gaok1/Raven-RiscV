@@ -175,6 +175,164 @@ pub struct CacheLineView<'a> {
     pub data: &'a [u8],
     pub frequency: u64,
     pub referenced: bool,
+    /// The line's state under the coherence protocol, when one tracks it.
+    /// `None` for a cache no protocol watches: a single shared L1, a private
+    /// one with coherence off, or any lower level.
+    pub state: Option<CoherenceState>,
+}
+
+/// The state a coherence protocol keeps for one line in one private cache.
+///
+/// The names are the MOESI ones; MSI uses three of them and MESI four.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoherenceState {
+    /// The only valid copy, and newer than memory.
+    Modified,
+    /// Newer than memory, shared with other caches that hold it in `Shared`.
+    /// This cache answers for the line and writes it back when it leaves.
+    Owned,
+    /// The only copy, and the same as memory: a write needs no bus traffic.
+    Exclusive,
+    /// One of possibly several read-only copies.
+    Shared,
+    /// Not held.
+    Invalid,
+}
+
+impl CoherenceState {
+    /// The one-letter name diagrams use: `M`, `O`, `E`, `S`, `I`.
+    pub fn letter(self) -> char {
+        match self {
+            Self::Modified => 'M',
+            Self::Owned => 'O',
+            Self::Exclusive => 'E',
+            Self::Shared => 'S',
+            Self::Invalid => 'I',
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Modified => "Modified",
+            Self::Owned => "Owned",
+            Self::Exclusive => "Exclusive",
+            Self::Shared => "Shared",
+            Self::Invalid => "Invalid",
+        }
+    }
+}
+
+/// What one core's private caches did on the coherence bus, and what the
+/// others did to them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CoherenceCoreStats {
+    /// Read misses broadcast as `BusRd`.
+    pub bus_reads: u64,
+    /// Write misses broadcast as `BusRdX` (read for ownership).
+    pub bus_read_exclusive: u64,
+    /// Writes to a line held `Shared` or `Owned`, broadcast as `BusUpgr`.
+    pub bus_upgrades: u64,
+    /// Writes put on the bus as they are: write-through stores and
+    /// no-write-allocate misses.
+    pub bus_writes: u64,
+    /// Lines of this core another core's request invalidated.
+    pub invalidations_received: u64,
+    /// Dirty lines this core wrote back to the shared level because another
+    /// core asked for them.
+    pub flushes: u64,
+    /// Lines this core sent straight to another core's cache.
+    pub cache_to_cache: u64,
+    /// Misses on a line another core's write had invalidated here: the cost
+    /// of sharing, as opposed to capacity or conflict.
+    pub coherence_misses: u64,
+    /// Cycles this core waited on the bus for snoops and transfers.
+    pub bus_cycles: u64,
+}
+
+impl CoherenceCoreStats {
+    /// Requests this core put on the bus.
+    pub fn transactions(&self) -> u64 {
+        self.bus_reads + self.bus_read_exclusive + self.bus_upgrades + self.bus_writes
+    }
+}
+
+/// The bus request behind a [`CoherenceEvent`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoherenceRequest {
+    /// Read miss.
+    BusRd,
+    /// Write miss: read the line and invalidate every other copy.
+    BusRdX,
+    /// Write hit on a shared line: invalidate every other copy.
+    BusUpgr,
+    /// A write that goes on the bus as it is (write-through, no allocate).
+    BusWr,
+    /// An instruction fetch miss, which makes a dirty data copy elsewhere
+    /// write itself back.
+    IFetch,
+    /// A dirty line leaving its cache on eviction or `fence.i`.
+    WriteBack,
+}
+
+impl CoherenceRequest {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::BusRd => "BusRd",
+            Self::BusRdX => "BusRdX",
+            Self::BusUpgr => "BusUpgr",
+            Self::BusWr => "BusWr",
+            Self::IFetch => "IFetch",
+            Self::WriteBack => "WriteBack",
+        }
+    }
+}
+
+/// One core's line changing state because of a request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CoherenceTransition {
+    pub core: usize,
+    pub from: CoherenceState,
+    pub to: CoherenceState,
+}
+
+/// One bus request and what it did to every cache that held the line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoherenceEvent {
+    /// The instruction count when it happened.
+    pub instruction: u64,
+    /// The core that made the request.
+    pub core: usize,
+    pub request: CoherenceRequest,
+    /// Base address of the line.
+    pub line: u64,
+    /// The requester's own transition first, then each other core's.
+    pub transitions: Vec<CoherenceTransition>,
+    /// The core whose cache sent the data, when it did not come from the
+    /// shared level.
+    pub supplied_by: Option<usize>,
+    /// Whether a dirty copy elsewhere had to be written back first.
+    pub flushed: bool,
+}
+
+/// The coherence side of a hierarchy with one private L1 per core.
+#[derive(Clone, Debug)]
+pub struct CoherenceView<'a> {
+    /// The protocol's short name: `"MESI"`, `"none"`, …
+    pub protocol: &'static str,
+    /// What the protocol does, in a sentence.
+    pub description: &'static str,
+    /// Whether the private caches keep each other up to date. `false` for
+    /// private caches with coherence off, which is there to show what goes
+    /// wrong without it.
+    pub coherent: bool,
+    /// The states this protocol uses, in diagram order.
+    pub states: &'static [CoherenceState],
+    pub snoop_latency: u64,
+    pub cache_to_cache_latency: u64,
+    /// One entry per core that has private caches.
+    pub cores: &'a [CoherenceCoreStats],
+    /// The most recent requests, oldest first.
+    pub events: &'a std::collections::VecDeque<CoherenceEvent>,
 }
 
 /// Replacement metadata for one set. Line bytes remain borrowed; only the
@@ -241,6 +399,40 @@ pub trait CacheHierarchy {
             cache.stats.misses as f64 / total as f64
         };
         cache.config.hit_latency as f64 + miss_rate * cache.config.miss_penalty as f64
+    }
+
+    /// Number of cores with their own private L1 caches. `1` when every core
+    /// shares one L1, as a hierarchy with no coherence protocol does.
+    fn core_count(&self) -> usize {
+        1
+    }
+
+    /// [`Self::cache`] as `core` sees it. Only level 0 differs between cores;
+    /// the lower levels are shared. The default ignores `core`.
+    fn core_cache(&self, _core: usize, level: usize, role: CacheRole) -> Option<CacheLevelView<'_>> {
+        self.cache(level, role)
+    }
+
+    /// [`Self::set`] as `core` sees it.
+    fn core_set(
+        &self,
+        _core: usize,
+        level: usize,
+        role: CacheRole,
+        set: usize,
+    ) -> Option<CacheSetView<'_>> {
+        self.set(level, role, set)
+    }
+
+    /// [`Self::amat`] as `core` sees it.
+    fn core_amat(&self, _core: usize, level: usize, role: CacheRole) -> f64 {
+        self.amat(level, role)
+    }
+
+    /// The coherence protocol between the cores' private caches, or `None`
+    /// when the cores share one L1.
+    fn coherence(&self) -> Option<CoherenceView<'_>> {
+        None
     }
 
     /// A display name for `level` — `"L1"`, `"L2"`, … — so a host labels a

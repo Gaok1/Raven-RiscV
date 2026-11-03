@@ -18,6 +18,14 @@ pub struct CacheLine {
     pub data: Vec<u8>,
     pub freq: u64,     // LFU: access frequency counter
     pub ref_bit: bool, // Clock: reference bit
+    /// No other private cache holds the line. Only a coherence protocol sets
+    /// it: with `dirty` it tells Modified from Owned, without it Exclusive
+    /// from Shared (see `coherence.rs`).
+    pub exclusive: bool,
+    /// Another core's write invalidated this line, and nothing has been
+    /// installed in its way since. A miss on the same tag is then a
+    /// coherence miss.
+    pub invalidated: bool,
 }
 
 impl CacheLine {
@@ -29,6 +37,8 @@ impl CacheLine {
             data: vec![0; line_size],
             freq: 0,
             ref_bit: false,
+            exclusive: false,
+            invalidated: false,
         }
     }
 }
@@ -131,6 +141,8 @@ impl CacheSet {
             data,
             freq: 1,
             ref_bit: true,
+            exclusive: false,
+            invalidated: false,
         };
         match policy {
             ReplacementPolicy::Lru | ReplacementPolicy::Mru | ReplacementPolicy::Lfu => {
@@ -182,6 +194,8 @@ impl Cache {
             for line in &mut set.lines {
                 line.valid = false;
                 line.dirty = false;
+                line.exclusive = false;
+                line.invalidated = false;
             }
         }
     }
@@ -196,7 +210,38 @@ impl Cache {
         if let Some(way) = self.sets[idx].lookup(tag) {
             self.sets[idx].lines[way].valid = false;
             self.sets[idx].lines[way].dirty = false;
+            self.sets[idx].lines[way].exclusive = false;
         }
+    }
+
+    /// The way holding `addr`'s line, if any: `(set, way)`.
+    pub fn locate(&self, addr: u32) -> Option<(usize, usize)> {
+        if !self.config.is_valid_config() {
+            return None;
+        }
+        let idx = self.config.addr_index(addr);
+        let way = self.sets[idx].lookup(self.config.addr_tag(addr))?;
+        Some((idx, way))
+    }
+
+    /// Whether a miss on `addr` finds the line another core's write
+    /// invalidated: a coherence miss.
+    pub fn was_invalidated(&self, addr: u32) -> bool {
+        if !self.config.is_valid_config() {
+            return false;
+        }
+        let tag = self.config.addr_tag(addr);
+        let idx = self.config.addr_index(addr);
+        self.sets[idx]
+            .lines
+            .iter()
+            .any(|line| !line.valid && line.invalidated && line.tag == tag)
+    }
+
+    /// The byte at `addr` if its line is present, dirty or not.
+    pub fn peek_valid(&self, addr: u32) -> Option<u8> {
+        let (idx, way) = self.locate(addr)?;
+        Some(self.sets[idx].lines[way].data[self.config.addr_offset(addr)])
     }
 
     /// Write all dirty lines back to RAM, then invalidate.
@@ -219,6 +264,7 @@ impl Cache {
                 }
                 line.valid = false;
                 line.dirty = false;
+                line.exclusive = false;
             }
         }
     }

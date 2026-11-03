@@ -1,6 +1,7 @@
 // falcon/cache/mod.rs â€” Cache simulation module
 
 mod cache;
+mod coherence;
 mod config;
 mod controller;
 mod policies;
@@ -8,6 +9,7 @@ mod presets;
 mod stats;
 
 pub use cache::{Cache, CacheLineView, CacheSetView};
+pub use coherence::{CoherenceConfig, CoherenceProtocol, CoherenceTracker};
 pub use config::CacheConfig;
 pub use controller::{CacheController, CacheSnapshot};
 pub use policies::{InclusionPolicy, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
@@ -17,3 +19,7 @@ pub use stats::CacheStats;
 #[cfg(test)]
 #[path = "../../../../../tests/support/falcon_cache.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../../../tests/support/falcon_coherence.rs"]
+mod coherence_tests;

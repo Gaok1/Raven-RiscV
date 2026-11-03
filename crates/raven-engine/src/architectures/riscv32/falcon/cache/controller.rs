@@ -1,10 +1,12 @@
 // falcon/cache/controller.rs â€” Multi-level CacheController and Bus impl
 
+use super::coherence::{CoherenceConfig, CoherenceProtocol, CoherenceTracker, line_state};
 use super::{Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy};
 use crate::capability::{
     CacheHierarchy, CacheHistory, CacheInclusionPolicy, CacheLevelConfig, CacheLevelStats,
     CacheLevelView, CacheLineView, CacheReplacementPolicy, CacheRole, CacheSetView,
-    CacheWriteAllocation, CacheWritePolicy,
+    CacheWriteAllocation, CacheWritePolicy, CoherenceRequest, CoherenceState, CoherenceTransition,
+    CoherenceView,
 };
 use crate::falcon::{
     errors::FalconError,
@@ -50,6 +52,37 @@ pub struct CacheController {
     host_request: Option<HostRequest>,
     /// An unsupported request is reported once per program, not per store.
     host_request_reported: bool,
+    /// Whether each core has its own L1, and how those L1s stay coherent.
+    coherence: CoherenceConfig,
+    /// The core whose private L1 is in `icache` and `dcache` right now. With
+    /// a shared L1 it only names the core that ran last.
+    active_core: usize,
+    /// The other cores' private L1s, by core. `banks[active_core]` holds a
+    /// spare: switching cores swaps caches in and out, never allocates. Empty
+    /// with a shared L1.
+    banks: Vec<L1Bank>,
+    /// Bus counters per core and the recent requests.
+    coh: CoherenceTracker,
+}
+
+/// One core's private L1 while another core runs.
+#[derive(Clone)]
+struct L1Bank {
+    icache: Cache,
+    dcache: Cache,
+}
+
+/// What the other caches did with one bus request.
+#[derive(Default)]
+struct SnoopOutcome {
+    /// Some other cache still holds the line after the request.
+    others_hold: bool,
+    /// The line, sent by another cache instead of the shared level.
+    data: Option<Vec<u8>>,
+    supplier: Option<usize>,
+    /// A dirty copy was written back to the shared level first.
+    flushed: bool,
+    transitions: Vec<CoherenceTransition>,
 }
 
 #[derive(Clone, Copy)]
@@ -75,6 +108,10 @@ pub struct CacheSnapshot {
     step_count: u64,
     bypass: bool,
     reservations: HashMap<u32, Reservation>,
+    coherence: CoherenceConfig,
+    active_core: usize,
+    banks: Vec<L1Bank>,
+    coh: CoherenceTracker,
 }
 
 impl CacheController {
@@ -98,7 +135,323 @@ impl CacheController {
             tohost: None,
             host_request: None,
             host_request_reported: false,
+            coherence: CoherenceConfig::default(),
+            active_core: 0,
+            banks: Vec::new(),
+            coh: CoherenceTracker::default(),
         }
+    }
+
+    // ── Private L1s and coherence ───────────────────────────────────────────
+
+    pub fn coherence_config(&self) -> &CoherenceConfig {
+        &self.coherence
+    }
+
+    pub fn coherence_protocol(&self) -> CoherenceProtocol {
+        self.coherence.protocol
+    }
+
+    /// Bus counters per core and the recent requests.
+    pub fn coherence_tracker(&self) -> &CoherenceTracker {
+        &self.coh
+    }
+
+    /// Switch protocol, or between one shared L1 and one per core.
+    ///
+    /// Dirty data survives the switch: the other cores' private L1s write
+    /// their dirty lines to the shared level and go away, and the L1 in use
+    /// becomes the shared one, or the active core's. Counters start over.
+    pub fn set_coherence(&mut self, config: CoherenceConfig) {
+        let was_private = self.coherence.protocol.private_l1();
+        if was_private {
+            for core in 0..self.banks.len() {
+                if core != self.active_core {
+                    let _ = self.flush_bank(core);
+                }
+            }
+            self.banks.clear();
+        }
+        self.coherence = config;
+        // The L1 that stays was the only copy of what it holds. A protocol
+        // with no Exclusive state has no clean exclusive line: that is Shared.
+        let exclusive_clean = self.coherence.protocol.has_exclusive();
+        for set in &mut self.dcache.sets {
+            for line in &mut set.lines {
+                line.exclusive = line.valid && (line.dirty || exclusive_clean);
+                line.invalidated = false;
+            }
+        }
+        self.coh = CoherenceTracker::default();
+    }
+
+    /// Change what later bus requests cost, without touching any cache.
+    pub fn set_coherence_latencies(&mut self, snoop: u64, cache_to_cache: u64) {
+        self.coherence.snoop_latency = snoop;
+        self.coherence.cache_to_cache_latency = cache_to_cache;
+    }
+
+    /// How many cores to keep private L1s for. Hosts call it once they know
+    /// the core count, so a core that has not run yet still has caches to
+    /// show. A core beyond it gets its L1 the first time it runs.
+    pub fn set_core_count(&mut self, cores: usize) {
+        if self.coherence.protocol.private_l1() {
+            self.ensure_banks(cores.max(self.active_core + 1));
+        }
+        self.coh.core(cores.saturating_sub(1));
+    }
+
+    /// The core whose accesses come next. With private L1s this puts that
+    /// core's caches in front of the shared levels; it costs two swaps, so a
+    /// host calls it before every turn a core gets.
+    pub fn set_active_core(&mut self, core: usize) {
+        if core == self.active_core {
+            return;
+        }
+        if self.coherence.protocol.private_l1() {
+            self.ensure_banks(core.max(self.active_core) + 1);
+            // `banks[active]` is the spare. Swap the new core's L1 in — the
+            // old core's lands in the new core's slot — then trade the two
+            // slots so each L1 sits under its own core again.
+            std::mem::swap(&mut self.icache, &mut self.banks[core].icache);
+            std::mem::swap(&mut self.dcache, &mut self.banks[core].dcache);
+            self.banks.swap(self.active_core, core);
+        }
+        self.active_core = core;
+    }
+
+    pub fn active_core(&self) -> usize {
+        self.active_core
+    }
+
+    fn ensure_banks(&mut self, cores: usize) {
+        while self.banks.len() < cores {
+            self.banks.push(L1Bank {
+                icache: Cache::new(self.icache.config.clone()),
+                dcache: Cache::new(self.dcache.config.clone()),
+            });
+        }
+    }
+
+    /// `core`'s L1 I-cache and D-cache, wherever they are. With a shared L1
+    /// every core gets the same pair.
+    pub fn l1_of(&self, core: usize) -> Option<(&Cache, &Cache)> {
+        if core == self.active_core || !self.coherence.protocol.private_l1() {
+            return Some((&self.icache, &self.dcache));
+        }
+        self.banks.get(core).map(|bank| (&bank.icache, &bank.dcache))
+    }
+
+    /// The other cores whose private D-caches a request has to reach.
+    fn peers(&self) -> impl Iterator<Item = usize> + use<> {
+        let active = self.active_core;
+        (0..self.banks.len()).filter(move |&core| core != active)
+    }
+
+    /// Every private L1 that is not the active core's, for whole-machine sums.
+    fn parked_banks(&self) -> impl Iterator<Item = &L1Bank> {
+        self.banks
+            .iter()
+            .enumerate()
+            .filter(|(core, _)| *core != self.active_core)
+            .map(|(_, bank)| bank)
+    }
+
+    /// Write `core`'s dirty D-cache lines to the shared level. `core` is not
+    /// the active one.
+    fn flush_bank(&mut self, core: usize) -> Result<(), FalconError> {
+        let cfg = &self.banks[core].dcache.config;
+        if !cfg.is_valid_config() {
+            return Ok(());
+        }
+        let (offset_bits, index_bits) = (cfg.offset_bits(), cfg.index_bits());
+        let mut dirty = Vec::new();
+        for (set_idx, set) in self.banks[core].dcache.sets.iter_mut().enumerate() {
+            for line in &mut set.lines {
+                if line.valid && line.dirty {
+                    let base = (line.tag << (offset_bits + index_bits))
+                        | ((set_idx as u32) << offset_bits);
+                    dirty.push((base, line.data.clone()));
+                    line.dirty = false;
+                }
+            }
+        }
+        for (base, data) in dirty {
+            self.banks[core].dcache.stats.writebacks += 1;
+            self.writeback_bytes_to_level(WritebackSource::L1D, 0, base, &data)?;
+        }
+        Ok(())
+    }
+
+    /// Put `request` for `addr`'s line on the bus and let every other core's
+    /// D-cache answer it, as a snooping protocol does. Only called under a
+    /// protocol that keeps the caches coherent. The active core waits
+    /// `snoop_latency` for the answers, plus whatever write-back a dirty copy
+    /// needed.
+    fn snoop(&mut self, request: CoherenceRequest, addr: u32) -> Result<SnoopOutcome, FalconError> {
+        use CoherenceRequest::*;
+        use CoherenceState::*;
+        let protocol = self.coherence.protocol;
+        let line_base = self.dcache.config.line_base(addr);
+        let mut outcome = SnoopOutcome::default();
+        let me = self.active_core;
+        match request {
+            BusRd => self.coh.core(me).bus_reads += 1,
+            BusRdX => self.coh.core(me).bus_read_exclusive += 1,
+            BusUpgr => self.coh.core(me).bus_upgrades += 1,
+            BusWr => self.coh.core(me).bus_writes += 1,
+            IFetch | WriteBack => {}
+        }
+        let snoop = self.coherence.snoop_latency;
+        self.coh.core(me).bus_cycles += snoop;
+        if request == IFetch {
+            self.icache.stats.total_cycles += snoop;
+        } else {
+            self.dcache.stats.total_cycles += snoop;
+        }
+
+        for peer in self.peers() {
+            let Some((set, way)) = self.banks[peer].dcache.locate(line_base) else {
+                continue;
+            };
+            let from = line_state(&self.banks[peer].dcache.sets[set].lines[way]);
+            let dirty = matches!(from, Modified | Owned);
+            // What the request leaves in the peer's cache, and whether it
+            // sends the data across or writes it back on the way.
+            let (to, supply, flush) = match request {
+                BusRd if dirty && protocol.has_owned() => (Owned, true, false),
+                BusRd if dirty => (Shared, false, true),
+                BusRd => (Shared, false, false),
+                IFetch if dirty => (Shared, false, true),
+                IFetch => (from, false, false),
+                BusRdX if dirty && protocol.has_owned() => (Invalid, true, false),
+                BusRdX if dirty => (Invalid, false, true),
+                // The requester holds the line too, Shared, with the same
+                // bytes; it becomes the dirty owner, so the copy here can go.
+                BusUpgr => (Invalid, false, false),
+                // The write lands below this cache: a dirty copy has to get
+                // there first, or its write-back later would undo the write.
+                BusWr if dirty => (Invalid, false, true),
+                BusRdX | BusWr => (Invalid, false, false),
+                WriteBack => (from, false, false),
+            };
+
+            let line = &mut self.banks[peer].dcache.sets[set].lines[way];
+            let data = (supply || flush).then(|| line.data.clone());
+            match to {
+                Invalid => {
+                    line.valid = false;
+                    line.dirty = false;
+                    line.exclusive = false;
+                    line.invalidated = true;
+                }
+                Owned => line.exclusive = false,
+                Shared => {
+                    if flush {
+                        line.dirty = false;
+                    }
+                    line.exclusive = false;
+                }
+                _ => {}
+            }
+            if to == Invalid {
+                self.coh.core(peer).invalidations_received += 1;
+            } else {
+                outcome.others_hold = true;
+            }
+            if let Some(data) = data {
+                if supply {
+                    self.coh.core(peer).cache_to_cache += 1;
+                    outcome.supplier = Some(peer);
+                    outcome.data = Some(data);
+                } else {
+                    self.coh.core(peer).flushes += 1;
+                    self.banks[peer].dcache.stats.writebacks += 1;
+                    let wait = self.dcache.config.miss_penalty
+                        + self.dcache.config.line_transfer_cycles();
+                    self.dcache.stats.total_cycles += wait;
+                    self.coh.core(me).bus_cycles += wait;
+                    self.writeback_bytes_to_level(WritebackSource::L1D, 0, line_base, &data)?;
+                    outcome.flushed = true;
+                }
+            }
+            if to != from {
+                outcome.transitions.push(CoherenceTransition { core: peer, from, to });
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// The state of `addr`'s line in the active core's D-cache.
+    fn active_state(&self, addr: u32) -> CoherenceState {
+        self.dcache
+            .locate(addr)
+            .map_or(CoherenceState::Invalid, |(set, way)| {
+                line_state(&self.dcache.sets[set].lines[way])
+            })
+    }
+
+    /// Set the `exclusive` bit of `addr`'s line in the active D-cache.
+    fn set_active_exclusive(&mut self, addr: u32, exclusive: bool) {
+        if let Some((set, way)) = self.dcache.locate(addr) {
+            self.dcache.sets[set].lines[way].exclusive = exclusive;
+        }
+    }
+
+    /// Record `request` in the event log, with the active core's own
+    /// transition first.
+    fn log_request(
+        &mut self,
+        request: CoherenceRequest,
+        addr: u32,
+        from: CoherenceState,
+        outcome: SnoopOutcome,
+    ) {
+        let line_base = self.dcache.config.line_base(addr);
+        let to = self.active_state(addr);
+        let mut transitions = Vec::with_capacity(outcome.transitions.len() + 1);
+        transitions.push(CoherenceTransition { core: self.active_core, from, to });
+        transitions.extend(outcome.transitions);
+        self.coh.log(
+            self.instruction_count,
+            self.active_core,
+            request,
+            line_base,
+            transitions,
+            outcome.supplier,
+            outcome.flushed,
+        );
+    }
+
+    /// A clean line may be Exclusive only under a protocol with that state,
+    /// and only with write-back: under write-through every store goes on the
+    /// bus anyway, so the caches keep plain valid copies.
+    fn clean_exclusive_allowed(&self) -> bool {
+        self.coherence.protocol.has_exclusive()
+            && self.dcache.config.write_policy == WritePolicy::WriteBack
+    }
+
+    /// Before a store that hits the active D-cache: under a coherent
+    /// protocol, a line the core does not hold exclusively has to invalidate
+    /// the other copies first (`BusUpgr`).
+    fn upgrade_for_write(&mut self, addr: u32) -> Result<(), FalconError> {
+        if !self.coherence.protocol.coherent()
+            || self.dcache.config.write_policy != WritePolicy::WriteBack
+        {
+            return Ok(());
+        }
+        let from = self.active_state(addr);
+        if matches!(from, CoherenceState::Modified | CoherenceState::Exclusive) {
+            return Ok(());
+        }
+        let outcome = self.snoop(CoherenceRequest::BusUpgr, addr)?;
+        self.set_active_exclusive(addr, true);
+        // The store sets the dirty bit next; log the state it leaves.
+        if let Some((set, way)) = self.dcache.locate(addr) {
+            self.dcache.sets[set].lines[way].dirty = true;
+        }
+        self.log_request(CoherenceRequest::BusUpgr, addr, from, outcome);
+        Ok(())
     }
 
     /// Give the bus the physical address of the program's HTIF `tohost` word
@@ -255,6 +608,10 @@ impl CacheController {
             step_count: self.step_count,
             bypass: self.bypass,
             reservations: self.reservations.clone(),
+            coherence: self.coherence.clone(),
+            active_core: self.active_core,
+            banks: self.banks.clone(),
+            coh: self.coh.clone(),
         }
     }
 
@@ -270,6 +627,10 @@ impl CacheController {
         self.step_count = snap.step_count;
         self.bypass = snap.bypass;
         self.reservations = snap.reservations;
+        self.coherence = snap.coherence;
+        self.active_core = snap.active_core;
+        self.banks = snap.banks;
+        self.coh = snap.coh;
         // A snapshot is taken between instructions, where no request is left
         // waiting: one still here was made after it, by a store this rewinds.
         self.host_request = None;
@@ -278,6 +639,11 @@ impl CacheController {
     pub fn reset_stats(&mut self) {
         self.icache.reset_stats();
         self.dcache.reset_stats();
+        for bank in &mut self.banks {
+            bank.icache.reset_stats();
+            bank.dcache.reset_stats();
+        }
+        self.coh.reset();
         for level in &mut self.extra_levels {
             level.reset_stats();
         }
@@ -295,20 +661,24 @@ impl CacheController {
         self.icache = Cache::new(icfg);
         self.dcache = Cache::new(dcfg);
         self.extra_levels = extra_cfgs.into_iter().map(Cache::new).collect();
+        // Every core's private L1 takes the new shape.
+        let cores = self.banks.len();
+        self.banks.clear();
+        if self.coherence.protocol.private_l1() {
+            self.ensure_banks(cores);
+        }
         self.reset_stats();
     }
 
     pub fn total_program_cycles(&self) -> u64 {
-        let mut total =
-            self.icache.stats.total_cycles + self.dcache.stats.total_cycles + self.extra_cycles;
-        for level in &self.extra_levels {
-            total += level.stats.total_cycles;
-        }
-        total
+        self.total_cache_cycles() + self.extra_cycles
     }
 
     pub fn total_cache_cycles(&self) -> u64 {
         let mut total = self.icache.stats.total_cycles + self.dcache.stats.total_cycles;
+        for bank in self.parked_banks() {
+            total += bank.icache.stats.total_cycles + bank.dcache.stats.total_cycles;
+        }
         for level in &self.extra_levels {
             total += level.stats.total_cycles;
         }
@@ -496,6 +866,24 @@ impl CacheController {
         self.icache.stats.total_cycles += tag_search + miss_penalty + transfer_cyc;
         *self.icache.stats.miss_pcs.entry(addr).or_insert(0) += 1;
 
+        // Code another core just wrote may sit dirty in its D-cache. The
+        // fetch is a bus read like any other, so that copy writes itself back
+        // before the I-cache fills from the shared level.
+        if self.coherence.protocol.coherent() {
+            let outcome = self.snoop(CoherenceRequest::IFetch, line_base)?;
+            if !outcome.transitions.is_empty() {
+                self.coh.log(
+                    self.instruction_count,
+                    self.active_core,
+                    CoherenceRequest::IFetch,
+                    line_base,
+                    outcome.transitions,
+                    None,
+                    outcome.flushed,
+                );
+            }
+        }
+
         let line_data = self.fetch_line(line_base, line_size, 0)?;
         let way = self.icache.sets[idx].find_victim(replacement);
         if self.icache.sets[idx].lines[way].valid {
@@ -507,6 +895,13 @@ impl CacheController {
     }
 
     fn load_dcache_line(&mut self, addr: u32) -> Result<Vec<u8>, FalconError> {
+        self.load_dcache_line_for(addr, false)
+    }
+
+    /// Read `addr`'s line through the active D-cache. `for_write` says the
+    /// read is the first half of a read-modify-write (an AMO): a miss then
+    /// asks for ownership (`BusRdX`) instead of a shared copy.
+    fn load_dcache_line_for(&mut self, addr: u32, for_write: bool) -> Result<Vec<u8>, FalconError> {
         let tag_search = self.dcache.config.tag_search_cycles();
         let miss_penalty = self.dcache.config.miss_penalty;
         let transfer_cyc = self.dcache.config.line_transfer_cycles();
@@ -527,6 +922,17 @@ impl CacheController {
         }
 
         self.dcache.stats.misses += 1;
+        if self.coherence.protocol.coherent() {
+            // Under write-through the store that follows goes on the bus
+            // itself, so the read only needs a copy.
+            let for_write = for_write && self.dcache.config.write_policy == WritePolicy::WriteBack;
+            let request = if for_write {
+                CoherenceRequest::BusRdX
+            } else {
+                CoherenceRequest::BusRd
+            };
+            return self.coherent_fill(addr, request);
+        }
         self.dcache.stats.total_cycles += tag_search + miss_penalty + transfer_cyc;
 
         let line_data = self.fetch_line(line_base, line_size, 0)?;
@@ -538,6 +944,67 @@ impl CacheController {
             index_bits,
             line_data.clone(),
         )?;
+        Ok(line_data)
+    }
+
+    /// Fill the active D-cache after a miss under a coherent protocol. The
+    /// request goes on the bus first; the line then comes from the cache that
+    /// owns it (MOESI) or from the shared level, and lands Exclusive when no
+    /// other cache kept a copy and the protocol has that state, Modified-to-be
+    /// for a write, and Shared otherwise. The miss itself is already counted;
+    /// this charges the transfer.
+    fn coherent_fill(
+        &mut self,
+        addr: u32,
+        request: CoherenceRequest,
+    ) -> Result<Vec<u8>, FalconError> {
+        let cfg = &self.dcache.config;
+        let tag_search = cfg.tag_search_cycles();
+        let fetch_cost = cfg.miss_penalty + cfg.line_transfer_cycles();
+        let line_base = cfg.line_base(addr);
+        let line_size = cfg.line_size;
+        let replacement = cfg.replacement;
+        let offset_bits = cfg.offset_bits();
+        let index_bits = cfg.index_bits();
+        let tag = cfg.addr_tag(addr);
+        let idx = cfg.addr_index(addr);
+
+        if self.dcache.was_invalidated(addr) {
+            self.coh.core(self.active_core).coherence_misses += 1;
+        }
+        let mut outcome = self.snoop(request, line_base)?;
+        let line_data = match outcome.data.take() {
+            Some(data) => {
+                let c2c = self.coherence.cache_to_cache_latency;
+                self.dcache.stats.total_cycles += tag_search + c2c;
+                self.coh.core(self.active_core).bus_cycles += c2c;
+                data
+            }
+            None => {
+                self.dcache.stats.total_cycles += tag_search + fetch_cost;
+                self.fetch_line(line_base, line_size, 0)?
+            }
+        };
+        self.install_dcache_line(
+            idx,
+            tag,
+            replacement,
+            offset_bits,
+            index_bits,
+            line_data.clone(),
+        )?;
+        let exclusive = match request {
+            CoherenceRequest::BusRdX => true,
+            _ => !outcome.others_hold && self.clean_exclusive_allowed(),
+        };
+        self.set_active_exclusive(line_base, exclusive);
+        if request == CoherenceRequest::BusRdX {
+            // A write follows at once; the line is Modified when it ends.
+            if let Some((set, way)) = self.dcache.locate(line_base) {
+                self.dcache.sets[set].lines[way].dirty = true;
+            }
+        }
+        self.log_request(request, line_base, CoherenceState::Invalid, outcome);
         Ok(line_data)
     }
 
@@ -571,8 +1038,17 @@ impl CacheController {
         let idx = self.dcache.config.addr_index(addr);
         let hit_way = self.dcache.sets[idx].lookup(tag);
 
+        let coherent = self.coherence.protocol.coherent();
         match self.dcache.config.write_policy {
             WritePolicy::WriteThrough => {
+                // Every write-through store is on the bus already: it
+                // invalidates the other cores' copies on its way to memory.
+                let bus_write = if coherent {
+                    let from = self.active_state(addr);
+                    Some((from, self.snoop(CoherenceRequest::BusWr, addr)?))
+                } else {
+                    None
+                };
                 for (i, &b) in bytes.iter().enumerate() {
                     self.ram.store8(addr.wrapping_add(i as u32), b)?;
                 }
@@ -613,17 +1089,46 @@ impl CacheController {
                 for level in &mut self.extra_levels {
                     level.invalidate_line(addr);
                 }
+                if let Some((from, outcome)) = bus_write {
+                    self.set_active_exclusive(addr, false);
+                    self.log_request(CoherenceRequest::BusWr, addr, from, outcome);
+                }
             }
             WritePolicy::WriteBack => {
                 self.dcache.stats.bytes_stored += bytes.len() as u64;
                 if let Some(way) = hit_way {
                     self.dcache.stats.hits += 1;
                     self.dcache.stats.total_cycles += tag_search;
+                    self.upgrade_for_write(addr)?;
                     for (i, &b) in bytes.iter().enumerate() {
                         self.dcache.sets[idx].lines[way].data[offset + i] = b;
                     }
                     self.dcache.sets[idx].lines[way].dirty = true;
                     self.dcache.sets[idx].touch(way, replacement);
+                } else if coherent {
+                    self.dcache.stats.misses += 1;
+                    if let WriteAllocPolicy::WriteAllocate = self.dcache.config.write_alloc {
+                        // Read for ownership: every other copy goes, and the
+                        // line arrives here to be written.
+                        self.coherent_fill(addr, CoherenceRequest::BusRdX)?;
+                        if let Some((set, way)) = self.dcache.locate(addr) {
+                            for (i, &b) in bytes.iter().enumerate() {
+                                self.dcache.sets[set].lines[way].data[offset + i] = b;
+                            }
+                        }
+                    } else {
+                        // No allocation: the write goes to the shared level,
+                        // where the other cores' next miss will find it.
+                        self.dcache.stats.total_cycles += tag_search + miss_penalty + transfer_cyc;
+                        let outcome = self.snoop(CoherenceRequest::BusWr, addr)?;
+                        self.writeback_bytes_to_level(WritebackSource::L1D, 0, addr, bytes)?;
+                        self.log_request(
+                            CoherenceRequest::BusWr,
+                            addr,
+                            CoherenceState::Invalid,
+                            outcome,
+                        );
+                    }
                 } else {
                     self.dcache.stats.misses += 1;
                     self.dcache.stats.total_cycles += tag_search + miss_penalty + transfer_cyc;
@@ -750,6 +1255,10 @@ impl CacheController {
     pub fn invalidate_all(&mut self) {
         self.icache.invalidate();
         self.dcache.invalidate();
+        for bank in &mut self.banks {
+            bank.icache.invalidate();
+            bank.dcache.invalidate();
+        }
         for level in &mut self.extra_levels {
             level.invalidate();
         }
@@ -768,7 +1277,34 @@ impl CacheController {
             // SAFETY: `ram` and `extra_levels` are distinct fields, no aliasing.
             level.writeback_dirty(unsafe { &mut *ram_ptr });
         }
+        // Private L1s: under a protocol at most one of them holds a line
+        // dirty, so the order does not matter. With coherence off several may
+        // hold different bytes for the same line; the active core's go last
+        // and win, matching what `effective_read8` shows.
+        let active = self.active_core;
+        for (core, bank) in self.banks.iter_mut().enumerate() {
+            if core != active {
+                bank.dcache.writeback_dirty(&mut self.ram);
+            }
+        }
         self.dcache.writeback_dirty(&mut self.ram);
+        self.drop_clean_exclusive_if_msi();
+    }
+
+    /// MSI has no clean exclusive state: a line written back is Shared.
+    fn drop_clean_exclusive_if_msi(&mut self) {
+        if self.coherence.protocol != CoherenceProtocol::Msi {
+            return;
+        }
+        let caches = std::iter::once(&mut self.dcache)
+            .chain(self.banks.iter_mut().map(|bank| &mut bank.dcache));
+        for cache in caches {
+            for line in cache.sets.iter_mut().flat_map(|set| set.lines.iter_mut()) {
+                if !line.dirty {
+                    line.exclusive = false;
+                }
+            }
+        }
     }
 
     /// Write-back all dirty D-cache lines to RAM, then invalidate all caches.
@@ -783,6 +1319,13 @@ impl CacheController {
         for level in self.extra_levels.iter_mut().rev() {
             // SAFETY: `ram` and `extra_levels` are distinct fields, no aliasing.
             level.flush_to_ram(unsafe { &mut *ram_ptr });
+        }
+        let active = self.active_core;
+        for (core, bank) in self.banks.iter_mut().enumerate() {
+            bank.icache.invalidate();
+            if core != active {
+                bank.dcache.flush_to_ram(&mut self.ram);
+            }
         }
         self.dcache.flush_to_ram(&mut self.ram);
     }
@@ -935,38 +1478,28 @@ impl CacheController {
 
     /// AMAT for I-cache hierarchy (hierarchical formula).
     pub fn icache_amat(&self) -> f64 {
-        let hit_lat = self.icache.config.hit_latency as f64;
-        let total = self.icache.stats.total_accesses();
-        let miss_rate = if total == 0 {
-            0.0
-        } else {
-            self.icache.stats.misses as f64 / total as f64
-        };
-        let miss_cost =
-            (self.icache.config.miss_penalty + self.icache.config.line_transfer_cycles()) as f64;
-        if self.extra_levels.is_empty() {
-            hit_lat + miss_rate * miss_cost
-        } else {
-            // miss_cost is the L1â†’L2 access overhead; add L2 AMAT on top
-            hit_lat + miss_rate * (miss_cost + self.extra_level_amat(0))
-        }
+        self.l1_amat(&self.icache)
     }
 
     /// AMAT for D-cache hierarchy (hierarchical formula).
     pub fn dcache_amat(&self) -> f64 {
-        let hit_lat = self.dcache.config.hit_latency as f64;
-        let total = self.dcache.stats.total_accesses();
+        self.l1_amat(&self.dcache)
+    }
+
+    /// AMAT of one L1, any core's.
+    pub fn l1_amat(&self, cache: &Cache) -> f64 {
+        let hit_lat = cache.config.hit_latency as f64;
+        let total = cache.stats.total_accesses();
         let miss_rate = if total == 0 {
             0.0
         } else {
-            self.dcache.stats.misses as f64 / total as f64
+            cache.stats.misses as f64 / total as f64
         };
-        let miss_cost =
-            (self.dcache.config.miss_penalty + self.dcache.config.line_transfer_cycles()) as f64;
+        let miss_cost = (cache.config.miss_penalty + cache.config.line_transfer_cycles()) as f64;
         if self.extra_levels.is_empty() {
             hit_lat + miss_rate * miss_cost
         } else {
-            // miss_cost is the L1â†’L2 access overhead; add L2 AMAT on top
+            // miss_cost is the L1->L2 access overhead; add L2 AMAT on top
             hit_lat + miss_rate * (miss_cost + self.extra_level_amat(0))
         }
     }
@@ -1032,6 +1565,13 @@ impl CacheController {
     /// Word-sized D-cache read at an already-translated physical address. Used
     /// internally by `lr_w` / `amo_w` to avoid translating twice.
     pub fn dcache_read_pa32(&mut self, paddr: u32) -> Result<u32, FalconError> {
+        self.dcache_read_pa32_for(paddr, false)
+    }
+
+    /// [`Self::dcache_read_pa32`] for the read half of a read-modify-write:
+    /// a miss asks for ownership, so the write that follows needs no second
+    /// bus request.
+    fn dcache_read_pa32_for(&mut self, paddr: u32, for_write: bool) -> Result<u32, FalconError> {
         if self.bypass {
             return self.ram.load32(paddr);
         }
@@ -1040,7 +1580,7 @@ impl CacheController {
         }
         let line_size = self.dcache.config.line_size;
         let offset = self.dcache.config.addr_offset(paddr);
-        let first_line = self.load_dcache_line(paddr)?;
+        let first_line = self.load_dcache_line_for(paddr, for_write)?;
         if offset + 3 < line_size {
             return Ok(u32::from_le_bytes([
                 first_line[offset],
@@ -1050,7 +1590,7 @@ impl CacheController {
             ]));
         }
         let split = line_size - offset;
-        let second_line = self.load_dcache_line(paddr.wrapping_add(split as u32))?;
+        let second_line = self.load_dcache_line_for(paddr.wrapping_add(split as u32), for_write)?;
         let mut bytes = [0u8; 4];
         bytes[..split].copy_from_slice(&first_line[offset..]);
         bytes[split..].copy_from_slice(&second_line[..4 - split]);
@@ -1074,7 +1614,21 @@ impl CacheController {
         if self.bypass {
             return self.ram.load8(addr);
         }
-        if let Some(v) = self.dcache.peek_dirty(addr) {
+        if self.coherence.protocol.private_l1() {
+            // What the active core would read: its own copy, clean or not —
+            // with coherence off that may be stale, and that is the point —
+            // then, under a protocol, the one dirty copy another core owns.
+            if let Some(v) = self.dcache.peek_valid(addr) {
+                return Ok(v);
+            }
+            if self.coherence.protocol.coherent() {
+                for bank in self.parked_banks() {
+                    if let Some(v) = bank.dcache.peek_dirty(addr) {
+                        return Ok(v);
+                    }
+                }
+            }
+        } else if let Some(v) = self.dcache.peek_dirty(addr) {
             return Ok(v);
         }
         for level in &self.extra_levels {
@@ -1102,7 +1656,11 @@ impl CacheController {
         if self.bypass {
             return false;
         }
-        (0..bytes).any(|i| self.dcache.peek_dirty(addr.wrapping_add(i)).is_some())
+        (0..bytes).any(|i| {
+            let a = addr.wrapping_add(i);
+            self.dcache.peek_dirty(a).is_some()
+                || self.parked_banks().any(|bank| bank.dcache.peek_dirty(a).is_some())
+        })
     }
 
     /// Returns `Some((level, dirty))` if `addr`'s cache line is present in the D-cache hierarchy.
@@ -1112,6 +1670,9 @@ impl CacheController {
             return None;
         }
         if let Some(dirty) = self.dcache.has_line(addr) {
+            return Some((1, dirty));
+        }
+        if let Some(dirty) = self.parked_banks().find_map(|bank| bank.dcache.has_line(addr)) {
             return Some((1, dirty));
         }
         for (i, level) in self.extra_levels.iter().enumerate() {
@@ -1140,35 +1701,24 @@ impl CacheController {
     }
 }
 
-impl CacheHierarchy for CacheController {
-    fn level_count(&self) -> usize {
-        1 + self.extra_levels.len()
-    }
-
-    /// Fully retunable: this is the hierarchy the Cache tab exists to explore.
-    fn is_configurable(&self) -> bool {
-        true
-    }
-
-    /// Hierarchical: an L1 miss costs the transfer plus the next level's AMAT,
-    /// not a flat penalty.
-    fn amat(&self, level: usize, role: CacheRole) -> f64 {
+impl CacheController {
+    /// The cache `core` sees serving `role` at `level`.
+    fn cache_for(&self, core: usize, level: usize, role: CacheRole) -> Option<&Cache> {
         match (level, role) {
-            (0, CacheRole::Instruction) => self.icache_amat(),
-            (0, CacheRole::Data) => self.dcache_amat(),
-            (level, _) if level >= 1 => self.extra_level_amat(level - 1),
-            _ => 0.0,
+            (0, CacheRole::Instruction) => self.l1_of(core).map(|(i, _)| i),
+            (0, CacheRole::Data) => self.l1_of(core).map(|(_, d)| d),
+            (0, CacheRole::Unified) => None,
+            (_, CacheRole::Unified) => self.extra_levels.get(level - 1),
+            _ => None,
         }
     }
 
-    fn cache(&self, level: usize, role: CacheRole) -> Option<CacheLevelView<'_>> {
-        let cache = match (level, role) {
-            (0, CacheRole::Instruction) => &self.icache,
-            (0, CacheRole::Data) => &self.dcache,
-            (0, CacheRole::Unified) => return None,
-            (_, CacheRole::Unified) => self.extra_levels.get(level - 1)?,
-            _ => return None,
-        };
+    fn level_view<'a>(
+        &self,
+        cache: &'a Cache,
+        level: usize,
+        role: CacheRole,
+    ) -> Option<CacheLevelView<'a>> {
         let config = &cache.config;
         let replacement = match config.replacement {
             ReplacementPolicy::Lru => CacheReplacementPolicy::Lru,
@@ -1231,14 +1781,17 @@ impl CacheHierarchy for CacheController {
         })
     }
 
-    fn set(&self, level: usize, role: CacheRole, set: usize) -> Option<CacheSetView<'_>> {
-        let cache = match (level, role) {
-            (0, CacheRole::Instruction) => &self.icache,
-            (0, CacheRole::Data) => &self.dcache,
-            (0, CacheRole::Unified) => return None,
-            (_, CacheRole::Unified) => self.extra_levels.get(level - 1)?,
-            _ => return None,
-        };
+    fn set_view<'a>(
+        &self,
+        cache: &'a Cache,
+        level: usize,
+        role: CacheRole,
+        set: usize,
+    ) -> Option<CacheSetView<'a>> {
+        // Only the private D-caches carry a protocol state; the I-caches
+        // hold read-only copies the protocol does not track.
+        let tracked =
+            level == 0 && role == CacheRole::Data && self.coherence.protocol.coherent();
         let set = cache.sets.get(set)?;
         Some(CacheSetView {
             lines: set
@@ -1251,11 +1804,94 @@ impl CacheHierarchy for CacheController {
                     data: &line.data,
                     frequency: line.freq,
                     referenced: line.ref_bit,
+                    state: tracked.then(|| line_state(line)),
                 })
                 .collect(),
             lru_order: set.lru_order.iter().copied().collect(),
             fifo_order: set.fifo_order.iter().copied().collect(),
             clock_hand: set.clock_hand,
+        })
+    }
+}
+
+impl CacheHierarchy for CacheController {
+    fn level_count(&self) -> usize {
+        1 + self.extra_levels.len()
+    }
+
+    /// Fully retunable: this is the hierarchy the Cache tab exists to explore.
+    fn is_configurable(&self) -> bool {
+        true
+    }
+
+    /// Hierarchical: an L1 miss costs the transfer plus the next level's AMAT,
+    /// not a flat penalty.
+    fn amat(&self, level: usize, role: CacheRole) -> f64 {
+        self.core_amat(self.active_core, level, role)
+    }
+
+    fn cache(&self, level: usize, role: CacheRole) -> Option<CacheLevelView<'_>> {
+        self.core_cache(self.active_core, level, role)
+    }
+
+    fn set(&self, level: usize, role: CacheRole, set: usize) -> Option<CacheSetView<'_>> {
+        self.core_set(self.active_core, level, role, set)
+    }
+
+    fn core_count(&self) -> usize {
+        if self.coherence.protocol.private_l1() {
+            self.banks.len().max(self.active_core + 1)
+        } else {
+            1
+        }
+    }
+
+    fn core_cache(&self, core: usize, level: usize, role: CacheRole) -> Option<CacheLevelView<'_>> {
+        let cache = self.cache_for(core, level, role)?;
+        self.level_view(cache, level, role)
+    }
+
+    fn core_set(
+        &self,
+        core: usize,
+        level: usize,
+        role: CacheRole,
+        set: usize,
+    ) -> Option<CacheSetView<'_>> {
+        let cache = self.cache_for(core, level, role)?;
+        self.set_view(cache, level, role, set)
+    }
+
+    fn core_amat(&self, core: usize, level: usize, role: CacheRole) -> f64 {
+        match (level, role) {
+            (0, CacheRole::Instruction | CacheRole::Data) => self
+                .cache_for(core, 0, role)
+                .map_or(0.0, |cache| self.l1_amat(cache)),
+            (level, _) if level >= 1 => self.extra_level_amat(level - 1),
+            _ => 0.0,
+        }
+    }
+
+    /// The private L1s keep cycles of their own, so the whole machine's total
+    /// is the controller's, not the active core's levels.
+    fn total_cycles(&self) -> u64 {
+        self.total_cache_cycles()
+    }
+
+    fn coherence(&self) -> Option<CoherenceView<'_>> {
+        let protocol = self.coherence.protocol;
+        if !protocol.private_l1() {
+            return None;
+        }
+        Some(CoherenceView {
+            protocol: protocol.label(),
+            description: protocol.description(),
+            coherent: protocol.coherent(),
+            states: protocol.states(),
+            snoop_latency: self.coherence.snoop_latency,
+            cache_to_cache_latency: self.coherence.cache_to_cache_latency,
+            cores: &self.coh.cores,
+            events: &self.coh.events,
         })
     }
 }
@@ -1410,12 +2046,29 @@ impl Bus for CacheController {
                     if line.valid && line.dirty {
                         let base = (line.tag << (offset_bits + index_bits))
                             | ((set_idx as u32) << offset_bits);
-                        dirty.push((base, line.data.clone()));
+                        dirty.push((base, line.data.clone(), line_state(line)));
                         line.dirty = false;
                     }
                 }
             }
-            for (base, data) in dirty {
+            self.drop_clean_exclusive_if_msi();
+            for (base, data, from) in dirty {
+                if self.coherence.protocol.coherent() {
+                    let to = self.active_state(base);
+                    self.coh.log(
+                        self.instruction_count,
+                        self.active_core,
+                        CoherenceRequest::WriteBack,
+                        base,
+                        vec![CoherenceTransition {
+                            core: self.active_core,
+                            from,
+                            to,
+                        }],
+                        None,
+                        true,
+                    );
+                }
                 self.propagate_line_to_next_level(WritebackSource::L1D, base, &data)?;
             }
         }
@@ -1489,7 +2142,7 @@ impl Bus for CacheController {
         // the AMO then operate on the resolved paddr.
         let paddr = self.translate_for_access(addr, AccessType::Store)?;
         let aligned = paddr & !0x3;
-        let old = self.dcache_read_pa32(aligned)?;
+        let old = self.dcache_read_pa32_for(aligned, true)?;
         let new = match op {
             AmoOp::Swap => operand,
             AmoOp::Add => old.wrapping_add(operand),
@@ -1532,6 +2185,22 @@ impl CacheController {
             if evicted_dirty {
                 let evict_base =
                     (evicted_tag << (offset_bits + index_bits)) | ((idx as u32) << offset_bits);
+                if self.coherence.protocol.coherent() {
+                    let from = line_state(&self.dcache.sets[idx].lines[way]);
+                    self.coh.log(
+                        self.instruction_count,
+                        self.active_core,
+                        CoherenceRequest::WriteBack,
+                        evict_base,
+                        vec![CoherenceTransition {
+                            core: self.active_core,
+                            from,
+                            to: CoherenceState::Invalid,
+                        }],
+                        None,
+                        true,
+                    );
+                }
                 self.propagate_line_to_next_level(WritebackSource::L1D, evict_base, &evicted_data)?;
             }
         }

@@ -737,6 +737,32 @@ impl CacheHierarchy for RiscV32Machine {
     fn level_name(&self, level: usize) -> String {
         self.mem().level_name(level)
     }
+
+    fn core_count(&self) -> usize {
+        self.mem().core_count()
+    }
+
+    fn core_cache(&self, core: usize, level: usize, role: CacheRole) -> Option<CacheLevelView<'_>> {
+        self.mem().core_cache(core, level, role)
+    }
+
+    fn core_set(
+        &self,
+        core: usize,
+        level: usize,
+        role: CacheRole,
+        set: usize,
+    ) -> Option<CacheSetView<'_>> {
+        self.mem().core_set(core, level, role, set)
+    }
+
+    fn core_amat(&self, core: usize, level: usize, role: CacheRole) -> f64 {
+        self.mem().core_amat(core, level, role)
+    }
+
+    fn coherence(&self) -> Option<crate::capability::CoherenceView<'_>> {
+        self.mem().coherence()
+    }
 }
 
 /// Stateless: decoding an RV32 word depends only on the word.

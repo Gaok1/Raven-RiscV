@@ -120,6 +120,7 @@ impl CacheHierarchy for TeachingCache {
                     data: &line.data,
                     frequency: line.frequency,
                     referenced: line.referenced,
+                    state: None,
                 })
                 .collect(),
             lru_order: order,

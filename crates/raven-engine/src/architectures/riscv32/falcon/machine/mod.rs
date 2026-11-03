@@ -226,6 +226,23 @@ impl<P: JournaledPipeline> Machine<P> {
         mmu.priv_mode = self.cpu.priv_mode;
     }
 
+    /// Put `core`'s private L1 in front of the shared cache levels before it
+    /// runs (see [`CacheController::set_active_core`]).
+    ///
+    /// Like [`Machine::sync_mmu`] this keeps the journal: it moves caches
+    /// between slots without changing what any of them holds, and the step
+    /// that follows snapshots the cache subsystem — which core is in front
+    /// included — before it runs, so a step-back puts it all back.
+    pub fn select_core(&mut self, core: usize) {
+        self.mem.set_active_core(core);
+    }
+
+    /// Change what later coherence bus requests cost. Journal-preserving for
+    /// the same reason: no cache contents change.
+    pub fn set_coherence_latencies(&mut self, snoop: u64, cache_to_cache: u64) {
+        self.mem.set_coherence_latencies(snoop, cache_to_cache);
+    }
+
     /// Apply one instruction's worth of cycle/stats accounting after a
     /// journaled [`Machine::step_interpreted`].
     ///

@@ -71,7 +71,8 @@ mod translation;
 pub use cache::{
     CacheHierarchy, CacheHistory, CacheInclusionPolicy, CacheLevelConfig, CacheLevelStats,
     CacheLevelView, CacheLineView, CacheReplacementPolicy, CacheRole, CacheSetView,
-    CacheWriteAllocation, CacheWritePolicy,
+    CacheWriteAllocation, CacheWritePolicy, CoherenceCoreStats, CoherenceEvent, CoherenceRequest,
+    CoherenceState, CoherenceTransition, CoherenceView,
 };
 pub use code::{BitRole, InstructionBitField, InstructionCodec, InstructionField, InstructionInfo};
 pub use memory::{MemoryInspect, MemoryRegion};
