@@ -144,7 +144,7 @@ cd Raven-RiscV
 cargo run
 ```
 
-Requer Rust 1.75+. Sem dependências externas além da toolchain Rust.
+Requer Rust 1.85+ (os crates usam a edição 2024). No Linux, compilar do fonte também exige `pkg-config` e os arquivos de desenvolvimento do GTK 3 (`libgtk-3-dev` no Debian/Ubuntu); os binários prontos não precisam de nada a mais.
 
 ---
 
@@ -208,11 +208,11 @@ Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 - [Memória Virtual & TLB (PT-BR)](virtual-memory.md) — Sv32, os quatro modos de VM, a TLB, page faults, demand paging
 - [Coerência de cache (PT-BR)](coherence.md) — L1 privada por core, MSI / MESI / MOESI, pedidos no barramento, experimentos
 - [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md) | [Virtual memory (EN)](../en/virtual-memory.md)
-- `threads-plan.md` — plano de design para execução multi-core futura, usando o termo `hart` ("hardware thread") para manter a modelagem em nível de hardware, não de SO
+- [Hardware threads (harts)](hart.md) — criação de harts, escalonamento entre cores, `max_cores`
 - `Program Examples/harts/hart_spawn_visual_demo.s` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
 
 ---
 
 ## Contribuições
 
-Issues e pull requests são bem-vindos. O código é intencionalmente legível — o núcleo da CPU, o decoder e o montador têm cada um menos de ~500 linhas e seguem uma estrutura direta.
+Issues e pull requests são bem-vindos. O código é intencionalmente legível: o simulador fica em `crates/raven-engine`, com um módulo por arquitetura em `src/architectures/`; a TUI e a CLI ficam em `src/`.

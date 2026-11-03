@@ -75,7 +75,7 @@ addr 0x0000 → set 0, way 0  (the only option)
 addr 0x0400 → set 0, way 0  (same slot! → conflict)
 ```
 
-Simple hardware, but vulnerable to **conflict misses**. Try `cache_conflict.s` + `cache_direct_mapped_1kb.rcfg`.
+Simple hardware, but vulnerable to **conflict misses**. Try `cache_conflict.s` with the D-cache set to Size 1024 and Associativity 1.
 
 ### Set-associative (N-way, N > 1)
 
@@ -87,7 +87,7 @@ addr 0x0400 → set 0, way 1  ✓  (no conflict!)
 addr 0x0800 → set 0, ?      → set full → eviction
 ```
 
-More ways → fewer conflict misses, slightly more work per lookup. Try `cache_large_4kb_4way.rcfg`.
+More ways → fewer conflict misses, slightly more work per lookup. Run `cache_conflict.s` again with Associativity 4 (Size 4096) and compare.
 
 ### Fully associative
 
@@ -140,7 +140,7 @@ These settings control what happens when the CPU executes a **store** instructio
 
 ### Write-Back (default)
 
-The store updates **only the cache line**; the line is flagged **dirty** (shown as yellow `D` in the View tab). RAM is updated only when that dirty line is eventually evicted.
+The store updates **only the cache line**; the line is flagged **dirty** (a violet `1` in the D column of the View subtab; under a coherence protocol the state letter `M` or `O` takes its place). RAM is updated only when that dirty line is eventually evicted.
 
 - Much less RAM traffic when the same variable is written many times.
 - Watch the `D` flags in View and the `WB` counter in Stats.
@@ -267,9 +267,13 @@ All examples are in `Program Examples/cache/`:
 
 Coherence examples are in `Program Examples/harts/`: `coherence_flag_handoff.s` (stale data without a protocol) and `coherence_false_sharing.s` (two cores fighting over one line).
 
-Matching `.rcfg` configs:
+Configurations worth trying with them, set in the Config subtab and saved with **Ctrl+e** if you want to keep them:
 
-- `cache_direct_mapped_1kb.rcfg`
-- `cache_large_4kb_4way.rcfg`
-- `cache_write_through.rcfg`
-- `cache_no_write_allocate.rcfg`
+| Config | D-cache settings | Pairs well with |
+|---|---|---|
+| Direct-mapped 1 KB | Size 1024, Associativity 1 | `cache_conflict.s` |
+| 4 KB 4-way | Size 4096, Associativity 4 | `cache_conflict.s`, `cache_locality.s` |
+| Write-through | Write Policy WriteThrough | `cache_write_policy.s` |
+| No write-allocate | Write Alloc NoWriteAllocate | `cache_write_policy.s` |
+
+On the CLI, `raven export-config --out my.rcfg` writes the defaults; edit the `dcache.*` keys and pass `--config my.rcfg` to `raven run`.

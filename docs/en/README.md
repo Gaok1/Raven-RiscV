@@ -18,7 +18,7 @@ cd Raven-RiscV
 cargo run
 ```
 
-Requires Rust 1.75+. No other dependencies.
+Requires Rust 1.85+ (the crates use the 2024 edition). On Linux, building from source also needs `pkg-config` and the GTK 3 development files (`libgtk-3-dev` on Debian/Ubuntu); the prebuilt binaries need nothing extra.
 
 ---
 
@@ -223,11 +223,11 @@ See the **[CLI Reference](cli.md)** for all subcommands and flags.
 - [Cache config file reference](cache-config.md) — `[cache]` section of `.rcfg`, all fields, LN hierarchy, LLM prompt template
 - [Virtual memory & TLB guide](virtual-memory.md) — Sv32, the four VM modes, the TLB, page faults, demand paging
 - [Cache coherence](coherence.md) — private L1 per core, MSI / MESI / MOESI, bus requests, experiments
-- `threads-plan.md` — design plan for future multi-core execution using the term `hart` ("hardware thread") to keep the model bare metal and avoid OS-thread semantics
+- [Hardware threads (harts)](hart.md) — spawning harts, scheduling across cores, `max_cores`
 - `Program Examples/harts/hart_spawn_visual_demo.s` — multi-hart example to stress Run/Pipeline views across cores
 
 ---
 
 ## Contributing
 
-Issues and pull requests are welcome. The CPU core, decoder, and assembler are each under ~500 lines and follow a straightforward structure.
+Issues and pull requests are welcome. The simulator lives in `crates/raven-engine`, with one module per architecture under `src/architectures/`; the TUI and CLI are in `src/`.

@@ -16,11 +16,11 @@ Download the latest binary from [Releases](https://github.com/Gaok1/Raven-RiscV/
 
 ```bash
 git clone https://github.com/Gaok1/Raven-RiscV.git
-cd Raven
+cd Raven-RiscV
 cargo run
 ```
 
-Requires Rust 1.75+. No other dependencies.
+Requires Rust 1.85+ (the crates use the 2024 edition). On Linux, building from source also needs `pkg-config` and the GTK 3 development files (`libgtk-3-dev` on Debian/Ubuntu); the prebuilt binaries need nothing extra.
 
 ---
 
@@ -225,4 +225,4 @@ See the **[CLI Reference](docs/en/cli.md)** for all subcommands and flags.
 
 ## Contributing
 
-Issues and pull requests are welcome. The CPU core, decoder, and assembler are each under ~500 lines and follow a straightforward structure.
+Issues and pull requests are welcome. The simulator lives in `crates/raven-engine`, with one module per architecture under `src/architectures/`; the TUI and CLI are in `src/`.

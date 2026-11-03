@@ -8,10 +8,10 @@ Everything you can call from a Raven C program, grouped by module. The umbrella 
 
 | Module | Purpose |
 |--------|---------|
-| [`<raven/types.h>`](#types--rangetypesh) | integer typedefs, `NULL`, `size_t` |
+| [`<raven/types.h>`](#types--raventypesh) | integer typedefs, `NULL`, `size_t` |
 | [`<raven/version.h>`](#version--ravenversionh) | API version macros |
-| [`<raven/io.h>`](#io--raveniooh) | print / read / println / eprint |
-| [`<raven/gfx.h>`](#graphics--ravengfxh) | framebuffer graphics / key polling / frame pacing |
+| [`<raven/io.h>`](#io--ravenioh) | print / read / println / eprint |
+| [`<raven/gfx.h>`](#graphics---ravengfxh) | framebuffer graphics / key polling / frame pacing |
 | [`<raven/fmt.h>`](#fmt--ravenfmth) | printf / scanf / snprintf / sscanf |
 | [`<raven/mem.h>`](#mem--ravenmemh) | malloc family, memset / memcpy / memmove / memcmp |
 | [`<raven/str.h>`](#strings--ravenstrh) | strlen / strcmp / strcpy / ... |

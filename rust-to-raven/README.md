@@ -5,7 +5,7 @@ Minimal `no_std` support crate and examples for code that runs inside Raven.
 ## Coroutines
 
 Stackful **cooperative** coroutines live in
-[src/raven_api/coroutine.rs](/home/gaok1/rust/Raven/rust-to-raven/src/raven_api/coroutine.rs).
+[src/raven_api/coroutine.rs](src/raven_api/coroutine.rs).
 A `Coroutine<T>` runs a closure on its own stack; the closure receives a
 `Yielder<T>` whose `suspend` hands control back to `resume`, keeping the stack
 alive so the next `resume` continues exactly where it left off.
@@ -43,7 +43,7 @@ API still deals in plain `T` values. Keep stacks modest — the default RAM is
 
 ## Atomic wrappers
 
-The atomic API lives in [src/raven_api/atomic](/home/gaok1/rust/Raven/rust-to-raven/src/raven_api/atomic).
+The atomic API lives in [src/raven_api/atomic](src/raven_api/atomic).
 It provides:
 
 - `AtomicBool`
