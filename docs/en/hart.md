@@ -8,12 +8,12 @@ A **hart** — *hardware thread* — is an independent execution context within 
 
 ## Multi-hart execution model
 
-When a program spawns a hart, the simulator allocates a free core slot and schedules both harts in round-robin lockstep: each global tick advances every running hart by one step. Memory accesses from all harts go through the same cache hierarchy, so cache pressure from one hart is visible to all others.
+When a program spawns a hart, the simulator allocates a free core slot and schedules both harts in round-robin lockstep: each global tick advances every running hart by one step. By default every hart's memory accesses go through the same cache hierarchy, so cache pressure from one hart is visible to all others. The `coherence` setting can instead give each core its own L1 caches, kept coherent by MSI, MESI or MOESI — or by nothing at all, to show what goes wrong — see [Cache coherence](coherence.md).
 
 Key properties:
 
 - All harts share a single flat memory (no per-hart address spaces, no protection).
-- Cache state (I-cache, D-cache, outer levels) is shared across all harts.
+- With `coherence=shared` (the default) the whole cache hierarchy (I-cache, D-cache, outer levels) is shared across all harts. With any other `coherence` value each core has a private L1 I-cache and D-cache, and only L2 and below are shared; see [Cache coherence](coherence.md).
 - Hart IDs are assigned by the simulator at spawn time and are unique across the session.
 - A new hart becomes runnable on the next global cycle — never mid-cycle.
 - The selected core in the UI determines which hart's register state and pipeline view is displayed.
@@ -201,9 +201,11 @@ Raven does **not** enforce stack bounds at runtime. Overflowing into another har
 
 ## Configuring the number of cores
 
-The maximum number of simultaneous harts is set in the **Settings tab** (`max_cores`). The default is `1`. Each additional core adds one slot that can be occupied by a spawned hart. Setting `max_cores` to `N` allows up to `N − 1` concurrent child harts plus the main hart.
+The maximum number of simultaneous harts is set in the **Settings tab** (`max_cores`), in the `.rcfg` (`max_cores=`) or with `--cores` on the CLI. The default is `4` in the TUI and `1` for `raven run`. Each additional core adds one slot that can be occupied by a spawned hart. Setting `max_cores` to `N` allows up to `N − 1` concurrent child harts plus the main hart.
 
 Changes to `max_cores` take effect after the next program reset.
+
+The same Settings section sets how the cores' L1 caches relate (`coherence`: shared, none, MSI, MESI, MOESI) and what the coherence bus costs; see [Cache coherence](coherence.md).
 
 ---
 
@@ -211,4 +213,5 @@ Changes to `max_cores` take effect after the next program reset.
 
 - [Syscall reference](syscalls.md) — full syscall table including `1100` and `1101`
 - [Pipeline simulation](pipeline.md) — per-hart pipeline state and visualization
+- [Cache coherence](coherence.md) — private L1s per core and the MSI / MESI / MOESI protocols
 - [Memory map](syscalls.md#memory-layout) — address layout used by all harts

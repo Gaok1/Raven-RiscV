@@ -55,6 +55,7 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - Live stats: hit rate, MPKI, RAM traffic, top miss PCs
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
+- Multicore cache coherence: one shared L1, or a private L1 per core kept coherent by **MSI**, **MESI** or **MOESI** (or by nothing, to see stale data) — with line states, bus requests and per-core bus traffic in the **Coherence** subtab ([guide](docs/en/coherence.md))
 - Export results (`Ctrl+r`) to `.rstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
@@ -185,6 +186,8 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 | `pipeline/pipeline_cache_stall_demo.s` | MEM stalls from cache latency |
 | `syscalls/` (`io_echo.s`, `syscall_echo_linux.s`) | Console I/O via Linux ABI and teaching syscalls |
 | `harts/hart_spawn_visual_demo.s` | Multi-hart activity across cores for Run/Pipeline inspection |
+| `harts/coherence_flag_handoff.s` | A flag handed between cores: stale data without a coherence protocol |
+| `harts/coherence_false_sharing.s` | False sharing: two cores' counters on one cache line |
 | `graphics/snake.s` | Complete snake game on the graphics syscalls (2000+) |
 
 ---
@@ -216,6 +219,7 @@ See the **[CLI Reference](docs/en/cli.md)** for all subcommands and flags.
 - [Instruction formats (EN)](docs/en/format.md) — bit layouts, encoding, pseudo-instructions
 - [Formatos (PT-BR)](docs/pt-BR/format.md)
 - [Cache config file reference](docs/en/cache-config.md) — `[cache]` section of `.rcfg`, all fields, LN hierarchy, LLM prompt template
+- [Cache coherence](docs/en/coherence.md) — private L1 per core, MSI / MESI / MOESI, bus requests, experiments ([PT-BR](docs/pt-BR/coherence.md))
 
 ---
 

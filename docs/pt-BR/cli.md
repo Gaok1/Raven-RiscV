@@ -75,6 +75,7 @@ raven run <arquivo> [opções]
 | `--pipeline-trace-out <arquivo>` | desligado | Grava um JSON por ciclo do pipeline; requer `--pipeline` |
 | `--screen` | desligado | Mostra programas que usam as syscalls gráficas (2000+) em uma janela do SO |
 | `--cores <n>` | settings ou `1` | Máximo de cores físicos disponíveis para `hart_start` durante a execução |
+| `--coherence <shared\|none\|msi\|mesi\|moesi>` | config ou `shared` | Como as L1 dos cores se relacionam: uma L1 compartilhada (`shared`), uma L1 privada por core sem protocolo (`none`), ou L1 privadas mantidas coerentes por snooping (`msi`, `mesi`, `moesi`). Sobrescreve a chave `coherence=` da config. Veja [Coerência de cache](coherence.md) |
 | `--mem <tamanho>` | sim-settings ou `16mb` | Tamanho da RAM — sufixos `kb`, `mb`, `gb` (ex.: `256kb`, `1gb`) |
 | `--max-cycles <n>` | `1000000000` | Limite de instruções; um aviso é exibido se atingido |
 | `--jit <none\|hot\|full>` | `none` | Backend de execução. `full` exige recompilar com `--features jit`; qualquer modo volta a `none` (com aviso) quando a memória virtual está ativa, pois o JIT ainda não é ciente da TLB |
@@ -115,6 +116,9 @@ raven run program.s --pipeline --pipeline-trace-out trace.json --nout
 # Permitir até 4 cores para programas multi-hart
 raven run program.s --cores 4 --nout
 
+# Dar a cada um de 2 cores uma L1 privada mantida coerente por MESI, e imprimir os contadores do barramento
+raven run program.s --cores 2 --coherence mesi --format csv
+
 # Executar com 64 MB de RAM (substitui o sim-settings)
 raven run program.s --mem 64mb
 
@@ -149,6 +153,8 @@ Quando `--pipeline` está ativo, o Raven ainda exporta as estatísticas normais 
 - contagem de flushes
 - CPI do pipeline
 - breakdown por tags de stall (`RAW`, `load-use`, `branch`, `FU`, `mem`)
+
+Quando cada core tem uma L1 privada (`coherence` diferente de `shared`), todo formato também traz a L1 I-cache e D-cache de cada core e os seus contadores do barramento de coerência: um objeto `"coherence"` no JSON, chaves `coherence.*` e `coreN.*` no rstats, e linhas `Core N … L1` mais uma tabela `COHERENCE (<protocolo>)` no CSV. As entradas `icache`/`dcache` do topo são as do core 0. [Coerência de cache](coherence.md#9-contadores-na-saída-da-cli) lista os contadores.
 
 ### Asserções
 
@@ -197,7 +203,7 @@ Veja a seção [Formato do arquivo de config](#formato-do-arquivo-de-config) aba
 
 ## `raven check-config`
 
-Analisa e valida um arquivo `.rcfg`, imprime um resumo de cada seção (configurações de simulação, cada nível de cache, comportamento do pipeline) e, opcionalmente, reexporta a config normalizada.
+Analisa e valida um arquivo `.rcfg`, imprime um resumo de cada seção (configurações de simulação, cada nível de cache, o protocolo de coerência, comportamento do pipeline) e, opcionalmente, reexporta a config normalizada.
 
 ```
 raven check-config <arquivo> [--out <arquivo>]
@@ -326,6 +332,10 @@ icache.write_alloc=WriteAllocate
 icache.hit_latency=1
 icache.miss_penalty=50
 # ... dcache.* espelha icache.* ; níveis extras usam l2.* / l3.* ; tlb.* para a TLB
+# coherence: shared | none | msi | mesi | moesi (L1 privada por core, exceto em shared)
+coherence=shared
+coherence.snoop_latency=4
+coherence.c2c_latency=10
 
 [pipeline]
 enabled=true
@@ -359,9 +369,10 @@ speed=Normal
 
 ### `[cache]` — hardware de cache
 
-Descreve a hierarquia de cache: I-cache, D-cache, quaisquer níveis extras (L2, L3…)
-e a TLB unificada. Veja a [Referência de Config de Cache](cache-config.md) para a
-lista completa de campos.
+Descreve a hierarquia de cache: I-cache, D-cache, quaisquer níveis extras (L2, L3…),
+a TLB unificada e se cada core ganha uma L1 privada mantida coerente por um
+protocolo (`coherence=`). Veja a [Referência de Config de Cache](cache-config.md) para a
+lista completa de campos e [Coerência de cache](coherence.md) para os protocolos.
 
 ### `[pipeline]` — comportamento do pipeline
 

@@ -2,10 +2,11 @@
 
 O Raven inclui um simulador de **I-cache + D-cache** integrado. Enquanto seu programa roda, você pode acompanhar o cache se preenchendo, observar hits e misses em tempo real e experimentar configurações diferentes para entender seus trade-offs.
 
-Abra a aba **Cache** para ver três subtabs:
+Abra a aba **Cache** para ver quatro subtabs:
 
 - **Stats** — hit rate, contagem de misses, tráfego de RAM e custo em ciclos para cada cache.
 - **View** — mapa ao vivo de todos os slots do cache: quais endereços estão armazenados, quais linhas estão sujas e o que a política de substituição está fazendo.
+- **Coherence** — com uma L1 privada por core: o tráfego de cada core no barramento, o estado das linhas recentes em cada core e os últimos pedidos no barramento. Veja [Coerência de cache](coherence.md).
 - **Config** — ajustar tamanho, tamanho de linha, associatividade, política de escrita e parâmetros de latência.
 
 ---
@@ -101,6 +102,7 @@ Quando a Associatividade é igual ao número total de linhas, há apenas um set 
 | **Cold miss** | Primeiro acesso a qualquer endereço — a linha nunca foi carregada | Sempre ocorre no início do programa; inevitável |
 | **Capacity miss** | O working set é maior que a cache; linhas são evictadas antes de serem reutilizadas | Aumente o **Tamanho** — se o miss rate cair, a capacidade era o gargalo |
 | **Conflict miss** | Dois endereços no mesmo set ficam se expulsando | Aumente a **Associatividade** (mesmo Tamanho) — se o miss rate cair, conflitos eram o problema |
+| **Miss de coerência** | Com uma L1 privada por core, a escrita de outro core invalidou a linha aqui | A subtab **Coherence** conta esses misses por core; ponha dados escritos por cores diferentes em linhas diferentes (veja [false sharing](coherence.md#false-sharing)) |
 
 ---
 
@@ -238,6 +240,17 @@ O tamanho de linha deve ser potência de 2, e o tamanho total deve ser divisíve
 
 ---
 
+## Vários cores
+
+Por padrão todos os cores compartilham a única L1 I-cache e D-cache descritas aqui, então uma linha tem uma só cópia. **Settings → coherence** (ou `coherence=` na seção `[cache]`, ou `raven run --coherence`) dá a cada core uma L1 privada com a forma configurada nesta aba, diante de um L2 e uma RAM compartilhados:
+
+- `none` — sem protocolo: um core continua lendo a sua cópia obsoleta;
+- `msi`, `mesi`, `moesi` — protocolos com snooping que invalidam ou atualizam as outras cópias.
+
+A subtab View passa a mostrar a L1 do core selecionado, com o estado de cada linha da D-cache (`M`/`O`/`E`/`S`/`I`) no lugar do bit dirty, e a subtab Coherence mostra o barramento. [Coerência de cache](coherence.md) explica os protocolos, os custos e dois experimentos.
+
+---
+
 ## Salvar e carregar configurações (.rcfg)
 
 Use **Ctrl+e** (exportar) e **Ctrl+l** (importar) na aba Cache. A exportação grava o `.rcfg` unificado completo (sim + cache + pipeline); a hierarquia de cache fica na seção `[cache]`. O formato é texto simples `chave=valor` — você pode abrir e editar em qualquer editor de texto.
@@ -251,6 +264,8 @@ Todos os exemplos estão em `Program Examples/cache/`:
 - `cache_locality.s` — acesso sequencial vs com stride; observe o hit rate mudar conforme o padrão de acesso varia.
 - `cache_conflict.s` — dois endereços no mesmo set que se expulsam mesmo com capacidade livre em outros sets.
 - `cache_write_policy.s` — loop com muitos stores; compare Write-Back vs Write-Through observando o `RAM W`.
+
+Os exemplos de coerência estão em `Program Examples/harts/`: `coherence_flag_handoff.s` (dado obsoleto sem protocolo) e `coherence_false_sharing.s` (dois cores disputando uma linha).
 
 Configs prontas para importar:
 

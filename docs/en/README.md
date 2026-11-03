@@ -52,6 +52,7 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - Live stats: hit rate, MPKI, RAM traffic, top miss PCs
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
+- Multicore cache coherence: one shared L1, or a private L1 per core kept coherent by **MSI**, **MESI** or **MOESI** (or by nothing, to see stale data) — with line states, bus requests and per-core bus traffic in the **Coherence** subtab ([guide](coherence.md))
 - Export results (`Ctrl+r`) to `.rstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
@@ -183,6 +184,8 @@ A ready-to-use project with `_start`, panic handler, allocator, and wrappers for
 | `algorithms/binary_search_tree.s` | Heap allocation, pointer chasing |
 | `algorithms/gcd_euclid.s` | Iterative algorithm, branch-heavy |
 | `cache/cache_locality.s` | Cache-friendly vs cache-hostile access patterns |
+| `harts/coherence_flag_handoff.s` | A flag handed between cores: stale data without a coherence protocol |
+| `harts/coherence_false_sharing.s` | False sharing: two cores' counters on one cache line |
 | `pipeline/pipeline_forwarding_demo.s` | RAW chains and forwarding paths |
 | `pipeline/pipeline_load_use_demo.s` | Load-use stalls and replays |
 | `pipeline/pipeline_branch_flush_demo.s` | Prediction, redirect, and wrong-path squash |
@@ -219,6 +222,7 @@ See the **[CLI Reference](cli.md)** for all subcommands and flags.
 - [Formatos (PT-BR)](../pt-BR/format.md)
 - [Cache config file reference](cache-config.md) — `[cache]` section of `.rcfg`, all fields, LN hierarchy, LLM prompt template
 - [Virtual memory & TLB guide](virtual-memory.md) — Sv32, the four VM modes, the TLB, page faults, demand paging
+- [Cache coherence](coherence.md) — private L1 per core, MSI / MESI / MOESI, bus requests, experiments
 - `threads-plan.md` — design plan for future multi-core execution using the term `hart` ("hardware thread") to keep the model bare metal and avoid OS-thread semantics
 - `Program Examples/harts/hart_spawn_visual_demo.s` — multi-hart example to stress Run/Pipeline views across cores
 

@@ -2,10 +2,11 @@
 
 Raven includes a built-in **I-cache + D-cache** simulator. As your program runs, you can watch the cache fill up, observe hits and misses in real time, and experiment with different configurations to understand their trade-offs.
 
-Open the **Cache** tab for three subtabs:
+Open the **Cache** tab for four subtabs:
 
 - **Stats** — hit rate, miss count, RAM traffic, and cycle cost for each cache.
 - **View** — a live map of every slot in the cache: which addresses are stored, which lines are dirty, and what the replacement policy is doing.
+- **Coherence** — with a private L1 per core: each core's bus traffic, the state of recent lines in every core, and the latest bus requests. See [Cache coherence](coherence.md).
 - **Config** — change size, line size, associativity, write policy, and latency parameters.
 
 ---
@@ -101,6 +102,7 @@ When Associativity equals the total number of lines, there is just one set and a
 | **Cold miss** | First access to any address — the line was never loaded | Always happens at program start; unavoidable |
 | **Capacity miss** | Working set is larger than the cache; lines are evicted before reuse | Increase **Size** — if miss rate drops, capacity was the bottleneck |
 | **Conflict miss** | Two addresses sharing a set keep evicting each other | Increase **Associativity** (same Size) — if miss rate drops, conflicts were the issue |
+| **Coherence miss** | With a private L1 per core, another core's write invalidated the line here | The **Coherence** subtab counts them per core; move data written by different cores onto different lines (see [false sharing](coherence.md#false-sharing)) |
 
 ---
 
@@ -238,6 +240,17 @@ Line Size must be a power of 2, and the total Size must divide evenly into a who
 
 ---
 
+## Multiple cores
+
+By default every core shares the one L1 I-cache and D-cache described here, so a line has a single copy. **Settings → coherence** (or `coherence=` in the `[cache]` section, or `raven run --coherence`) gives each core a private L1 with the shape configured on this tab, in front of a shared L2 and RAM:
+
+- `none` — no protocol: a core keeps reading its own stale copy;
+- `msi`, `mesi`, `moesi` — snooping protocols that invalidate or update the other copies.
+
+The View subtab then shows the selected core's L1, with each D-cache line's state (`M`/`O`/`E`/`S`/`I`) in place of the dirty bit, and the Coherence subtab shows the bus. [Cache coherence](coherence.md) explains the protocols, their costs and two experiments.
+
+---
+
 ## Saving and loading configs (.rcfg)
 
 Use **Ctrl+e** (export) and **Ctrl+l** (import) in the Cache tab to save and restore configurations as text files. Export writes the whole unified `.rcfg` (sim + cache + pipeline); the cache hierarchy lives in its `[cache]` section. The format is plain `key=value` — you can open and edit it in any text editor.
@@ -251,6 +264,8 @@ All examples are in `Program Examples/cache/`:
 - `cache_locality.s` — sequential vs stride access; watch hit rate change as access patterns vary.
 - `cache_conflict.s` — two addresses sharing a set that evict each other even when free capacity exists elsewhere.
 - `cache_write_policy.s` — store-heavy loop; compare Write-Back vs Write-Through by watching `RAM W`.
+
+Coherence examples are in `Program Examples/harts/`: `coherence_flag_handoff.s` (stale data without a protocol) and `coherence_false_sharing.s` (two cores fighting over one line).
 
 Matching `.rcfg` configs:
 

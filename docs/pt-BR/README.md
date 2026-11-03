@@ -66,6 +66,7 @@ Os três backends menores têm seus próprios conjuntos de instruções, bem mai
 - Métricas acadêmicas: AMAT (hierárquico), IPC, breakdown de CPI por nível
 - Exportar resultados (`Ctrl+r`) para `.rstats` / `.csv`
 - Matriz visual de cache com scroll horizontal e drag por scrollbar
+- Coerência de cache multicore: uma L1 compartilhada, ou uma L1 privada por core mantida coerente por **MSI**, **MESI** ou **MOESI** (ou por nada, para ver dado obsoleto) — com estados de linha, pedidos no barramento e tráfego por core na subaba **Coherence** ([guia](coherence.md))
 
 ### Aba Virtual Memory / TLB (Aba 4)
 - Quatro modos de VM: **Off**, **Sv32** (mapa identidade automático), **Custom** (esquema de paginação paramétrico que você desenha — níveis, bits de índice, tamanho de página), **Manual** (`satp` e tabelas dirigidos pelo programa)
@@ -173,7 +174,8 @@ O diretório `Program Examples/` está organizado por tema — `basics/`,
 `algorithms/`, `cache/`, `pipeline/`, `syscalls/`, `harts/` e `graphics/` — e
 inclui `algorithms/fib.s`, `algorithms/bubble_sort_20.s`,
 `algorithms/binary_search_tree.s`, `cache/cache_locality.s`,
-`graphics/snake.s` (jogo completo nas syscalls gráficas) e mais.
+`harts/coherence_flag_handoff.s` e `harts/coherence_false_sharing.s` (coerência
+de cache entre cores), `graphics/snake.s` (jogo completo nas syscalls gráficas) e mais.
 
 ---
 
@@ -204,6 +206,7 @@ Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 - [Formatos de instrução (PT-BR)](format.md) — layouts de bits, encoding, pseudoinstruções
 - [Guia do simulador de cache (PT-BR)](cache.md) — configuração, métricas, exportação
 - [Memória Virtual & TLB (PT-BR)](virtual-memory.md) — Sv32, os quatro modos de VM, a TLB, page faults, demand paging
+- [Coerência de cache (PT-BR)](coherence.md) — L1 privada por core, MSI / MESI / MOESI, pedidos no barramento, experimentos
 - [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md) | [Virtual memory (EN)](../en/virtual-memory.md)
 - `threads-plan.md` — plano de design para execução multi-core futura, usando o termo `hart` ("hardware thread") para manter a modelagem em nível de hardware, não de SO
 - `Program Examples/harts/hart_spawn_visual_demo.s` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline

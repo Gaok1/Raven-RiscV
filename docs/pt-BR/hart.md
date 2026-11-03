@@ -8,12 +8,12 @@ Um **hart** — *hardware thread* — é um contexto de execução independente 
 
 ## Modelo de execução multi-hart
 
-Quando um programa cria um hart, o simulador aloca um slot de núcleo livre e escalona ambos os harts em round-robin sincronizado: cada tick global avança cada hart em execução por um passo. Os acessos à memória de todos os harts passam pela mesma hierarquia de cache, então a pressão de cache de um hart é visível para todos os outros.
+Quando um programa cria um hart, o simulador aloca um slot de núcleo livre e escalona ambos os harts em round-robin sincronizado: cada tick global avança cada hart em execução por um passo. Por padrão os acessos à memória de todos os harts passam pela mesma hierarquia de cache, então a pressão de cache de um hart é visível para todos os outros. A opção `coherence` pode, em vez disso, dar a cada core as suas próprias caches L1, mantidas coerentes por MSI, MESI ou MOESI — ou por nada, para mostrar o que dá errado — veja [Coerência de cache](coherence.md).
 
 Propriedades principais:
 
 - Todos os harts compartilham uma única memória plana (sem espaços de endereçamento por hart, sem proteção).
-- O estado do cache (I-cache, D-cache, níveis externos) é compartilhado entre todos os harts.
+- Com `coherence=shared` (o padrão) toda a hierarquia de cache (I-cache, D-cache, níveis externos) é compartilhada entre todos os harts. Com qualquer outro valor de `coherence` cada core tem uma L1 I-cache e D-cache privadas, e só o L2 para baixo é compartilhado; veja [Coerência de cache](coherence.md).
 - IDs de hart são atribuídos pelo simulador no momento do spawn e são únicos durante a sessão.
 - Um novo hart se torna executável no próximo ciclo global — nunca no meio de um ciclo.
 - O núcleo selecionado na UI determina qual estado de registradores e visão de pipeline do hart é exibido.
@@ -194,9 +194,11 @@ O Raven **não** impõe limites de pilha em tempo de execução.
 
 ## Configurando o número de núcleos
 
-O número máximo de harts simultâneos é definido na **aba Settings** (`max_cores`). O padrão é `1`. Cada núcleo adicional adiciona um slot que pode ser ocupado por um hart criado. Definir `max_cores` como `N` permite até `N − 1` harts filhos concorrentes mais o hart principal.
+O número máximo de harts simultâneos é definido na **aba Settings** (`max_cores`), no `.rcfg` (`max_cores=`) ou com `--cores` na CLI. O padrão é `4` na TUI e `1` no `raven run`. Cada núcleo adicional adiciona um slot que pode ser ocupado por um hart criado. Definir `max_cores` como `N` permite até `N − 1` harts filhos concorrentes mais o hart principal.
 
 Alterações em `max_cores` têm efeito após o próximo reset do programa.
+
+A mesma seção do Settings define como as L1 dos cores se relacionam (`coherence`: shared, none, MSI, MESI, MOESI) e quanto custa o barramento de coerência; veja [Coerência de cache](coherence.md).
 
 ---
 
@@ -204,3 +206,4 @@ Alterações em `max_cores` têm efeito após o próximo reset do programa.
 
 - [Referência de syscalls](syscalls.md) — tabela completa incluindo `1100` e `1101`
 - [Simulação de pipeline](../en/pipeline.md) — estado e visualização do pipeline por hart
+- [Coerência de cache](coherence.md) — L1 privadas por core e os protocolos MSI / MESI / MOESI

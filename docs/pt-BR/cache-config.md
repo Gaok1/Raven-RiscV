@@ -232,6 +232,27 @@ Veja o [guia de memória virtual](virtual-memory.md) para o que significam e com
 
 ---
 
+## Chaves de coerência
+
+Como as caches L1 dos cores se relacionam. Ficam na seção `[cache]`, junto dos níveis:
+
+```
+# Coherence: shared | none | msi | mesi | moesi (private L1 per core unless shared)
+coherence=mesi
+coherence.snoop_latency=4
+coherence.c2c_latency=10
+```
+
+| Chave | Tipo | Valores válidos | Padrão | Notas |
+|-------|------|-----------------|--------|-------|
+| `coherence` | enum | `shared` \| `none` \| `msi` \| `mesi` \| `moesi` | `shared` | `shared`: todos os cores usam a única L1 acima. Qualquer outro valor dá a cada core os seus próprios `icache`/`dcache` com esta geometria, diante dos `l2`, `l3`… e da RAM compartilhados. `none` não tem protocolo entre eles. |
+| `coherence.snoop_latency` | inteiro (ciclos) | ≥ 0 | `4` | Ciclos que um core espera as outras caches responderem a cada pedido que faz no barramento. |
+| `coherence.c2c_latency` | inteiro (ciclos) | ≥ 0 | `10` | Ciclos para mandar uma linha da cache de um core para a de outro (MOESI), no lugar da ida ao L2/RAM. |
+
+Um arquivo sem essas chaves carrega como `coherence=shared`, então configs antigas se comportam como antes. L1 privadas só fazem diferença com `max_cores` ≥ 2 na seção `[sim]`. `raven run --coherence <protocolo>` sobrescreve `coherence=`. Veja [Coerência de cache](coherence.md) para o que cada protocolo faz.
+
+---
+
 ## Regras de validação
 
 O Raven rejeitará a config e mostrará um erro se qualquer uma delas falhar:
@@ -399,4 +420,8 @@ tlb.associativity inteiro    ≥ 1 (padrão 4)
 tlb.replacement   enum       lru | fifo | random | lfu | clock | mru   (minúsculas!)
 tlb.hit_latency   inteiro    ≥ 1 (padrão 1)
 tlb.miss_penalty  inteiro    ≥ 0 (padrão 20)
+
+coherence               enum     shared | none | msi | mesi | moesi (padrão shared)
+coherence.snoop_latency inteiro  ≥ 0 (padrão 4)
+coherence.c2c_latency   inteiro  ≥ 0 (padrão 10)
 ```

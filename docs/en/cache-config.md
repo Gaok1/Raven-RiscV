@@ -232,6 +232,27 @@ See the [virtual memory guide](virtual-memory.md) for what these mean and how to
 
 ---
 
+## Coherence keys
+
+How the cores' L1 caches relate. They sit in the `[cache]` section next to the levels:
+
+```
+# Coherence: shared | none | msi | mesi | moesi (private L1 per core unless shared)
+coherence=mesi
+coherence.snoop_latency=4
+coherence.c2c_latency=10
+```
+
+| Key | Type | Valid values | Default | Notes |
+|-----|------|--------------|---------|-------|
+| `coherence` | enum | `shared` \| `none` \| `msi` \| `mesi` \| `moesi` | `shared` | `shared`: every core uses the one L1 above. Any other value gives each core its own `icache`/`dcache` with this geometry, in front of the shared `l2`, `l3`… and RAM. `none` has no protocol between them. |
+| `coherence.snoop_latency` | integer (cycles) | ≥ 0 | `4` | Cycles a core waits for the other caches to answer each bus request it makes. |
+| `coherence.c2c_latency` | integer (cycles) | ≥ 0 | `10` | Cycles to send a line from one core's cache to another's (MOESI), instead of the trip to L2/RAM. |
+
+A file without these keys loads as `coherence=shared`, so older configs behave as before. Private L1s only matter with `max_cores` ≥ 2 in the `[sim]` section. `raven run --coherence <protocol>` overrides `coherence=`. See [Cache coherence](coherence.md) for what each protocol does.
+
+---
+
 ## Validation rules
 
 Raven will reject the config and show an error if any of these fail:
@@ -399,4 +420,8 @@ tlb.associativity integer    ≥ 1 (default 4)
 tlb.replacement   enum       lru | fifo | random | lfu | clock | mru   (lowercase!)
 tlb.hit_latency   integer    ≥ 1 (default 1)
 tlb.miss_penalty  integer    ≥ 0 (default 20)
+
+coherence               enum     shared | none | msi | mesi | moesi (default shared)
+coherence.snoop_latency integer  ≥ 0 (default 4)
+coherence.c2c_latency   integer  ≥ 0 (default 10)
 ```
