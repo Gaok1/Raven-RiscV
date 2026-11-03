@@ -8,6 +8,9 @@ pub(crate) enum CacheSubtab {
     Stats,
     Config,
     View,
+    /// Each core's private L1 under the coherence protocol: bus traffic,
+    /// line states, the recent requests.
+    Coherence,
 }
 
 /// Editable field in the Config subtab.
@@ -214,6 +217,7 @@ pub(crate) enum CacheHoverTarget {
     SubtabStats,
     SubtabConfig,
     SubtabView,
+    SubtabCoherence,
     Level(usize),
     AddLevel,
     RemoveLevel,
@@ -285,6 +289,9 @@ pub(crate) struct CacheState {
     pub(crate) pending_icache: CacheConfig,
     pub(crate) pending_dcache: CacheConfig,
     pub(crate) extra_pending: Vec<CacheConfig>, // L2, L3, … pending configs
+    /// Shared L1 or one per core, and the protocol between them. Set in the
+    /// Settings tab; it takes effect on the next restart, like the shapes.
+    pub(crate) pending_coherence: crate::falcon::cache::CoherenceConfig,
     // Validation errors and status messages
     pub(crate) config_error: Option<String>,
     pub(crate) config_status: Option<String>,

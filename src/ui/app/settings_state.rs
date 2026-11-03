@@ -37,12 +37,20 @@ pub(crate) const SETTINGS_ROW_JIT_MODE: usize = 7;
 pub(crate) const SETTINGS_ROW_TRACE_SYSCALLS: usize = 8;
 /// Row index of the screen output selector (graphics syscalls: TUI / window).
 pub(crate) const SETTINGS_ROW_SCREEN_TARGET: usize = 9;
+/// Row index of the cache coherence protocol selector (shared L1 / none /
+/// MSI / MESI / MOESI).
+pub(crate) const SETTINGS_ROW_COHERENCE: usize = 10;
+/// Row index of the snoop latency (cycles a bus request waits for the other
+/// caches).
+pub(crate) const SETTINGS_ROW_SNOOP_LATENCY: usize = 11;
+/// Row index of the cache-to-cache transfer latency (MOESI).
+pub(crate) const SETTINGS_ROW_C2C_LATENCY: usize = 12;
 /// Total number of settings rows.
 ///
 /// The list used to run to 22: ten toggles, a blank, and the eleven CPI fields.
 /// Those moved to the Pipeline tab's settings page, next to the datapath they
 /// parameterise.
-pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_SCREEN_TARGET + 1;
+pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_C2C_LATENCY + 1;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub(crate) enum RunScope {

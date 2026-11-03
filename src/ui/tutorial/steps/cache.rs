@@ -156,6 +156,10 @@ fn setup_config(app: &mut App) {
     app.cache.subtab = CacheSubtab::Config;
 }
 
+fn setup_coherence(app: &mut App) {
+    app.cache.subtab = CacheSubtab::Coherence;
+}
+
 // ── Step definitions ─────────────────────────────────────────────────────────
 
 pub static STEPS: &[TutorialStep] = &[
@@ -163,7 +167,7 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "Cache Hotkeys",
         title_pt: "Hotkeys do Cache",
         body_en: "General:\
-\n[Tab] :: switch Stats / View / Config\
+\n[Tab] :: switch Stats / View / Coherence / Config\
 \n[[ / ]] :: switch selected core / hart\
 \n[+/-] :: add or remove cache levels\
 \n[r] :: restart the simulation\
@@ -194,7 +198,7 @@ pub static STEPS: &[TutorialStep] = &[
 \n[Ctrl+l] :: import config\
 \n[Ctrl+r] :: export results",
         body_pt: "Geral:\
-\n[Tab] :: alterna entre Stats / View / Config\
+\n[Tab] :: alterna entre Stats / View / Coherence / Config\
 \n[[ / ]] :: trocam o core / hart selecionado\
 \n[+/-] :: adicionam ou removem níveis de cache\
 \n[r] :: reinicia a simulação\
@@ -293,11 +297,11 @@ pub static STEPS: &[TutorialStep] = &[
         title_en: "View Subtab — visualization",
         title_pt: "Subtab View — visualização",
         body_en: "The View subtab shows the physical contents of cache lines in real time during execution.\
-\n\nEach line displays the address (tag), stored data, validity bit and dirty bit (for write-back).\
+\n\nEach line displays the address (tag), stored data, validity bit and dirty bit (for write-back). Under a coherence protocol the D-cache shows each line's state (M/O/E/S/I) in place of the dirty bit, and the panel names the core whose L1 it is.\
 \n\nScroll with ↑/↓ to navigate through lines. Use ← → to scroll horizontally.\
 \n\nIn split L1 view with scope = Both, mouse wheel and keyboard scrolling affect only the panel you are interacting with or focusing.",
         body_pt: "A subtab View mostra o conteúdo físico das linhas de cache em tempo real durante a execução.\
-\n\nCada linha exibe o endereço (tag), dados armazenados, bit de validade e bit dirty (para write-back).\
+\n\nCada linha exibe o endereço (tag), dados armazenados, bit de validade e bit dirty (para write-back). Com um protocolo de coerência a D-cache mostra o estado de cada linha (M/O/E/S/I) no lugar do bit dirty, e o painel diz de qual core é aquele L1.\
 \n\nRole com ↑/↓ para navegar pelas linhas. Use ← → para rolar horizontalmente.\
 \n\nNa visão L1 dividida com scope = Both, a roda do mouse e o scroll por teclado afetam apenas o painel com o qual você está interagindo ou que está focado.",
         target: target_subtab_and_content,
@@ -318,6 +322,20 @@ pub static STEPS: &[TutorialStep] = &[
 \n\nSão configurações por painel e funcionam de forma independente para I-Cache e D-Cache.",
         target: target_content,
         setup: Some(setup_view),
+    },
+    TutorialStep {
+        title_en: "Coherence Subtab — private L1s",
+        title_pt: "Subtab Coherence — L1 privados",
+        body_en: "By default every core shares one L1, so each line has a single copy. Pick a protocol in Settings → coherence and each core gets its own L1 in front of the shared L2 and RAM.\
+\n\nnone — no protocol: a core keeps reading its own stale copy.\
+\nMSI / MESI / MOESI — the caches snoop each other's bus requests (BusRd, BusRdX, BusUpgr, BusWr).\
+\n\nThis subtab counts each core's bus traffic, invalidations, write-backs, cache-to-cache transfers and coherence misses, shows the state of the recent lines in every core, and lists the last requests with the transitions they caused. The View subtab shows the selected core's L1, with each D-cache line's state in place of the dirty bit.",
+        body_pt: "Por padrão todos os cores compartilham um L1, então cada linha tem uma única cópia. Escolha um protocolo em Settings → coherence e cada core ganha um L1 próprio diante do L2 e da RAM compartilhados.\
+\n\nnone — sem protocolo: um core continua lendo sua cópia obsoleta.\
+\nMSI / MESI / MOESI — as caches observam (snoop) os pedidos umas das outras no barramento (BusRd, BusRdX, BusUpgr, BusWr).\
+\n\nEsta subtab conta o tráfego de cada core no barramento, invalidações, write-backs, transferências cache a cache e misses de coerência, mostra o estado das linhas recentes em cada core e lista os últimos pedidos com as transições que causaram. A subtab View mostra o L1 do core selecionado, com o estado de cada linha da D-cache no lugar do bit dirty.",
+        target: target_subtab_and_content,
+        setup: Some(setup_coherence),
     },
     TutorialStep {
         title_en: "Settings Subtab — overview",

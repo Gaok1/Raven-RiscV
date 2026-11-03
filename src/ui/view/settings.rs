@@ -9,7 +9,8 @@ use crate::ui::app::{
     App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
     SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
-    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
+    SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SETTINGS_ROW_C2C_LATENCY,
+    SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY,
 };
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
@@ -342,6 +343,65 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
     ]));
     items.push(screen_item);
 
+    // ── Section: Multi-core caches ───────────────────────────────────────
+    items.push(ListItem::new(Line::raw("")));
+    items.push(ListItem::new(section_rule("MULTI-CORE CACHES", area.width)));
+    let coherence = &app.cache.pending_coherence;
+    let private_l1 = coherence.protocol.private_l1();
+    let one_core = app.max_cores < 2;
+
+    // Row 10: coherence protocol
+    at!(SETTINGS_ROW_COHERENCE);
+    let coh_hover = app.settings.hover_row == Some(SETTINGS_ROW_COHERENCE);
+    let coh_state = ControlState::from(sel == SETTINGS_ROW_COHERENCE, coh_hover);
+    let mut coh_spans = vec![
+        label_span(format!("{:<20}", "  coherence"), coh_state, theme::LABEL),
+        Span::raw("  "),
+        dense_value(coherence.protocol.label(), coh_hover, true, theme::LABEL_Y),
+    ];
+    if one_core && private_l1 {
+        coh_spans.push(Span::raw("  "));
+        coh_spans.push(Span::styled(
+            "(one core — nothing to share)",
+            Style::default().fg(theme::BORDER),
+        ));
+    }
+    items.push(ListItem::new(Line::from(coh_spans)));
+
+    // Rows 11 and 12: what the bus costs. Only a snooping protocol uses them.
+    let snooping = coherence.protocol.coherent();
+    for (row, label, value) in [
+        (SETTINGS_ROW_SNOOP_LATENCY, "  snoop latency", coherence.snoop_latency),
+        (SETTINGS_ROW_C2C_LATENCY, "  cache-to-cache", coherence.cache_to_cache_latency),
+    ] {
+        at!(row);
+        let is_sel = sel == row;
+        let hover = app.settings.hover_row == Some(row);
+        let state = ControlState::from(is_sel, hover).disabled_if(!snooping);
+        let text = format!("{value} cyc");
+        let mut spans = vec![
+            label_span(format!("{label:<20}"), state, theme::LABEL),
+            Span::raw("  "),
+            edit_value(
+                &text,
+                (app.settings.num_editing && is_sel).then_some(app.settings.num_edit_buf.as_str()),
+                hover,
+                theme::LABEL_Y,
+            ),
+        ];
+        if row == SETTINGS_ROW_C2C_LATENCY
+            && snooping
+            && coherence.protocol != crate::falcon::cache::CoherenceProtocol::Moesi
+        {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                "(MOESI only)",
+                Style::default().fg(theme::BORDER),
+            ));
+        }
+        items.push(ListItem::new(Line::from(spans)));
+    }
+
     // The `CYCLES PER INSTRUCTION` section used to sit here. It moved to the
     // Pipeline tab's settings page, beside the datapath whose timing it sets —
     // this tab could only list the numbers, while the page that actually models
@@ -636,6 +696,95 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(" / Click = toggle", style::label()),
             ]),
         ]
+    } else if sel == SETTINGS_ROW_COHERENCE {
+        let protocol = app.cache.pending_coherence.protocol;
+        let mut lines = vec![
+            Line::from(Span::styled(
+                "coherence",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+        ];
+        for (name, text) in [
+            ("Shared L1", "one L1 for every core"),
+            ("none", "private L1s, no protocol"),
+            ("MSI", "Modified / Shared / Invalid"),
+            ("MESI", "+ Exclusive: silent first write"),
+            ("MOESI", "+ Owned: dirty lines shared"),
+        ] {
+            let current = name == protocol.label();
+            let marker = if current { "▸ " } else { "  " };
+            let name_style = if current {
+                Style::default().fg(theme::LABEL_Y).bold()
+            } else {
+                style::label()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{marker}{name:<10}"), name_style),
+                Span::styled(text, style::value()),
+            ]));
+        }
+        lines.push(Line::raw(""));
+        for chunk in wrap_words(protocol.description(), (area.width as usize).saturating_sub(2)) {
+            lines.push(Line::from(Span::styled(chunk, style::value())));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "The Cache tab shows each core's L1,",
+            style::label(),
+        )));
+        lines.push(Line::from(Span::styled(
+            "line states and the bus requests.",
+            style::label(),
+        )));
+        lines.push(Line::from(Span::styled(
+            "Changing it restarts the simulation.",
+            style::label(),
+        )));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::styled("←/→ Enter", Style::default().fg(theme::LABEL_Y)),
+            Span::styled(" = cycle protocol", style::label()),
+        ]));
+        lines
+    } else if sel == SETTINGS_ROW_SNOOP_LATENCY || sel == SETTINGS_ROW_C2C_LATENCY {
+        let snoop = sel == SETTINGS_ROW_SNOOP_LATENCY;
+        let body: &[&str] = if snoop {
+            &[
+                "Cycles a core waits on the bus for",
+                "the other caches to answer each",
+                "request it puts there: BusRd,",
+                "BusRdX, BusUpgr, BusWr, and the",
+                "snoop behind an I-cache miss.",
+            ]
+        } else {
+            &[
+                "Cycles to send a line from the cache",
+                "that owns it straight to the one that",
+                "missed. MOESI does this instead of",
+                "writing the line back and reading it",
+                "from the shared level.",
+            ]
+        };
+        let mut lines = vec![
+            Line::from(Span::styled(
+                if snoop { "snoop latency" } else { "cache-to-cache" },
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+        ];
+        lines.extend(body.iter().map(|t| Line::from(Span::styled(*t, style::value()))));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "Takes effect at once, no restart.",
+            style::label(),
+        )));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+            Span::styled(" = edit", style::label()),
+        ]));
+        lines
     } else if sel == SETTINGS_ROW_MAX_CORES {
         vec![
             Line::from(Span::styled(
@@ -759,4 +908,24 @@ fn render_controls_bar(f: &mut Frame, col: Rect, row: Rect, app: &App) {
         };
         rect.set((inner.y, origin + start, origin + end));
     }
+}
+
+/// Split `text` into lines of at most `width` columns, at spaces.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(10);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }

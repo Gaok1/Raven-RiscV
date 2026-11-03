@@ -23,6 +23,8 @@ pub(crate) use self::serialization::{
     do_export_config, do_export_results, do_import_config, open_path_input, split_config_v3,
     wrap_config_v3,
 };
+#[cfg(test)]
+pub(crate) use self::serialization::{import_config_text, serialize_config_v3_from_app};
 pub(crate) use self::tlb_keys::select as tlb_select;
 
 use crate::ui::app::{App, EditorMode, Tab};

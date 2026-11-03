@@ -468,6 +468,7 @@ mod tests {
                         (CacheSubtab::Stats, "stats"),
                         (CacheSubtab::Config, "config"),
                         (CacheSubtab::View, "view"),
+                        (CacheSubtab::Coherence, "coherence"),
                     ] {
                         out.push((tab, Subtab::Cache(sub), format!("Cache/{name}")));
                     }

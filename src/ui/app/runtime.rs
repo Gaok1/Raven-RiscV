@@ -536,6 +536,8 @@ impl App {
         self.sync_selected_core_to_runtime();
         self.selected_core = new_core;
         self.sync_runtime_to_selected_core();
+        // With a private L1 per core, memory reads now go through this core's.
+        self.select_core_caches(new_core);
     }
 
     pub(crate) fn cycle_selected_core(&mut self, delta: isize) {

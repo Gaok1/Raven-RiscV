@@ -87,11 +87,11 @@ pub(super) fn render_view(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
     if app.cache.selected_level == 0 {
-        render_l1_view(f, area, app, caches);
+        render_l1_view(f, area, app, &caches);
     } else {
         let level = app.cache.selected_level;
         if caches.cache(level, CacheRole::Unified).is_some() {
-            render_unified_view(f, area, app, caches, level);
+            render_unified_view(f, area, app, &caches, level);
         }
     }
 }
@@ -259,8 +259,27 @@ fn render_legend(
 ) {
     let mut row = SpanRow::new(area.x, area.y);
     row.push(Span::raw(" "));
-    row.push(Span::styled("V D", Style::default().fg(theme::LABEL_Y)));
-    row.push(Span::styled(" valid / dirty", style::label()));
+    let states = app
+        .cache_hierarchy()
+        .and_then(|caches| caches.coherence())
+        .map(|coherence| coherence.states)
+        .filter(|states| !states.is_empty());
+    match states {
+        Some(states) => {
+            row.push(Span::styled("V ", Style::default().fg(theme::LABEL_Y)));
+            for state in states {
+                row.push(Span::styled(
+                    state.letter().to_string(),
+                    Style::default().fg(theme::coherence_state(*state)).bold(),
+                ));
+            }
+            row.push(Span::styled(" valid / D-cache line state", style::label()));
+        }
+        None => {
+            row.push(Span::styled("V D", Style::default().fg(theme::LABEL_Y)));
+            row.push(Span::styled(" valid / dirty", style::label()));
+        }
+    }
     row.gap(3);
 
     let bar = build_view_legend_bar(app);
@@ -626,7 +645,12 @@ fn render_cache_matrix(
 ) {
     let cache = caches.cache(0, role).unwrap();
     let icache = role == CacheRole::Instruction;
-    let label = &cache.name;
+    // With a private L1 per core, say whose this one is.
+    let label = &if caches.core_count() > 1 {
+        format!("Core {} {}", app.selected_core, cache.name)
+    } else {
+        cache.name.clone()
+    };
     let cfg = &cache.config;
 
     let title = if cfg.is_enabled() {
@@ -1039,7 +1063,9 @@ fn build_cell(
         if is_first_row {
             spans.push(Span::styled("0", style::label()));
             spans.push(Span::raw(" "));
-            spans.push(Span::styled("-", style::label()));
+            // Under a protocol the second column is the line's state.
+            let mark = if line.state.is_some() { "I" } else { "-" };
+            spans.push(Span::styled(mark, style::label()));
             let rest = cell_width.saturating_sub(3);
             spans.push(Span::styled(
                 format!("{:<width$}", "  (empty)", width = rest),
@@ -1105,8 +1131,14 @@ fn build_cell(
     spans.push(Span::styled("1", style::success().bold()));
     spans.push(Span::raw(" "));
 
-    // D bit
-    if is_dcache {
+    // D bit — or, under a coherence protocol, the line's state, which says
+    // dirty and more: M and O are the dirty ones.
+    if let Some(state) = line.state {
+        spans.push(Span::styled(
+            state.letter().to_string(),
+            Style::default().fg(theme::coherence_state(state)).bold(),
+        ));
+    } else if is_dcache {
         if is_dirty {
             spans.push(Span::styled("1", Style::default().fg(DIRTY_COLOR).bold()));
         } else {

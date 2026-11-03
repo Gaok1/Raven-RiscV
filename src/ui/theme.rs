@@ -108,3 +108,17 @@ pub const HL_DIM: Color = Color::Rgb(88, 88, 96);
 pub const COMMENT: Color = Color::Rgb(98, 138, 112);
 /// Immediate values — steel blue (same family as metrics)
 pub const IMM_COLOR: Color = Color::Rgb(115, 178, 235);
+
+/// The colour of a coherence state, the same wherever a state is drawn: a
+/// dirty line keeps the dirty colour, an exclusive clean one reads as "free to
+/// write", a shared one as an ordinary copy.
+pub fn coherence_state(state: raven_engine::capability::CoherenceState) -> Color {
+    use raven_engine::capability::CoherenceState::*;
+    match state {
+        Modified => DIRTY,
+        Owned => SPECULATIVE,
+        Exclusive => RUNNING,
+        Shared => CACHE_I,
+        Invalid => LABEL,
+    }
+}

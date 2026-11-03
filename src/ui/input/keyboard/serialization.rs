@@ -1,5 +1,5 @@
 use crate::falcon::cache::{
-    Cache, CacheConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets,
+    Cache, CacheConfig, CoherenceConfig, ReplacementPolicy, WriteAllocPolicy, WritePolicy, extra_level_presets,
 };
 use crate::falcon::jit::BackendKind;
 use crate::falcon::mmu::TlbConfig;
@@ -31,6 +31,7 @@ pub(super) fn serialize_cache_configs(
     dcfg: &CacheConfig,
     extra: &[CacheConfig],
     tlb: &TlbConfig,
+    coherence: &CoherenceConfig,
 ) -> String {
     let mut s = String::from("# Raven Cache Config v2\n");
     s.push_str(&format!("levels={}\n", extra.len()));
@@ -41,6 +42,8 @@ pub(super) fn serialize_cache_configs(
         serialize_one_config(&mut s, &prefix, cfg);
     }
     serialize_tlb_config(&mut s, tlb);
+    s.push_str("\n# Coherence: shared | none | msi | mesi | moesi (private L1 per core unless shared)\n");
+    s.push_str(&coherence.to_rcfg());
     s
 }
 
@@ -215,6 +218,7 @@ pub(super) struct ConfigV3 {
     pub(super) dcfg: CacheConfig,
     pub(super) extra: Vec<CacheConfig>,
     pub(super) tlb: TlbConfig,
+    pub(super) coherence: CoherenceConfig,
     pub(super) pipeline: crate::ui::pipeline::PipelineConfig,
 }
 
@@ -237,6 +241,7 @@ pub(super) fn parse_config_v3(text: &str) -> Result<ConfigV3, String> {
     crate::arch::lookup(&architecture)?;
     let sim = parse_rcfg(&sim_t)?;
     let (icfg, dcfg, extra, tlb) = parse_cache_configs(&cache_t)?;
+    let coherence = CoherenceConfig::from_rcfg(&cache_t)?;
     let pipeline = parse_pcfg(&pipe_t)?;
     Ok(ConfigV3 {
         architecture,
@@ -245,6 +250,7 @@ pub(super) fn parse_config_v3(text: &str) -> Result<ConfigV3, String> {
         dcfg,
         extra,
         tlb,
+        coherence,
         pipeline,
     })
 }
@@ -274,12 +280,20 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
         &app.cache.pending_dcache,
         &app.cache.extra_pending,
         &app.tlb.pending,
+        &app.cache.pending_coherence,
     );
     let pipeline = serialize_pcfg(pipeline_config, app.run.pipeline_view().speed);
     wrap_config_v3(&sim, &cache, &pipeline)
 }
 
 /// Apply a parsed unified config to the app (cache + pipeline + sim).
+/// Parse a unified `.rcfg` text and apply it, as importing a file does.
+#[cfg(test)]
+pub(crate) fn import_config_text(app: &mut App, text: &str) -> Result<(), String> {
+    apply_config_v3(app, parse_config_v3(text)?);
+    Ok(())
+}
+
 fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
     let architecture = cfg.architecture.clone();
     app.cache.pending_icache = cfg.icfg;
@@ -291,6 +305,8 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
         app.cache.selected_level = n_extra;
     }
     app.tlb.pending = cfg.tlb.clone();
+    let coherence_changed = app.cache.pending_coherence != cfg.coherence;
+    app.cache.pending_coherence = cfg.coherence;
     if let Some(runtime) = app.rv32_mut() {
         runtime
             .mem_mut_unjournaled()
@@ -305,6 +321,11 @@ fn apply_config_v3(app: &mut App, cfg: ConfigV3) {
     app.run.pipeline_view_mut().speed = cfg.pipeline.speed;
     // Sim settings applied last: may trigger a simulation restart.
     apply_rcfg(app, cfg.sim);
+    // The private L1s are built when the machine is, so a new protocol needs
+    // one.
+    if coherence_changed {
+        app.restart_simulation();
+    }
     if let Err(error) = app.activate_architecture(&architecture, false) {
         app.console.push_error(error);
     }

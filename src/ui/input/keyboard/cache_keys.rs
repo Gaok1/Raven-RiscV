@@ -13,7 +13,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Tab => {
             app.cache.subtab = match app.cache.subtab {
                 CacheSubtab::Stats => CacheSubtab::View,
-                CacheSubtab::View => CacheSubtab::Config,
+                CacheSubtab::View => CacheSubtab::Coherence,
+                CacheSubtab::Coherence => CacheSubtab::Config,
                 CacheSubtab::Config => CacheSubtab::Stats,
             };
             true
@@ -156,7 +157,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                         app.cache.view_scroll = app.cache.view_scroll.saturating_sub(1);
                     }
                 }
-                CacheSubtab::Config => {}
+                CacheSubtab::Config | CacheSubtab::Coherence => {}
             }
             true
         }
@@ -217,7 +218,7 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                         }
                     }
                 }
-                CacheSubtab::Config => {}
+                CacheSubtab::Config | CacheSubtab::Coherence => {}
             }
             true
         }

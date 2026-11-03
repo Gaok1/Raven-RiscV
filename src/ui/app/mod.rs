@@ -38,6 +38,7 @@ pub(crate) use self::settings_state::{
     RunScope, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_JIT_MODE,
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
     SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
+    SETTINGS_ROW_C2C_LATENCY, SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY,
     SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState,
     nearest_pow2_clamp,
 };
@@ -152,6 +153,127 @@ fn rv32_runtime_mut(machine: &mut dyn raven_engine::Machine) -> Option<&mut Falc
     (machine as &mut dyn std::any::Any)
         .downcast_mut::<raven_engine::architectures::riscv32::RiscV32Machine>()
         .map(|rv32| rv32.falcon_mut())
+}
+
+/// A cache hierarchy seen from one core. Every query that has a per-core form
+/// asks it for `core`; the rest pass through. With a shared L1 it answers
+/// exactly as the hierarchy does.
+#[derive(Clone, Copy)]
+pub(crate) struct CoreCaches<'a> {
+    pub(crate) inner: &'a dyn CacheHierarchy,
+    pub(crate) core: usize,
+}
+
+/// The same queries as the trait, with results that borrow the hierarchy
+/// rather than this (temporary) view of it — which is what lets a caller
+/// write `app.cache_hierarchy().and_then(|c| c.cache(0, role))`.
+impl<'a> CoreCaches<'a> {
+    pub(crate) fn level_count(&self) -> usize {
+        self.inner.level_count()
+    }
+
+    pub(crate) fn core_count(&self) -> usize {
+        self.inner.core_count()
+    }
+
+    pub(crate) fn cache(
+        &self,
+        level: usize,
+        role: raven_engine::capability::CacheRole,
+    ) -> Option<raven_engine::capability::CacheLevelView<'a>> {
+        self.inner.core_cache(self.core, level, role)
+    }
+
+    pub(crate) fn set(
+        &self,
+        level: usize,
+        role: raven_engine::capability::CacheRole,
+        set: usize,
+    ) -> Option<raven_engine::capability::CacheSetView<'a>> {
+        self.inner.core_set(self.core, level, role, set)
+    }
+
+    pub(crate) fn amat(&self, level: usize, role: raven_engine::capability::CacheRole) -> f64 {
+        self.inner.core_amat(self.core, level, role)
+    }
+
+    pub(crate) fn level_name(&self, level: usize) -> String {
+        self.inner.level_name(level)
+    }
+
+    pub(crate) fn coherence(&self) -> Option<raven_engine::capability::CoherenceView<'a>> {
+        self.inner.coherence()
+    }
+}
+
+impl CacheHierarchy for CoreCaches<'_> {
+    fn level_count(&self) -> usize {
+        self.inner.level_count()
+    }
+
+    fn cache(
+        &self,
+        level: usize,
+        role: raven_engine::capability::CacheRole,
+    ) -> Option<raven_engine::capability::CacheLevelView<'_>> {
+        self.inner.core_cache(self.core, level, role)
+    }
+
+    fn set(
+        &self,
+        level: usize,
+        role: raven_engine::capability::CacheRole,
+        set: usize,
+    ) -> Option<raven_engine::capability::CacheSetView<'_>> {
+        self.inner.core_set(self.core, level, role, set)
+    }
+
+    fn is_configurable(&self) -> bool {
+        self.inner.is_configurable()
+    }
+
+    fn total_cycles(&self) -> u64 {
+        self.inner.total_cycles()
+    }
+
+    fn amat(&self, level: usize, role: raven_engine::capability::CacheRole) -> f64 {
+        self.inner.core_amat(self.core, level, role)
+    }
+
+    fn level_name(&self, level: usize) -> String {
+        self.inner.level_name(level)
+    }
+
+    fn core_count(&self) -> usize {
+        self.inner.core_count()
+    }
+
+    fn core_cache(
+        &self,
+        core: usize,
+        level: usize,
+        role: raven_engine::capability::CacheRole,
+    ) -> Option<raven_engine::capability::CacheLevelView<'_>> {
+        self.inner.core_cache(core, level, role)
+    }
+
+    fn core_set(
+        &self,
+        core: usize,
+        level: usize,
+        role: raven_engine::capability::CacheRole,
+        set: usize,
+    ) -> Option<raven_engine::capability::CacheSetView<'_>> {
+        self.inner.core_set(core, level, role, set)
+    }
+
+    fn core_amat(&self, core: usize, level: usize, role: raven_engine::capability::CacheRole) -> f64 {
+        self.inner.core_amat(core, level, role)
+    }
+
+    fn coherence(&self) -> Option<raven_engine::capability::CoherenceView<'_>> {
+        self.inner.coherence()
+    }
 }
 
 /// Cycles and retired instructions as the active backend counts them.
@@ -506,6 +628,7 @@ impl App {
                 pending_icache: CacheConfig::default(),
                 pending_dcache: CacheConfig::default(),
                 extra_pending: vec![],
+                pending_coherence: Default::default(),
                 config_error: None,
                 config_status: None,
                 edit_field: None,
@@ -715,8 +838,12 @@ impl App {
         self.machine.code()
     }
 
-    pub(crate) fn cache_hierarchy(&self) -> Option<&dyn CacheHierarchy> {
-        self.machine.caches()
+    /// The cache hierarchy as the selected core sees it: with one private L1
+    /// per core, level 0 is that core's.
+    pub(crate) fn cache_hierarchy(&self) -> Option<CoreCaches<'_>> {
+        let inner = self.machine.caches()?;
+        let core = self.selected_core.min(inner.core_count().saturating_sub(1));
+        Some(CoreCaches { inner, core })
     }
 
     pub(crate) fn pipeline(&self) -> Option<&dyn PipelineInspect> {
@@ -2976,6 +3103,7 @@ impl App {
     /// Execute one pipeline tick using shared cpu/mem state.
     /// Execute one pipeline cycle. Returns true if an instruction was committed.
     fn pipeline_step(&mut self) -> bool {
+        self.select_core_caches(self.selected_core);
         // screen_sleep_ms parking: don't burn pipeline cycles refetching the
         // parked ecall; the tick loop retries once the deadline passes.
         if self
@@ -3081,6 +3209,51 @@ impl App {
         committed
     }
 
+    /// Switch between one shared L1 and one per core, or between protocols.
+    /// The private L1s are built with the machine, so this restarts it.
+    pub(crate) fn set_coherence_protocol(&mut self, protocol: crate::falcon::cache::CoherenceProtocol) {
+        if self.cache.pending_coherence.protocol == protocol {
+            return;
+        }
+        self.cache.pending_coherence.protocol = protocol;
+        self.restart_simulation();
+    }
+
+    /// The next protocol in the Settings row's cycle.
+    pub(crate) fn cycle_coherence_protocol(&mut self, forward: bool) {
+        use crate::falcon::cache::CoherenceProtocol;
+        let all = CoherenceProtocol::ALL;
+        let at = all
+            .iter()
+            .position(|&p| p == self.cache.pending_coherence.protocol)
+            .unwrap_or(0);
+        let next = if forward {
+            (at + 1) % all.len()
+        } else {
+            (at + all.len() - 1) % all.len()
+        };
+        self.set_coherence_protocol(all[next]);
+    }
+
+    /// Change the bus latencies. They only set what later requests cost, so
+    /// the running machine takes them at once.
+    pub(crate) fn set_coherence_latencies(&mut self, snoop: u64, cache_to_cache: u64) {
+        self.cache.pending_coherence.snoop_latency = snoop;
+        self.cache.pending_coherence.cache_to_cache_latency = cache_to_cache;
+        if let Some(runtime) = rv32_runtime_mut(&mut *self.machine) {
+            runtime.set_coherence_latencies(snoop, cache_to_cache);
+        }
+    }
+
+    /// Put `core`'s private L1 in front of the shared levels before it runs.
+    /// A no-op with one shared L1. It keeps the step-back history; see
+    /// `Machine::select_core`.
+    fn select_core_caches(&mut self, core: usize) {
+        if let Some(runtime) = rv32_runtime_mut(&mut *self.machine) {
+            runtime.select_core(core);
+        }
+    }
+
     fn step_all_cores_once(&mut self) -> bool {
         let original = self.selected_core;
         let mut selected_committed = false;
@@ -3126,6 +3299,8 @@ impl App {
                     let mem = rv32_runtime_mut(&mut *self.machine)
                         .expect(NOT_RV32)
                         .mem_mut_unjournaled();
+                    // This core's private L1, when it has one, serves its turn.
+                    mem.set_active_core(core_idx);
                     let console = &mut self.console;
                     let backend = self.session.backend.as_mut();
                     step_hart_bg_inner(
@@ -3168,6 +3343,11 @@ impl App {
         if max_break != self.native().cpu().heap_break {
             self.propagate_heap_break(max_break);
         }
+
+        // Leave the selected core's private L1 in front, so what the screens
+        // read between rounds — the RAM view, the Cache tab — is that core's
+        // view of memory, not whichever core happened to run last.
+        self.select_core_caches(original);
 
         // Sync selected core's CPU snapshot to harts[original] (cheap — skips
         // exec_counts/exec_trace).  Keeps harts[selected].cpu current so that
@@ -3327,6 +3507,7 @@ impl App {
     }
 
     fn single_step_selected_sequential(&mut self) {
+        self.select_core_caches(self.selected_core);
         // Restore the selected hart's satp/priv_mode into the shared MMU — a
         // background hart may have just run with different page tables. Uses the
         // journal-preserving sync (it only touches MMU metadata) so the step

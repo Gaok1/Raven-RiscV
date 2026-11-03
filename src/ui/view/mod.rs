@@ -566,7 +566,7 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+x]", "cut selection"),
         ]],
         Tab::Cache => vec![vec![
-            ("[Tab]", "cycle subtabs: Stats → View → Settings"),
+            ("[Tab]", "cycle subtabs: Stats → View → Coherence → Settings"),
             ("Core [[]/]]", "select which core/hart to observe"),
             ("[r]", "restart simulation"),
             ("[p] / [Space]", "run / pause toggle"),
@@ -590,6 +590,10 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ),
             ("[g] View", "cycle byte grouping: 1B → 2B → 4B"),
             ("[t] View", "cycle address view: block base ↔ off|idx|tag"),
+            (
+                "Coherence",
+                "each core's bus traffic, line states and recent bus requests (Settings → coherence)",
+            ),
             (
                 "[↑/↓] View",
                 "scroll the active cache panel; in Both mode this follows the focused panel",

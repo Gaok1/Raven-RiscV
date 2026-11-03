@@ -2762,3 +2762,120 @@ fn an_unknown_architecture_names_the_valid_ones() {
         assert!(error.contains(id), "{error:?} should mention {id}");
     }
 }
+
+/// Two cores hand a value over through a flag in memory, each word on its own
+/// cache line; core 0 exits with what core 1 copied.
+const COHERENCE_HANDOFF: &[&str] = &[
+    ".text",
+    ".globl _start",
+    "_start:",
+    "    li   t5, -4096",
+    "    add  a1, sp, t5",
+    "    la   a0, consumer",
+    "    li   a2, 0",
+    "    li   a7, 1100",
+    "    ecall",
+    "    li   t0, 0x8000",
+    "    li   t1, 42",
+    "    sw   t1, 0(t0)",
+    "    li   t1, 1",
+    "    sw   t1, 16(t0)",
+    "wait:",
+    "    lw   t1, 48(t0)",
+    "    beqz t1, wait",
+    "    lw   a0, 32(t0)",
+    "    li   a7, 93",
+    "    ecall",
+    "consumer:",
+    "    li   t0, 0x8000",
+    "spin:",
+    "    lw   t1, 16(t0)",
+    "    beqz t1, spin",
+    "    lw   t1, 0(t0)",
+    "    sw   t1, 32(t0)",
+    "    li   t1, 1",
+    "    sw   t1, 48(t0)",
+    "    li   a7, 1101",
+    "    ecall",
+];
+
+fn screen_text(app: &mut App) -> String {
+    app.splash_start = None;
+    let app = &*app;
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 48)).unwrap();
+    terminal.draw(|f| crate::ui::view::ui(f, app)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn the_tui_runs_each_core_on_its_own_l1_and_shows_the_protocol() {
+    use crate::falcon::cache::CoherenceProtocol;
+    let mut app = App::new(None);
+    app.max_cores = 2;
+    app.run_scope = RunScope::AllHarts;
+    app.session.cache_enabled = true;
+    app.cache.pending_coherence.protocol = CoherenceProtocol::Mesi;
+    load_program(&mut app, COHERENCE_HANDOFF);
+    app.rebuild_harts_for_debug();
+    for _ in 0..5_000 {
+        if app.native().cpu().exit_code.is_some() {
+            break;
+        }
+        app.single_step();
+    }
+    assert_eq!(app.native().cpu().exit_code, Some(42));
+
+    let caches = app.cache_hierarchy().expect("RV32 has caches");
+    assert_eq!(caches.core_count(), 2);
+    let coherence = caches.coherence().expect("private L1s");
+    assert_eq!(coherence.protocol, "MESI");
+    assert!(coherence.cores[1].bus_reads > 0);
+    assert!(coherence.cores[0].flushes > 0, "core 0's dirty flag was written back");
+
+    app.tab = Tab::Cache;
+    app.cache.subtab = super::CacheSubtab::Coherence;
+    let screen = screen_text(&mut app);
+    for text in ["Coherence · MESI", "Bus traffic per core", "BusRd", "Recent lines"] {
+        assert!(screen.contains(text), "missing {text}:\n{screen}");
+    }
+
+    // The View subtab names the core and shows states instead of dirty bits.
+    app.cache.subtab = super::CacheSubtab::View;
+    let screen = screen_text(&mut app);
+    assert!(screen.contains("Core 0 D-Cache"), "{screen}");
+    assert!(screen.contains("valid / D-cache line state"), "{screen}");
+}
+
+#[test]
+fn the_coherence_subtab_explains_a_shared_l1() {
+    let mut app = App::new(None);
+    app.session.cache_enabled = true;
+    app.tab = Tab::Cache;
+    app.cache.subtab = super::CacheSubtab::Coherence;
+    let screen = screen_text(&mut app);
+    assert!(screen.contains("Coherence · Shared L1"), "{screen}");
+    assert!(screen.contains("Settings → coherence"), "{screen}");
+}
+
+#[test]
+fn coherence_survives_an_rcfg_round_trip() {
+    use crate::falcon::cache::CoherenceProtocol;
+    let mut app = App::new(None);
+    app.cache.pending_coherence.protocol = CoherenceProtocol::Moesi;
+    app.cache.pending_coherence.snoop_latency = 6;
+    let text = crate::ui::input::keyboard::serialize_config_v3_from_app(&app);
+    assert!(text.contains("coherence=moesi"), "{text}");
+    assert!(text.contains("coherence.snoop_latency=6"), "{text}");
+    let mut other = App::new(None);
+    crate::ui::input::keyboard::import_config_text(&mut other, &text).unwrap();
+    assert_eq!(other.cache.pending_coherence, app.cache.pending_coherence);
+}

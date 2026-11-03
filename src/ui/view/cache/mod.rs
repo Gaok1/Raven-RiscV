@@ -7,6 +7,7 @@ use crate::ui::view::components::panel::{PanelKind, render_panel};
 use crate::ui::view::components::{ControlState, SpanRow, Toolbar};
 use crate::ui::view::style;
 
+mod coherence;
 pub(crate) mod config;
 mod stats;
 mod view;
@@ -53,6 +54,7 @@ pub(super) fn render_cache(f: &mut Frame, area: Rect, app: &App) {
         CacheSubtab::Stats => stats::render_stats(f, layout[1], app),
         CacheSubtab::View => view::render_view(f, layout[1], app),
         CacheSubtab::Config => config::render_config(f, layout[1], app),
+        CacheSubtab::Coherence => coherence::render_coherence(f, layout[1], app),
     }
 
     if app.cache.viewing_snapshot.is_some() {
@@ -374,6 +376,12 @@ pub(crate) fn build_cache_subtab_bar(app: &App) -> Toolbar<CacheSubtab> {
         CacheSubtab::View,
         "view",
         st(CacheSubtab::View, CacheHoverTarget::SubtabView),
+        theme::ACCENT,
+    )
+    .value(
+        CacheSubtab::Coherence,
+        "coherence",
+        st(CacheSubtab::Coherence, CacheHoverTarget::SubtabCoherence),
         theme::ACCENT,
     )
     .value(

@@ -3,7 +3,8 @@ use crate::ui::app::{
     App, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_JIT_MODE, SETTINGS_ROW_MAX_CORES,
     SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
     SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
-    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS,
+    SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SETTINGS_ROW_C2C_LATENCY, SETTINGS_ROW_COHERENCE,
+    SETTINGS_ROW_SNOOP_LATENCY,
 };
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -28,7 +29,12 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             app.settings.selected = (app.settings.selected + 1).min(SETTINGS_ROWS - 1);
             true
         }
-        KeyCode::Left | KeyCode::Right => true,
+        KeyCode::Left | KeyCode::Right => {
+            if app.settings.selected == SETTINGS_ROW_COHERENCE {
+                app.cycle_coherence_protocol(key.code == KeyCode::Right);
+            }
+            true
+        }
         KeyCode::Enter | KeyCode::Char(' ') => {
             if app.settings.selected == SETTINGS_ROW_CACHE_ENABLED {
                 app.set_cache_enabled(!app.session.cache_enabled);
@@ -59,12 +65,24 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 app.set_trace_syscalls(!app.session.trace_syscalls);
             } else if app.settings.selected == SETTINGS_ROW_SCREEN_TARGET {
                 app.console.screen_target = app.console.screen_target.cycle();
+            } else if app.settings.selected == SETTINGS_ROW_COHERENCE {
+                app.cycle_coherence_protocol(true);
+            } else if app.settings.selected == SETTINGS_ROW_SNOOP_LATENCY {
+                app.settings.num_edit_buf =
+                    app.cache.pending_coherence.snoop_latency.to_string();
+                app.settings.num_editing = true;
+            } else if app.settings.selected == SETTINGS_ROW_C2C_LATENCY {
+                app.settings.num_edit_buf =
+                    app.cache.pending_coherence.cache_to_cache_latency.to_string();
+                app.settings.num_editing = true;
             }
             true
         }
         KeyCode::Char(c)
             if (app.settings.selected == SETTINGS_ROW_MAX_CORES
-                || app.settings.selected == SETTINGS_ROW_MEM_SIZE)
+                || app.settings.selected == SETTINGS_ROW_MEM_SIZE
+                || app.settings.selected == SETTINGS_ROW_SNOOP_LATENCY
+                || app.settings.selected == SETTINGS_ROW_C2C_LATENCY)
                 && c.is_ascii_digit() =>
         {
             app.settings.num_edit_buf.clear();
@@ -140,7 +158,21 @@ fn commit_numeric_edit(app: &mut App) {
                 app.restart_simulation();
             }
         }
+    } else if app.settings.selected == SETTINGS_ROW_SNOOP_LATENCY
+        || app.settings.selected == SETTINGS_ROW_C2C_LATENCY
+    {
+        if let Ok(v) = app.settings.num_edit_buf.trim().parse::<u64>() {
+            let v = v.min(10_000);
+            let current = &app.cache.pending_coherence;
+            let (snoop, c2c) = if app.settings.selected == SETTINGS_ROW_SNOOP_LATENCY {
+                (v, current.cache_to_cache_latency)
+            } else {
+                (current.snoop_latency, v)
+            };
+            app.set_coherence_latencies(snoop, c2c);
+        }
     }
-    // Only max cores and memory size are typed here now; the CPI fields moved
-    // to the Pipeline tab and commit through `pipeline_keys::commit_cpi_edit`.
+    // Max cores, memory size and the two bus latencies are typed here; the CPI
+    // fields moved to the Pipeline tab and commit through
+    // `pipeline_keys::commit_cpi_edit`.
 }

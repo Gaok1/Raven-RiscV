@@ -174,6 +174,7 @@ impl App {
             mem_size,
         );
         let tlb = self.tlb.pending.clone();
+        let (coherence, cores) = (self.cache.pending_coherence.clone(), self.max_cores);
         self.session.prev_pc = base_pc;
         let runtime = self.native_mut();
         *runtime.cpu_mut_unjournaled() = Cpu::default();
@@ -181,6 +182,8 @@ impl App {
         runtime.cpu_mut_unjournaled().write(2, mem_size as u32);
         *runtime.mem_mut_unjournaled() = memory;
         runtime.mem_mut_unjournaled().bypass = bypass;
+        runtime.mem_mut_unjournaled().set_coherence(coherence);
+        runtime.mem_mut_unjournaled().set_core_count(cores);
         runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
         self.push_vm_mode_to_mmu();
         self.session.faulted = false;

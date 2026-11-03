@@ -17,7 +17,8 @@ use crate::ui::{
         EditorMode, FormatMode, InstrFieldKind, MemRegion, PathInputAction, RunButton,
         RunEditTarget, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
         SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
-        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SbDrag, Tab,
+        SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SbDrag, Tab, SETTINGS_ROW_C2C_LATENCY,
+        SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY,
     },
     editor::Editor,
 };
@@ -2085,6 +2086,7 @@ fn cache_header_hit(app: &App, me: MouseEvent) -> Option<CacheHoverTarget> {
                 CacheSubtab::Stats => CacheHoverTarget::SubtabStats,
                 CacheSubtab::View => CacheHoverTarget::SubtabView,
                 CacheSubtab::Config => CacheHoverTarget::SubtabConfig,
+                CacheSubtab::Coherence => CacheHoverTarget::SubtabCoherence,
             });
         }
     }
@@ -2236,6 +2238,7 @@ fn handle_cache_click(app: &mut App, me: MouseEvent, area: Rect) {
             CacheHoverTarget::SubtabStats => app.cache.subtab = CacheSubtab::Stats,
             CacheHoverTarget::SubtabView => app.cache.subtab = CacheSubtab::View,
             CacheHoverTarget::SubtabConfig => app.cache.subtab = CacheSubtab::Config,
+            CacheHoverTarget::SubtabCoherence => app.cache.subtab = CacheSubtab::Coherence,
             CacheHoverTarget::Level(i) => {
                 app.cache.selected_level = i;
                 if i != 0 {
@@ -2631,6 +2634,26 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
     if me.row == screen_y {
         app.console.screen_target = app.console.screen_target.cycle();
         app.settings.selected = SETTINGS_ROW_SCREEN_TARGET;
+        return;
+    }
+
+    let row_ys = app.settings.row_ys.get();
+    if me.row == row_ys[SETTINGS_ROW_COHERENCE] {
+        app.settings.selected = SETTINGS_ROW_COHERENCE;
+        app.cycle_coherence_protocol(true);
+        return;
+    }
+    if me.row == row_ys[SETTINGS_ROW_SNOOP_LATENCY] {
+        app.settings.selected = SETTINGS_ROW_SNOOP_LATENCY;
+        app.settings.num_editing = true;
+        app.settings.num_edit_buf = app.cache.pending_coherence.snoop_latency.to_string();
+        return;
+    }
+    if me.row == row_ys[SETTINGS_ROW_C2C_LATENCY] {
+        app.settings.selected = SETTINGS_ROW_C2C_LATENCY;
+        app.settings.num_editing = true;
+        app.settings.num_edit_buf =
+            app.cache.pending_coherence.cache_to_cache_latency.to_string();
         return;
     }
 
