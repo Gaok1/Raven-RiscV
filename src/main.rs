@@ -274,6 +274,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
             "--max-cycles",
             "--format",
             "--cores",
+            "--coherence",
             "--expect-exit",
             "--expect-stdout",
             "--jit",
@@ -324,6 +325,13 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         .map(|value| parse_jit_mode(&value))
         .transpose()?
         .unwrap_or(BackendKind::None);
+    let coherence = flag_value(args, "--coherence")
+        .map(|value| {
+            raven::falcon::cache::CoherenceProtocol::from_str(&value).ok_or_else(|| {
+                format!("unknown --coherence '{value}' (use shared, none, msi, mesi or moesi)")
+            })
+        })
+        .transpose()?;
 
     cli::run_headless(cli::RunArgs {
         architecture: arch_flag(args),
@@ -342,6 +350,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         expect_regs,
         expect_mems,
         jit_mode,
+        coherence,
         screen_window: has_flag(args, "--screen"),
     })
 }
@@ -514,6 +523,9 @@ OPTIONS  run:
     --pipeline-trace-out <file> Write per-cycle pipeline trace JSON (requires --pipeline)
     --screen                    Show programs that use the graphics syscalls (2000+) in an OS window
     --cores <n>                 Max physical cores / harts for the run (default: settings or 1)
+    --coherence <protocol>      L1 caches between cores: shared (one L1 for all, default),
+                                none (private, not coherent), msi, mesi or moesi (private,
+                                snooping); overrides the config's coherence= key
     --mem <size>                RAM size, e.g. 16mb, 256kb, 1gb   (default: sim-settings or 16mb)
     --max-cycles <n>            Execution budget: steps (sequential), rounds (multi-hart), or pipeline cycles (default: 1000000000)
     --jit none|hot|full         Execution backend (default: none); full needs --features jit,
@@ -564,6 +576,7 @@ EXAMPLES:
     raven run program.s --out results.json
     raven run program.s --config my.rcfg --format csv --out stats.csv
     raven run program.s --cores 4 --nout
+    raven run program.s --cores 2 --coherence mesi --format rstats
     raven run program.s --pipeline --config my.rcfg --format json
     raven run program.s --expect-exit 0 --expect-reg a0=42
     raven run program.s --pipeline --pipeline-trace-out trace.json

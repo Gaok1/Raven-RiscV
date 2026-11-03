@@ -396,3 +396,91 @@ fn pipeline_output_formats_do_not_emit_serial_cycle_breakdown() {
     assert!(!csv.contains("Base Cycles"));
     assert!(!csv.contains("Cache Cycles"));
 }
+
+/// Core 0 writes a value and raises a flag; core 1 waits for the flag, copies
+/// the value and says it is done; core 0 exits with the copy. Every word sits
+/// on its own cache line.
+const FLAG_HANDOFF: &str = r#"
+.text
+.globl _start
+_start:
+    li   t5, -4096
+    add  a1, sp, t5
+    la   a0, consumer
+    li   a2, 0
+    li   a7, 1100
+    ecall
+    li   t0, 0x8000
+    li   t1, 42
+    sw   t1, 0(t0)
+    li   t1, 1
+    sw   t1, 16(t0)
+wait:
+    lw   t1, 48(t0)
+    beqz t1, wait
+    lw   a0, 32(t0)
+    li   a7, 93
+    ecall
+consumer:
+    li   t0, 0x8000
+spin:
+    lw   t1, 16(t0)
+    beqz t1, spin
+    lw   t1, 0(t0)
+    sw   t1, 32(t0)
+    li   t1, 1
+    sw   t1, 48(t0)
+    li   a7, 1101
+    ecall
+"#;
+
+fn run_flag_handoff(protocol: crate::falcon::cache::CoherenceProtocol) -> Cpu {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        16 * 1024 * 1024,
+    );
+    mem.set_coherence(crate::falcon::cache::CoherenceConfig {
+        protocol,
+        ..Default::default()
+    });
+    mem.set_core_count(2);
+    let mut console = Console::default();
+    let mut stdout = Vec::new();
+    let prog = assemble(FLAG_HANDOFF, 0).expect("assemble flag handoff");
+    load_words(&mut mem.ram, 0, &prog.text).expect("load text");
+    cpu.pc = 0;
+    cpu.write(2, (16 * 1024 * 1024) as u32);
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    run_headless_multihart_sequential(
+        &mut cpu,
+        &mut mem,
+        &mut console,
+        20_000,
+        &mut stdout,
+        2,
+        backend.as_mut(),
+    )
+    .expect("headless multi-hart run");
+    cpu
+}
+
+#[test]
+fn a_flag_handoff_between_cores_works_under_every_coherent_protocol() {
+    use crate::falcon::cache::CoherenceProtocol::*;
+    for protocol in [Shared, Msi, Mesi, Moesi] {
+        let cpu = run_flag_handoff(protocol);
+        assert_eq!(cpu.exit_code, Some(42), "{protocol:?}");
+    }
+}
+
+#[test]
+fn without_coherence_the_waiting_core_never_sees_the_flag() {
+    // Core 1 read the flag before core 0 raised it and keeps its own copy;
+    // core 0 waits on core 1 in turn, so the run reaches its cycle limit.
+    let cpu = run_flag_handoff(crate::falcon::cache::CoherenceProtocol::None);
+    assert_eq!(cpu.exit_code, None);
+}

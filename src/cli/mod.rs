@@ -43,6 +43,8 @@ pub struct RunArgs {
     pub expect_mems: Vec<(u32, u32)>,
     /// Execution backend (`--jit=none|hot|full`). Defaults to `None`.
     pub jit_mode: BackendKind,
+    /// `--coherence`: overrides the config's `coherence=` key.
+    pub coherence: Option<crate::falcon::cache::CoherenceProtocol>,
     /// `--screen`: show programs that use the graphics syscalls (2000+) in an
     /// OS window. Without it the screen stays in-memory only (CI-safe).
     pub screen_window: bool,
@@ -200,6 +202,13 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         cfg.validate()
             .map_err(|e| format!("L{} cache config error: {e}", i + 2))?;
     }
+    let mut coherence = match &cache_text {
+        Some(t) => crate::falcon::cache::CoherenceConfig::from_rcfg(t)?,
+        None => crate::falcon::cache::CoherenceConfig::default(),
+    };
+    if let Some(protocol) = args.coherence {
+        coherence.protocol = protocol;
+    }
 
     // ── 2. Apply sim settings (.rcfg) ────────────────────────────────────────
     let (
@@ -239,6 +248,8 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     // ── 3. Set up simulation ─────────────────────────────────────────────────
     let mut cpu = Cpu::default();
     let mut mem = CacheController::new(icfg, dcfg, extra_cfgs, mem_size);
+    mem.set_coherence(coherence);
+    mem.set_core_count(max_cores);
     mem.bypass = !cache_enabled;
     mem.mmu.enabled = vm_enabled;
     mem.mmu.force_translate = vm_enabled;
@@ -394,6 +405,10 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
             }
         }
     }
+
+    // Report from core 0's point of view: the top-level L1 numbers are its
+    // caches when each core has its own.
+    mem.set_active_core(0);
 
     validate_expectations(
         &cpu,
@@ -552,6 +567,7 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
         cfg.validate()
             .map_err(|e| format!("L{} config error: {e}", i + 2))?;
     }
+    let coherence = crate::falcon::cache::CoherenceConfig::from_rcfg(&cache_t)?;
     // [pipeline]
     let pcfg = parse_pipeline_config(&pipe_t)?;
 
@@ -574,6 +590,12 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
     for (i, cfg) in extra.iter().enumerate() {
         print_config_row(&format!("L{} Unified", i + 2), cfg);
     }
+    eprintln!(
+        "  coherence      = {} (snoop {} cyc, cache-to-cache {} cyc)",
+        coherence.protocol.as_str(),
+        coherence.snoop_latency,
+        coherence.cache_to_cache_latency
+    );
     eprintln!("[pipeline]");
     eprintln!("  enabled        = {}", pcfg.enabled);
     eprintln!("  mode           = {:?}", pcfg.mode);
@@ -591,7 +613,7 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
             max_cores,
             &run_scope,
         );
-        let cache = serialize_cache_configs(&icfg, &dcfg, &extra);
+        let cache = serialize_cache_configs_with(&icfg, &dcfg, &extra, &coherence);
         let pipeline = serialize_pipeline_config(&pcfg);
         let normalized = crate::ui::input::keyboard::wrap_config_v3(&sim, &cache, &pipeline);
         std::fs::write(out, normalized).map_err(|e| format!("cannot write '{}': {e}", out))?;
@@ -874,6 +896,8 @@ fn run_headless_multihart_sequential(
                 continue;
             }
             any_running = true;
+            // The core's private L1, when it has one, serves this turn.
+            mem.set_active_core(idx);
             let outcome = {
                 let mut ctx = ExecCtx::new(&mut harts[idx].cpu, mem, console);
                 backend.run_until_yield(&mut ctx)
@@ -1096,6 +1120,15 @@ pub fn serialize_cache_configs(
     dcfg: &CacheConfig,
     extra: &[CacheConfig],
 ) -> String {
+    serialize_cache_configs_with(icfg, dcfg, extra, &Default::default())
+}
+
+pub fn serialize_cache_configs_with(
+    icfg: &CacheConfig,
+    dcfg: &CacheConfig,
+    extra: &[CacheConfig],
+    coherence: &crate::falcon::cache::CoherenceConfig,
+) -> String {
     let mut s = String::from("# Raven Cache Config v2\n");
     s.push_str(&format!("levels={}\n", extra.len()));
     serialize_one_config(&mut s, "icache", icfg);
@@ -1104,6 +1137,8 @@ pub fn serialize_cache_configs(
         let prefix = format!("l{}", i + 2);
         serialize_one_config(&mut s, &prefix, cfg);
     }
+    s.push_str("# coherence: shared | none | msi | mesi | moesi (private L1 per core unless shared)\n");
+    s.push_str(&coherence.to_rcfg());
     s
 }
 

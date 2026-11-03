@@ -3,6 +3,7 @@
 use super::{PipelineReport, PipelineTraceHazard, PipelineTraceStage, PipelineTraceStep};
 use crate::falcon::asm::utils::parse_reg;
 use crate::falcon::cache::Cache;
+use raven_engine::capability::{CacheHierarchy, CoherenceCoreStats};
 use crate::falcon::memory::Bus;
 use crate::falcon::{CacheController, Cpu};
 use crate::ui::pipeline::{HazardType, Stage, TraceKind};
@@ -84,8 +85,72 @@ pub(super) fn format_json(
         append_cache_json(&mut s, lvl, &name, instr, amat);
     }
 
+    append_coherence_json(&mut s, mem, instr);
     s.push_str("\n}\n");
     s
+}
+
+/// What one core did on the coherence bus, as `(key, value)` pairs, in the
+/// order every output format lists them.
+fn coherence_counters(c: &CoherenceCoreStats) -> [(&'static str, u64); 10] {
+    [
+        ("bus_transactions", c.transactions()),
+        ("bus_reads", c.bus_reads),
+        ("bus_read_exclusive", c.bus_read_exclusive),
+        ("bus_upgrades", c.bus_upgrades),
+        ("bus_writes", c.bus_writes),
+        ("invalidations_received", c.invalidations_received),
+        ("flushes", c.flushes),
+        ("cache_to_cache", c.cache_to_cache),
+        ("coherence_misses", c.coherence_misses),
+        ("bus_cycles", c.bus_cycles),
+    ]
+}
+
+/// The cores with a private L1, each with its L1 pair and bus counters.
+/// Empty with a shared L1.
+fn private_cores(
+    mem: &CacheController,
+) -> Vec<(usize, &Cache, &Cache, CoherenceCoreStats)> {
+    if !mem.coherence_protocol().private_l1() {
+        return Vec::new();
+    }
+    let tracker = mem.coherence_tracker();
+    (0..mem.core_count())
+        .filter_map(|core| {
+            let (icache, dcache) = mem.l1_of(core)?;
+            let counters = tracker.cores.get(core).copied().unwrap_or_default();
+            Some((core, icache, dcache, counters))
+        })
+        .collect()
+}
+
+fn append_coherence_json(s: &mut String, mem: &CacheController, instr: u64) {
+    let cores = private_cores(mem);
+    if cores.is_empty() {
+        return;
+    }
+    let cfg = mem.coherence_config();
+    s.push_str(",\n  \"coherence\": {\n");
+    s.push_str(&format!("    \"protocol\": \"{}\",\n", cfg.protocol.as_str()));
+    s.push_str(&format!("    \"snoop_latency\": {},\n", cfg.snoop_latency));
+    s.push_str(&format!("    \"c2c_latency\": {},\n", cfg.cache_to_cache_latency));
+    s.push_str("    \"cores\": [");
+    for (n, (core, icache, dcache, counters)) in cores.iter().enumerate() {
+        if n > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!("\n    {{\n    \"core\": {core},\n"));
+        for (key, value) in coherence_counters(counters) {
+            s.push_str(&format!("    \"{key}\": {value},\n"));
+        }
+        s.push_str("    \"icache\": ");
+        append_cache_json(s, icache, &format!("Core {core} I-Cache L1"), instr, mem.l1_amat(icache));
+        s.push_str(",\n    \"dcache\": ");
+        append_cache_json(s, dcache, &format!("Core {core} D-Cache L1"), instr, mem.l1_amat(dcache));
+        s.push_str("\n    }");
+    }
+    s.push_str("\n    ]\n  }");
 }
 
 pub(super) fn append_cache_json(
@@ -595,6 +660,26 @@ pub(super) fn format_rstats(
         write_cache_level_fstats(&mut s, &key, &name, lvl, instr, amat);
     }
 
+    let cores = private_cores(mem);
+    if !cores.is_empty() {
+        let cfg = mem.coherence_config();
+        s.push_str(&format!("coherence.protocol={}\n", cfg.protocol.as_str()));
+        s.push_str(&format!("coherence.snoop_latency={}\n", cfg.snoop_latency));
+        s.push_str(&format!("coherence.c2c_latency={}\n", cfg.cache_to_cache_latency));
+        s.push_str(&format!("coherence.cores={}\n", cores.len()));
+        for (core, icache, dcache, counters) in &cores {
+            for (key, value) in coherence_counters(counters) {
+                s.push_str(&format!("core{core}.{key}={value}\n"));
+            }
+            let amat_i = mem.l1_amat(icache);
+            let amat_d = mem.l1_amat(dcache);
+            let name_i = format!("Core {core} I-Cache L1");
+            let name_d = format!("Core {core} D-Cache L1");
+            write_cache_level_fstats(&mut s, &format!("core{core}.icache"), &name_i, icache, instr, amat_i);
+            write_cache_level_fstats(&mut s, &format!("core{core}.dcache"), &name_d, dcache, instr, amat_d);
+        }
+    }
+
     // Miss hotspots (I-cache)
     let mut hotspots: Vec<(u32, u64)> = mem
         .icache
@@ -746,6 +831,29 @@ pub(super) fn format_csv(
             lvl.stats.total_cycles as f64 / total as f64
         };
         write_level(&mut s, &label, lvl, instr, amat);
+    }
+
+    let cores = private_cores(mem);
+    if !cores.is_empty() {
+        for (core, icache, dcache, _) in &cores {
+            let label_i = format!("Core {core} I-Cache L1");
+            let label_d = format!("Core {core} D-Cache L1");
+            write_level(&mut s, &label_i, icache, instr, mem.l1_amat(icache));
+            write_level(&mut s, &label_d, dcache, instr, mem.l1_amat(dcache));
+        }
+        s.push('\n');
+        s.push_str(&format!(
+            "COHERENCE ({})\n",
+            mem.coherence_config().protocol.as_str()
+        ));
+        s.push_str("Core,Bus Transactions,BusRd,BusRdX,BusUpgr,BusWr,Invalidations Received,Flushes,Cache-to-Cache,Coherence Misses,Bus Cycles\n");
+        for (core, _, _, counters) in &cores {
+            let values: Vec<String> = coherence_counters(counters)
+                .iter()
+                .map(|(_, v)| v.to_string())
+                .collect();
+            s.push_str(&format!("{core},{}\n", values.join(",")));
+        }
     }
 
     // Miss hotspots
