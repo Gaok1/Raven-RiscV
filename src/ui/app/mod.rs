@@ -675,6 +675,7 @@ impl App {
                 exec_trace: std::collections::VecDeque::new(),
                 reg_age: [255u8; 32],
                 block_comments: std::collections::HashMap::new(),
+                file_marks: std::collections::HashMap::new(),
                 reg_last_write_pc: [None; 32],
                 dyn_mem_access: None,
                 prev_f: [0u32; 32],
@@ -1465,7 +1466,6 @@ impl App {
         self.add_file_with_lines(name, vec![String::new()]);
     }
 
-    /// Add a file tab with the given content and switch to it (Ctrl+O / import).
     /// The help for the tab on screen: its guide when it has one, else its
     /// guided tour, else its list of keys. The guide offers the tour itself.
     pub(crate) fn open_help(&mut self) {
@@ -1481,6 +1481,21 @@ impl App {
         }
     }
 
+    /// Make `lines` the whole workspace: one tab, the others closed (Ctrl+P,
+    /// open program). Unlike [`Self::add_file_with_lines`], nothing else is
+    /// built along with it.
+    pub(crate) fn replace_workspace(&mut self, name: String, lines: Vec<String>) {
+        self.add_file_with_lines(name.clone(), lines);
+        let mut opened = self.editor.files.pop().expect("a tab was just added");
+        // The name no longer has to dodge the tabs it replaces.
+        opened.name = name;
+        self.editor.files = vec![opened];
+        self.editor.active_file = 0;
+        self.editor.file_delete_armed = None;
+    }
+
+    /// Add a file tab with the given content and switch to it (Ctrl+O, add a
+    /// file to the program).
     pub(crate) fn add_file_with_lines(&mut self, name: String, lines: Vec<String>) {
         let mut name = name;
         while self.editor.files.iter().any(|f| f.name == name) {
@@ -1681,6 +1696,7 @@ impl App {
 
         // Labels and the sections viewer come from the ELF symbol table.
         self.session.labels = info.symbols;
+        self.session.file_marks.clear();
         self.session.halt_pcs.clear();
         self.session.elf_sections = info.sections;
         self.session.exec_counts.clear();
@@ -2082,6 +2098,24 @@ impl App {
         }
     }
 
+    /// Rows the instruction list draws above the instruction at `addr`, in
+    /// order: the tab its code comes from, its block comment, its labels.
+    pub(crate) fn imem_header_rows(&self, addr: u32) -> usize {
+        usize::from(self.session.file_marks.contains_key(&addr))
+            + usize::from(self.session.block_comments.contains_key(&addr))
+            + self.session.labels.get(&addr).map_or(0, Vec::len)
+    }
+
+    /// The editor tab whose code holds `addr`, when the workspace has several.
+    pub(crate) fn source_file_at(&self, addr: u32) -> Option<&str> {
+        self.session
+            .file_marks
+            .iter()
+            .filter(|&(&start, _)| start <= addr)
+            .max_by_key(|&(&start, _)| start)
+            .map(|(_, name)| name.as_str())
+    }
+
     /// Total visual rows in the instruction list (block_comment + labels + instruction per addr).
     pub(super) fn imem_total_visual_rows(&self) -> usize {
         if let Some(region) = self.active_imem_exec_region() {
@@ -2093,12 +2127,7 @@ impl App {
             if !self.imem_in_range(addr) {
                 break;
             }
-            if self.session.block_comments.contains_key(&addr) {
-                count += 1;
-            }
-            if let Some(names) = self.session.labels.get(&addr) {
-                count += names.len();
-            }
+            count += self.imem_header_rows(addr);
             count += 1;
             addr = addr.wrapping_add(4);
         }
@@ -2122,13 +2151,7 @@ impl App {
             if !self.imem_in_range(addr) {
                 return (base, 0);
             }
-            let bc = if self.session.block_comments.contains_key(&addr) {
-                1
-            } else {
-                0
-            };
-            let lbls = self.session.labels.get(&addr).map_or(0, |v| v.len());
-            let block = bc + lbls + 1;
+            let block = self.imem_header_rows(addr) + 1;
             if vrow + block > scroll {
                 return (addr, scroll - vrow);
             }
@@ -2152,12 +2175,7 @@ impl App {
             if !self.imem_in_range(addr) {
                 return None;
             }
-            if self.session.block_comments.contains_key(&addr) {
-                vrow += 1;
-            }
-            if let Some(names) = self.session.labels.get(&addr) {
-                vrow += names.len();
-            }
+            vrow += self.imem_header_rows(addr);
             if addr == pc {
                 return Some(vrow);
             }
@@ -2218,12 +2236,7 @@ impl App {
             if !self.imem_in_range(addr) {
                 break;
             }
-            if self.session.block_comments.contains_key(&addr) {
-                vrow += 1;
-            }
-            if let Some(names) = self.session.labels.get(&addr) {
-                vrow += names.len();
-            }
+            vrow += self.imem_header_rows(addr);
             cache.insert(addr, vrow);
             vrow += 1;
             addr = addr.wrapping_add(4);

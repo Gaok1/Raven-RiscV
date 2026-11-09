@@ -109,7 +109,8 @@ pub static STEPS: &[TutorialStep] = &[
         body_en: "Build and files:\
 \n[Esc] :: switch to Command mode\
 \n[Ctrl+Enter] / [F5] :: assemble and open Run\
-\n[Ctrl+o] :: open a file\
+\n[Ctrl+p] :: open a program (replaces every tab)\
+\n[Ctrl+o] :: add a file to the program (one more tab)\
 \n[Ctrl+s] :: save or export the file\
 \n\
 \nSearch and selection:\
@@ -131,7 +132,8 @@ pub static STEPS: &[TutorialStep] = &[
         body_pt: "Build e arquivos:\
 \n[Esc] :: troca para o modo Command\
 \n[Ctrl+Enter] / [F5] :: monta e abre a aba Run\
-\n[Ctrl+o] :: abre um arquivo\
+\n[Ctrl+p] :: abre um programa (substitui todas as abas)\
+\n[Ctrl+o] :: adiciona um arquivo ao programa (mais uma aba)\
 \n[Ctrl+s] :: salva ou exporta o arquivo\
 \n\
 \nBusca e seleção:\
@@ -174,16 +176,16 @@ pub static STEPS: &[TutorialStep] = &[
         setup: None,
     },
     TutorialStep {
-        title_en: "Import / Export Buttons",
-        title_pt: "Botões Import / Export",
-        body_en: "Import [BIN] loads an ELF binary. Import [CODE] opens a .s (assembly) file.\
+        title_en: "Open / Export Buttons",
+        title_pt: "Botões Open / Export",
+        body_en: "Open [BIN] loads an ELF binary. Open [CODE] opens a .s (assembly) file as the whole program, replacing every tab. [+ ADD FILE] adds a .s as one more tab: all tabs build into one program, labels resolve across them, and the first tab's code runs first.\
 \n\nExport [BIN] saves the compiled binary. Export [CODE] saves the source code.\
 \n\nThe [▶ RUN] and [FORMAT] buttons execute and format the code respectively.\
-\n\nCtrl+o opens a file picker for import; Ctrl+s opens one for export; Ctrl+Enter or F5 assembles and switches to Run.",
-        body_pt: "Import [BIN] carrega um binário ELF. Import [CODE] abre um arquivo .s (assembly).\
+\n\nCtrl+p opens a program, Ctrl+o adds a file; Ctrl+s exports; Ctrl+Enter or F5 assembles and switches to Run.",
+        body_pt: "Open [BIN] carrega um binário ELF. Open [CODE] abre um arquivo .s (assembly) como o programa inteiro, substituindo todas as abas. [+ ADD FILE] adiciona um .s como mais uma aba: todas as abas montam juntas num programa só, labels valem entre elas e o código da primeira aba roda primeiro.\
 \n\nExport [BIN] salva o binário compilado. Export [CODE] salva o código-fonte.\
 \n\nOs botões [▶ RUN] e [FORMAT] executam e formatam o código respectivamente.\
-\n\nCtrl+o abre o seletor de arquivo para importação; Ctrl+s abre para exportação; Ctrl+Enter ou F5 montam e trocam para a aba Run.",
+\n\nCtrl+p abre um programa, Ctrl+o adiciona um arquivo; Ctrl+s exporta; Ctrl+Enter ou F5 montam e trocam para a aba Run.",
         target: target_actions,
         setup: None,
     },

@@ -111,8 +111,11 @@ impl Default for TutorialState {
 
 #[derive(Clone, PartialEq, Default)]
 pub(crate) enum PathInputAction {
+    /// Add a source file to the workspace as one more tab.
     #[default]
     OpenFas,
+    /// Open a program: the file replaces every tab.
+    OpenProgram,
     SaveFas,
     OpenBin,
     SaveBin,

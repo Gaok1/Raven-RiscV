@@ -394,6 +394,9 @@ pub(crate) struct RunSession {
     /// Visible comments from source (`#!` text), keyed by instruction address.
     pub(crate) comments: std::collections::HashMap<u32, String>,
     pub(crate) block_comments: std::collections::HashMap<u32, String>,
+    /// Where each editor tab's code starts, by tab name — only when the
+    /// workspace has several, so the Run tab can say whose code is running.
+    pub(crate) file_marks: std::collections::HashMap<u32, String>,
     pub(crate) labels: std::collections::HashMap<u32, Vec<String>>,
     pub(crate) halt_pcs: std::collections::HashSet<u32>,
     /// ELF sections for the sections viewer (empty when loaded from ASM).

@@ -57,8 +57,13 @@ pub(super) fn handle_insert_readonly_guard(app: &mut App, key: KeyEvent) -> bool
 }
 
 pub(super) fn handle_common_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) -> bool {
+    if ctrl && matches!(key.code, KeyCode::Char('p')) {
+        open_file(app, true);
+        return true;
+    }
+
     if ctrl && matches!(key.code, KeyCode::Char('o')) {
-        open_file(app);
+        open_file(app, false);
         return true;
     }
 
@@ -118,15 +123,24 @@ pub(super) fn handle_common_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
     false
 }
 
-fn open_file(app: &mut App) {
+/// Pick a file and open it: as the whole program (`replace`, Ctrl+P), or as
+/// one more tab of it (Ctrl+O).
+pub(crate) fn open_file(app: &mut App, replace: bool) {
     if let Some(path) = OSFileDialog::new()
         .add_filter("Assembly / ELF", &["s", "asm", "elf", "bin"])
         .add_filter("All Files", &["*"])
         .pick_file()
     {
-        open_file_autodetect(app, &path);
+        open_file_autodetect(app, &path, replace);
     } else {
-        open_path_input(app, PathInputAction::OpenFas);
+        open_path_input(
+            app,
+            if replace {
+                PathInputAction::OpenProgram
+            } else {
+                PathInputAction::OpenFas
+            },
+        );
     }
 }
 

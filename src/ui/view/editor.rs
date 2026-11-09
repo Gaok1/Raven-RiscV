@@ -16,7 +16,10 @@ use raven_engine::capability::BitRole;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditorActionBtn {
     ImportBin,
-    ImportCode,
+    /// Open a source as the whole program.
+    OpenCode,
+    /// Add a source to the program as one more tab.
+    AddCode,
     ExportBin,
     ExportCode,
     Run,
@@ -77,12 +80,19 @@ pub(crate) fn build_editor_action_bar(
 ) -> Toolbar<EditorActionBtn> {
     let state = |btn: EditorActionBtn| ControlState::chip(false, hovered == Some(btn));
     let mut bar = Toolbar::with_gap(1);
-    bar.text(vec![Span::styled("import", crate::ui::view::style::label())])
+    bar.text(vec![Span::styled("open", crate::ui::view::style::label())])
         .action(EditorActionBtn::ImportBin, "bin", state(EditorActionBtn::ImportBin), theme::TEXT)
         .action(
-            EditorActionBtn::ImportCode,
+            EditorActionBtn::OpenCode,
             "code",
-            state(EditorActionBtn::ImportCode),
+            state(EditorActionBtn::OpenCode),
+            theme::TEXT,
+        )
+        .separator()
+        .action(
+            EditorActionBtn::AddCode,
+            "+ add file",
+            state(EditorActionBtn::AddCode),
             theme::TEXT,
         )
         .separator()
@@ -153,7 +163,7 @@ pub(crate) fn build_file_tab_bar(app: &App) -> Toolbar<FileTabId> {
 ///
 /// ```text
 ///  Editor   main.s  +                                  ln 1  col 1  addr hints
-///  import bin code │ export bin code │ ▶ run  format    ✓ Assembled 22 instructions…
+///  open bin code │ + add file │ export bin code │ ▶ run  format    ✓ Assembled 22 instructions…
 /// ```
 ///
 /// It was an `Editor Control` box of five rows — two of them border — holding a

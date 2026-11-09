@@ -118,7 +118,8 @@ pub fn ui(f: &mut Frame, app: &App) {
                 EditorMode::Command => "COMMAND",
             };
             let mut line = style::hint_bar(&[
-                ("ctrl+o", "open"),
+                ("ctrl+p", "open"),
+                ("ctrl+o", "add file"),
                 ("ctrl+s", "save"),
                 ("ctrl+z", "undo"),
                 ("ctrl+f", "find"),
@@ -592,7 +593,8 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+h]", "open find & replace bar"),
             ("[Ctrl+g]", "goto line number"),
             ("[Ctrl+w]", "select word at cursor"),
-            ("[Ctrl+o]", "import file"),
+            ("[Ctrl+p]", "open a program: the file replaces every tab"),
+            ("[Ctrl+o]", "add a file: one more tab, built with the others"),
             ("[Ctrl+s]", "export / save file"),
             ("", ""),
             ("[Ctrl+a]", "select all"),

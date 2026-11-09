@@ -1455,8 +1455,13 @@ fn ensure_extension(path: std::path::PathBuf, ext: &str) -> std::path::PathBuf {
 }
 
 /// Auto-detect whether `path` is a binary (ELF / FALC / non-UTF-8) or assembly
-/// source and load it accordingly. Used by Ctrl+O and the path-input overlay.
-pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path) {
+/// source and load it accordingly. Used by Ctrl+P / Ctrl+O, the editor's
+/// buttons and the path-input overlay.
+///
+/// A binary always replaces the program. A source either replaces the whole
+/// workspace (`replace`: open a program) or joins it as one more tab (add a
+/// file the program depends on).
+pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path, replace: bool) {
     let Ok(bytes) = std::fs::read(path) else {
         return;
     };
@@ -1491,9 +1496,23 @@ pub(super) fn open_file_autodetect(app: &mut App, path: &std::path::Path) {
             .and_then(|n| n.to_str())
             .unwrap_or("opened.s")
             .to_string();
-        // Opened sources land in a new file tab so the workspace keeps its modules.
-        app.add_file_with_lines(name, content.lines().map(|s| s.to_string()).collect());
+        let lines = content.lines().map(|s| s.to_string()).collect();
+        if replace {
+            app.replace_workspace(name, lines);
+        } else {
+            app.add_file_with_lines(name, lines);
+        }
         app.assemble_and_load();
+        // Every tab builds into one program, first tab first: say so, or the
+        // added file looks loaded while another tab's code runs.
+        if !replace && app.editor.files.len() > 1 && app.editor.last_compile_ok == Some(true) {
+            let opened = &app.editor.files[app.editor.active_file].name;
+            let first = &app.editor.files[0].name;
+            app.editor.last_assemble_msg = Some(format!(
+                "{opened} is tab {} · tabs build together, {first} runs first",
+                app.editor.active_file + 1,
+            ));
+        }
     }
 }
 
@@ -1504,7 +1523,10 @@ pub(super) fn dispatch_path_input(
 ) {
     match action {
         PathInputAction::OpenFas => {
-            open_file_autodetect(app, &path);
+            open_file_autodetect(app, &path, false);
+        }
+        PathInputAction::OpenProgram => {
+            open_file_autodetect(app, &path, true);
         }
         PathInputAction::SaveFas => {
             let _ = std::fs::write(&path, app.editor.buf.text());

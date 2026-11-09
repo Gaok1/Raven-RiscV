@@ -114,7 +114,13 @@ fn instruction_block(app: &App) -> Block<'static> {
     } else {
         theme::BORDER
     };
-    panel::panel_state("Instruction Memory", "pc", PanelKind::Custom(border))
+    // With several editor tabs the program is all of them, first tab first:
+    // name the one the PC is in, so the code on screen has an owner.
+    let title = match app.source_file_at(app.program_counter() as u32) {
+        Some(file) => format!("Instructions · {file}"),
+        None => "Instruction Memory".to_string(),
+    };
+    panel::panel_state(title, "pc", PanelKind::Custom(border))
 }
 
 fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
@@ -130,6 +136,24 @@ fn instruction_items(inner: Rect, app: &App) -> Vec<ListItem<'static>> {
     let mut remaining = lines;
 
     while remaining > 0 && imem_address_in_range(app, addr) {
+        // Where an editor tab's code begins
+        if let Some(file) = app.session.file_marks.get(&addr) {
+            if skip > 0 {
+                skip -= 1;
+            } else {
+                let rule = "─".repeat(usize::from(inner.width).saturating_sub(file.len() + 6));
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled("── ", Style::default().fg(theme::BORDER)),
+                    Span::styled(file.clone(), Style::default().fg(theme::ACCENT).bold()),
+                    Span::styled(format!(" {rule}"), Style::default().fg(theme::BORDER)),
+                ])));
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
+            }
+        }
+
         // Block comment separator
         if let Some(bc) = app.session.block_comments.get(&addr) {
             if skip > 0 {

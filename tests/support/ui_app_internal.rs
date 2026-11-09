@@ -2404,6 +2404,45 @@ fn multi_file_workspace_assembles_across_tabs_and_maps_lines() {
     assert_eq!(app.editor.files.len(), 1);
 }
 
+/// With several tabs the program is all of them, first tab first: the Run
+/// tab marks where each tab's code starts and names the one the PC is in.
+#[test]
+fn the_run_tab_knows_which_tab_the_code_came_from() {
+    let mut app = App::new(None);
+    app.editor.buf.lines = vec![".text".into(), "    li a7, 93".into(), "    ecall".into()];
+    app.add_file_with_lines("soma.s".into(), vec![".text".into(), "soma:".into(), "    nop".into()]);
+    app.assemble_and_load();
+    assert_eq!(app.editor.last_compile_ok, Some(true));
+
+    let base = app.session.base_pc;
+    assert_eq!(app.source_file_at(base), Some("main.s"));
+    assert_eq!(app.source_file_at(base + 8), Some("soma.s"));
+    assert_eq!(app.imem_header_rows(base + 8), 2, "the tab mark and the label");
+
+    // One tab: nothing to tell apart.
+    app.replace_workspace("soma.s".into(), vec![".text".into(), "    nop".into()]);
+    app.assemble_and_load();
+    assert!(app.session.file_marks.is_empty());
+}
+
+/// Ctrl+P opens a program: the file becomes the only tab, under its own name
+/// even when a replaced tab had it.
+#[test]
+fn opening_a_program_replaces_every_tab() {
+    let mut app = App::new(None);
+    app.add_file_with_lines("soma.s".into(), vec!["    nop".into()]);
+    app.add_file_with_lines("util.s".into(), vec!["    nop".into()]);
+    assert_eq!(app.editor.files.len(), 3);
+
+    app.replace_workspace("soma.s".into(), vec![".text".into(), "    li a0, 1".into()]);
+    assert_eq!(app.editor.files.len(), 1);
+    assert_eq!(app.editor.active_file, 0);
+    assert_eq!(app.editor.files[0].name, "soma.s");
+    assert_eq!(app.editor.buf.lines[1], "    li a0, 1");
+    app.assemble_and_load();
+    assert_eq!(app.editor.last_compile_ok, Some(true));
+}
+
 #[test]
 fn toy16_is_a_runtime_app_backend_with_cache_and_pipeline_tabs() {
     let mut app = App::new_with_architecture(

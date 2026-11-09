@@ -217,12 +217,14 @@ impl App {
     /// A no-op beyond the source map for trait-driven backends, which have
     /// none of those panes.
     pub(super) fn adopt_program(&mut self, image: &ProgramImage, offsets: Vec<usize>) {
+        let file_marks = self.file_marks(image, &offsets);
         self.store_image_source_meta(image, offsets);
         if self.rv32().is_none() {
             return;
         }
         self.session.comments = narrow(image.source_map.comments.clone());
         self.session.block_comments = narrow(image.source_map.block_comments.clone());
+        self.session.file_marks = file_marks;
         self.session.labels = narrow(image.source_map.labels.clone());
         self.session.halt_pcs = halt_pcs(&image.source_map);
         self.session.exec_counts.clear();
@@ -242,6 +244,33 @@ impl App {
         let pc = self.native().cpu().pc;
         self.reset_pipeline_stages(pc);
         self.rebuild_harts();
+    }
+
+    /// Where each tab's code starts, by tab name. Every tab builds into one
+    /// program and the first tab's code runs first; with more than one tab
+    /// the Run tab needs this to say whose code is on screen.
+    fn file_marks(&self, image: &ProgramImage, offsets: &[usize]) -> HashMap<u32, String> {
+        let mut marks = HashMap::new();
+        if self.editor.files.len() < 2 {
+            return marks;
+        }
+        let text = image.executable_bytes().map_or(0, |bytes| bytes.len() as u64);
+        let base = u64::from(self.session.base_pc);
+        for (i, file) in self.editor.files.iter().enumerate() {
+            let lines = offsets.get(i).copied().unwrap_or(usize::MAX)
+                ..offsets.get(i + 1).copied().unwrap_or(usize::MAX);
+            let first = image
+                .source_map
+                .line_addresses
+                .iter()
+                .filter(|&(line, &addr)| lines.contains(line) && (base..base + text).contains(&addr))
+                .map(|(_, &addr)| addr)
+                .min();
+            if let Some(addr) = first.and_then(|addr| u32::try_from(addr).ok()) {
+                marks.insert(addr, file.name.clone());
+            }
+        }
+        marks
     }
 
     /// In auto mode the simulator writes the page map for every load: the

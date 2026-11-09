@@ -12,6 +12,7 @@ mod run_keys;
 mod serialization;
 mod tlb_keys;
 
+pub(crate) use self::editor_shared::open_file;
 pub(crate) use self::paste::paste_from_terminal;
 #[cfg(test)]
 use self::paste::{paste_imem_search, paste_mem_search};

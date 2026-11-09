@@ -779,7 +779,9 @@ fn addr_at_visual_row(base: u32, skip: usize, target_row: usize, app: &App) -> O
         if addr >= mem_end || (addr as usize) + 4 > app.session.mem_size {
             return None;
         }
-        if app.session.block_comments.contains_key(&addr) {
+        let headers = usize::from(app.session.file_marks.contains_key(&addr))
+            + usize::from(app.session.block_comments.contains_key(&addr));
+        for _ in 0..headers {
             if skip_rem > 0 {
                 skip_rem -= 1;
             } else {
@@ -1110,23 +1112,8 @@ fn handle_editor_status_click(app: &mut App, me: MouseEvent, status_area: Rect) 
         }
         return;
     }
-    if btn == EditorActionBtn::ImportCode {
-        if let Some(path) = OSFileDialog::new()
-            .add_filter("Falcon ASM", &["s", "asm"])
-            .pick_file()
-        {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("opened.s")
-                    .to_string();
-                app.add_file_with_lines(name, content.lines().map(|s| s.to_string()).collect());
-                app.assemble_and_load();
-            }
-        } else {
-            super::keyboard::open_path_input(app, PathInputAction::OpenFas);
-        }
+    if btn == EditorActionBtn::OpenCode || btn == EditorActionBtn::AddCode {
+        super::keyboard::open_file(app, btn == EditorActionBtn::OpenCode);
         return;
     }
     if btn == EditorActionBtn::ExportBin {
