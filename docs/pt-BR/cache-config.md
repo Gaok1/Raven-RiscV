@@ -220,13 +220,11 @@ tlb.miss_penalty=20
 
 ### Modo de memória virtual (seção `[sim]`)
 
-O *modo* de VM e o esquema de paginação Custom são configurações do simulador, não do cache, então vivem na seção `[sim]`, não em `[cache]`:
+O *modo* de VM é uma configuração do simulador, não do cache, então vive na seção `[sim]`, não em `[cache]`:
 
-| Chave | Tipo | Valores | Notas |
-|-------|------|---------|-------|
-| `vm_mode` | enum | `off` \| `sv32` \| `custom` \| `manual` | Qual modo de VM está ativo (minúsculas). |
-| `vm_offset_bits` | inteiro | 12–30 | Largura do offset de página no modo **Custom** (ignorado nos demais). |
-| `vm_level_bits` | lista por vírgula | ex.: `10,10` | Larguras de índice por nível, do topo para a folha, no modo **Custom**. `offset + Σ níveis` deve somar 32. |
+| Chave | Tipo | Valores | Observações |
+|-------|------|---------|-------------|
+| `vm_mode` | enum | `off` \| `auto` \| `program` | Qual modo de VM está ativo (minúsculas). Arquivos de versões anteriores também carregam: `sv32` e `custom` viram `auto`, `manual` vira `program`; as chaves `vm_offset_bits` / `vm_level_bits` deles são ignoradas. |
 
 Veja o [guia de memória virtual](virtual-memory.md) para o que significam e como usá-los.
 

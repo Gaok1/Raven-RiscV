@@ -35,6 +35,7 @@ Os três backends menores têm seus próprios conjuntos de instruções, bem mai
 - `Ctrl+Enter` para montar rapidamente; erros mostram linha e motivo
 - Desfazer/refazer (50 níveis), navegação por palavra, alternar comentário (`Ctrl+/`), selecionar próxima ocorrência (`Ctrl+d`)
 - Auto-indent, colar com formatação, page up/down
+- Programas em vários arquivos: `Ctrl+P` abre um programa (substitui todas as abas), `Ctrl+O` adiciona um arquivo como mais uma aba. Todas as abas montam juntas num programa só, labels valem entre elas, o código da primeira aba roda primeiro, e a aba Run marca onde começa o código de cada uma
 
 ### Aba Run (Aba 2)
 **Memória de Instruções**
@@ -69,9 +70,9 @@ Os três backends menores têm seus próprios conjuntos de instruções, bem mai
 - Coerência de cache multicore: uma L1 compartilhada, ou uma L1 privada por core mantida coerente por **MSI**, **MESI** ou **MOESI** (ou por nada, para ver dado obsoleto) — com estados de linha, pedidos no barramento e tráfego por core na subaba **Coherence** ([guia](coherence.md))
 
 ### Aba Virtual Memory / TLB (Aba 4)
-- Quatro modos de VM: **Off**, **Sv32** (mapa identidade automático), **Custom** (esquema de paginação paramétrico que você desenha — níveis, bits de índice, tamanho de página), **Manual** (`satp` e tabelas dirigidos pelo programa)
-- TLB configurável: entradas, associatividade, seis políticas de substituição, hit latency, miss penalty — com hits/misses/evictions ao vivo e gráfico rolante de hit rate
-- Árvore da tabela de páginas ao vivo, tabela de entradas da TLB e painel de controle de VM sem código (esquema + page map + geometria da TLB)
+- Três modos de VM: **off**, **auto** (o simulador escreve um mapa identidade Sv32 e traduz até em M-mode), **program** (o seu programa dirige o `satp` e as próprias tabelas de páginas)
+- TLB configurável, uma por core: entradas, associatividade, seis políticas de substituição, hit latency, miss penalty — os walks leem as PTEs pelas caches e pagam o que elas custam — com hits/misses/evictions ao vivo, gráfico rolante de hit rate e um guia dentro do app (`?`)
+- Walk passo a passo de cada tradução, matriz sets × ways da TLB, tabela de páginas ao vivo nível a nível e painel de controle de VM sem código (modo + page map + geometria da TLB)
 - Page faults Sv32, delegação de traps (`medeleg`/`stvec`), `sret` e demand paging
 - Veja o **[guia de Memória Virtual & TLB](virtual-memory.md)** para o passo a passo completo
 
@@ -205,7 +206,7 @@ Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 - [CLI Reference (EN)](../en/cli.md)
 - [Formatos de instrução (PT-BR)](format.md) — layouts de bits, encoding, pseudoinstruções
 - [Guia do simulador de cache (PT-BR)](cache.md) — configuração, métricas, exportação
-- [Memória Virtual & TLB (PT-BR)](virtual-memory.md) — Sv32, os quatro modos de VM, a TLB, page faults, demand paging
+- [Memória Virtual & TLB (PT-BR)](virtual-memory.md) — Sv32, os três modos de VM, a TLB, page faults, demand paging
 - [Coerência de cache (PT-BR)](coherence.md) — L1 privada por core, MSI / MESI / MOESI, pedidos no barramento, experimentos
 - [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md) | [Virtual memory (EN)](../en/virtual-memory.md)
 - [Hardware threads (harts)](hart.md) — criação de harts, escalonamento entre cores, `max_cores`

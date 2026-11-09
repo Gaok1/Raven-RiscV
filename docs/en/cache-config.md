@@ -220,13 +220,11 @@ tlb.miss_penalty=20
 
 ### Virtual-memory mode (`[sim]` section)
 
-The VM *mode* and the Custom paging scheme are simulator settings, not cache settings, so they live in the `[sim]` section rather than `[cache]`:
+The VM *mode* is a simulator setting, not a cache setting, so it lives in the `[sim]` section rather than `[cache]`:
 
 | Key | Type | Values | Notes |
 |-----|------|--------|-------|
-| `vm_mode` | enum | `off` \| `sv32` \| `custom` \| `manual` | Which VM mode is active (lowercase). |
-| `vm_offset_bits` | integer | 12–30 | Page-offset width for **Custom** mode (ignored otherwise). |
-| `vm_level_bits` | comma list | e.g. `10,10` | Per-level index widths, top level first, for **Custom** mode. `offset + Σ levels` must equal 32. |
+| `vm_mode` | enum | `off` \| `auto` \| `program` | Which VM mode is active (lowercase). Files from earlier versions load too: `sv32` and `custom` as `auto`, `manual` as `program`; their `vm_offset_bits` / `vm_level_bits` keys are ignored. |
 
 See the [virtual memory guide](virtual-memory.md) for what these mean and how to use them.
 

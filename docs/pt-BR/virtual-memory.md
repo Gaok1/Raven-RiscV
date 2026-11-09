@@ -24,10 +24,10 @@ Você não precisa abrir nenhum código pra ler este texto. Tudo é apresentado 
 12. [ASIDs e a flag global](#12-asids-e-a-flag-global)
 13. [`sfence.vma` e coerência da TLB](#13-sfencevma-e-coerência-da-tlb)
 14. [Page faults: causas e fluxo do trap](#14-page-faults-causas-e-fluxo-do-trap)
-15. [Os modos de VM: padrão, Custom e Manual](#15-os-modos-de-vm-padrão-custom-e-manual)
+15. [Os modos de VM: off, auto e program](#15-os-modos-de-vm-off-auto-e-program)
 16. [Impacto em performance](#16-impacto-em-performance)
 17. [A aba Virtual Memory do simulador](#17-a-aba-virtual-memory-do-simulador)
-18. [Exemplo mínimo — modo padrão](#18-exemplo-mínimo--modo-padrão)
+18. [Exemplo mínimo — modo auto](#18-exemplo-mínimo--modo-auto)
 19. [Exemplo avançado — tabela customizada](#19-exemplo-avançado--tabela-customizada)
 20. [Delegação de traps e demand paging](#20-delegação-de-traps-e-demand-paging)
 21. [Veja também](#21-veja-também)
@@ -258,7 +258,7 @@ Por que isso importa?
 
 Restrição: o PPN da megapágina precisa ser **alinhado em 4 MiB** (os 10 bits baixos zero). Caso contrário a arquitetura considera "superpage misaligned" e gera page fault.
 
-O modo padrão do Raven (§15) usa megapáginas pra cobrir os 4 GiB inteiros com 1024 entradas únicas, todas com identity mapping.
+O modo **auto** do Raven (§15) usa megapáginas de identidade pra cobrir todo o espaço de endereçamento fora do programa carregado, que fica em páginas de 4 KiB.
 
 ---
 
@@ -312,7 +312,7 @@ Regras com `satp.MODE = Sv32`:
 - **S**: PTE precisa ter `U=0`.
 - **M**: o hardware real **bypassa** a MMU completamente em M-mode.
 
-> **Override didático do Raven:** quando o "modo padrão" está ativo, a MMU traduz também em M-mode. Isso é deliberado: a maioria dos programas educacionais roda em M (não há configuração de privilégio), então sem esse override a TLB ficaria silenciosa. Quando você instala suas próprias tabelas e desce pra U via `mret`, o comportamento volta a ser idêntico ao hardware real.
+> **Override didático do Raven:** no modo **auto**, a MMU traduz também em M-mode. Isso é deliberado: a maioria dos programas educacionais roda em M (não há configuração de privilégio), então sem esse override a TLB ficaria silenciosa. Quando você instala suas próprias tabelas e desce pra U via `mret` (modo **program**), o comportamento volta a ser idêntico ao hardware real.
 
 ### 8.3 Causa do page fault
 
@@ -348,7 +348,7 @@ Esse cache se chama **Translation Lookaside Buffer (TLB)**. É a estrutura mais 
 ### 9.2 Métricas a observar
 
 - **Hit rate**: fração de traduções que vieram do TLB. Programas bem-comportados ficam acima de 99%.
-- **Miss penalty**: ciclos pra fazer um walk. No Raven, default `20` ciclos.
+- **Miss penalty**: ciclos pra fazer um walk. No Raven, os `20` ciclos do próprio walker por padrão, mais o que cada leitura de PTE custa nas caches (§16).
 - **Hit latency**: ciclos pra confirmar um hit. Default `1` ciclo.
 
 A subaba stats da TLB plota o hit rate em janela rolante de 300 ciclos — útil pra ver fases distintas (warmup vs steady state, mudança de working set, etc.).
@@ -377,7 +377,7 @@ VPN → hash → set k →   │   entry   │   entry   │   entry   │   ent
 
 Uma megapágina cobre 1024 VPNs consecutivos. Se ela fosse colocada apenas no set do VPN do *início*, qualquer probe pra um VPN no meio da megapágina seria miss. Pra evitar isso, megapáginas usam um esquema de indexação diferente das páginas de 4 KiB — efetivamente vivendo em "seus próprios" sets — e o TLB consulta ambos os esquemas a cada lookup, garantindo que entradas grandes sejam encontradas pelos VPNs que cobrem.
 
-Você não precisa pensar nisso ao escrever programas. O detalhe importa pra entender por que uma única megapágina no modo padrão consegue servir um programa inteiro com hit rate próximo de 100%.
+Você não precisa pensar nisso ao escrever programas. O detalhe importa pra entender como, no modo auto, as páginas de 4 KiB do programa e as megapáginas que cobrem o resto do espaço convivem na mesma TLB.
 
 ### 10.3 Trade-offs de associatividade
 
@@ -404,7 +404,7 @@ Quando um set está cheio, qual entrada é despejada? O Raven oferece as mesmas 
 | **MRU** (Most Recently Used) | A mais recentemente acessada | Streams sequenciais grandes |
 | **Random** | Aleatória | Baseline; surpreendentemente OK |
 
-Mudar política em runtime: vá em **Virtual Memory → settings**, escolha a política, Apply. O Apply reinicia a TLB (todas as entradas viram inválidas), então a próxima execução começa de cold.
+Mudar política em runtime: vá em **Virtual Memory → config** e escolha a política. A mudança vale na hora e reconstrói a TLB vazia (todas as entradas viram inválidas), então a tradução recomeça de cold.
 
 Dica de experimento: rode o mesmo programa duas vezes — uma com LRU, outra com MRU. Compare o hit rate na subaba stats. Pra padrões de acesso comuns (loops, arrays), LRU ganha de longe. Pra varreduras sequenciais grandes maiores que a TLB, MRU pode surpreender.
 
@@ -444,6 +444,8 @@ A instrução **`sfence.vma`** sinaliza pro hardware: "invalide as traduções c
 - `sfence.vma rs1=vaddr, rs2=asid` → flush a entrada específica.
 
 O Raven respeita o `rs1`: `sfence.vma` com `rs1 = x0` esvazia a TLB inteira e, com um registrador, descarta só as entradas que traduzem aquele endereço (em qualquer ASID — o `rs2` é ignorado, o que é correto, só menos seletivo). Escrever em `satp` também esvazia tudo, já que trocar de tabela invalida todas as traduções.
+
+Como no hardware, cada core tem a sua própria TLB, e o `sfence.vma` esvazia só a TLB do core que o executa. Um kernel que muda um mapeamento que outros cores podem ter guardado precisa fazer cada um deles esvaziar também (um "TLB shootdown"). O botão `flush tlb` da aba, e um novo formato de TLB, valem para todos os cores.
 
 ---
 
@@ -485,55 +487,41 @@ O Raven não tem swap nem alocador de páginas — ele te dá os primitivos pra 
 
 ---
 
-## 15. Os modos de VM: padrão, Custom e Manual
+## 15. Os modos de VM: off, auto e program
 
-A memória virtual no Raven não é um simples liga/desliga: você escolhe **um entre quatro modos**, cada um pensado para um momento diferente do aprendizado. O seletor fica na **aba Settings global**, ou nas subabas overview / settings da aba **Virtual Memory** (ver §17) — em qualquer um deles você cicla entre os modos. A escolha é persistida no `.rcfg`.
+O modo responde a uma pergunta: **quem monta a tabela de páginas?** Escolha-o na subaba **Virtual Memory → config** (ou na aba Settings global); ele vale no instante em que você escolhe e fica salvo no `.rcfg`.
 
-| Modo | O que faz | Quando usar |
-|------|-----------|-------------|
-| **Off** | Sem tradução: VA = PA, a MMU é ignorada e a TLB fica intacta. Nenhum ciclo extra. | Programa comum, memória plana — comportamento idêntico a ter VM desligada. |
-| **Sv32** | Modo **padrão** didático: instala automaticamente um mapa identidade em Sv32 (10+10+12) e força tradução até em M-mode. | Ver atividade de TLB em **qualquer** programa, sem escrever uma linha de setup. |
-| **Custom** | Como o Sv32, mas com um **esquema de paginação paramétrico** que você desenha (nº de níveis, bits por nível, offset). | Testar **outras formas** de paginação — páginas maiores/menores, mais/menos níveis. |
-| **Manual** | RISC-V real: M-mode bypassa, o **programa** dirige o `satp` e suas próprias tabelas. | Estudar page faults, transição de privilégio e demand paging fiéis ao hardware (§19–§20). |
+| Modo | Quem monta a tabela | Quando usar |
+|------|---------------------|-------------|
+| **off** | Ninguém: VA = PA, a MMU é ignorada e a TLB fica intacta. Nenhum ciclo extra. | Programas comuns, memória plana. |
+| **auto** | **O simulador**: escreve um mapa identidade Sv32 quando o programa é carregado e traduz até em M-mode. | Ver a TLB trabalhando em **qualquer** programa, sem código de setup. |
+| **program** | **O seu programa**: escreve o `satp` e as próprias tabelas, e o M-mode bypassa a tradução — RISC-V real. | Page faults, transição de privilégio, demand paging (§19–§20). |
 
-### 15.1 Modo padrão (Sv32) — experimentar sem boilerplate
+Configs gravadas por versões anteriores continuam carregando: `sv32` e `custom` viram **auto**, `manual` vira **program**.
 
-Ligar tradução sem nenhuma configuração seria inútil: o `satp` ficaria em zero (Bare), o privilégio inicial é M, e nada seria traduzido. Você teria que montar uma tabela de páginas só pra ver qualquer atividade na TLB. O modo **Sv32** resolve isso:
+### 15.1 auto — experimentar sem boilerplate
 
-1. Ao montar um programa, o Raven escreve automaticamente um mapa de **megapáginas** de identidade cobrindo o espaço inteiro, com permissões `R|W|X|U|V`.
-2. O `satp` é configurado pra Sv32 apontando pra essa tabela.
-3. A tradução é forçada mesmo em M-mode, pra que qualquer programa veja atividade na TLB.
+Ligar tradução sem nenhuma configuração seria inútil: o `satp` ficaria em zero (Bare), o privilégio inicial é M, e nada seria traduzido. Você teria que montar uma tabela de páginas só pra ver qualquer atividade na TLB. O **auto** resolve isso:
 
-Resultado: **qualquer programa**, mesmo um `addi`/`blt` simples sem CSR algum, gera atividade na TLB. Você seleciona o modo, monta, roda — pronto. Assim dá pra estudar comportamento de cache de tradução (hit rate, políticas de substituição, efeito do tamanho do TLB) sem antes ter que aprender a montar tabelas, configurar `mtvec`, escrever um handler e cair em U-mode.
+1. O Raven escreve um mapa identidade (VA = PA): o programa carregado — text, data e bss — em **páginas de 4 KiB** sob uma leaf table, pra que os acessos dele mostrem um walk completo de dois níveis; o resto do espaço de endereçamento em **megapáginas de 4 MiB** direto da raiz.
+2. As tabelas ficam **logo abaixo das pilhas dos harts**, então nenhum push consegue cair em cima de uma PTE. A subaba config mostra onde.
+3. O `satp` aponta pra raiz, e a tradução é forçada mesmo em M-mode.
 
-### 15.2 Modo Custom — desenhe o seu próprio esquema de paginação
+Resultado: **qualquer programa**, mesmo um `addi`/`blt` simples sem CSR algum, gera atividade na TLB. Escolher auto no meio da sessão escreve o mapa na hora — não precisa remontar.
 
-O modo **Custom** é o "tudo é possível": ele instala um mapa automático como o Sv32, mas a **forma** da tradução é sua. Um esquema de paginação fatia o endereço virtual de 32 bits em campos:
+As permissões do mapa estão aí pra você quebrar na subaba config: tire o **W** e o próximo store dá page fault, com a subaba walk mostrando exatamente qual PTE o recusou. Mudar uma permissão reescreve o mapa e esvazia a TLB.
 
-- **offset bits** — define o tamanho da página (`página = 2^offset bytes`; `12` → 4 KiB, `22` → 4 MiB).
-- **um índice por nível** — quantos bits selecionam uma entrada em cada nível da tabela (um nível por profundidade da árvore; 1 a 4 níveis).
+### 15.2 program — o programa no comando
 
-A **única regra rígida**: `offset + Σ (bits de índice de cada nível) = 32`. O painel mostra ao vivo o tamanho da página, a profundidade e a soma com ✓/✗ — se estiver vermelho, o `apply` é recusado.
-
-Exemplos para experimentar:
-
-| offset | níveis | soma | resultado |
-|--------|--------|------|-----------|
-| 12 | L1=10, L0=10 | 32 | Sv32 puro: páginas de 4 KiB, walk de 2 níveis |
-| 22 | L0=10 | 32 | megapáginas de 4 MiB, walk de 1 nível |
-| 12 | L2=8, L1=6, L0=6 | 32 | três níveis, tabelas menores por nível |
-
-Páginas maiores/menos numerosas → walks mais curtos e menor pegada na TLB, mas mapeamento mais grosso. Mais níveis → tabelas menores e árvore mais profunda. É exatamente o trade-off que as ISAs reais enfrentam — e aqui você muda, dá `apply`, remonta e compara o hit rate na subaba stats, tudo sem escrever assembly.
-
-### 15.3 Modo Manual — o programa no comando
-
-Quando você quer o comportamento fiel ao hardware — sem o override didático, com o programa instalando suas próprias tabelas e tratando faults — use o modo **Manual**. Aqui M-mode bypassa a MMU; só depois de `csrw satp` (Sv32) e de cair em U/S-mode a tradução entra em ação. É o modo necessário para os exemplos avançados das §19 e §20.
+Quando você quer o comportamento fiel ao hardware — sem o override didático, com o programa instalando suas próprias tabelas e tratando faults — use o modo **program**. O M-mode bypassa a MMU; só depois de `csrw satp` (Sv32) e de cair em U/S-mode a tradução entra em ação. É o modo de que os exemplos avançados das §19 e §20 precisam. Até lá, o cabeçalho da aba diz por que nada está sendo traduzido.
 
 ---
 
 ## 16. Impacto em performance
 
-Toda tradução adiciona ciclos. Onde eles aparecem depende do modo de execução.
+Toda tradução adiciona ciclos. Um hit custa `hit_latency`. Um miss custa `miss_penalty`, o trabalho do próprio walker, **mais cada PTE que ele lê**: essas leituras são loads comuns pela D-cache, então uma PTE que está na L1 custa um hit de L1, e uma que precisa vir da memória custa um miss inteiro e preenche uma linha no caminho. Um walk sobre tabelas que as caches já guardam é barato; o primeiro walk por tabelas frias não é. Com as caches desligadas (o padrão; ligue em Settings), as leituras de PTE não custam nada próprio e o walk custa `miss_penalty`.
+
+Onde os ciclos aparecem depende do modo de execução.
 
 ### 16.1 Pipeline mode
 
@@ -557,41 +545,52 @@ A subaba stats mostra o gráfico rolante e os totais. Capture um snapshot com `s
 
 ## 17. A aba Virtual Memory do simulador
 
-A aba **Virtual Memory** é o painel central de tudo que este documento explica. Ela espelha a aba Cache: um único cabeçalho plano com **cinco** subabas — **overview · map · tlb · stats · settings** — emoldurado por uma caixa de **Execution** (speed / state / reset + ciclos ao vivo) e uma barra de controles compartilhada (`results · import cfg · export cfg · flush tlb`). Use `Tab` para ciclar as subabas; `r` / `p` / `f` resetam, rodam-pausam e mudam a velocidade sem sair da aba.
+A aba **Virtual Memory** é o painel central de tudo que este documento explica. O cabeçalho dela traz cinco subabas — **walk · tlb · map · stats · config** —, os controles de execução (speed / state / step / back / reset), `flush tlb` e `results`, e uma linha de estado: `Sv32 · auto · translating` ou, quando nada é traduzido, **por quê** — com a correção a um clique (`turn on`, `install map`). Com a memória virtual desligada, a aba abre numa introdução curta com o botão `turn on`.
 
-### overview
-- A subaba inicial. Dois **controles rápidos** clicáveis no topo — `Mode < off | sv32 | custom | manual >` e `TLB [on/off]` — para você ligar a MMU com um clique, sem precisar abrir Settings.
-- Abaixo deles, o estado vivo do `satp` (MODE, ASID, root PPN) e o nível de privilégio atual, mais uma linha **Translation active?** que diz por que a tradução está (in)ativa — o diagnóstico rápido pra "por que a TLB está vazia?".
+Aperte `?` na aba para abrir o **guia**: um texto com rolagem, em português e inglês (`l` troca o idioma), com as seções listadas à esquerda — como a tradução funciona, o que cada painel mostra, todas as teclas e um glossário. Cada sigla aparece por extenso na primeira vez. Do guia, `t` começa o tour guiado.
 
-### map
-- A **tabela de páginas ao vivo**, lida direto da RAM a partir de `satp.PPN`, percorrida seguindo os N níveis do esquema ativo: PTEs ponteiro expandem em tabelas filhas; folhas em qualquer nível são (super)páginas; sequências longas de folhas uniformes colapsam numa linha-resumo. PTEs que estão cacheadas na TLB ganham a marca **●TLB**.
-- É **somente-leitura** — para alterar o mapa ou o esquema, use a subaba settings. É a sua janela para o que a MMU realmente enxerga, essencial quando um mapeamento não surte efeito.
+As três subabas ao vivo — walk, tlb e map — olham para o mesmo **acesso atual**: o acesso a dados mais recente enquanto o programa roda. Fixe um mais antigo pelo histórico da walk (clique nele, ou ande com `←` `→`) e as três passam a mostrar esse; `g` em qualquer uma delas volta a acompanhar.
 
-### tlb
-- Tabela por entrada: `VPN → PPN | R/W/X/U | ASID | V | G | A | D | mega`.
-- Útil pra confirmar que uma página foi cacheada, ou pra ver os bits A/D ligando conforme o programa roda. `↑`/`↓` ou a roda do mouse rolam a lista.
-- Quando a TLB está desligada (toggle no overview/settings), esta subaba mostra um aviso: todo acesso percorre a tabela (miss + penalidade, sem hits).
+Teclas: `Tab` cicla as subabas; `s` avança até a próxima tradução (pulando instruções que terminam sem traduzir nada novo) e `b` volta um passo (em stats, `s` tira um snapshot); `r` / `p` / `f` resetam, rodam-pausam e mudam a velocidade; o rodapé lista as teclas da subaba em que você está.
 
-### stats
-- Gauge de hit rate e contadores: `Hits`, `Misses`, `Evictions`, `Page Faults`, mais um gráfico de histórico rolante de 300 ciclos.
-- **Snapshots de sessão** (compartilhados com a aba Cache): aperte `s` para capturar a janela atual; `↑`/`↓` seleciona, `Enter` abre o popup de detalhes (agora com um bloco TLB), `D` apaga. Os snapshots vão junto no export de resultados (`results` / `Ctrl+r`) — o `.rstats` / `.csv` ganha uma seção `tlb.*`.
+Cada core guarda a sua própria TLB. Com mais de um core, os títulos dos painéis dizem qual é (`TLB · core 1`), e `[` `]` escolhem de qual core a aba mostra a TLB, as estatísticas e as traduções.
 
-### settings (painel de controle de VM)
-Onde você remodela a memória virtual **sem escrever uma linha de código**. Quatro blocos, de cima para baixo:
+### walk — um acesso, passo a passo
+- O acesso: a instrução, o tipo (fetch, load, store), o privilégio e o pc.
+- O endereço virtual dividido em **VPN[1] · VPN[0] · offset**, cada um na sua cor, com os bits embaixo. A mesma cor marca a PTE que aquele campo indexa nos passos abaixo, e o offset leva a sua cor até o endereço físico.
+- Os passos: qual **set** da TLB foi consultado (`VPN mod sets`) e se algum way bateu; num miss, `satp` → tabela raiz, depois cada **PTE** que o walk leu, com endereço, valor bruto e significado, e onde essa leitura foi atendida (`L1 +1`, `RAM +12`; só `RAM` com as caches desligadas); o **PA** montado como frame + offset, com os ciclos que custou; e o que a TLB **guardou** — o set e o way, e a entrada que ela despejou. Um fault para no passo que falhou e diz por quê (`V=0`, `page is not writable`, …) com o código da causa.
+- **Histórico**: as últimas 64 traduções, da mais recente pra mais antiga, filtradas por `all · misses · faults` (`1` `2` `3`). Acompanhe acessos `data`, `fetch` ou `any` com os chips ou com `v`.
 
-1. **Mode + TLB** — o mesmo seletor `Mode` e toggle `TLB` do overview.
-2. **Esquema de paginação** — o formato da tradução (offset + níveis). Editável no modo **Custom**; ver §15.2.
-3. **Page map** — o que o mapa automático instala: `kind` (identity = VA→VA, ou offset = desloca o físico por um deslocamento fixo, útil pra ver VPN e PPN divergirem na subaba tlb), permissões `R/W/X/U`, flag `G` (global) e `ASID`.
-4. **Geometria da TLB** — `Entries` (potência de 2), `Associativity`, `Replacement Policy`, `Hit Latency`, `Miss Penalty`, mais presets **small / med / large**.
+### tlb — sets e ways
+- A TLB desenhada do jeito que a aba Cache desenha uma cache: uma linha por **set**, uma coluna por **way**. Cada célula mostra o tamanho da página, `VPN→PPN`, as permissões e a sua **recência** (1 = usada mais recentemente).
+- Uma página de 4 KiB vai pro set `VPN mod sets`, uma megapágina de 4 MiB pro set `(VPN >> 10) mod sets`; os sets que o acesso atual consultou ficam marcados com `▸`. `●` marca a entrada que ele instalou, `✓` a que deu hit.
+- As setas movem um cursor; o painel de baixo detalha a entrada selecionada: os intervalos de VA e PA que ela mapeia, ASID ou global, dirty, e a posição dela na ordem de substituição. Uma matriz larga demais pra tela vira abas de set sobre uma lista de ways.
 
-Tudo é preparado em rascunho: as edições só surtem efeito quando você aperta **apply** (que reconfigura a TLB e, nos modos automáticos, reinstala o mapa e reaponta o `satp`). **flush tlb** apenas descarta as traduções cacheadas sem mexer no mapa. Clique num campo para editar ou alternar; `Tab` / `↑` `↓` movem entre os campos numéricos durante a edição. É o sandbox seguro: quebre o mapeamento aqui e nada trava — você só vê faults que consegue raciocinar.
-- Salvar/carregar config via export/import (`export cfg` / `import cfg`, ou `Ctrl+e` / `Ctrl+l`); o bloco `[tlb]` viaja na seção `[cache]` do `.rcfg` unificado (ver [Config de cache](cache-config.md)).
+### map — a própria tabela de páginas
+- Uma coluna por nível, lida ao vivo da memória (pelas caches, do jeito que o walker lê): a raiz (**VPN[1]**) à esquerda, a tabela pra qual a entrada selecionada aponta (**VPN[0]**) ao lado, e a **PTE selecionada decodificada campo a campo** — PPN, RSW, D, A, G, U, X, W, R, V — à direita.
+- Sequências de entradas iguais se dobram numa linha só (`002–3fe 4M RWXU ×1021`); `→` ou `Enter` as abrem. O caminho do acesso atual fica marcado com `▸`, e as entradas que a TLB guarda com `●`.
+- `↑` `↓` andam dentro de uma coluna, `→` segue um ponteiro, `←` volta. Aperte `/` e digite qualquer endereço pra ver o caminho que ele faria.
+
+### stats — quanto custou
+- Hits, misses, faults, evictions e o hit rate ao longo do tempo.
+- **cost**: ciclos gastos percorrendo tabelas de páginas e a fatia deles na execução. **reach**: as páginas que o programa tocou contra as entradas que a TLB tem.
+- **Why it missed** separa cada miss pela causa: o **primeiro toque** numa página (inevitável), uma página que a TLB **tinha e perdeu** (uma TLB maior ou organizada de outro jeito ajuda), um **store numa página limpa** (o walk seta o D) ou **sem mapeamento** (um page fault).
+- **Snapshots de sessão** (compartilhados com a aba Cache): `s` captura a janela atual; `↑`/`↓` seleciona, `Enter` abre os detalhes, `d` apaga. Eles vão junto no export de resultados (`results` / `Ctrl+r`) como uma seção `tlb.*`.
+
+### config — tudo vale na hora
+Toda opção fica na tela, com a escolhida acesa, e toda mudança vale imediatamente — não há botão de aplicar.
+
+1. **Translation** — o modo (§15).
+2. **Page map** (só no auto) — as permissões `R/W/X/U` carimbadas em toda folha, a flag `G` (global) e o `ASID` escrito no `satp`; abaixo, onde as tabelas ficam e qual intervalo é mapeado em páginas de 4 KiB.
+3. **TLB** — on/off (off: todo acesso faz walk), `entries`, `ways` (de mapeamento direto a totalmente associativa), a `policy` de substituição e os ciclos de `hit` e de `walk` (`walk` é o do próprio walker; cada leitura de PTE soma o custo dela na cache). Mudar entries, ways ou policy reconstrói vazia a TLB de todos os cores.
+
+Teclas: `m` cicla o modo; `e` edita um número (`Tab` vai pro próximo, `Enter` mantém, `Esc` descarta). Salve/carregue o formato da TLB com `export cfg` / `import cfg` (`Ctrl+e` / `Ctrl+l`); o bloco `[tlb]` viaja na seção `[cache]` do `.rcfg` unificado (ver [Config de cache](cache-config.md)).
 
 ---
 
-## 18. Exemplo mínimo — modo padrão
+## 18. Exemplo mínimo — modo auto
 
-Com VM ligada, isso já é suficiente:
+Com a VM no modo **auto**, isso já é suficiente:
 
 ```asm
 .text
@@ -605,16 +604,17 @@ loop:
     ecall               # exit
 ```
 
-1. Selecione o modo **Sv32** (em Settings global ou na subaba overview/settings da **Virtual Memory**) antes de montar.
-2. Monte e rode.
-3. Vá em **Virtual Memory → stats** e veja a hit rate subir conforme o loop reutiliza as páginas.
-4. Visite a subaba **tlb** pra confirmar que o `vpn` do código aparece com `X=1` e `A=1`.
+1. Escolha **auto** em **Virtual Memory → config** (ou na aba Settings global).
+2. Monte e avance algumas instruções passo a passo.
+3. A subaba **walk** mostra o primeiro fetch dando miss na TLB e percorrendo os dois níveis; os seguintes dão hit. (O loop não faz load nem store, então o walk mostra fetches; com acessos a dados ele segue esses, e `v` troca.)
+4. Rode até o fim e abra **stats**: o hit rate sobe conforme o loop reutiliza a página dele, e o *why it missed* mostra só primeiros toques.
+5. Em **tlb**, a página do código fica no set `VPN mod sets` com `X` setado.
 
 ---
 
 ## 19. Exemplo avançado — tabela customizada
 
-Pra estudar page faults, transição de privilégio, ou layouts próprios, selecione o modo **Manual** (na subaba overview/settings da **Virtual Memory**) e escreva a sua própria tabela — sem o override didático, o programa fica no comando.
+Pra estudar page faults, transição de privilégio, ou layouts próprios, selecione o modo **program** (em **Virtual Memory → config**) e escreva a sua própria tabela — sem o override didático, o programa fica no comando.
 
 ```asm
 # Mapeia VA 0x0000 → PA 0x0000 (R|W|X|U, 4 KiB) e cai em U-mode.
@@ -691,7 +691,7 @@ Até aqui todo fault foi parar em M-mode via `mtvec`. Sistemas operacionais reai
 3. O handler lê `stval` (o endereço que falhou), instala a PTE faltante e roda `sfence.vma` pra descartar entradas obsoletas da TLB.
 4. `sret` retorna pra `sepc` — a instrução que falhou re-executa e agora **funciona**.
 
-> **⚠ Coerência walker / cache.** O walk da tabela de páginas lê PTEs **direto da RAM**, enquanto um D-cache write-back pode segurar um valor recém-escrito sem ainda tê-lo enviado de volta. Então um handler que escreve uma PTE com um `sw` normal pode deixar essa PTE parada no cache: o walk repetido continua lendo a entrada antiga (vazia) da RAM e falha pra sempre. Pra programas de demand paging, **desligue o cache** (aba Cache) ou troque o D-cache pra **write-through**, de modo que o store do handler chegue à RAM antes do walk re-rodar.
+> **Walker e cache.** O walk da tabela de páginas lê cada PTE como um load veria, então uma PTE que o handler acabou de gravar com um `sw` comum já vale mesmo enquanto ainda está suja num D-cache write-back. Os bits A e D que o walker liga vão para a RAM e para toda cópia em cache, então o write-back dessa linha mais tarde não os apaga. O cache pode ficar ligado.
 
 ### 20.3 Configuração (no boot em M-mode)
 
@@ -721,7 +721,7 @@ Uma viagem de ida e volta completa fica assim: boot mapeia as páginas de códig
 - O **código do handler e as páginas de tabela precisam ser mapeados como não-`U`** (só kernel), porque S-mode não pode tocar páginas `U=1` (`SUM` não é modelado).
 - O handler edita a tabela *sob tradução*, então a página da leaf table precisa do próprio mapeamento de identidade (`VA = PA`) — o equivalente do simulador a um direct map de kernel.
 
-Pra ver ao vivo: selecione o modo **Manual** (na subaba overview/settings da **Virtual Memory**), desligue o cache, monte e abra a subaba **Virtual Memory → map** pra ver as PTEs surgindo conforme o handler as instala.
+Pra ver ao vivo: selecione o modo **program** (em **Virtual Memory → config**), monte e filtre o histórico da **walk** por `faults`: cada fault mostra a PTE que estava inválida, e a subaba **map** mostra as PTEs surgindo conforme o handler as instala.
 
 ---
 

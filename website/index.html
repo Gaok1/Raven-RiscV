@@ -335,7 +335,7 @@
             <span><span class="tui-st-key">faults</span> <span class="tui-st-val" style="color:var(--dirty)">3</span></span>
           </div>
           <div class="tui-cache-config">
-            Modes: Off / Sv32 / Custom / Manual · 4 KiB pages · configurable TLB geometry
+            Modes: off / auto / program · 4 KiB pages and 4 MiB megapages · a TLB per core
           </div>
         </div>
 
@@ -431,7 +431,7 @@
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="4" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="16" y="15" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M12 8.5h6.5a2 2 0 0 1 2 2V15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </div>
           <h3>Watch virtual memory translate</h3>
-          <p>A working MMU walks the page table and translates virtual addresses to physical ones a page at a time. See VPN to PPN mappings, TLB hits and misses, page faults, and the live page-table tree. Flip between Sv32, a custom scheme, or hardware-accurate manual mode.</p>
+          <p>A working Sv32 MMU walks the page table and translates virtual addresses to physical ones a page at a time. Step through each translation, see TLB hits and misses, page faults and the live page table, and let the simulator build the table for you or drive <code>satp</code> yourself.</p>
         </div>
 
         <div class="feature-card">
@@ -628,19 +628,22 @@
         <div class="audience-text">
           <ul class="audience-list" style="margin-top:0">
             <li>
-              <div><strong>Four modes.</strong> Off, Sv32, a Custom paging scheme you reshape yourself, or hardware-accurate Manual mode where your program drives <code>satp</code> and its own tables.</div>
+              <div><strong>Every step of a walk.</strong> The address split into VPN[1], VPN[0] and offset, the TLB set probed, each page-table entry read (and which cache level served it, at what cost), the physical address built, and what the TLB kept and evicted.</div>
             </li>
             <li>
-              <div><strong>Didactic by default.</strong> In Sv32 and Custom the simulator installs a page map for you, so even a plain loop shows TLB hits and misses with no setup code.</div>
+              <div><strong>Didactic by default.</strong> In auto mode the simulator writes the page table for you, so even a plain loop shows TLB hits and misses with no setup code. In program mode your program drives <code>satp</code> and its own tables, as on real hardware.</div>
             </li>
             <li>
-              <div><strong>The page table, live.</strong> Watch the real tree rooted at <code>satp</code>, straight from RAM: pointer entries expand into child tables, leaves are (super)pages, and cached entries are marked.</div>
+              <div><strong>The page table, live.</strong> One column per level, read from memory: follow a pointer into the next table, see each entry decoded field by field, and the path of the current access marked.</div>
             </li>
             <li>
-              <div><strong>Configurable TLB.</strong> Set entry count, associativity, hit latency, and miss penalty. Apply resets the TLB; flush just drops the cached translations.</div>
+              <div><strong>Configurable TLB, one per core.</strong> Drawn as sets × ways like a cache. Set entry count, ways, replacement policy and latencies; every change applies at once, and stats say why each miss happened.</div>
             </li>
             <li>
-              <div><strong>Faults and demand paging.</strong> In Manual mode, delegate page faults to supervisor mode, install the missing entry in a handler, run <code>sfence.vma</code>, and <code>sret</code> back to retry the access.</div>
+              <div><strong>Faults and demand paging.</strong> In program mode, delegate page faults to supervisor mode, install the missing entry in a handler, run <code>sfence.vma</code>, and <code>sret</code> back to retry the access.</div>
+            </li>
+            <li>
+              <div><strong>A guide on the tab.</strong> Press <code>?</code> for a scrollable guide in English or Portuguese: how translation works, what each panel shows, every key, and a glossary, with every acronym spelled out the first time it appears.</div>
             </li>
           </ul>
         </div>

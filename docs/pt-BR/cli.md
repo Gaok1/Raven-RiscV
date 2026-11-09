@@ -359,7 +359,7 @@ speed=Normal
 
 - `cache_enabled=false` ignora toda a hierarquia de cache (todos os acessos vão direto para a RAM).
 - `pipeline_enabled` alterna o estado global do pipeline usado na aba Config da TUI.
-- `vm_mode` — `off`, `sv32`, `custom` ou `manual`.
+- `vm_mode` — `off`, `auto` ou `program` (em arquivos antigos, `sv32` e `custom` são lidos como `auto`, e `manual` como `program`).
 - `trace_syscalls` controla o log de depuração de syscalls.
 - `run_scope` aceita `all` ou `focus`.
 - `max_cores` assume `1` quando omitido e deve ficar no intervalo `1..=32`.

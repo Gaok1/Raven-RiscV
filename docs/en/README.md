@@ -32,6 +32,7 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - `Ctrl+Enter` to assemble instantly; errors show line number and reason
 - Undo/redo (50 levels), word navigation, toggle comment (`Ctrl+/`), select next occurrence (`Ctrl+d`)
 - Go-to-definition (`F12`), label highlight, address gutter (`F2`)
+- Programs in several files: `Ctrl+P` opens a program (replacing every tab), `Ctrl+O` adds a file as one more tab. All tabs build into one program, labels resolve across them, the first tab's code runs first, and the Run tab marks where each tab's code begins
 
 ### Debugger — Run Tab (Tab 2)
 - Run free (`r`), pause (`p`), restart (`R`), or single-step (`s`)
@@ -57,9 +58,9 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
 ### Virtual Memory & TLB (Tab 4)
-- Four VM modes: **Off**, **Sv32** (auto identity map), **Custom** (a parametric paging scheme you design — levels, index bits, page size), **Manual** (program-driven `satp` + your own page tables)
-- Configurable TLB: entries, associativity, six replacement policies, hit latency, miss penalty — with live hit/miss/eviction stats and a rolling hit-rate chart
-- Live page-table tree view, per-entry TLB table, and a no-code VM control panel (scheme + page map + TLB geometry)
+- Three VM modes: **off**, **auto** (the simulator writes an Sv32 identity map and translates even in M-mode), **program** (your program drives `satp` and its own page tables)
+- Configurable TLB, one per core: entries, associativity, six replacement policies, hit latency, miss penalty — page-table walks read their PTEs through the caches and pay what they cost — with live hit/miss/eviction stats, a rolling hit-rate chart and an in-app guide (`?`)
+- Every translation step by step (TLB probe, each PTE read, the physical address), the TLB as a sets × ways matrix, the live page table level by level, and a no-code VM control panel (mode + page map + TLB shape)
 - Sv32 page faults, trap delegation (`medeleg`/`stvec`), `sret`, and demand paging
 - See the **[Virtual memory & TLB guide](virtual-memory.md)** for the full walkthrough
 
@@ -221,7 +222,7 @@ See the **[CLI Reference](cli.md)** for all subcommands and flags.
 - [Instruction formats (EN)](format.md) — bit layouts, encoding, pseudo-instructions
 - [Formatos (PT-BR)](../pt-BR/format.md)
 - [Cache config file reference](cache-config.md) — `[cache]` section of `.rcfg`, all fields, LN hierarchy, LLM prompt template
-- [Virtual memory & TLB guide](virtual-memory.md) — Sv32, the four VM modes, the TLB, page faults, demand paging
+- [Virtual memory & TLB guide](virtual-memory.md) — Sv32, the three VM modes, the TLB, page faults, demand paging
 - [Cache coherence](coherence.md) — private L1 per core, MSI / MESI / MOESI, bus requests, experiments
 - [Hardware threads (harts)](hart.md) — spawning harts, scheduling across cores, `max_cores`
 - `Program Examples/harts/hart_spawn_visual_demo.s` — multi-hart example to stress Run/Pipeline views across cores
