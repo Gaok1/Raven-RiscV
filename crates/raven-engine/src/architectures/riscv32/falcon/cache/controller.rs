@@ -11,7 +11,10 @@ use crate::capability::{
 use crate::falcon::{
     errors::FalconError,
     memory::{AmoOp, Bus, HostRequest, Ram},
-    mmu::{AccessType, Mmu, PageFault, TlbConfig},
+    mmu::{
+        AccessType, Mmu, PageFault, PageMapSpec, PteMemory, Satp, Tlb, TlbConfig,
+        TranslationRecord,
+    },
 };
 use std::collections::HashMap;
 
@@ -63,6 +66,10 @@ pub struct CacheController {
     banks: Vec<L1Bank>,
     /// Bus counters per core and the recent requests.
     coh: CoherenceTracker,
+    /// Every core has its own TLB, as every RISC-V hart does. The active
+    /// core's sits in `mmu.tlb`; the others wait here by core, and
+    /// `tlbs[active_core]` holds a spare — the same arrangement as `banks`.
+    tlbs: Vec<Tlb>,
 }
 
 /// One core's private L1 while another core runs.
@@ -112,6 +119,7 @@ pub struct CacheSnapshot {
     active_core: usize,
     banks: Vec<L1Bank>,
     coh: CoherenceTracker,
+    tlbs: Vec<Tlb>,
 }
 
 impl CacheController {
@@ -139,6 +147,7 @@ impl CacheController {
             active_core: 0,
             banks: Vec::new(),
             coh: CoherenceTracker::default(),
+            tlbs: Vec::new(),
         }
     }
 
@@ -198,6 +207,7 @@ impl CacheController {
         if self.coherence.protocol.private_l1() {
             self.ensure_banks(cores.max(self.active_core + 1));
         }
+        self.ensure_tlbs(cores.max(self.active_core + 1));
         self.coh.core(cores.saturating_sub(1));
     }
 
@@ -208,6 +218,10 @@ impl CacheController {
         if core == self.active_core {
             return;
         }
+        // Each hart translates through its own TLB, whatever the caches do.
+        self.ensure_tlbs(core.max(self.active_core) + 1);
+        std::mem::swap(&mut self.mmu.tlb, &mut self.tlbs[core]);
+        self.tlbs.swap(self.active_core, core);
         if self.coherence.protocol.private_l1() {
             self.ensure_banks(core.max(self.active_core) + 1);
             // `banks[active]` is the spare. Swap the new core's L1 in — the
@@ -222,6 +236,51 @@ impl CacheController {
 
     pub fn active_core(&self) -> usize {
         self.active_core
+    }
+
+    fn ensure_tlbs(&mut self, cores: usize) {
+        while self.tlbs.len() < cores {
+            self.tlbs.push(Tlb::new(self.mmu.tlb.config.clone()));
+        }
+    }
+
+    /// `core`'s TLB, wherever it is.
+    pub fn tlb_of(&self, core: usize) -> &Tlb {
+        if core == self.active_core {
+            return &self.mmu.tlb;
+        }
+        self.tlbs.get(core).unwrap_or(&self.mmu.tlb)
+    }
+
+    /// How many cores keep a TLB — every core the host has announced or run.
+    pub fn tlb_count(&self) -> usize {
+        self.tlbs.len().max(self.active_core + 1)
+    }
+
+    /// Rebuild every core's TLB in a new shape; entries and counters start over.
+    pub fn reconfigure_tlbs(&mut self, cfg: TlbConfig) {
+        self.mmu.tlb.reconfigure(cfg.clone());
+        for tlb in &mut self.tlbs {
+            tlb.reconfigure(cfg.clone());
+        }
+    }
+
+    /// Change what a hit and a walk cost on every core, keeping what the TLBs
+    /// hold.
+    pub fn set_tlb_latencies(&mut self, hit: u8, walk: u8) {
+        for tlb in std::iter::once(&mut self.mmu.tlb).chain(self.tlbs.iter_mut()) {
+            tlb.config.hit_latency = hit;
+            tlb.config.miss_penalty = walk;
+        }
+    }
+
+    /// Drop every core's cached translations. `sfence.vma` flushes only the
+    /// hart that runs it; this is the host's flush.
+    pub fn flush_all_tlbs(&mut self) {
+        self.mmu.flush();
+        for tlb in &mut self.tlbs {
+            tlb.flush();
+        }
     }
 
     fn ensure_banks(&mut self, cores: usize) {
@@ -501,16 +560,15 @@ impl CacheController {
         }
     }
 
-    /// Internal helper: translate a virtual address using the MMU and add the
-    /// reported stall cycles to `extra_cycles`. Page faults are surfaced as
-    /// `FalconError::Bus` for now; Phase 2 will route them through a real trap
-    /// handler (mtvec / mepc / mcause).
+    /// Translate a virtual address using the MMU and add the reported stall
+    /// cycles to `extra_cycles`. A page fault comes back as
+    /// `FalconError::Trap`, which the hart routes to its trap handler.
     pub fn translate_for_access(
         &mut self,
         vaddr: u32,
         access: AccessType,
     ) -> Result<u32, FalconError> {
-        match self.mmu.translate(vaddr, access, &mut self.ram) {
+        match self.run_mmu(vaddr, access) {
             Ok((paddr, stall)) => {
                 if stall != 0 {
                     self.extra_cycles = self.extra_cycles.saturating_add(stall as u64);
@@ -612,6 +670,7 @@ impl CacheController {
             active_core: self.active_core,
             banks: self.banks.clone(),
             coh: self.coh.clone(),
+            tlbs: self.tlbs.clone(),
         }
     }
 
@@ -631,6 +690,7 @@ impl CacheController {
         self.active_core = snap.active_core;
         self.banks = snap.banks;
         self.coh = snap.coh;
+        self.tlbs = snap.tlbs;
         // A snapshot is taken between instructions, where no request is left
         // waiting: one still here was made after it, by a store this rewinds.
         self.host_request = None;
@@ -1611,32 +1671,15 @@ impl CacheController {
     /// falling back to RAM. Checks L1 D-cache first, then extra_levels in order.
     /// No stats side-effects. Use for syscalls and the Run-tab memory view.
     pub fn effective_read8(&self, addr: u32) -> Result<u8, FalconError> {
-        if self.bypass {
-            return self.ram.load8(addr);
-        }
-        if self.coherence.protocol.private_l1() {
-            // What the active core would read: its own copy, clean or not —
-            // with coherence off that may be stale, and that is the point —
-            // then, under a protocol, the one dirty copy another core owns.
-            if let Some(v) = self.dcache.peek_valid(addr) {
-                return Ok(v);
-            }
-            if self.coherence.protocol.coherent() {
-                for bank in self.parked_banks() {
-                    if let Some(v) = bank.dcache.peek_dirty(addr) {
-                        return Ok(v);
-                    }
-                }
-            }
-        } else if let Some(v) = self.dcache.peek_dirty(addr) {
-            return Ok(v);
-        }
-        for level in &self.extra_levels {
-            if let Some(v) = level.peek_dirty(addr) {
-                return Ok(v);
-            }
-        }
-        self.ram.load8(addr)
+        effective_byte(
+            &self.ram,
+            &self.dcache,
+            self.parked_banks().map(|bank| &bank.dcache),
+            &self.extra_levels,
+            self.bypass,
+            self.coherence.protocol,
+            addr,
+        )
     }
     pub fn effective_read16(&self, addr: u32) -> Result<u16, FalconError> {
         let lo = self.effective_read8(addr)?;
@@ -1896,6 +1939,266 @@ impl CacheHierarchy for CacheController {
     }
 }
 
+/// The value a load would see at `addr`: the active core's copy, then — under
+/// a coherence protocol — a dirty copy another core owns, then the shared
+/// levels, then RAM. No statistic moves.
+fn effective_byte<'a>(
+    ram: &Ram,
+    dcache: &Cache,
+    parked: impl Iterator<Item = &'a Cache>,
+    extra_levels: &[Cache],
+    bypass: bool,
+    protocol: CoherenceProtocol,
+    addr: u32,
+) -> Result<u8, FalconError> {
+    if bypass {
+        return ram.load8(addr);
+    }
+    if protocol.private_l1() {
+        // What the active core would read: its own copy, clean or not —
+        // with coherence off that may be stale, and that is the point —
+        // then, under a protocol, the one dirty copy another core owns.
+        if let Some(v) = dcache.peek_valid(addr) {
+            return Ok(v);
+        }
+        if protocol.coherent() {
+            for cache in parked {
+                if let Some(v) = cache.peek_dirty(addr) {
+                    return Ok(v);
+                }
+            }
+        }
+    } else if let Some(v) = dcache.peek_dirty(addr) {
+        return Ok(v);
+    }
+    for level in extra_levels {
+        if let Some(v) = level.peek_dirty(addr) {
+            return Ok(v);
+        }
+    }
+    ram.load8(addr)
+}
+
+/// The memory hierarchy as the page walker sees it, borrowed apart from the
+/// MMU that drives the walk.
+///
+/// A PTE is read as a load would see it, so one the program stored a moment
+/// ago counts even while it still sits dirty in a write-back D-cache. The A/D
+/// bits the walker sets go to RAM *and* to every cached copy, so a dirty line
+/// written back later cannot erase them.
+struct Hierarchy<'a> {
+    ram: &'a mut Ram,
+    icache: &'a mut Cache,
+    dcache: &'a mut Cache,
+    extra_levels: &'a mut [Cache],
+    banks: &'a mut [L1Bank],
+    active_core: usize,
+    bypass: bool,
+    protocol: CoherenceProtocol,
+}
+
+impl PteMemory for Hierarchy<'_> {
+    fn read_pte(&mut self, pa: u32) -> Option<u32> {
+        let active = self.active_core;
+        let mut bytes = [0u8; 4];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            let parked = self
+                .banks
+                .iter()
+                .enumerate()
+                .filter(|(core, _)| *core != active)
+                .map(|(_, bank)| &bank.dcache);
+            *byte = effective_byte(
+                self.ram,
+                self.dcache,
+                parked,
+                self.extra_levels,
+                self.bypass,
+                self.protocol,
+                pa.checked_add(i as u32)?,
+            )
+            .ok()?;
+        }
+        Some(u32::from_le_bytes(bytes))
+    }
+
+    fn write_pte(&mut self, pa: u32, value: u32) -> bool {
+        if self.ram.store32(pa, value).is_err() {
+            return false;
+        }
+        for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+            let at = pa.wrapping_add(i as u32);
+            self.icache.patch_byte(at, byte);
+            self.dcache.patch_byte(at, byte);
+            for bank in self.banks.iter_mut() {
+                bank.icache.patch_byte(at, byte);
+                bank.dcache.patch_byte(at, byte);
+            }
+            for level in self.extra_levels.iter_mut() {
+                level.patch_byte(at, byte);
+            }
+        }
+        true
+    }
+}
+
+/// Reads PTEs as a load would see them and writes nothing — for a viewer
+/// asking where an address would go.
+struct EffectiveView<'a>(&'a CacheController);
+
+impl PteMemory for EffectiveView<'_> {
+    fn read_pte(&mut self, pa: u32) -> Option<u32> {
+        self.0.effective_read32(pa).ok()
+    }
+
+    fn write_pte(&mut self, _pa: u32, _value: u32) -> bool {
+        false
+    }
+}
+
+impl CacheController {
+    /// The MMU and, borrowed apart from it, the memory its walker reads.
+    fn split_mmu(&mut self) -> (&mut Mmu, Hierarchy<'_>) {
+        let hierarchy = Hierarchy {
+            ram: &mut self.ram,
+            icache: &mut self.icache,
+            dcache: &mut self.dcache,
+            extra_levels: &mut self.extra_levels,
+            banks: &mut self.banks,
+            active_core: self.active_core,
+            bypass: self.bypass,
+            protocol: self.coherence.protocol,
+        };
+        (&mut self.mmu, hierarchy)
+    }
+
+    fn run_mmu(&mut self, vaddr: u32, access: AccessType) -> Result<(u32, u8), PageFault> {
+        if !self.mmu.translation_applies() {
+            return Ok((vaddr, 0));
+        }
+        let before = self.mmu.trace.last().map(|rec| rec.seq);
+        let result = {
+            let (mmu, mut hierarchy) = self.split_mmu();
+            mmu.translate(vaddr, access, &mut hierarchy)
+        };
+        if self.mmu.trace.last().map(|rec| rec.seq) != before {
+            self.charge_walk();
+        }
+        result
+    }
+
+    /// A walk's PTE reads are loads like any other: they go through the
+    /// D-cache and the levels below, fill lines, count as hits or misses and
+    /// cost what the hierarchy charges — on top of the walker's own cycles.
+    /// The walker already read each value as a load would see it; this
+    /// replays the reads for what they do to the caches and the clock.
+    fn charge_walk(&mut self) {
+        let Some(rec) = self.mmu.trace.last() else {
+            return;
+        };
+        let mut steps = rec.steps;
+        let count = usize::from(rec.step_count);
+        let mut charged = 0u64;
+        for step in steps.iter_mut().take(count) {
+            step.served_by = self.walker_source(step.pte_addr);
+            let before = self.total_cache_cycles();
+            let _ = self.dcache_read_pa32_for(step.pte_addr, false);
+            let cost = self.total_cache_cycles().saturating_sub(before);
+            step.cycles = u16::try_from(cost).unwrap_or(u16::MAX);
+            charged += cost;
+        }
+        if let Some(rec) = self.mmu.trace.last_mut() {
+            rec.steps = steps;
+            rec.cycles = rec.cycles.saturating_add(u32::try_from(charged).unwrap_or(u32::MAX));
+        }
+        let stats = &mut self.mmu.tlb.stats;
+        stats.total_cycles += charged;
+        stats.walk_cycles += charged;
+    }
+
+    /// The level that will answer a PTE read from the running core: its own
+    /// L1, a shared level below, or `None` for memory. Another core's L1 does
+    /// not count; reaching it is a trip down the hierarchy.
+    fn walker_source(&self, pa: u32) -> Option<u8> {
+        self.walker_source_for(self.active_core, pa)
+    }
+
+    /// [`Self::walker_source`] for `core`, running or parked.
+    fn walker_source_for(&self, core: usize, pa: u32) -> Option<u8> {
+        if self.bypass || !self.dcache.config.is_valid_config() {
+            return None;
+        }
+        let l1 = match self.banks.get(core) {
+            Some(bank) if core != self.active_core && self.coherence.protocol.private_l1() => {
+                &bank.dcache
+            }
+            _ => &self.dcache,
+        };
+        if l1.has_line(pa).is_some() {
+            return Some(1);
+        }
+        self.extra_levels
+            .iter()
+            .position(|level| level.has_line(pa).is_some())
+            .map(|i| i as u8 + 2)
+    }
+
+    /// What translating `vaddr` would do, without doing it. `None` while
+    /// nothing is translated.
+    pub fn dry_run_translation(
+        &self,
+        vaddr: u32,
+        access: AccessType,
+    ) -> Option<TranslationRecord> {
+        self.dry_run_translation_on(self.active_core, vaddr, access)
+    }
+
+    /// [`Self::dry_run_translation`] as `core` would see it: its TLB, and the
+    /// level of its hierarchy each PTE read would reach. A dry run charges
+    /// nothing, so the steps say where, not how long.
+    pub fn dry_run_translation_on(
+        &self,
+        core: usize,
+        vaddr: u32,
+        access: AccessType,
+    ) -> Option<TranslationRecord> {
+        let mut rec = self
+            .mmu
+            .dry_run_on(self.tlb_of(core), vaddr, access, &mut EffectiveView(self))?;
+        let count = usize::from(rec.step_count);
+        for step in rec.steps.iter_mut().take(count) {
+            step.served_by = self.walker_source_for(core, step.pte_addr);
+        }
+        Some(rec)
+    }
+
+    /// Read a PTE as a load would see it, without side effects.
+    pub fn read_pte(&self, pa: u32) -> Option<u32> {
+        EffectiveView(self).read_pte(pa)
+    }
+
+    /// Write the simulator's identity page map with its tables ending at
+    /// `tables_top`, point the MMU at it and start the TLB and the trace over.
+    /// Returns the `satp` value, which the caller mirrors into the CPU's CSR.
+    pub fn install_auto_map(
+        &mut self,
+        tables_top: u32,
+        spec: PageMapSpec,
+        window: (u32, u32),
+    ) -> Result<u32, String> {
+        let layout = {
+            let (_, mut hierarchy) = self.split_mmu();
+            Mmu::install_auto_map(&mut hierarchy, tables_top, spec, window)?
+        };
+        let satp = Mmu::make_satp(layout.root, spec.asid);
+        self.mmu.auto_map = Some(layout);
+        self.mmu.satp = Satp::new(satp);
+        self.flush_all_tlbs();
+        self.mmu.trace.clear();
+        Ok(satp)
+    }
+}
+
 impl Bus for CacheController {
     fn mem_len(&self) -> u32 {
         self.ram.data_len().min(u32::MAX as usize) as u32
@@ -2077,7 +2380,7 @@ impl Bus for CacheController {
     }
 
     fn translate(&mut self, vaddr: u32, access: AccessType) -> Result<(u32, u8), PageFault> {
-        self.mmu.translate(vaddr, access, &mut self.ram)
+        self.run_mmu(vaddr, access)
     }
 
     fn tlb_flush(&mut self) {
@@ -2089,12 +2392,25 @@ impl Bus for CacheController {
     }
 
     fn set_satp(&mut self, val: u32) {
-        self.mmu.satp = crate::falcon::mmu::Satp::new(val);
+        let satp = Satp::new(val);
+        // A program pointing satp elsewhere has left the simulator's map.
+        if self
+            .mmu
+            .auto_map
+            .is_some_and(|map| satp.ppn() << 12 != map.root)
+        {
+            self.mmu.auto_map = None;
+        }
+        self.mmu.satp = satp;
         self.mmu.flush();
     }
 
     fn set_priv_mode(&mut self, mode: crate::falcon::mmu::PrivMode) {
         self.mmu.priv_mode = mode;
+    }
+
+    fn note_instruction(&mut self, hart: u32, pc: u32) {
+        self.mmu.note_instruction(hart, pc);
     }
 
     fn take_host_request(&mut self) -> Option<HostRequest> {

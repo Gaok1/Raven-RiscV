@@ -27,7 +27,7 @@
 //! diagnostics, the source map, the FALC container — is backend-neutral and
 //! shared.
 
-use super::{App, BuildStats, MemRegion, NOT_RV32, rv32_runtime_mut};
+use super::{App, BuildStats, MemRegion};
 use crate::falcon::{CacheController, Cpu};
 use raven_engine::{ProgramImage, SourceMap};
 use std::collections::{HashMap, HashSet};
@@ -184,7 +184,7 @@ impl App {
         runtime.mem_mut_unjournaled().bypass = bypass;
         runtime.mem_mut_unjournaled().set_coherence(coherence);
         runtime.mem_mut_unjournaled().set_core_count(cores);
-        runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(tlb);
+        runtime.mem_mut_unjournaled().reconfigure_tlbs(tlb);
         self.push_vm_mode_to_mmu();
         self.session.faulted = false;
     }
@@ -244,37 +244,12 @@ impl App {
         self.rebuild_harts();
     }
 
-    /// Didactic VM modes (Sv32 / Custom) auto-install the configured page map
-    /// so any program shows TLB activity without hand-writing page tables.
-    /// Manual mode leaves `satp` to the program.
-    ///
-    /// Runs on every load, not just the first: rebuilding the memory hierarchy
-    /// wipes the tables out of RAM along with the program.
+    /// In auto mode the simulator writes the page map for every load: the
+    /// load rebuilt the memory hierarchy and took the old tables with it.
     fn install_didactic_page_map(&mut self) {
-        if !self.session.vm_mode.is_auto() {
-            return;
+        if self.session.vm_mode.is_auto() {
+            self.install_auto_map();
         }
-        let scheme = self.active_scheme();
-        let root_pa = scheme.root_pa(self.session.mem_size as u32);
-        let window = (
-            self.session.base_pc.min(self.session.data_base),
-            self.session.heap_start,
-        );
-        crate::falcon::mmu::Mmu::install_map_scheme(
-            &mut rv32_runtime_mut(&mut *self.machine)
-                .expect(NOT_RV32)
-                .mem_mut_unjournaled()
-                .ram,
-            root_pa,
-            &scheme,
-            self.tlb.page_map,
-            window,
-        );
-        let satp = crate::falcon::mmu::Mmu::make_satp(root_pa, self.tlb.page_map.asid);
-        self.native_mut().cpu_mut_unjournaled().satp = satp;
-        let mmu = self.native_mut().mem_mut_unjournaled().mmu_mut();
-        mmu.satp = crate::falcon::mmu::Satp::new(satp);
-        mmu.force_translate = true;
     }
 
     // ── Opening a binary ───────────────────────────────────────────────────

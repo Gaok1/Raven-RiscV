@@ -628,7 +628,7 @@ impl Machine for RiscV32Machine {
     /// Always `Some`: RV32 has an MMU even when paging is switched off, and the
     /// scheme it reports then says "bare".
     fn translation(&self) -> Option<&dyn AddressTranslation> {
-        Some(self.mem().mmu())
+        Some(self.mem())
     }
 }
 

@@ -86,6 +86,7 @@ pub use pipeline::{
 };
 pub use registers::{RegisterBank, RegisterEntry, RegisterFile, RegisterFormat, RegisterId};
 pub use translation::{
-    AddressTranslation, TlbEntryView, TlbStatistics, TranslationLevel, TranslationOutcome,
-    TranslationPermissions, TranslationResult, TranslationScheme,
+    AddressTranslation, EntryField, TableEntryKind, TableEntryView, TlbEntryView, TlbStatistics,
+    TranslationAccess, TranslationLevel, TranslationOutcome, TranslationPermissions,
+    TranslationRecordView, TranslationScheme, WalkStepView,
 };

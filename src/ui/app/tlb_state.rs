@@ -1,214 +1,289 @@
 // ui/app/tlb_state.rs — UI state for the top-level Virtual Memory tab.
 //
-// The tab mirrors the Cache tab: one flat header with five subtabs
-// (`VmSubtab`) — Overview (live satp / privilege / activation banner + quick
-// mode/TLB controls), Map (the live page-table tree, read-only), Tlb (the
-// installed-translations table), Stats (counters + hit-rate chart + the shared
-// session-snapshot history) and Settings (the single comprehensive VM control
-// panel: mode, paging scheme, page map, TLB geometry + presets). Execution
-// controls and a shared controls bar (results / import / export / flush)
-// frame every subtab, exactly like the Cache tab.
+// Five subtabs, each answering one question:
+//   walk   — what happened to this access (the TLB probe, every PTE the walk
+//            read, the physical address, what the TLB kept and dropped)
+//   tlb    — what the TLB holds and why (sets × ways, recency)
+//   map    — how the page table is built (one column per level)
+//   stats  — what it cost
+//   config — how it is set up
+//
+// The three live views follow the same "current access" — the newest
+// translation of the followed kind, unless the reader pinned an older one —
+// so moving between subtabs keeps looking at the same thing.
 
-use crate::falcon::mmu::{PageMapSpec, PagingScheme, TlbConfig};
+use std::cell::RefCell;
 
-/// Virtual Memory subtab (single flat header row).
+use ratatui::layout::Rect;
+use raven_engine::capability::{TranslationAccess, TranslationOutcome, TranslationRecordView};
+
+use crate::falcon::cache::ReplacementPolicy;
+use crate::falcon::mmu::{PageMapSpec, TlbConfig, VmMode};
+use crate::ui::app::RunButton;
+
+/// Virtual Memory subtab.
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub(crate) enum VmSubtab {
-    Overview,
-    Map,
+    Walk,
     Tlb,
+    Map,
     Stats,
-    Settings,
+    Config,
 }
 
 impl VmSubtab {
     pub(crate) const ALL: [VmSubtab; 5] = [
-        Self::Overview,
-        Self::Map,
+        Self::Walk,
         Self::Tlb,
+        Self::Map,
         Self::Stats,
-        Self::Settings,
+        Self::Config,
     ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Overview => "overview",
-            Self::Map => "map",
+            Self::Walk => "walk",
             Self::Tlb => "tlb",
+            Self::Map => "map",
             Self::Stats => "stats",
-            Self::Settings => "settings",
+            Self::Config => "config",
         }
     }
 }
 
-/// An editable control in the VM Settings panel.
+/// Which translations the views follow while the program runs.
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
-pub(crate) enum VmSettingsField {
-    /// VM mode selector (Off / Sv32 / Custom / Manual).
-    Mode,
-    /// TLB cache enabled toggle.
-    TlbEnabled,
-    // ── Paging scheme (Custom mode only) ──
-    /// Page-offset width, in bits.
-    OffsetBits,
-    /// Index width of level `n` (0 = top), in bits.
-    LevelBits(usize),
-    /// Append a paging level.
-    AddLevel,
-    /// Drop the last paging level.
-    RemoveLevel,
-    // ── Page map ──
-    /// Identity ↔ Offset.
-    Kind,
-    /// Signed offset payload, in MiB (only when kind = Offset).
-    Offset,
-    PermR,
-    PermW,
-    PermX,
-    PermU,
-    /// Sv32 Global (G) bit.
-    Global,
-    /// ASID encoded into satp.
-    Asid,
-    // ── TLB geometry ──
-    TlbEntries,
-    TlbAssoc,
-    TlbReplacement,
-    TlbHitLat,
-    TlbMissLat,
+pub(crate) enum WalkFollow {
+    /// Loads and stores — where a program's data lives.
+    Data,
+    /// Instruction fetches.
+    Fetch,
+    /// Whatever translated last.
+    Any,
 }
 
-impl VmSettingsField {
-    /// Fields edited by typing a number (vs. toggled / cycled by click).
-    pub(crate) fn is_numeric(self) -> bool {
-        matches!(
-            self,
-            Self::OffsetBits
-                | Self::LevelBits(_)
-                | Self::Offset
-                | Self::Asid
-                | Self::TlbEntries
-                | Self::TlbAssoc
-                | Self::TlbHitLat
-                | Self::TlbMissLat
-        )
+impl WalkFollow {
+    pub(crate) const ALL: [WalkFollow; 3] = [Self::Data, Self::Fetch, Self::Any];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Data => "data",
+            Self::Fetch => "fetch",
+            Self::Any => "any",
+        }
+    }
+
+    pub(crate) fn admits(self, access: TranslationAccess) -> bool {
+        match self {
+            Self::Data => access != TranslationAccess::Fetch,
+            Self::Fetch => access == TranslationAccess::Fetch,
+            Self::Any => true,
+        }
     }
 }
 
-#[derive(PartialEq, Eq, Clone)]
-pub(crate) enum TlbHoverTarget {
-    /// A header subtab button.
+/// Which records the history list shows.
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub(crate) enum HistoryFilter {
+    All,
+    Misses,
+    Faults,
+}
+
+impl HistoryFilter {
+    pub(crate) const ALL: [HistoryFilter; 3] = [Self::All, Self::Misses, Self::Faults];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Misses => "misses",
+            Self::Faults => "faults",
+        }
+    }
+
+    pub(crate) fn admits(self, record: &TranslationRecordView) -> bool {
+        match self {
+            Self::All => true,
+            Self::Misses => record.outcome != TranslationOutcome::TlbHit,
+            Self::Faults => record.outcome == TranslationOutcome::Fault,
+        }
+    }
+}
+
+/// A number typed into the config subtab.
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub(crate) enum VmField {
+    Asid,
+    HitCycles,
+    WalkCycles,
+}
+
+impl VmField {
+    pub(crate) const ALL: [VmField; 3] = [Self::Asid, Self::HitCycles, Self::WalkCycles];
+}
+
+/// Everything clickable in the tab. The renderer records each one with the
+/// rectangle it drew it in; the mouse handler looks the pointer up in that
+/// list, so a control is clickable exactly where it is drawn.
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub(crate) enum VmHit {
     Subtab(VmSubtab),
-    // Overview quick controls
-    QuickMode,
-    QuickTlb,
-    // VM Settings panel
-    VmField(VmSettingsField),
-    /// TLB geometry preset button (0=small, 1=med, 2=large).
-    Preset(usize),
-    VmApply,
-    VmFlush,
-    // Shared controls bar
-    ExportResults,
+    Run(RunButton),
+    Results,
     ImportCfg,
     ExportCfg,
     FlushTlb,
+    /// Write the simulator's map now (auto mode, satp still Bare).
+    InstallMap,
+    /// Turn virtual memory on in auto mode.
+    TurnOn,
+
+    // walk
+    Older,
+    Newer,
+    Follow(WalkFollow),
+    Filter(HistoryFilter),
+    /// A history row, by translation number.
+    Record(u64),
+    /// The history list, for the wheel.
+    History,
+
+    // tlb
+    Slot(usize),
+    SetTab(usize),
+    /// The TLB matrix, for the wheel.
+    TlbArea,
+
+    // map
+    MapRow { column: usize, row: usize },
+    /// A map column, for the wheel.
+    MapColumn(usize),
+    /// Back to following the current access.
+    MapFollow,
+    /// Start typing an address to look up.
+    MapQuery,
+
+    // stats
+    Snapshot(usize),
+
+    // config
+    Mode(VmMode),
+    Perm(usize),
+    Global,
+    Edit(VmField),
+    TlbOn(bool),
+    Entries(u16),
+    Ways(u8),
+    Policy(ReplacementPolicy),
 }
 
+/// Which map column holds the keyboard.
+pub(crate) const MAP_COLUMNS: usize = 2;
+
 pub(crate) struct TlbState {
-    /// Active Virtual Memory subtab.
     pub(crate) vm_subtab: VmSubtab,
-    pub(crate) hover: Option<TlbHoverTarget>,
-    /// Header subtab hitboxes (y, x0, x1), in `VmSubtab::ALL` order.
-    pub(crate) subtab_btns: std::cell::Cell<[(u16, u16, u16); 5]>,
-    // Execution controls (mirrors CacheState's exec_* cells).
-    pub(crate) exec_speed_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_state_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) exec_reset_btn: std::cell::Cell<(u16, u16, u16)>,
-    // Shared controls bar.
-    pub(crate) ctrl_results_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_import_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_export_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) ctrl_flush_btn: std::cell::Cell<(u16, u16, u16)>,
-    // Overview quick controls.
-    pub(crate) quick_mode_btn: std::cell::Cell<(u16, u16, u16)>,
-    pub(crate) quick_tlb_btn: std::cell::Cell<(u16, u16, u16)>,
-    /// TLB geometry being edited in the Settings panel (applied via `apply`).
+    pub(crate) hover: Option<VmHit>,
+    /// Every clickable region drawn this frame, last on top.
+    pub(crate) hits: RefCell<Vec<(VmHit, Rect)>>,
+
+    // ── walk ─────────────────────────────────────────────────────────────────
+    pub(crate) follow: WalkFollow,
+    /// The record the reader pinned; `None` follows the newest.
+    pub(crate) pinned: Option<TranslationRecordView>,
+    pub(crate) filter: HistoryFilter,
+    /// Rows scrolled off the top of the history (newest first).
+    pub(crate) history_scroll: usize,
+
+    // ── tlb ──────────────────────────────────────────────────────────────────
+    /// The slot under the cursor; `None` puts it on the slot the current
+    /// access touched.
+    pub(crate) tlb_cursor: Option<usize>,
+    /// Sets scrolled off the top of the matrix.
+    pub(crate) tlb_scroll: usize,
+
+    // ── map ──────────────────────────────────────────────────────────────────
+    pub(crate) map_column: usize,
+    /// The entry index selected in each column; `None` follows the path of the
+    /// current access.
+    pub(crate) map_cursor: [Option<u64>; MAP_COLUMNS],
+    pub(crate) map_scroll: [usize; MAP_COLUMNS],
+    /// Groups of alike entries the reader opened: `(table, first index)`.
+    pub(crate) map_open: Vec<(u64, u64)>,
+    /// The address being typed into the lookup, while it is open.
+    pub(crate) map_query: Option<String>,
+    /// An address the map shows the path of, instead of the current access.
+    pub(crate) map_target: Option<u64>,
+
+    // ── config ───────────────────────────────────────────────────────────────
+    /// What the simulator's map grants, applied whenever it is (re)written.
+    pub(crate) page_map: PageMapSpec,
+    /// The TLB shape the next program load builds.
     pub(crate) pending: TlbConfig,
-    /// TLB preset button hitboxes in the Settings panel.
-    pub(crate) preset_btns: std::cell::Cell<[(u16, u16, u16); 3]>,
+    /// The number field being typed into, and its text so far.
+    pub(crate) edit: Option<(VmField, String)>,
+
     /// Footer status line (✓ / ✗ at the bottom of the screen).
     pub(crate) config_error: Option<String>,
     pub(crate) config_status: Option<String>,
-    pub(crate) entries_scroll: usize,
-    /// Vertical scrollbar of the Entries table — geometry set by render,
-    /// hit-tested by mouse for click-to-jump + thumb drag.
-    pub(crate) entries_sb: std::cell::Cell<Option<crate::ui::view::components::SbGeom>>,
-    /// `Some(grab)` while the bar's thumb is being dragged.
-    pub(crate) entries_sb_drag: Option<u16>,
-    pub(crate) page_tree_scroll: usize,
-    /// Max valid `page_tree_scroll`, recomputed each render so input handlers
-    /// can clamp without re-walking the page table.
-    pub(crate) page_tree_max_scroll: std::cell::Cell<usize>,
-    // ── VM Settings panel ────────────────────────────────────────────────────
-    /// Paging scheme being edited (applied to the MMU in Custom mode on apply).
-    pub(crate) pending_scheme: PagingScheme,
-    /// The map currently installed in RAM (applied).
-    pub(crate) page_map: PageMapSpec,
-    /// The map being edited in the panel (committed via `apply`).
-    pub(crate) pending_map: PageMapSpec,
-    /// Which VM-settings field is in keyboard-edit focus, if any.
-    pub(crate) vm_edit_field: Option<VmSettingsField>,
-    /// Text buffer while editing a numeric VM-settings field.
-    pub(crate) vm_edit_buf: String,
-    /// Status / error line for the VM Settings panel.
-    pub(crate) map_status: Option<String>,
-    /// Per-field hitboxes for the VM Settings panel: (field, y, x0, x1).
-    pub(crate) vm_field_hitboxes: std::cell::RefCell<Vec<(VmSettingsField, u16, u16, u16)>>,
-    /// Hitbox for the VM Settings `apply` button.
-    pub(crate) vm_apply_btn: std::cell::Cell<(u16, u16, u16)>,
-    /// Hitbox for the VM Settings `flush tlb` button.
-    pub(crate) vm_flush_btn: std::cell::Cell<(u16, u16, u16)>,
-    /// Scroll offset for the (potentially tall) VM Settings panel.
-    pub(crate) vm_settings_scroll: usize,
-    pub(crate) vm_settings_max_scroll: std::cell::Cell<usize>,
 }
 
 impl Default for TlbState {
     fn default() -> Self {
         Self {
-            vm_subtab: VmSubtab::Overview,
+            vm_subtab: VmSubtab::Walk,
             hover: None,
-            subtab_btns: std::cell::Cell::new([(0, 0, 0); 5]),
-            exec_speed_btn: std::cell::Cell::new((0, 0, 0)),
-            exec_state_btn: std::cell::Cell::new((0, 0, 0)),
-            exec_reset_btn: std::cell::Cell::new((0, 0, 0)),
-            ctrl_results_btn: std::cell::Cell::new((0, 0, 0)),
-            ctrl_import_btn: std::cell::Cell::new((0, 0, 0)),
-            ctrl_export_btn: std::cell::Cell::new((0, 0, 0)),
-            ctrl_flush_btn: std::cell::Cell::new((0, 0, 0)),
-            quick_mode_btn: std::cell::Cell::new((0, 0, 0)),
-            quick_tlb_btn: std::cell::Cell::new((0, 0, 0)),
+            hits: RefCell::new(Vec::new()),
+            follow: WalkFollow::Data,
+            pinned: None,
+            filter: HistoryFilter::All,
+            history_scroll: 0,
+            tlb_cursor: None,
+            tlb_scroll: 0,
+            map_column: 0,
+            map_cursor: [None; MAP_COLUMNS],
+            map_scroll: [0; MAP_COLUMNS],
+            map_open: Vec::new(),
+            map_query: None,
+            map_target: None,
+            page_map: PageMapSpec::default(),
             pending: TlbConfig::default(),
-            preset_btns: std::cell::Cell::new([(0, 0, 0); 3]),
+            edit: None,
             config_error: None,
             config_status: None,
-            entries_scroll: 0,
-            entries_sb: std::cell::Cell::new(None),
-            entries_sb_drag: None,
-            page_tree_scroll: 0,
-            page_tree_max_scroll: std::cell::Cell::new(0),
-            pending_scheme: PagingScheme::sv32(),
-            page_map: PageMapSpec::default(),
-            pending_map: PageMapSpec::default(),
-            vm_edit_field: None,
-            vm_edit_buf: String::new(),
-            map_status: None,
-            vm_field_hitboxes: std::cell::RefCell::new(Vec::new()),
-            vm_apply_btn: std::cell::Cell::new((0, 0, 0)),
-            vm_flush_btn: std::cell::Cell::new((0, 0, 0)),
-            vm_settings_scroll: 0,
-            vm_settings_max_scroll: std::cell::Cell::new(0),
         }
+    }
+}
+
+impl TlbState {
+    /// Record a clickable region for this frame.
+    pub(crate) fn hit(&self, target: VmHit, rect: Rect) {
+        if rect.width > 0 && rect.height > 0 {
+            self.hits.borrow_mut().push((target, rect));
+        }
+    }
+
+    /// The topmost region under `(column, row)`.
+    pub(crate) fn hit_at(&self, column: u16, row: u16) -> Option<VmHit> {
+        self.hits
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(_, r)| {
+                column >= r.x && column < r.x + r.width && row >= r.y && row < r.y + r.height
+            })
+            .map(|(hit, _)| *hit)
+    }
+
+    pub(crate) fn is_hovered(&self, target: VmHit) -> bool {
+        self.hover == Some(target)
+    }
+
+    /// Stop pinning anything: every view goes back to the current access.
+    pub(crate) fn follow_current(&mut self) {
+        self.pinned = None;
+        self.tlb_cursor = None;
+        self.map_cursor = [None; MAP_COLUMNS];
+        self.map_target = None;
+        self.history_scroll = 0;
     }
 }

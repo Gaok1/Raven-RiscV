@@ -256,56 +256,28 @@ impl App {
         self.session.vm_mode
     }
 
-    /// The paging scheme implied by the current VM mode: the user-configured
-    /// scheme in `Custom` (when valid), the standard Sv32 preset otherwise. A
-    /// mid-edit invalid Custom scheme falls back to Sv32 so the live MMU is
-    /// never driven with a malformed geometry (apply re-validates explicitly).
-    pub(in crate::ui) fn active_scheme(&self) -> crate::falcon::mmu::PagingScheme {
-        if matches!(self.session.vm_mode, crate::falcon::mmu::VmMode::Custom)
-            && self.tlb.pending_scheme.is_valid()
-        {
-            self.tlb.pending_scheme.clone()
-        } else {
-            crate::falcon::mmu::PagingScheme::sv32()
-        }
-    }
-
-    /// Push the current `vm_mode` (flags + active scheme) into the live MMU.
-    /// Used after rebuilding the memory subsystem (assemble / load).
+    /// Push the current `vm_mode` flags into the live MMU. Used after
+    /// rebuilding the memory subsystem (assemble / load).
     pub(in crate::ui) fn push_vm_mode_to_mmu(&mut self) {
         let (enabled, force_translate) = self.session.vm_mode.flags();
-        let scheme = self.active_scheme();
         let tlb_enabled = self.session.tlb_enabled;
         let Some(runtime) = self.rv32_mut() else {
             return;
         };
         let mmu = runtime.mem_mut_unjournaled().mmu_mut();
-        mmu.set_scheme(scheme);
         mmu.enabled = enabled;
         mmu.force_translate = force_translate;
         mmu.tlb_enabled = tlb_enabled;
     }
 
-    /// Backward-compatible on/off entry point. `true` selects Sv32 (the
-    /// classic "VM on" flavor); `false` selects Off.
-    pub(in crate::ui) fn set_vm_enabled(&mut self, enabled: bool) {
-        use crate::falcon::mmu::VmMode;
-        self.set_vm_mode(if enabled { VmMode::Sv32 } else { VmMode::Off });
-    }
-
-    /// Select the VM mode (Off / Sv32 / Custom / Manual) and push the derived
-    /// engine flags + active paging scheme into the MMU.
+    /// Select the VM mode and apply it at once: flags into the MMU, and the
+    /// simulator's page map written (auto) or dropped (otherwise).
     pub(in crate::ui) fn set_vm_mode(&mut self, mode: crate::falcon::mmu::VmMode) {
         let (enabled, _) = mode.flags();
         self.session.vm_mode = mode;
         self.push_vm_mode_to_mmu();
-        if !enabled {
-            // Drop all cached translations so re-enabling starts from a clean
-            // slate (no stale PA mappings).
-            if let Some(runtime) = self.rv32_mut() {
-                runtime.mem_mut_unjournaled().mmu.flush();
-            }
-        } else if self.session.jit_kind != crate::falcon::jit::BackendKind::None {
+        self.apply_vm_mode(mode);
+        if enabled && self.session.jit_kind != crate::falcon::jit::BackendKind::None {
             // The JIT does not yet invalidate translations on satp/sfence.vma,
             // so keeping it on with VM would silently run stale code. Demote to
             // the interpreter and rebuild the backend.
@@ -324,7 +296,7 @@ impl App {
         runtime.mem_mut_unjournaled().mmu.tlb_enabled = enabled;
         if !enabled {
             // Drop cached translations so re-enabling starts cold.
-            runtime.mem_mut_unjournaled().mmu.flush();
+            runtime.mem_mut_unjournaled().flush_all_tlbs();
         }
     }
 

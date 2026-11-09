@@ -1,20 +1,36 @@
-// falcon/mmu/ â€” Sv32 virtual memory + unified TLB
+// falcon/mmu/ — Sv32 virtual memory + unified TLB
 //
 // `Mmu::translate` is the single seam through which every cache-aware access
-// (fetch, load, store) reaches RAM. When VM is disabled, or satp=Bare, or the
-// hart is in M-mode, it short-circuits to identity. Otherwise it probes the
-// TLB; on a miss it walks the Sv32 page table, installs the resulting entry,
-// and surfaces page faults to the caller.
+// (fetch, load, store) reaches memory. When paging is off, satp is Bare, or the
+// hart is in M-mode (unless forced), it is the identity. Otherwise it probes
+// the TLB; on a miss it walks the Sv32 page table, installs the entry, and
+// reports page faults. Every translation leaves a record in `trace`.
 
 mod capability;
 pub mod satp;
 pub mod tlb;
+pub mod trace;
 pub mod walker;
 
 pub use satp::{PrivMode, Satp, SatpMode};
-pub use tlb::{PtePerms, Tlb, TlbConfig, TlbEntry, TlbStats};
+pub use tlb::{Installed, PtePerms, Tlb, TlbConfig, TlbEntry, TlbStats};
+pub use trace::{
+    FaultReason, TraceOutcome, TranslationRecord, TranslationTrace, WalkStep, TRACE_CAPACITY,
+};
+pub use walker::{Pte, PteMemory, check_access};
 
-use crate::falcon::memory::{Bus, Ram};
+use walker::{PTE_G, PTE_R, PTE_U, PTE_V, PTE_W, PTE_X};
+
+/// Page-offset width: 4 KiB pages.
+pub const PAGE_BITS: u32 = 12;
+/// Index width of each level.
+pub const VPN_BITS: u32 = 10;
+/// Sv32 walks two levels.
+pub const LEVELS: usize = 2;
+/// Low VPN bits a 4 MiB megapage covers.
+pub const MEGAPAGE_BITS: u8 = 10;
+/// Bytes in one page table (1024 four-byte PTEs).
+pub const TABLE_BYTES: u32 = 4096;
 
 /// What kind of access is being translated. Determines which permission bit is
 /// checked and which fault code is raised on failure.
@@ -42,203 +58,75 @@ pub struct PageFault {
     pub vaddr: u32,
 }
 
-/// How virtual memory behaves, as chosen by the user.
+/// Who builds the page table.
 ///
-/// The engine only knows two booleans (`enabled`, `force_translate`) plus the
-/// active [`PagingScheme`]; this enum is the human-facing selector:
-///   - `Off`    â†’ `enabled=false` (pure identity, TLB untouched)
-///   - `Sv32`   â†’ didactic: auto-installed standard Sv32 (10+10+12) map,
-///                `force_translate=true` so M-mode also translates and any
-///                program shows TLB activity with no setup code.
-///   - `Custom` â†’ didactic, but the auto-installed map uses a user-configured
-///                paging scheme (number of levels / per-level index widths /
-///                page-offset width). "Anything is possible" mode.
-///   - `Manual` â†’ real RISC-V Sv32: M-mode bypasses; the program drives `satp`
-///                + its own page tables (required for demand paging).
+/// - `Off`: no translation at all.
+/// - `Auto`: the simulator writes an Sv32 table when a program loads and
+///   translates even in M-mode, so any program shows the MMU at work with no
+///   setup code of its own.
+/// - `Program`: real RISC-V — the program writes `satp` and its own tables,
+///   and M-mode bypasses translation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum VmMode {
     #[default]
     Off,
-    Sv32,
-    Custom,
-    Manual,
+    Auto,
+    Program,
 }
 
 impl VmMode {
+    pub const ALL: [VmMode; 3] = [VmMode::Off, VmMode::Auto, VmMode::Program];
+
+    /// The spelling used on screen and in config files.
     pub fn as_str(self) -> &'static str {
         match self {
-            VmMode::Off => "OFF",
-            VmMode::Sv32 => "SV32",
-            VmMode::Custom => "CUSTOM",
-            VmMode::Manual => "MANUAL",
+            VmMode::Off => "off",
+            VmMode::Auto => "auto",
+            VmMode::Program => "program",
         }
     }
 
-    /// Cycle for the Settings selector: Off â†’ Sv32 â†’ Custom â†’ Manual â†’ Off.
+    /// Parse a config value. The names earlier versions wrote still load:
+    /// `sv32` and `custom` were the simulator-built map, `manual` the
+    /// program-built one.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(VmMode::Off),
+            "auto" | "sv32" | "custom" => Some(VmMode::Auto),
+            "program" | "manual" => Some(VmMode::Program),
+            _ => None,
+        }
+    }
+
+    /// The next mode, for a selector that cycles: off → auto → program → off.
     pub fn cycle(self) -> Self {
         match self {
-            VmMode::Off => VmMode::Sv32,
-            VmMode::Sv32 => VmMode::Custom,
-            VmMode::Custom => VmMode::Manual,
-            VmMode::Manual => VmMode::Off,
+            VmMode::Off => VmMode::Auto,
+            VmMode::Auto => VmMode::Program,
+            VmMode::Program => VmMode::Off,
         }
     }
 
-    /// True for the didactic auto-installed modes (Sv32 / Custom), where the
-    /// simulator owns the page tables and `force_translate` is on.
+    /// The simulator owns the page table.
     pub fn is_auto(self) -> bool {
-        matches!(self, VmMode::Sv32 | VmMode::Custom)
-    }
-
-    /// Reconstruct an approximate mode from the legacy run-state booleans
-    /// (`enabled`, `manual`). Old "auto" maps to `Sv32`; `Custom` is not
-    /// representable this way (callers that need it store [`VmMode`] directly).
-    pub fn from_user(enabled: bool, manual: bool) -> Self {
-        match (enabled, manual) {
-            (false, _) => VmMode::Off,
-            (true, false) => VmMode::Sv32,
-            (true, true) => VmMode::Manual,
-        }
+        matches!(self, VmMode::Auto)
     }
 
     /// `(enabled, force_translate)` engine flags for this mode.
     pub fn flags(self) -> (bool, bool) {
         match self {
             VmMode::Off => (false, false),
-            VmMode::Sv32 => (true, true),
-            VmMode::Custom => (true, true),
-            VmMode::Manual => (true, false),
+            VmMode::Auto => (true, true),
+            VmMode::Program => (true, false),
         }
     }
 }
 
-/// A parametric multi-level paging scheme over a 32-bit virtual address.
-///
-/// The VA splits into per-level table indices (from the top level down to the
-/// leaf) plus a final page offset, where
-/// `offset_bits + Î£ level_bits == 32`. Sv32 is the `offset_bits = 12,
-/// level_bits = [10, 10]` preset. A leaf PTE may occur at any level, producing
-/// a superpage covering `offset_bits + Î£ (index bits below it)` bits.
-///
-/// Page tables themselves are always 4 KiB-frame-granular (PTE PPN = `paddr >>
-/// 12`, like RISC-V); only the *virtual* page size scales with `offset_bits`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PagingScheme {
-    pub offset_bits: u8,
-    /// Index width per level, ordered from the top (walked first) to the leaf.
-    pub level_bits: Vec<u8>,
-}
-
-impl Default for PagingScheme {
-    fn default() -> Self {
-        Self::sv32()
-    }
-}
-
-impl PagingScheme {
-    /// Standard Sv32: 10 + 10 + 12.
-    pub fn sv32() -> Self {
-        Self {
-            offset_bits: 12,
-            level_bits: vec![10, 10],
-        }
-    }
-
-    pub fn num_levels(&self) -> usize {
-        self.level_bits.len()
-    }
-
-    /// `offset_bits + Î£ level_bits` â€” must equal 32 for a valid scheme.
-    pub fn total_bits(&self) -> u32 {
-        self.offset_bits as u32 + self.level_bits.iter().map(|b| *b as u32).sum::<u32>()
-    }
-
-    /// A scheme is valid when it tiles exactly 32 bits, every index width is
-    /// 1..=12 (table â‰¤ 16 KiB), the page offset is 12..=30 (page â‰¥ 4 KiB), and
-    /// it has 1..=4 levels.
-    pub fn is_valid(&self) -> bool {
-        !self.level_bits.is_empty()
-            && self.level_bits.len() <= 4
-            && (12..=30).contains(&self.offset_bits)
-            && self.level_bits.iter().all(|&b| (1..=12).contains(&b))
-            && self.total_bits() == 32
-    }
-
-    /// Bit position of `level`'s index (its low bit) = page_bits of a leaf
-    /// found at that level = `offset_bits + Î£ level_bits below it`.
-    pub fn shift_at(&self, level: usize) -> u32 {
-        let below: u32 = self.level_bits[level + 1..].iter().map(|b| *b as u32).sum();
-        self.offset_bits as u32 + below
-    }
-
-    /// Page size (bytes) of a leaf at `level`.
-    pub fn page_bytes_at(&self, level: usize) -> u64 {
-        1u64 << self.shift_at(level)
-    }
-
-    /// Number of entries in a `level`'s table.
-    pub fn entries_at(&self, level: usize) -> u32 {
-        1u32 << self.level_bits[level]
-    }
-
-    /// Distinct page-size classes (`mask_bits = page_bits - offset_bits`) this
-    /// scheme can install â€” one per level a leaf may sit at â€” always sorted and
-    /// including 0 (the leaf level). Drives the TLB probe. Sv32 â†’ `[0, 10]`.
-    pub fn leaf_masks(&self) -> Vec<u8> {
-        let mut v: Vec<u8> = (0..self.num_levels())
-            .map(|l| (self.shift_at(l) - self.offset_bits as u32) as u8)
-            .collect();
-        v.sort_unstable();
-        v.dedup();
-        v
-    }
-
-    /// Physical base of the root table for a given RAM size: placed just below
-    /// the top of memory, 4 KiB-aligned, leaving room for the top table.
-    pub fn root_pa(&self, mem_size: u32) -> u32 {
-        let top_bytes = self.entries_at(0) * 4;
-        let aligned = (top_bytes + 0xFFF) & !0xFFF;
-        (mem_size.saturating_sub(aligned)) & !0xFFF
-    }
-}
-
-/// Translation shape for the auto-installed page map (Tree-tab config form).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MapKind {
-    /// `PA = VA`.
-    Identity,
-    /// `PA = VA + delta`, where the payload is a signed offset in **MiB**.
-    Offset(i32),
-}
-
-impl MapKind {
-    /// Byte delta added to each virtual address (wraps into `u32`).
-    pub fn delta_bytes(self) -> u32 {
-        match self {
-            MapKind::Identity => 0,
-            MapKind::Offset(mib) => (mib as i64 * 0x10_0000) as u32,
-        }
-    }
-}
-
-/// Page granularity for the auto-installed map.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MapGran {
-    /// 4 MiB superpages (single-level: 1024 L1 leaves).
-    Mega4M,
-    /// 4 KiB pages (two-level walk) over the program window.
-    Kilo4K,
-}
-
-/// Content of the page map installed by [`Mmu::install_map`] /
-/// [`Mmu::install_map_scheme`]: how each page maps and with which permissions.
-/// The *structure* (levels / page size) comes from the [`PagingScheme`]; the
-/// legacy `gran` field is ignored by the scheme-driven installer.
+/// What the simulator's page map grants. Every page maps to itself (VA == PA):
+/// the loader put the program at its virtual addresses, so any other map would
+/// leave the CPU fetching from frames nothing was loaded into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PageMapSpec {
-    pub kind: MapKind,
-    /// Legacy granularity selector (kept for the old `install_map` entry point).
-    pub gran: MapGran,
     pub perms: PtePerms,
     /// Sv32 Global (G) bit on every leaf.
     pub global: bool,
@@ -249,8 +137,6 @@ pub struct PageMapSpec {
 impl Default for PageMapSpec {
     fn default() -> Self {
         Self {
-            kind: MapKind::Identity,
-            gran: MapGran::Mega4M,
             perms: PtePerms {
                 r: true,
                 w: true,
@@ -263,22 +149,55 @@ impl Default for PageMapSpec {
     }
 }
 
-/// Sv32 R/W/X/U permission bits for a PTE (no V).
+/// Where the simulator put its page tables.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MapLayout {
+    /// The root table, which `satp` points at.
+    pub root: u32,
+    /// The tables span `[tables_lo, tables_hi)`.
+    pub tables_lo: u32,
+    pub tables_hi: u32,
+    /// Leaf tables under the root, one per 4 MiB the program window touches.
+    pub leaf_tables: u32,
+}
+
+impl MapLayout {
+    pub fn bytes(&self) -> u32 {
+        self.tables_hi - self.tables_lo
+    }
+}
+
 fn perm_bits(p: PtePerms) -> u32 {
     let mut b = 0;
     if p.r {
-        b |= 0x2;
+        b |= PTE_R;
     }
     if p.w {
-        b |= 0x4;
+        b |= PTE_W;
     }
     if p.x {
-        b |= 0x8;
+        b |= PTE_X;
     }
     if p.u {
-        b |= 0x10;
+        b |= PTE_U;
     }
     b
+}
+
+/// Bytes a page of this size covers.
+pub fn page_bytes(megapage: bool) -> u64 {
+    if megapage {
+        1 << (PAGE_BITS + u32::from(MEGAPAGE_BITS))
+    } else {
+        1 << PAGE_BITS
+    }
+}
+
+/// The physical address `vaddr` reaches through a leaf with `ppn`: the frame
+/// base, plus the low bits of the address the page passes through untouched.
+pub fn physical(ppn: u32, megapage: bool, vaddr: u32) -> u32 {
+    let mask = (page_bytes(megapage) - 1) as u32;
+    ((ppn << PAGE_BITS) & !mask) | (vaddr & mask)
 }
 
 #[derive(Clone)]
@@ -286,21 +205,17 @@ pub struct Mmu {
     pub tlb: Tlb,
     pub satp: Satp,
     pub priv_mode: PrivMode,
-    /// Mirror of `vm_enabled`. When false, `translate()` is pure identity and
-    /// no TLB state is touched (zero overhead path).
+    /// When false, `translate()` is pure identity and no TLB state is touched.
     pub enabled: bool,
-    /// When true, translation is applied even in M-mode. Used by the
-    /// didactic standard mode so any program sees TLB activity without
-    /// needing explicit page-table setup code.
+    /// Translate in M-mode too (auto mode), so a program needs no privilege
+    /// switch to be translated.
     pub force_translate: bool,
-    /// When false, the TLB cache is bypassed: every translation walks the page
-    /// table (counts as a miss, costs `miss_penalty`) and no entry is installed
-    /// or probed. Page faults still work. Lets the user see the cost of a TLB
-    /// that never hits.
+    /// When false, the TLB is bypassed: every translation walks the page table
+    /// and nothing is cached. Page faults still work.
     pub tlb_enabled: bool,
-    /// Active paging scheme (Sv32 preset by default; user-configurable in the
-    /// Custom VM mode). Drives `translate`, the walker and `build_paddr`.
-    pub scheme: PagingScheme,
+    /// The tables the simulator wrote, while its auto map is installed.
+    pub auto_map: Option<MapLayout>,
+    pub trace: TranslationTrace,
 }
 
 impl Default for Mmu {
@@ -318,263 +233,291 @@ impl Mmu {
             enabled: false,
             force_translate: false,
             tlb_enabled: true,
-            scheme: PagingScheme::sv32(),
+            auto_map: None,
+            trace: TranslationTrace::default(),
         }
     }
 
-    /// Adopt a paging scheme and propagate its page-offset width and page-size
-    /// classes into the TLB (so probes/flushes index consistently).
-    pub fn set_scheme(&mut self, scheme: PagingScheme) {
-        self.tlb.set_scheme(scheme.offset_bits, scheme.leaf_masks());
-        self.scheme = scheme;
-    }
-
-    /// Build an Sv32 satp value (mode=1) for `root_pa` and `asid`. Page tables
-    /// are 4 KiB-frame-granular, so the PPN is always `root_pa >> 12`.
+    /// Build an Sv32 satp value (mode=1) for `root_pa` and `asid`.
     pub fn make_satp(root_pa: u32, asid: u16) -> u32 {
-        (1u32 << 31) | ((asid as u32 & 0x1FF) << 22) | (root_pa >> 12)
+        (1u32 << 31) | ((asid as u32 & 0x1FF) << 22) | (root_pa >> PAGE_BITS)
     }
 
-    /// Write a full-coverage Sv32 megapage identity map at `root_pa` (VA == PA,
-    /// RWX+U). Thin wrapper over [`Mmu::install_map`] kept for the CLI / back-compat.
-    pub fn install_identity_megapages(ram: &mut Ram, root_pa: u32) {
-        Self::install_map(ram, root_pa, PageMapSpec::default(), (0, 0));
-    }
-
-    /// Legacy Sv32 entry point (granularity from `spec.gran`). `Mega4M` fills the
-    /// whole space with 4 MiB superpage leaves; `Kilo4K` refines the `window`
-    /// region into real 4 KiB pages. Delegates to [`Mmu::install_map_scheme`] with
-    /// the Sv32 preset.
-    pub fn install_map(ram: &mut Ram, root_pa: u32, spec: PageMapSpec, window: (u32, u32)) {
-        let w = if matches!(spec.gran, MapGran::Kilo4K) {
-            window
-        } else {
-            (0, 0)
-        };
-        Self::install_map_scheme(ram, root_pa, &PagingScheme::sv32(), spec, w);
-    }
-
-    /// Build a page table at `root_pa` from `scheme` + `spec`.
+    /// Write the simulator's identity map, with its tables ending at
+    /// `tables_top`.
     ///
-    /// Every entry of every table is written: an entry whose virtual range
-    /// intersects `window` (a `[start, end)` VA range â€” typically the loaded
-    /// program) becomes a pointer to a freshly-allocated child table and is
-    /// refined recursively down to the leaf level; every other entry becomes a
-    /// **superpage leaf** at its own level (so the rest of memory â€” stack,
-    /// etc. â€” still translates). With an empty window the top table is all
-    /// superpage leaves (the megapage map). `PA = VA` (Identity) or `PA = VA +
-    /// delta` (Offset); the Global bit and permissions come from `spec`. Child
-    /// tables are placed 4 KiB-aligned, growing downward from `root_pa`.
-    pub fn install_map_scheme(
-        ram: &mut Ram,
-        root_pa: u32,
-        scheme: &PagingScheme,
+    /// Every 4 MiB of the address space the program window `[start, end)` does
+    /// not touch becomes one megapage leaf in the root; each 4 MiB it does
+    /// touch gets a leaf table of 4 KiB pages, so the program's own accesses
+    /// show a full two-level walk. The tables sit just below `tables_top` —
+    /// callers pass the bottom of the stacks, so a push can never land on a
+    /// PTE.
+    pub fn install_auto_map<M: PteMemory + ?Sized>(
+        mem: &mut M,
+        tables_top: u32,
         spec: PageMapSpec,
         window: (u32, u32),
-    ) {
-        let g = if spec.global { 0x20 } else { 0 };
-        let leaf_flags = perm_bits(spec.perms) | g | 0x1; // perms | [G] | V
-        let delta = spec.kind.delta_bytes();
-        let (va_lo, va_hi) = if window.1 > window.0 {
-            (window.0, window.1)
+    ) -> Result<MapLayout, String> {
+        let megapage_shift = PAGE_BITS + u32::from(MEGAPAGE_BITS);
+        let refined: Vec<u32> = if window.1 > window.0 {
+            ((window.0 >> megapage_shift)..=((window.1 - 1) >> megapage_shift)).collect()
         } else {
-            (0, 0) // empty window â†’ all superpage leaves
+            Vec::new()
         };
-        // Child tables grow downward from just below the top table.
-        let mut next_free = root_pa;
-        fill_table(
-            ram,
-            root_pa,
-            0,
-            scheme,
-            va_lo,
-            va_hi,
-            delta,
-            leaf_flags,
-            &mut next_free,
-        );
+        let leaf_tables = refined.len() as u32;
+        let bytes = TABLE_BYTES * (1 + leaf_tables);
+        let top = tables_top & !(TABLE_BYTES - 1);
+        let Some(tables_lo) = top.checked_sub(bytes) else {
+            return Err(format!(
+                "no room for {} KiB of page tables below 0x{top:08x}",
+                bytes / 1024
+            ));
+        };
+        if window.1 > window.0 && tables_lo < window.1 {
+            return Err(format!(
+                "the page tables (0x{tables_lo:08x}–0x{top:08x}) would overlap the program, \
+                 which ends at 0x{:08x}; give the machine more memory",
+                window.1
+            ));
+        }
+
+        let root = top - TABLE_BYTES;
+        let leaf_flags = perm_bits(spec.perms) | if spec.global { PTE_G } else { 0 } | PTE_V;
+        let write = |mem: &mut M, addr: u32, value: u32| {
+            if mem.write_pte(addr, value) {
+                Ok(())
+            } else {
+                Err(format!("page table at 0x{addr:08x} lies outside RAM"))
+            }
+        };
+
+        for vpn1 in 0..(1u32 << VPN_BITS) {
+            let pte_addr = root + vpn1 * 4;
+            let base = vpn1 << megapage_shift;
+            match refined.iter().position(|&v| v == vpn1) {
+                Some(n) => {
+                    let table = root - TABLE_BYTES * (n as u32 + 1);
+                    write(mem, pte_addr, ((table >> PAGE_BITS) << 10) | PTE_V)?;
+                    for vpn0 in 0..(1u32 << VPN_BITS) {
+                        let page = base | (vpn0 << PAGE_BITS);
+                        write(mem, table + vpn0 * 4, ((page >> PAGE_BITS) << 10) | leaf_flags)?;
+                    }
+                }
+                None => write(mem, pte_addr, ((base >> PAGE_BITS) << 10) | leaf_flags)?,
+            }
+        }
+
+        Ok(MapLayout {
+            root,
+            tables_lo,
+            tables_hi: top,
+            leaf_tables,
+        })
+    }
+
+    /// Whether loads and stores are translated right now: paging on, satp in
+    /// Sv32, and either not in M-mode or forced.
+    pub fn translation_applies(&self) -> bool {
+        self.enabled
+            && self.satp.mode() == SatpMode::Sv32
+            && (self.priv_mode != PrivMode::M || self.force_translate)
+    }
+
+    /// Why addresses are not being translated, when they are not.
+    pub fn idle_reason(&self) -> Option<&'static str> {
+        if !self.enabled {
+            Some("virtual memory is off")
+        } else if self.satp.mode() == SatpMode::Bare {
+            Some("satp is Bare: no page table installed")
+        } else if self.priv_mode == PrivMode::M && !self.force_translate {
+            Some("the hart is in M-mode, which bypasses translation")
+        } else {
+            None
+        }
+    }
+
+    /// Name the instruction whose accesses the next translations belong to.
+    pub fn note_instruction(&mut self, hart: u32, pc: u32) {
+        self.trace.note_instruction(hart, pc);
     }
 
     /// Translate a virtual address.
     ///
-    /// Returns `(paddr, extra_stall_cycles)`. The stall is `hit_latency` on a
-    /// TLB hit and `miss_penalty` on a walk. RAM is mutable because the walker
-    /// auto-sets A/D on the leaf PTE.
-    pub fn translate(
+    /// Returns `(paddr, extra_stall_cycles)`: `hit_latency` on a TLB hit,
+    /// `miss_penalty` on a walk. `mem` is mutable because the walker sets A/D
+    /// in the leaf PTE.
+    pub fn translate<M: PteMemory + ?Sized>(
         &mut self,
         vaddr: u32,
         access: AccessType,
-        ram: &mut Ram,
+        mem: &mut M,
     ) -> Result<(u32, u8), PageFault> {
-        // Short-circuit: VM off or satp=Bare â†’ identity (no TLB touch).
-        if !self.enabled || self.satp.mode() == SatpMode::Bare {
+        if !self.translation_applies() {
             return Ok((vaddr, 0));
         }
-        // M-mode bypasses the MMU on real hardware. In the didactic standard
-        // mode (force_translate), we skip this bypass so TLB activity is
-        // visible for any program without privilege-level boilerplate.
-        if self.priv_mode == PrivMode::M && !self.force_translate {
-            return Ok((vaddr, 0));
-        }
-
-        let offset_bits = self.scheme.offset_bits as u32;
-        let vpn = vaddr >> offset_bits;
+        let vpn = vaddr >> PAGE_BITS;
         let asid = self.satp.asid();
+        let fault = PageFault {
+            cause: access.page_fault_cause(),
+            vaddr,
+        };
+        let mut rec = self.trace.start(access, self.priv_mode, vaddr, asid);
 
-        // TLB probe. A Store on a non-dirty entry is forced through the walker
-        // so the PTE gets its D bit set in RAM â€” mirrors real hardware.
-        // Skipped entirely when the TLB is disabled: every access then walks.
         if self.tlb_enabled {
-            if let Some(entry) = self.tlb.probe(vpn, asid) {
-                let needs_d_writeback = matches!(access, AccessType::Store) && !entry.dirty;
-                if !needs_d_writeback && self.check_perms(&entry, access).is_ok() {
-                    self.tlb.stats.hits += 1;
-                    let paddr = build_paddr(&entry, vaddr, offset_bits);
-                    return Ok((paddr, self.tlb.config.hit_latency));
-                }
-                // Otherwise fall through and re-walk â€” either to fault on perms
-                // or to set the D bit. The walker will reinstall the entry.
-                if self.check_perms(&entry, access).is_err() && !needs_d_writeback {
+            rec.tlb_used = true;
+            let [small, mega] = self.tlb.probe_sets(vpn);
+            rec.probed_sets = [small as u16, mega as u16];
+            if let Some((slot, entry)) = self.tlb.probe(vpn, asid) {
+                rec.hit_slot = Some(slot as u16);
+                rec.megapage = entry.megapage;
+                if let Err(reason) = check_access(entry.perms, access, self.priv_mode) {
                     self.tlb.stats.page_faults += 1;
-                    return Err(PageFault {
-                        cause: access.page_fault_cause(),
-                        vaddr,
-                    });
+                    rec.outcome = TraceOutcome::Fault(reason);
+                    self.trace.push(rec);
+                    return Err(fault);
+                }
+                // A store through a clean entry walks again, so the PTE gets
+                // its D bit — what hardware that manages A/D itself does.
+                if matches!(access, AccessType::Store) && !entry.dirty {
+                    rec.dirty_rewalk = true;
+                } else {
+                    let cycles = self.tlb.config.hit_latency;
+                    let paddr = physical(entry.ppn, entry.megapage, vaddr);
+                    self.tlb.stats.hits += 1;
+                    self.tlb.stats.total_cycles += u64::from(cycles);
+                    rec.outcome = TraceOutcome::Hit;
+                    rec.paddr = Some(paddr);
+                    rec.cycles = u32::from(cycles);
+                    self.trace.push(rec);
+                    return Ok((paddr, cycles));
                 }
             }
         }
 
         self.tlb.stats.misses += 1;
-        let res = match walker::walk(
-            &self.scheme,
-            self.satp.ppn(),
-            vaddr,
-            ram,
-            access,
-            self.priv_mode,
-        ) {
-            Ok(r) => r,
-            Err(e) => {
+        let walk = walker::walk(self.satp.ppn(), vaddr, access, self.priv_mode, mem, true);
+        rec.steps = walk.steps;
+        rec.step_count = walk.step_count;
+        let leaf = match walk.result {
+            Ok(leaf) => leaf,
+            Err(reason) => {
                 self.tlb.stats.page_faults += 1;
-                return Err(e);
+                self.tlb.stats.walk_faults += 1;
+                rec.outcome = TraceOutcome::Fault(reason);
+                self.trace.push(rec);
+                return Err(fault);
             }
         };
 
-        let mask_bits = (res.page_bits as u32).saturating_sub(offset_bits) as u8;
-        let entry = TlbEntry {
-            valid: true,
-            vpn: vpn & !((1u32 << mask_bits) - 1),
-            ppn: res.ppn,
-            asid,
-            perms: res.perms,
-            global: res.global,
-            accessed: true,
-            dirty: matches!(access, AccessType::Store),
-            mask_bits,
-            age: 0,
-            ref_bit: false,
-        };
-        // With the TLB disabled we never cache the translation â€” the next
-        // access to the same page walks again (miss, no hit).
-        if self.tlb_enabled {
-            self.tlb.install(entry);
+        let cycles = self.tlb.config.miss_penalty;
+        let stats = &mut self.tlb.stats;
+        stats.total_cycles += u64::from(cycles);
+        stats.walk_cycles += u64::from(cycles);
+        if rec.dirty_rewalk {
+            stats.dirty_rewalks += 1;
         }
+        if leaf.first_touch {
+            stats.first_touches += 1;
+            stats.first_touch_bytes += page_bytes(leaf.megapage);
+        }
+        let paddr = physical(leaf.ppn, leaf.megapage, vaddr);
+        rec.outcome = TraceOutcome::Walked;
+        rec.paddr = Some(paddr);
+        rec.megapage = leaf.megapage;
+        rec.cycles = u32::from(cycles);
+        rec.set_accessed = leaf.set_accessed;
+        rec.set_dirty = leaf.set_dirty;
 
-        let paddr = build_paddr(&entry, vaddr, offset_bits);
-        Ok((paddr, self.tlb.config.miss_penalty))
+        if self.tlb_enabled {
+            let installed = self.tlb.install(TlbEntry {
+                valid: true,
+                vpn: if leaf.megapage {
+                    vpn & !((1 << MEGAPAGE_BITS) - 1)
+                } else {
+                    vpn
+                },
+                ppn: leaf.ppn,
+                asid,
+                perms: leaf.perms,
+                global: leaf.global,
+                dirty: leaf.dirty,
+                megapage: leaf.megapage,
+                age: 0,
+                ref_bit: false,
+            });
+            rec.installed_slot = Some(installed.slot as u16);
+            rec.evicted = installed.evicted;
+        }
+        self.trace.push(rec);
+        Ok((paddr, cycles))
     }
 
-    fn check_perms(&self, entry: &TlbEntry, access: AccessType) -> Result<(), ()> {
-        match access {
-            AccessType::Fetch if !entry.perms.x => return Err(()),
-            AccessType::Load if !entry.perms.r => return Err(()),
-            AccessType::Store if !entry.perms.w => return Err(()),
-            _ => {}
+    /// What translating `vaddr` would do now, without doing it: no TLB entry
+    /// moves, no statistic counts, no A/D bit is written. For a viewer.
+    pub fn dry_run<M: PteMemory + ?Sized>(
+        &self,
+        vaddr: u32,
+        access: AccessType,
+        mem: &mut M,
+    ) -> Option<TranslationRecord> {
+        self.dry_run_on(&self.tlb, vaddr, access, mem)
+    }
+
+    /// [`Self::dry_run`] through `tlb` — another hart's, parked while this
+    /// one runs.
+    pub fn dry_run_on<M: PteMemory + ?Sized>(
+        &self,
+        tlb: &Tlb,
+        vaddr: u32,
+        access: AccessType,
+        mem: &mut M,
+    ) -> Option<TranslationRecord> {
+        if !self.translation_applies() {
+            return None;
         }
-        match self.priv_mode {
-            PrivMode::U if !entry.perms.u => Err(()),
-            PrivMode::S if entry.perms.u => Err(()), // ignore mstatus.SUM in Phase 2
-            _ => Ok(()),
+        let vpn = vaddr >> PAGE_BITS;
+        let asid = self.satp.asid();
+        let mut trace = TranslationTrace::default();
+        let mut rec = trace.start(access, self.priv_mode, vaddr, asid);
+        rec.seq = 0;
+
+        if self.tlb_enabled {
+            rec.tlb_used = true;
+            let [small, mega] = tlb.probe_sets(vpn);
+            rec.probed_sets = [small as u16, mega as u16];
+            if let Some(slot) = tlb.find(vpn, asid) {
+                let entry = tlb.entries[slot];
+                rec.hit_slot = Some(slot as u16);
+                rec.megapage = entry.megapage;
+                rec.outcome = match check_access(entry.perms, access, self.priv_mode) {
+                    Err(reason) => TraceOutcome::Fault(reason),
+                    Ok(()) => {
+                        rec.paddr = Some(physical(entry.ppn, entry.megapage, vaddr));
+                        rec.cycles = u32::from(tlb.config.hit_latency);
+                        TraceOutcome::Hit
+                    }
+                };
+                return Some(rec);
+            }
         }
+
+        let walk = walker::walk(self.satp.ppn(), vaddr, access, self.priv_mode, mem, false);
+        rec.steps = walk.steps;
+        rec.step_count = walk.step_count;
+        rec.outcome = match walk.result {
+            Ok(leaf) => {
+                rec.paddr = Some(physical(leaf.ppn, leaf.megapage, vaddr));
+                rec.megapage = leaf.megapage;
+                rec.cycles = u32::from(tlb.config.miss_penalty);
+                TraceOutcome::Walked
+            }
+            Err(reason) => TraceOutcome::Fault(reason),
+        };
+        Some(rec)
     }
 
     pub fn flush(&mut self) {
         self.tlb.flush();
-    }
-}
-
-fn build_paddr(entry: &TlbEntry, vaddr: u32, offset_bits: u32) -> u32 {
-    // Page size = offset + the masked (superpage) bits. The frame base
-    // (`ppn << 12`) is page-aligned; take the low `page_bits` from the vaddr.
-    let page_bits = offset_bits + entry.mask_bits as u32;
-    let page_mask: u32 = if page_bits >= 32 {
-        u32::MAX
-    } else {
-        (1u32 << page_bits) - 1
-    };
-    ((entry.ppn << 12) & !page_mask) | (vaddr & page_mask)
-}
-
-/// Bump-allocate a 4 KiB-aligned page-table of `bytes`, growing downward.
-fn alloc_table(next_free: &mut u32, bytes: u32) -> u32 {
-    let sz = (bytes + 0xFFF) & !0xFFF;
-    *next_free = next_free.saturating_sub(sz);
-    *next_free
-}
-
-/// Recursively fill the table at `table_pa` for `level` (see
-/// [`Mmu::install_map_scheme`]).
-#[allow(clippy::too_many_arguments)]
-fn fill_table(
-    ram: &mut Ram,
-    table_pa: u32,
-    level: usize,
-    scheme: &PagingScheme,
-    va_lo: u32,
-    va_hi: u32,
-    delta: u32,
-    leaf_flags: u32,
-    next_free: &mut u32,
-) {
-    let n = scheme.num_levels();
-    let shift = scheme.shift_at(level); // page_bits of a leaf at this level
-    let entries = scheme.entries_at(level);
-    let is_last = level + 1 == n;
-    let entry_span: u64 = 1u64 << shift;
-    let has_window = va_hi > va_lo;
-
-    for idx in 0u32..entries {
-        let va_base: u64 = (idx as u64) << shift;
-        let in_window = has_window && va_base + entry_span > va_lo as u64 && va_base < va_hi as u64;
-        let pte_addr = table_pa.wrapping_add(idx * 4);
-
-        if in_window && !is_last {
-            // Pointer PTE â†’ allocate and recurse into a child table.
-            let child_bytes = scheme.entries_at(level + 1) * 4;
-            let child_pa = alloc_table(next_free, child_bytes);
-            for j in 0..scheme.entries_at(level + 1) {
-                let _ = ram.store32(child_pa.wrapping_add(j * 4), 0);
-            }
-            let child_ppn = child_pa >> 12;
-            let _ = ram.store32(pte_addr, (child_ppn << 10) | 0x1);
-            fill_table(
-                ram,
-                child_pa,
-                level + 1,
-                scheme,
-                va_lo,
-                va_hi,
-                delta,
-                leaf_flags,
-                next_free,
-            );
-        } else {
-            // Superpage (or base-page) leaf covering this entry's range.
-            let page_mask = (entry_span as u32).wrapping_sub(1);
-            let pa_base = (va_base as u32).wrapping_add(delta) & !page_mask;
-            let ppn = pa_base >> 12;
-            let _ = ram.store32(pte_addr, (ppn << 10) | leaf_flags);
-        }
     }
 }
 

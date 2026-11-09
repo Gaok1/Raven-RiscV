@@ -101,5 +101,5 @@ pub(crate) use controls::{
     label_span,
 };
 pub(crate) use lists::{SbGeom, horizontal_scrollbar, vertical_scrollbar, visible_window};
-pub(crate) use tables::{Align, Col, DataTable, kv_styled};
+pub(crate) use tables::{Align, Col, DataTable};
 pub(crate) use toolbar::Toolbar;

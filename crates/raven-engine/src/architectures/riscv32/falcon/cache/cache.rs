@@ -244,6 +244,17 @@ impl Cache {
         Some(self.sets[idx].lines[way].data[self.config.addr_offset(addr)])
     }
 
+    /// Overwrite one byte of a resident line in place — no statistic, no
+    /// replacement update, dirtiness kept. For a write the hardware makes
+    /// behind the program's back (the page walker setting A/D), which must
+    /// land in every copy so none of them goes stale.
+    pub fn patch_byte(&mut self, addr: u32, val: u8) {
+        if let Some((idx, way)) = self.locate(addr) {
+            let offset = self.config.addr_offset(addr);
+            self.sets[idx].lines[way].data[offset] = val;
+        }
+    }
+
     /// Write all dirty lines back to RAM, then invalidate.
     pub fn flush_to_ram(&mut self, ram: &mut Ram) {
         if !self.config.is_valid_config() {

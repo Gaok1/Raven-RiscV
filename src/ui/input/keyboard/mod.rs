@@ -25,7 +25,7 @@ pub(crate) use self::serialization::{
 };
 #[cfg(test)]
 pub(crate) use self::serialization::{import_config_text, serialize_config_v3_from_app};
-pub(crate) use self::tlb_keys::select as tlb_select;
+pub(crate) use self::tlb_keys::{activate as tlb_activate, scroll as tlb_scroll, step as tlb_step};
 
 use crate::ui::app::{App, EditorMode, Tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};

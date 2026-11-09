@@ -109,6 +109,20 @@ pub const COMMENT: Color = Color::Rgb(98, 138, 112);
 /// Immediate values — steel blue (same family as metrics)
 pub const IMM_COLOR: Color = Color::Rgb(115, 178, 235);
 
+// ── Virtual-address fields (Virtual Memory tab) ──────────────────────────────
+//
+// One colour per field, the same wherever the field is drawn — in the split
+// address, in the walk that indexes a table with it, in the physical address
+// it ends up in. The offset keeps its colour from VA to PA: that it passes
+// through untouched is the point.
+
+/// The outer page-table index, VPN[1] in Sv32.
+pub const VA_VPN1: Color = Color::Rgb(115, 178, 235);
+/// The inner page-table index, VPN[0] in Sv32.
+pub const VA_VPN0: Color = Color::Rgb(232, 140, 180);
+/// The page offset.
+pub const VA_OFFSET: Color = Color::Rgb(72, 195, 168);
+
 /// The colour of a coherence state, the same wherever a state is drawn: a
 /// dirty line keeps the dirty colour, an exclusive clean one reads as "free to
 /// write", a shared one as an ordinary copy.

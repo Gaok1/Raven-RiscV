@@ -1,13 +1,10 @@
-//! Tabular helpers: a thin builder over ratatui's real `Table` plus the
-//! key/value line helpers the docs pages reach for.
+//! Tabular helpers: a thin builder over ratatui's real `Table`.
 //!
 //! Most "tables" in the older views were hand-aligned with `format!("{:<N}")`
 //! and duplicated width constants. Prefer:
 //!
 //! - [`DataTable`] when the data is genuinely columnar and benefits from a
 //!   styled header row, zebra striping and per-column alignment.
-//! - [`kv_styled`] for the two-column "key: value" blocks (e.g. the Virtual
-//!   Memory overview readout).
 
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell, Row, Table};
@@ -134,13 +131,4 @@ impl DataTable {
         }
         table
     }
-}
-
-/// A two-column "key: value" block rendered as plain `Line`s; the caller
-/// supplies already-styled spans per side and this owns the line + separator.
-pub(crate) fn kv_styled(pairs: Vec<(Span<'static>, Span<'static>)>) -> Vec<Line<'static>> {
-    pairs
-        .into_iter()
-        .map(|(k, v)| Line::from(vec![k, Span::raw(" "), v]))
-        .collect()
 }

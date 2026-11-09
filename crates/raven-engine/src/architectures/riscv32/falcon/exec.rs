@@ -259,6 +259,7 @@ fn step_inner<B: Bus>(
     console: &mut Console,
 ) -> Result<bool, FalconError> {
     let pc = cpu.pc;
+    mem.note_instruction(cpu.hart_id, pc);
     let word = mem.fetch32(pc)?;
     let instr = match crate::falcon::decoder::decode(word) {
         Ok(i) => i,

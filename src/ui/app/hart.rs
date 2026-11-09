@@ -7,9 +7,8 @@ use crate::ui::console::Console;
 
 /// Push this hart's `satp` and `priv_mode` into the shared MMU so the next
 /// translation uses the per-hart CSRs. Required before any step on a hart
-/// other than the one whose CSRs the MMU currently mirrors. Does NOT flush
-/// the TLB — translations are tagged by ASID, so cross-hart sharing is fine
-/// as long as the OS uses distinct ASIDs (or sfence.vma is issued).
+/// other than the one whose CSRs the MMU currently mirrors. The TLB needs no
+/// flush: each core keeps its own, swapped in with the core's caches.
 pub(crate) fn sync_mmu_to_cpu(mem: &mut CacheController, cpu: &Cpu) {
     let mmu = mem.mmu_mut();
     mmu.satp = crate::falcon::mmu::Satp::new(cpu.satp);

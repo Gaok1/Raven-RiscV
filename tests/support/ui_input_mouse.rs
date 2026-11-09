@@ -2,6 +2,7 @@ use super::*;
 use crate::ui::pipeline::{GanttCell, GanttRow, InstrClass, Stage, gantt_max_scroll};
 use crate::ui::view::run::run_controls_plain_text;
 use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+use raven_engine::capability::AddressTranslation;
 use ratatui::layout::Rect;
 use std::collections::VecDeque;
 
@@ -1082,73 +1083,61 @@ fn clicking_collapsed_details_rail_reopens_panel() {
     assert!(!app.run.details_collapsed);
 }
 
+/// Every control in the Virtual Memory tab is clickable exactly where it was
+/// drawn: the renderer records each one, the mouse handler only reads that.
 #[test]
-fn tlb_entries_scrollbar_click_jumps_and_drag_follows() {
-    use crate::ui::view::components::SbGeom;
+fn vm_tab_clicks_land_on_the_controls_drawn() {
+    use crate::ui::app::{VmHit, VmSubtab};
     let mut app = App::new(None);
     app.tab = Tab::Tlb;
-    // Geometry as the Entries renderer registers it: 60 rows, 20 visible,
-    // bar on column 100 over rows 5..25 (thumb at rows 6..11 for offset 0).
-    let bar = SbGeom {
-        start: 5,
-        len: 20,
-        cross: 100,
-        content: 60,
-        viewport: 20,
-        offset: 0,
-        max: 40,
+    app.splash_start = None;
+    let area = Rect::new(0, 0, 160, 40);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+        area.width,
+        area.height,
+    ))
+    .expect("terminal");
+    let mut click = |app: &mut App, hit: VmHit| {
+        terminal
+            .draw(|f| crate::ui::view::ui(f, app))
+            .expect("render");
+        let rect = app
+            .tlb
+            .hits
+            .borrow()
+            .iter()
+            .find(|(h, _)| *h == hit)
+            .map(|(_, r)| *r)
+            .unwrap_or_else(|| panic!("{hit:?} was not drawn"));
+        handle_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: rect.x,
+                row: rect.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        );
     };
-    app.tlb.entries_sb.set(Some(bar));
 
-    // Down on the track jumps the thumb under the cursor and starts the drag.
-    handle_mouse(
-        &mut app,
-        MouseEvent {
-            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 100,
-            row: 15,
-            modifiers: KeyModifiers::NONE,
-        },
-        Rect::new(0, 0, 160, 40),
-    );
-    let (grab, jumped) = bar.begin_drag(15);
-    assert!(app.tlb.entries_sb_drag.is_some());
-    assert_eq!(app.tlb.entries_scroll, jumped);
-    let thumb = SbGeom {
-        offset: jumped,
-        ..bar
-    }
-    .thumb();
+    click(&mut app, VmHit::Subtab(VmSubtab::Config));
+    assert_eq!(app.tlb.vm_subtab, VmSubtab::Config);
+
+    // Choosing auto writes the map at once: translation starts with no reload.
+    click(&mut app, VmHit::Mode(crate::falcon::mmu::VmMode::Auto));
+    assert_eq!(app.vm_mode(), crate::falcon::mmu::VmMode::Auto);
     assert!(
-        (thumb.0..thumb.0 + thumb.1).contains(&15),
-        "thumb under cursor"
+        app.translation().is_some_and(|t| t.enabled()),
+        "auto mode translates the moment it is chosen"
     );
 
-    // Dragging keeps the grabbed thumb cell glued to the cursor (clamped at max).
-    handle_mouse(
-        &mut app,
-        MouseEvent {
-            kind: MouseEventKind::Drag(crossterm::event::MouseButton::Left),
-            column: 90,
-            row: 24,
-            modifiers: KeyModifiers::NONE,
-        },
-        Rect::new(0, 0, 160, 40),
-    );
-    assert_eq!(app.tlb.entries_scroll, bar.drag(24, grab));
+    click(&mut app, VmHit::Entries(64));
+    assert_eq!(app.tlb.pending.entry_count, 64);
+    assert_eq!(app.translation().unwrap().tlb_len(), 64);
 
-    // Up ends the drag; further drags are ignored.
-    handle_mouse(
-        &mut app,
-        MouseEvent {
-            kind: MouseEventKind::Up(crossterm::event::MouseButton::Left),
-            column: 90,
-            row: 24,
-            modifiers: KeyModifiers::NONE,
-        },
-        Rect::new(0, 0, 160, 40),
-    );
-    assert!(app.tlb.entries_sb_drag.is_none());
+    click(&mut app, VmHit::Subtab(VmSubtab::Walk));
+    assert_eq!(app.tlb.vm_subtab, VmSubtab::Walk);
 }
 
 #[test]

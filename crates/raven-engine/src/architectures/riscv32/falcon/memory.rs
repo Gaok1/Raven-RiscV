@@ -200,6 +200,10 @@ pub trait Bus {
     /// Update the hart's current privilege level (used by `mret`/trap entry).
     fn set_priv_mode(&mut self, _mode: PrivMode) {}
 
+    /// Name the instruction whose accesses come next, so a translation trace
+    /// can say which instruction asked. Default no-op.
+    fn note_instruction(&mut self, _hart: u32, _pc: u32) {}
+
     /// Take the request a store to `tohost` left for the host, if any.
     ///
     /// The store only records it; every execution path collects it at the

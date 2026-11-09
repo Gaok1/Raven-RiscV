@@ -6,6 +6,7 @@ pub mod console {
 }
 pub mod debug_hitboxes;
 pub mod editor;
+pub(crate) mod guide;
 pub(crate) mod input;
 pub mod pipeline;
 mod platform;

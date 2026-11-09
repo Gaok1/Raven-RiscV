@@ -165,11 +165,14 @@ impl Falcon {
         cpu.heap_break = (bss_end.wrapping_add(15)) & !15;
 
         if self.vm {
-            let root_pa = (self.mem_size as u32).saturating_sub(4096);
-            crate::falcon::mmu::Mmu::install_identity_megapages(&mut mem.ram, root_pa);
-            let satp = (1u32 << 31) | (root_pa >> 12);
-            cpu.satp = satp;
-            mem.mmu.satp = crate::falcon::mmu::Satp::new(satp);
+            // The tables go below the stack, which grows down from the top.
+            let mem_size = self.mem_size as u32;
+            let stack = (mem_size / 2).clamp(4096, 64 * 1024);
+            cpu.satp = mem.install_auto_map(
+                mem_size - stack,
+                crate::falcon::mmu::PageMapSpec::default(),
+                (0, 0),
+            )?;
         }
 
         mem.invalidate_all();

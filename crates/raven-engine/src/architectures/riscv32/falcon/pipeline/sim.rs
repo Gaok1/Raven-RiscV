@@ -912,6 +912,7 @@ pub(super) fn stage_mem(
         Some(a) => a,
         None => return (0, false, None), // no memory op for this instruction
     };
+    crate::falcon::memory::Bus::note_instruction(mem, cpu.hart_id, slot.pc);
 
     let mut latency = 0u64;
     let mut faulted = false;

@@ -10,6 +10,7 @@ mod run_state;
 mod runtime;
 mod settings_state;
 mod tlb_state;
+mod vm;
 
 use self::cpi::classify_cpi_cycles;
 pub(crate) use self::cpi::{classify_cpi_for_display, cpi_class_label};
@@ -42,7 +43,10 @@ pub(crate) use self::settings_state::{
     SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState,
     nearest_pow2_clamp,
 };
-pub(crate) use self::tlb_state::{TlbHoverTarget, TlbState, VmSettingsField, VmSubtab};
+pub(crate) use self::tlb_state::{
+    HistoryFilter, MAP_COLUMNS, TlbState, VmField, VmHit, VmSubtab, WalkFollow,
+};
+pub(crate) use self::vm::{MapColumn, MapRow};
 
 use super::{
     console::Console,
@@ -276,6 +280,112 @@ impl CacheHierarchy for CoreCaches<'_> {
     }
 }
 
+/// Address translation seen from one core: its own TLB, and only the
+/// translations its hart made. With a single core it answers exactly as the
+/// backend does.
+#[derive(Clone, Copy)]
+pub(crate) struct CoreTranslation<'a> {
+    pub(crate) inner: &'a dyn AddressTranslation,
+    pub(crate) core: usize,
+    /// Whose translations the history keeps: `None` keeps them all (one
+    /// core), `Some(None)` none (a core with no hart on it yet).
+    pub(crate) hart: Option<Option<u32>>,
+}
+
+impl AddressTranslation for CoreTranslation<'_> {
+    fn scheme(&self) -> raven_engine::capability::TranslationScheme {
+        self.inner.scheme()
+    }
+
+    fn enabled(&self) -> bool {
+        self.inner.enabled()
+    }
+
+    fn idle_reason(&self) -> Option<String> {
+        self.inner.idle_reason()
+    }
+
+    fn root_table(&self) -> Option<u64> {
+        self.inner.root_table()
+    }
+
+    fn tlb_stats(&self) -> raven_engine::capability::TlbStatistics {
+        self.inner.core_tlb_stats(self.core)
+    }
+
+    fn tlb_len(&self) -> usize {
+        self.inner.tlb_len()
+    }
+
+    fn tlb_entry(&self, index: usize) -> Option<raven_engine::capability::TlbEntryView> {
+        self.inner.core_tlb_entry(self.core, index)
+    }
+
+    fn tlb_sets(&self) -> usize {
+        self.inner.tlb_sets()
+    }
+
+    fn tlb_policy(&self) -> String {
+        self.inner.tlb_policy()
+    }
+
+    fn tlb_enabled(&self) -> bool {
+        self.inner.tlb_enabled()
+    }
+
+    fn probe(&self, address: u64) -> raven_engine::capability::TranslationRecordView {
+        self.inner.core_probe(self.core, address)
+    }
+
+    fn recent(&self) -> Vec<raven_engine::capability::TranslationRecordView> {
+        let mut records = self.inner.recent();
+        if let Some(hart) = self.hart {
+            records.retain(|rec| Some(rec.hart) == hart);
+        }
+        records
+    }
+
+    fn read_table(
+        &self,
+        address: u64,
+        level: usize,
+    ) -> Vec<raven_engine::capability::TableEntryView> {
+        self.inner.read_table(address, level)
+    }
+
+    fn hit_rate_history(&self) -> Vec<(f64, f64)> {
+        self.inner.core_hit_rate_history(self.core)
+    }
+
+    fn tlb_count(&self) -> usize {
+        self.inner.tlb_count()
+    }
+
+    fn core_tlb_stats(&self, core: usize) -> raven_engine::capability::TlbStatistics {
+        self.inner.core_tlb_stats(core)
+    }
+
+    fn core_tlb_entry(
+        &self,
+        core: usize,
+        index: usize,
+    ) -> Option<raven_engine::capability::TlbEntryView> {
+        self.inner.core_tlb_entry(core, index)
+    }
+
+    fn core_hit_rate_history(&self, core: usize) -> Vec<(f64, f64)> {
+        self.inner.core_hit_rate_history(core)
+    }
+
+    fn core_probe(
+        &self,
+        core: usize,
+        address: u64,
+    ) -> raven_engine::capability::TranslationRecordView {
+        self.inner.core_probe(core, address)
+    }
+}
+
 /// Cycles and retired instructions as the active backend counts them.
 ///
 /// Built by [`App::execution_totals`]; `cpi` is derived rather than stored so
@@ -379,6 +489,8 @@ pub struct App {
 
     // Interactive guided tutorial ([?] button)
     pub tutorial: TutorialState,
+    /// The help guide overlay, for tabs that have one.
+    pub(crate) guide: crate::ui::guide::GuideState,
 }
 
 pub(super) fn compute_find_matches(query: &str, lines: &[String]) -> Vec<(usize, usize)> {
@@ -669,6 +781,7 @@ impl App {
             splash_start: Some(Instant::now()),
             path_input: PathInput::new(),
             tutorial: TutorialState::default(),
+            guide: crate::ui::guide::GuideState::default(),
             settings: SettingsState::default(),
             max_cores: 4,
             selected_core: 0,
@@ -948,8 +1061,14 @@ impl App {
             .is_some_and(|caches| caches.is_configurable())
     }
 
-    pub(crate) fn translation(&self) -> Option<&dyn AddressTranslation> {
-        self.machine.translation()
+    /// Address translation as the selected core sees it: its TLB, its
+    /// hart's translations.
+    pub(crate) fn translation(&self) -> Option<CoreTranslation<'_>> {
+        let inner = self.machine.translation()?;
+        let cores = inner.tlb_count().max(1);
+        let core = self.selected_core.min(cores - 1);
+        let hart = (cores > 1).then(|| self.core_hart_id(core));
+        Some(CoreTranslation { inner, core, hart })
     }
 
     /// The register bank the sidebar is showing, clamped to what this backend
@@ -1347,6 +1466,21 @@ impl App {
     }
 
     /// Add a file tab with the given content and switch to it (Ctrl+O / import).
+    /// The help for the tab on screen: its guide when it has one, else its
+    /// guided tour, else its list of keys. The guide offers the tour itself.
+    pub(crate) fn open_help(&mut self) {
+        if crate::ui::guide::guide(self.tab, self.tutorial.lang).is_some() {
+            self.guide.open();
+        } else if !matches!(self.tab, Tab::Docs)
+            && !crate::ui::tutorial::get_steps(self.tab).is_empty()
+        {
+            crate::ui::tutorial::start_tutorial(self);
+        } else {
+            self.help_open = !self.help_open;
+            self.help_page = 0;
+        }
+    }
+
     pub(crate) fn add_file_with_lines(&mut self, name: String, lines: Vec<String>) {
         let mut name = name;
         while self.editor.files.iter().any(|f| f.name == name) {
@@ -1816,237 +1950,6 @@ impl App {
         }
         // Select the newly added level
         self.cache.selected_level = self.cache.extra_pending.len(); // 1-based (L1=0)
-    }
-
-    // ── TLB helpers ─────────────────────────────────────────────────────────
-
-    pub(crate) fn flush_tlb(&mut self) {
-        if let Some(runtime) = self.rv32_mut() {
-            runtime.mem_mut_unjournaled().mmu_mut().tlb.flush();
-        }
-        self.tlb.config_status = Some("TLB flushed".into());
-        self.tlb.config_error = None;
-    }
-
-    // ── VM Settings panel helpers ──────────────────────────────────────────
-
-    /// The string shown when a numeric VM-settings field enters edit mode.
-    pub(crate) fn vm_field_value_str(&self, field: VmSettingsField) -> String {
-        use crate::falcon::mmu::MapKind;
-        match field {
-            VmSettingsField::Offset => match self.tlb.pending_map.kind {
-                MapKind::Offset(v) => v.to_string(),
-                _ => "0".into(),
-            },
-            VmSettingsField::OffsetBits => self.tlb.pending_scheme.offset_bits.to_string(),
-            VmSettingsField::LevelBits(i) => self
-                .tlb
-                .pending_scheme
-                .level_bits
-                .get(i)
-                .copied()
-                .unwrap_or(0)
-                .to_string(),
-            VmSettingsField::Asid => self.tlb.pending_map.asid.to_string(),
-            VmSettingsField::TlbEntries => self.tlb.pending.entry_count.to_string(),
-            VmSettingsField::TlbAssoc => self.tlb.pending.associativity.to_string(),
-            VmSettingsField::TlbHitLat => self.tlb.pending.hit_latency.to_string(),
-            VmSettingsField::TlbMissLat => self.tlb.pending.miss_penalty.to_string(),
-            _ => String::new(),
-        }
-    }
-
-    /// Commit the in-progress numeric VM-settings edit into the pending state.
-    pub(crate) fn commit_vm_edit(&mut self) {
-        use crate::falcon::mmu::MapKind;
-        let Some(field) = self.tlb.vm_edit_field else {
-            return;
-        };
-        let buf = self.tlb.vm_edit_buf.trim().to_string();
-        match field {
-            VmSettingsField::Offset => match buf.parse::<i32>() {
-                Ok(v) => {
-                    self.tlb.pending_map.kind = MapKind::Offset(v);
-                    self.tlb.map_status = None;
-                }
-                Err(_) if buf.is_empty() || buf == "-" => {
-                    self.tlb.pending_map.kind = MapKind::Offset(0);
-                }
-                Err(_) => {
-                    self.tlb.map_status = Some("offset must be an integer (MiB)".into());
-                }
-            },
-            VmSettingsField::OffsetBits => {
-                if let Ok(v) = buf.parse::<u8>() {
-                    self.tlb.pending_scheme.offset_bits = v.clamp(12, 30);
-                    self.tlb.map_status = None;
-                }
-            }
-            VmSettingsField::LevelBits(i) => {
-                if let Ok(v) = buf.parse::<u8>() {
-                    if let Some(b) = self.tlb.pending_scheme.level_bits.get_mut(i) {
-                        *b = v.clamp(1, 12);
-                    }
-                    self.tlb.map_status = None;
-                }
-            }
-            VmSettingsField::Asid => {
-                if let Ok(v) = buf.parse::<u16>() {
-                    self.tlb.pending_map.asid = v.min(511);
-                    self.tlb.map_status = None;
-                }
-            }
-            VmSettingsField::TlbEntries => {
-                if let Ok(v) = buf.parse::<u16>() {
-                    self.tlb.pending.entry_count = v.clamp(1, 4096);
-                }
-            }
-            VmSettingsField::TlbAssoc => {
-                if let Ok(v) = buf.parse::<u8>() {
-                    self.tlb.pending.associativity = v.clamp(1, 64);
-                }
-            }
-            VmSettingsField::TlbHitLat => {
-                if let Ok(v) = buf.parse::<u8>() {
-                    self.tlb.pending.hit_latency = v;
-                }
-            }
-            VmSettingsField::TlbMissLat => {
-                if let Ok(v) = buf.parse::<u8>() {
-                    self.tlb.pending.miss_penalty = v;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Toggle / cycle a non-numeric VM-settings control (click action).
-    pub(crate) fn toggle_vm_field(&mut self, field: VmSettingsField) {
-        use crate::falcon::cache::ReplacementPolicy;
-        use crate::falcon::mmu::MapKind;
-        self.tlb.map_status = None;
-        match field {
-            VmSettingsField::Mode => {
-                let next = self.vm_mode().cycle();
-                self.set_vm_mode(next);
-            }
-            VmSettingsField::TlbEnabled => {
-                self.set_tlb_enabled(!self.session.tlb_enabled);
-            }
-            VmSettingsField::Kind => {
-                self.tlb.pending_map.kind = match self.tlb.pending_map.kind {
-                    MapKind::Identity => MapKind::Offset(0),
-                    MapKind::Offset(_) => MapKind::Identity,
-                };
-            }
-            VmSettingsField::AddLevel => {
-                if self.tlb.pending_scheme.level_bits.len() < 4 {
-                    self.tlb.pending_scheme.level_bits.push(10);
-                }
-            }
-            VmSettingsField::RemoveLevel => {
-                if self.tlb.pending_scheme.level_bits.len() > 1 {
-                    self.tlb.pending_scheme.level_bits.pop();
-                }
-            }
-            VmSettingsField::PermR => self.tlb.pending_map.perms.r ^= true,
-            VmSettingsField::PermW => self.tlb.pending_map.perms.w ^= true,
-            VmSettingsField::PermX => self.tlb.pending_map.perms.x ^= true,
-            VmSettingsField::PermU => self.tlb.pending_map.perms.u ^= true,
-            VmSettingsField::Global => self.tlb.pending_map.global ^= true,
-            VmSettingsField::TlbReplacement => {
-                self.tlb.pending.replacement = match self.tlb.pending.replacement {
-                    ReplacementPolicy::Lru => ReplacementPolicy::Mru,
-                    ReplacementPolicy::Mru => ReplacementPolicy::Fifo,
-                    ReplacementPolicy::Fifo => ReplacementPolicy::Random,
-                    ReplacementPolicy::Random => ReplacementPolicy::Lfu,
-                    ReplacementPolicy::Lfu => ReplacementPolicy::Clock,
-                    ReplacementPolicy::Clock => ReplacementPolicy::Lru,
-                };
-            }
-            // Numeric fields enter edit mode via the mouse/keyboard handlers.
-            _ => {}
-        }
-    }
-
-    /// Apply the whole VM Settings panel: TLB geometry, then the page map +
-    /// paging scheme (in the didactic auto modes).
-    pub(crate) fn apply_vm_settings(&mut self) {
-        let cfg = self.tlb.pending.clone();
-        if cfg.associativity < 1 || cfg.entry_count < cfg.associativity as u16 {
-            self.tlb.map_status = Some("TLB: entry count must be ≥ associativity ≥ 1".into());
-            return;
-        }
-        let Some(runtime) = self.rv32_mut() else {
-            return;
-        };
-        runtime.mem_mut_unjournaled().mmu_mut().tlb.reconfigure(cfg);
-        if self.session.vm_mode.is_auto() {
-            self.apply_page_map();
-        } else {
-            // Manual / Off: the map is program-driven; only the TLB applies.
-            self.tlb.map_status = Some("TLB applied (map is program-driven in this mode)".into());
-        }
-    }
-
-    /// Apply the pending paging scheme + map: rewrite the root page table in
-    /// RAM and re-point satp. Only valid in the didactic auto modes (Sv32 /
-    /// Custom), where the simulator owns the page tables.
-    pub(crate) fn apply_page_map(&mut self) {
-        use crate::falcon::mmu::{Mmu, Satp, VmMode};
-        if !self.session.vm_mode.is_auto() {
-            self.tlb.map_status = Some("set VM mode to Sv32 or Custom first".into());
-            return;
-        }
-        // In Custom mode validate the user scheme before touching RAM.
-        let scheme = if matches!(self.session.vm_mode, VmMode::Custom) {
-            if !self.tlb.pending_scheme.is_valid() {
-                self.tlb.map_status =
-                    Some("invalid scheme: index+offset bits must total 32".into());
-                return;
-            }
-            self.tlb.pending_scheme.clone()
-        } else {
-            crate::falcon::mmu::PagingScheme::sv32()
-        };
-        let root_pa = scheme.root_pa(self.session.mem_size as u32);
-        let window = (
-            self.session.base_pc.min(self.session.data_base),
-            self.session.heap_start,
-        );
-        let spec = self.tlb.pending_map;
-        let Some(runtime) = self.rv32_mut() else {
-            return;
-        };
-        Mmu::install_map_scheme(
-            &mut runtime.mem_mut_unjournaled().ram,
-            root_pa,
-            &scheme,
-            spec,
-            window,
-        );
-        let satp_val = Mmu::make_satp(root_pa, spec.asid);
-        runtime.cpu_mut_unjournaled().satp = satp_val;
-        let mmu = runtime.mem_mut_unjournaled().mmu_mut();
-        mmu.set_scheme(scheme);
-        mmu.satp = Satp::new(satp_val);
-        mmu.force_translate = true;
-        // Stale cached translations would mask the new map.
-        mmu.tlb.flush();
-        self.tlb.page_map = spec;
-        self.tlb.map_status = Some("Map applied (TLB flushed)".into());
-    }
-
-    pub(crate) fn apply_tlb_preset(&mut self, idx: usize) {
-        use crate::falcon::cache::ReplacementPolicy;
-        let (entries, assoc) = match idx {
-            0 => (16u16, 4u8),
-            1 => (32u16, 4u8),
-            _ => (64u16, 8u8),
-        };
-        self.tlb.pending.entry_count = entries;
-        self.tlb.pending.associativity = assoc;
-        self.tlb.pending.replacement = ReplacementPolicy::Lru;
     }
 
     /// Delete the currently selected session snapshot, fixing up the scroll

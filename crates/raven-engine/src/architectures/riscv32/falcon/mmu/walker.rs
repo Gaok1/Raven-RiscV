@@ -1,18 +1,18 @@
-﻿// falcon/mmu/walker.rs â€” Sv32 2-level page-table walker.
+// falcon/mmu/walker.rs — Sv32 2-level page-table walker.
 //
-// Sv32 (RISC-V volume 2, Â§4.3): two-level table, 10+10+12 split, 4 KiB / 4 MiB
-// page sizes. `walk` is invoked by `Mmu::translate` on a TLB miss. On success
-// the walker auto-sets A (and D on Store) directly in the PTE â€” a pedagogical
-// shortcut that avoids a second trap round-trip.
-
-#![allow(dead_code)]
+// Sv32 (RISC-V volume 2, §4.3): a two-level table, a 10+10+12 split, 4 KiB
+// pages and 4 MiB megapages. `walk` runs on a TLB miss and reports every PTE it
+// read, so a viewer can replay the walk. On success it sets A (and D on a
+// store) in the leaf PTE itself — the hardware-managed flavour the spec allows,
+// which spares the program a trap round-trip.
 
 use super::tlb::PtePerms;
-use super::{AccessType, PageFault, PrivMode};
-use crate::falcon::memory::Ram;
+use super::trace::{FaultReason, WalkStep};
+use super::{AccessType, LEVELS, PAGE_BITS, PrivMode, VPN_BITS};
+use crate::falcon::memory::{Bus, Ram};
 
 /// Sv32 PTE bit layout (32 bits):
-///   bits 31-10: PPN (22 bits, combined `PPN[1]:PPN[0]`)  â† `paddr >> 12`
+///   bits 31-10: PPN (22 bits, `PPN[1]:PPN[0]`) ← `paddr >> 12`
 ///   bits  9- 8: RSW (software reserved)
 ///   bit 7 : D (dirty)
 ///   bit 6 : A (accessed)
@@ -23,201 +23,235 @@ use crate::falcon::memory::Ram;
 ///   bit 1 : R (read)
 ///   bit 0 : V (valid)
 ///
-/// Encoding: `PTE = (ppn << 10) | flags`, where `ppn = physical_address >> 12`.
-/// A non-leaf (pointer) PTE has R=W=X=0 and V=1; a leaf has at least one of R/W/X set.
+/// A pointer PTE has R=W=X=0 and V=1; a leaf has at least one of R/W/X set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pte {
     pub raw: u32,
 }
+
+pub const PTE_V: u32 = 1 << 0;
+pub const PTE_R: u32 = 1 << 1;
+pub const PTE_W: u32 = 1 << 2;
+pub const PTE_X: u32 = 1 << 3;
+pub const PTE_U: u32 = 1 << 4;
+pub const PTE_G: u32 = 1 << 5;
+pub const PTE_A: u32 = 1 << 6;
+pub const PTE_D: u32 = 1 << 7;
 
 impl Pte {
     pub fn new(raw: u32) -> Self {
         Self { raw }
     }
     pub fn valid(self) -> bool {
-        self.raw & 0x1 != 0
+        self.raw & PTE_V != 0
     }
     pub fn perms(self) -> PtePerms {
         PtePerms {
-            r: self.raw & 0x2 != 0,
-            w: self.raw & 0x4 != 0,
-            x: self.raw & 0x8 != 0,
-            u: self.raw & 0x10 != 0,
+            r: self.raw & PTE_R != 0,
+            w: self.raw & PTE_W != 0,
+            x: self.raw & PTE_X != 0,
+            u: self.raw & PTE_U != 0,
         }
     }
     pub fn global(self) -> bool {
-        self.raw & 0x20 != 0
+        self.raw & PTE_G != 0
     }
     pub fn accessed(self) -> bool {
-        self.raw & 0x40 != 0
+        self.raw & PTE_A != 0
     }
     pub fn dirty(self) -> bool {
-        self.raw & 0x80 != 0
+        self.raw & PTE_D != 0
     }
     /// Combined 22-bit PPN (`PPN[1]:PPN[0]`).
     pub fn ppn(self) -> u32 {
         (self.raw >> 10) & 0x003F_FFFF
     }
-    pub fn ppn0(self) -> u32 {
-        (self.raw >> 10) & 0x3FF
-    }
-    pub fn ppn1(self) -> u32 {
-        (self.raw >> 20) & 0xFFF
-    }
     /// A leaf PTE has at least one of R/W/X set.
     pub fn is_leaf(self) -> bool {
-        let p = self.perms();
-        p.r || p.w || p.x
+        self.raw & (PTE_R | PTE_W | PTE_X) != 0
+    }
+    /// W without R is reserved for future use, and faults.
+    pub fn is_reserved(self) -> bool {
+        self.raw & (PTE_R | PTE_W) == PTE_W
+    }
+    /// Physical address of the table a pointer PTE names, or of a leaf's frame.
+    pub fn target(self) -> u32 {
+        self.ppn() << PAGE_BITS
     }
 }
 
-/// Result of a successful page-table walk.
+/// Where the walker reads and writes PTEs. Plain [`Ram`] for tests; the cache
+/// controller answers with the value the caches hold, so a PTE the program
+/// just stored is seen even while it still sits dirty in the D-cache.
+pub trait PteMemory {
+    fn read_pte(&mut self, pa: u32) -> Option<u32>;
+    fn write_pte(&mut self, pa: u32, value: u32) -> bool;
+}
+
+impl PteMemory for Ram {
+    fn read_pte(&mut self, pa: u32) -> Option<u32> {
+        self.load32(pa).ok()
+    }
+    fn write_pte(&mut self, pa: u32, value: u32) -> bool {
+        self.store32(pa, value).is_ok()
+    }
+}
+
+/// Whether a page with `perms` may be touched by `access` from `priv_mode`.
+/// One check for both a TLB hit and a fresh walk. `mstatus.SUM`/`MXR` are not
+/// modelled: S-mode never touches U pages.
+pub fn check_access(
+    perms: PtePerms,
+    access: AccessType,
+    priv_mode: PrivMode,
+) -> Result<(), FaultReason> {
+    let allowed = match access {
+        AccessType::Fetch => perms.x,
+        AccessType::Load => perms.r,
+        AccessType::Store => perms.w,
+    };
+    if !allowed {
+        return Err(FaultReason::NotPermitted);
+    }
+    match priv_mode {
+        PrivMode::U if !perms.u => Err(FaultReason::SupervisorPage),
+        PrivMode::S if perms.u => Err(FaultReason::UserPage),
+        _ => Ok(()),
+    }
+}
+
+/// The leaf a successful walk ended on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WalkResult {
-    /// Leaf PPN (frame number = `paddr >> 12`), as stored in the PTE. For a
-    /// superpage the low `(page_bits-12)` bits are zero; the caller reassembles
-    /// the physical address using `page_bits`.
+pub struct Leaf {
+    /// Leaf PPN as the PTE stores it. A megapage's low 10 bits are zero.
     pub ppn: u32,
     pub perms: PtePerms,
     pub global: bool,
-    /// log2 of the page size in bytes (e.g. 12 = 4 KiB, 22 = 4 MiB superpage).
-    pub page_bits: u8,
-    /// Level at which the leaf PTE was found (0 = top).
-    pub leaf_level: u8,
+    pub megapage: bool,
+    /// A was clear before this walk: the first touch since the PTE was written.
+    pub first_touch: bool,
+    /// D is set in the PTE now (it was, or this walk set it).
+    pub dirty: bool,
+    pub set_accessed: bool,
+    pub set_dirty: bool,
 }
 
-/// Walk the page table rooted at `root_ppn` for `vaddr`, using the parametric
-/// [`PagingScheme`](super::PagingScheme) (number of levels, per-level index
-/// widths and page-offset width â€” Sv32 is the `offset=12, levels=[10,10]`
-/// preset). A leaf PTE (R|W|X set) may occur at any level, yielding a superpage.
+/// Everything one walk did: the PTEs it read, outermost first, and where it
+/// ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Walk {
+    pub steps: [WalkStep; LEVELS],
+    pub step_count: u8,
+    pub result: Result<Leaf, FaultReason>,
+}
+
+impl Walk {
+    pub fn steps(&self) -> &[WalkStep] {
+        &self.steps[..self.step_count as usize]
+    }
+}
+
+/// Walk the Sv32 table rooted at `root_ppn` for `vaddr`.
 ///
-/// On success the leaf PTE has its A bit set, and D set on `Store`. RAM is
-/// updated in place; the caller does not need to do a separate writeback.
-pub fn walk(
-    scheme: &super::PagingScheme,
+/// With `update` set, a successful walk writes A (and D on a store) back into
+/// the leaf PTE; a read-only "what if" walk for a viewer passes `false`.
+pub fn walk<M: PteMemory + ?Sized>(
     root_ppn: u32,
     vaddr: u32,
-    ram: &mut Ram,
     access: AccessType,
     priv_mode: PrivMode,
-) -> Result<WalkResult, PageFault> {
-    let cause = access.page_fault_cause();
-    let fault = |_| PageFault { cause, vaddr };
+    mem: &mut M,
+    update: bool,
+) -> Walk {
+    let mut out = Walk {
+        steps: [WalkStep::default(); LEVELS],
+        step_count: 0,
+        result: Err(FaultReason::NoLeaf),
+    };
+    let mut table = root_ppn << PAGE_BITS;
 
-    let offset_bits = scheme.offset_bits as u32;
-    let n = scheme.level_bits.len();
-    // `shift` tracks the low bit position of the current level's index. It
-    // starts at the top (offset + all index bits == 32) and descends.
-    let mut shift = offset_bits + scheme.level_bits.iter().map(|b| *b as u32).sum::<u32>();
-    // Page tables are frame-granular (4 KiB) regardless of the page offset.
-    let mut table_pa = root_ppn << 12;
-
-    for level in 0..n {
-        let lb = scheme.level_bits[level] as u32;
-        shift -= lb;
-        let idx = (vaddr >> shift) & ((1u32 << lb) - 1);
-        let pte_addr = table_pa.wrapping_add(idx * 4);
-        let pte = Pte::new(load_pte(ram, pte_addr).map_err(fault)?);
+    // Level 1 is the root (VPN[1]); level 0 is the leaf table (VPN[0]).
+    for level in (0..LEVELS).rev() {
+        let shift = PAGE_BITS + VPN_BITS * level as u32;
+        let index = (vaddr >> shift) & ((1 << VPN_BITS) - 1);
+        let pte_addr = table.wrapping_add(index * 4);
+        let Some(raw) = mem.read_pte(pte_addr) else {
+            out.result = Err(FaultReason::OutsideMemory);
+            out.steps[out.step_count as usize] = WalkStep {
+                level: level as u8,
+                index: index as u16,
+                pte_addr,
+                ..WalkStep::default()
+            };
+            out.step_count += 1;
+            return out;
+        };
+        let pte = Pte::new(raw);
+        out.steps[out.step_count as usize] = WalkStep {
+            level: level as u8,
+            index: index as u16,
+            pte_addr,
+            pte: raw,
+            ..WalkStep::default()
+        };
+        out.step_count += 1;
 
         if !pte.valid() {
-            return Err(PageFault { cause, vaddr });
+            out.result = Err(FaultReason::NotValid);
+            return out;
         }
-        let p = pte.perms();
-        if p.w && !p.r {
-            // Reserved encoding (W=1, R=0).
-            return Err(PageFault { cause, vaddr });
+        if pte.is_reserved() {
+            out.result = Err(FaultReason::Reserved);
+            return out;
         }
-
         if !pte.is_leaf() {
-            // Pointer PTE â†’ descend to the next level.
-            table_pa = pte.ppn() << 12;
+            if level == 0 {
+                out.result = Err(FaultReason::NoLeaf);
+                return out;
+            }
+            table = pte.target();
             continue;
         }
 
-        // â”€â”€ Leaf (possibly a superpage at this level) â”€â”€
-        // `page_bits == shift`: offset + the index bits of all lower levels.
-        let page_bits = shift;
-        // Misaligned superpage: the frame must be aligned to the page size, i.e.
-        // the low `(page_bits - 12)` bits of the PPN must be zero.
-        if page_bits > 12 {
-            let align_mask = (1u32 << (page_bits - 12)) - 1;
-            if pte.ppn() & align_mask != 0 {
-                return Err(PageFault { cause, vaddr });
-            }
+        // A leaf at level 1 is a megapage: its frame must be 4 MiB-aligned.
+        let megapage = level == 1;
+        if megapage && pte.ppn() & ((1 << VPN_BITS) - 1) != 0 {
+            out.result = Err(FaultReason::Misaligned);
+            return out;
+        }
+        if let Err(reason) = check_access(pte.perms(), access, priv_mode) {
+            out.result = Err(reason);
+            return out;
         }
 
-        // â”€â”€ Permission check â”€â”€
-        match access {
-            AccessType::Fetch => {
-                if !p.x {
-                    return Err(PageFault { cause, vaddr });
-                }
+        let set_accessed = !pte.accessed();
+        let set_dirty = matches!(access, AccessType::Store) && !pte.dirty();
+        if update && (set_accessed || set_dirty) {
+            let mut updated = raw;
+            if set_accessed {
+                updated |= PTE_A;
             }
-            AccessType::Load => {
-                if !p.r {
-                    return Err(PageFault { cause, vaddr });
-                }
+            if set_dirty {
+                updated |= PTE_D;
             }
-            AccessType::Store => {
-                if !p.w {
-                    return Err(PageFault { cause, vaddr });
-                }
+            if !mem.write_pte(pte_addr, updated) {
+                out.result = Err(FaultReason::OutsideMemory);
+                return out;
             }
         }
-
-        // â”€â”€ Privilege check â”€â”€
-        match priv_mode {
-            PrivMode::U => {
-                if !p.u {
-                    return Err(PageFault { cause, vaddr });
-                }
-            }
-            PrivMode::S => {
-                // Phase 2 ignores mstatus.SUM: S-mode cannot touch U pages.
-                if p.u {
-                    return Err(PageFault { cause, vaddr });
-                }
-            }
-            PrivMode::M => {
-                // Should not happen â€” Mmu::translate short-circuits in M-mode.
-            }
-        }
-
-        // â”€â”€ A / D writeback (pedagogical: walker does it) â”€â”€
-        let need_a = !pte.accessed();
-        let need_d = matches!(access, AccessType::Store) && !pte.dirty();
-        if need_a || need_d {
-            let mut raw = pte.raw;
-            if need_a {
-                raw |= 0x40;
-            }
-            if need_d {
-                raw |= 0x80;
-            }
-            store_pte(ram, pte_addr, raw).map_err(fault)?;
-        }
-
-        return Ok(WalkResult {
+        out.result = Ok(Leaf {
             ppn: pte.ppn(),
-            perms: p,
+            perms: pte.perms(),
             global: pte.global(),
-            page_bits: page_bits as u8,
-            leaf_level: level as u8,
+            megapage,
+            first_touch: set_accessed,
+            dirty: pte.dirty() || set_dirty,
+            set_accessed: update && set_accessed,
+            set_dirty: update && set_dirty,
         });
+        return out;
     }
-
-    // Ran out of levels without finding a leaf (last-level PTE was a pointer).
-    Err(PageFault { cause, vaddr })
-}
-
-fn load_pte(ram: &Ram, addr: u32) -> Result<u32, ()> {
-    use crate::falcon::memory::Bus;
-    ram.load32(addr).map_err(|_| ())
-}
-
-fn store_pte(ram: &mut Ram, addr: u32, val: u32) -> Result<(), ()> {
-    use crate::falcon::memory::Bus;
-    ram.store32(addr, val).map_err(|_| ())
+    out
 }
 
 #[cfg(test)]

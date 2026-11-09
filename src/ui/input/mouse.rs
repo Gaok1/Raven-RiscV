@@ -1,5 +1,8 @@
 use crate::falcon::machine::types::MemWidth;
-use crate::ui::input::keyboard::{do_export_config, do_export_results, do_import_config};
+use crate::ui::input::keyboard::{
+    do_export_config, do_export_results, do_import_config, tlb_activate, tlb_scroll, tlb_step,
+};
+use crate::ui::app::VmHit;
 use crate::ui::platform::OSFileDialog;
 use crate::ui::view::components::SbGeom;
 use crate::ui::view::components::layout;
@@ -51,6 +54,11 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         return;
     }
 
+    if app.guide.open {
+        handle_guide_mouse(app, me);
+        return;
+    }
+
     if app.help_open {
         // Clicking anywhere outside the popup closes it; click inside does page nav
         handle_help_popup_mouse(app, me, area);
@@ -75,14 +83,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         if me.column >= help.x && me.column < help.x + help.width {
             app.hover_help = true;
             if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                if !matches!(app.tab, Tab::Docs)
-                    && !crate::ui::tutorial::get_steps(app.tab).is_empty()
-                {
-                    crate::ui::tutorial::start_tutorial(app);
-                } else {
-                    app.help_open = !app.help_open;
-                    app.help_page = 0;
-                }
+                app.open_help();
             }
         } else if me.row == area.y {
             // Same bar the renderer draws; origin is one column in from the edge.
@@ -137,22 +138,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 clamp_docs_scroll(app, area);
             }
             Tab::Tlb => {
-                use crate::ui::app::VmSubtab;
-                match app.tlb.vm_subtab {
-                    VmSubtab::Map => {
-                        app.tlb.page_tree_scroll = app.tlb.page_tree_scroll.saturating_sub(1);
-                    }
-                    VmSubtab::Settings => {
-                        app.tlb.vm_settings_scroll = app.tlb.vm_settings_scroll.saturating_sub(1);
-                    }
-                    VmSubtab::Tlb => {
-                        app.tlb.entries_scroll = app.tlb.entries_scroll.saturating_sub(1);
-                    }
-                    VmSubtab::Stats => {
-                        app.cache.history_scroll = app.cache.history_scroll.saturating_sub(1);
-                    }
-                    VmSubtab::Overview => {}
-                }
+                let hit = app.tlb.hit_at(me.column, me.row);
+                tlb_scroll(app, hit, false);
             }
             Tab::Settings => {}
         },
@@ -204,33 +191,8 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 clamp_docs_scroll(app, area);
             }
             Tab::Tlb => {
-                use crate::ui::app::VmSubtab;
-                match app.tlb.vm_subtab {
-                    VmSubtab::Map => {
-                        let max = app.tlb.page_tree_max_scroll.get();
-                        app.tlb.page_tree_scroll =
-                            app.tlb.page_tree_scroll.saturating_add(1).min(max);
-                    }
-                    VmSubtab::Settings => {
-                        let max = app.tlb.vm_settings_max_scroll.get();
-                        app.tlb.vm_settings_scroll =
-                            app.tlb.vm_settings_scroll.saturating_add(1).min(max);
-                    }
-                    VmSubtab::Tlb => {
-                        let total = app
-                            .rv32()
-                            .map_or(0, |rv32| rv32.mem().mmu().tlb.entries.len());
-                        let next = app.tlb.entries_scroll.saturating_add(1);
-                        app.tlb.entries_scroll = next.min(total.saturating_sub(1));
-                    }
-                    VmSubtab::Stats => {
-                        if !app.cache.session_history.is_empty() {
-                            app.cache.history_scroll = (app.cache.history_scroll + 1)
-                                .min(app.cache.session_history.len() - 1);
-                        }
-                    }
-                    VmSubtab::Overview => {}
-                }
+                let hit = app.tlb.hit_at(me.column, me.row);
+                tlb_scroll(app, hit, true);
             }
             Tab::Settings => {}
         },
@@ -322,18 +284,14 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
     }
 
     if let Tab::Tlb = app.tab {
-        update_tlb_hover(app, me);
+        app.tlb.hover = app.tlb.hit_at(me.column, me.row);
         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-            if !start_tlb_entries_scrollbar_drag(app, me) {
-                handle_tlb_click(app, me);
-            }
-        }
-        if matches!(me.kind, MouseEventKind::Up(MouseButton::Left)) {
-            app.tlb.entries_sb_drag = None;
-        }
-        if matches!(me.kind, MouseEventKind::Drag(MouseButton::Left)) {
-            if let (Some(grab), Some(bar)) = (app.tlb.entries_sb_drag, app.tlb.entries_sb.get()) {
-                app.tlb.entries_scroll = bar.drag(me.row, grab);
+            match app.tlb.hover {
+                Some(VmHit::Run(RunButton::Step)) => tlb_step(app, true),
+                Some(VmHit::Run(RunButton::Stepback)) => tlb_step(app, false),
+                Some(VmHit::Run(btn)) => apply_run_button(app, btn),
+                Some(hit) => tlb_activate(app, hit),
+                None => {}
             }
         }
     }
@@ -972,20 +930,6 @@ fn start_cache_history_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
             if start != bar.offset {
                 app.cache.history_scroll = history_sel_for_window(bar, start);
             }
-            return true;
-        }
-    }
-    false
-}
-
-/// Down on the TLB Entries scrollbar: grab the thumb (or jump it under the
-/// cursor) and begin dragging. Returns `true` when the click was on the bar.
-fn start_tlb_entries_scrollbar_drag(app: &mut App, me: MouseEvent) -> bool {
-    if let Some(bar) = app.tlb.entries_sb.get() {
-        if bar.hit(me.row, me.column) {
-            let (grab, offset) = bar.begin_drag(me.row);
-            app.tlb.entries_sb_drag = Some(grab);
-            app.tlb.entries_scroll = offset;
             return true;
         }
     }
@@ -1804,6 +1748,30 @@ fn handle_memory_click(app: &mut App, me: MouseEvent, area: Rect) {
         addr,
         width: MemWidth::from_view_bytes(bytes),
     });
+}
+
+/// The guide: the wheel scrolls it, a section in the contents jumps there, and
+/// a click outside closes it.
+fn handle_guide_mouse(app: &mut App, me: MouseEvent) {
+    let guide = &mut app.guide;
+    guide.hover = guide.contents_row_at(me.column, me.row);
+    match me.kind {
+        MouseEventKind::ScrollUp => guide.scroll_by(-3),
+        MouseEventKind::ScrollDown => guide.scroll_by(3),
+        MouseEventKind::Down(MouseButton::Left) => {
+            let popup = guide.popup.get();
+            let inside = me.column >= popup.x
+                && me.column < popup.x + popup.width
+                && me.row >= popup.y
+                && me.row < popup.y + popup.height;
+            if let Some(section) = guide.hover {
+                guide.jump(section);
+            } else if !inside {
+                guide.open = false;
+            }
+        }
+        _ => {}
+    }
 }
 
 fn handle_help_popup_mouse(app: &mut App, me: MouseEvent, area: Rect) {
@@ -2947,192 +2915,6 @@ fn handle_pipeline_click(app: &mut App, me: MouseEvent) {
                 return;
             }
         }
-    }
-}
-
-// ── TLB tab mouse ────────────────────────────────────────────────────────────
-
-fn update_tlb_hover(app: &mut App, me: MouseEvent) {
-    use crate::ui::app::{TlbHoverTarget, VmSubtab};
-
-    app.tlb.hover = None;
-
-    // Header subtabs.
-    let btns = app.tlb.subtab_btns.get();
-    for (i, sub) in VmSubtab::ALL.iter().enumerate() {
-        if point_in_btn(me, btns[i]) {
-            app.tlb.hover = Some(TlbHoverTarget::Subtab(*sub));
-        }
-    }
-
-    // Execution controls (shared highlight via hover_run_button).
-    app.hover_run_button = tlb_exec_hit(app, me);
-
-    // Shared controls bar.
-    if point_in_btn(me, app.tlb.ctrl_results_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::ExportResults);
-    } else if point_in_btn(me, app.tlb.ctrl_import_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::ImportCfg);
-    } else if point_in_btn(me, app.tlb.ctrl_export_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::ExportCfg);
-    } else if point_in_btn(me, app.tlb.ctrl_flush_btn.get()) {
-        app.tlb.hover = Some(TlbHoverTarget::FlushTlb);
-    }
-
-    // Overview quick controls.
-    if matches!(app.tlb.vm_subtab, VmSubtab::Overview) {
-        if point_in_btn(me, app.tlb.quick_mode_btn.get()) {
-            app.tlb.hover = Some(TlbHoverTarget::QuickMode);
-        } else if point_in_btn(me, app.tlb.quick_tlb_btn.get()) {
-            app.tlb.hover = Some(TlbHoverTarget::QuickTlb);
-        }
-    }
-
-    // VM Settings panel.
-    if matches!(app.tlb.vm_subtab, VmSubtab::Settings) {
-        for &(field, y, x0, x1) in app.tlb.vm_field_hitboxes.borrow().iter() {
-            if point_in_btn(me, (y, x0, x1)) {
-                app.tlb.hover = Some(TlbHoverTarget::VmField(field));
-            }
-        }
-        let presets = app.tlb.preset_btns.get();
-        if let Some(i) = point_in_any_btn(me, &presets) {
-            app.tlb.hover = Some(TlbHoverTarget::Preset(i));
-        }
-        if point_in_btn(me, app.tlb.vm_apply_btn.get()) {
-            app.tlb.hover = Some(TlbHoverTarget::VmApply);
-        } else if point_in_btn(me, app.tlb.vm_flush_btn.get()) {
-            app.tlb.hover = Some(TlbHoverTarget::VmFlush);
-        }
-    }
-}
-
-/// Which execution-control button (if any) the pointer is over in the VM tab.
-fn tlb_exec_hit(app: &App, me: MouseEvent) -> Option<RunButton> {
-    if point_in_btn(me, app.tlb.exec_reset_btn.get()) {
-        Some(RunButton::Reset)
-    } else if point_in_btn(me, app.tlb.exec_speed_btn.get()) {
-        Some(RunButton::Speed)
-    } else if point_in_btn(me, app.tlb.exec_state_btn.get()) {
-        Some(RunButton::State)
-    } else {
-        None
-    }
-}
-
-fn handle_tlb_click(app: &mut App, me: MouseEvent) {
-    use crate::ui::app::VmSubtab;
-    use crate::ui::input::keyboard::tlb_select;
-
-    // Header subtabs.
-    let btns = app.tlb.subtab_btns.get();
-    for (i, sub) in VmSubtab::ALL.iter().enumerate() {
-        if point_in_btn(me, btns[i]) {
-            tlb_select(app, *sub);
-            return;
-        }
-    }
-
-    // Execution controls.
-    if let Some(btn) = tlb_exec_hit(app, me) {
-        apply_run_button(app, btn);
-        return;
-    }
-
-    // Shared controls bar. Export/import report through the cache status
-    // fields; mirror them into the VM footer so feedback shows on this tab.
-    if point_in_btn(me, app.tlb.ctrl_results_btn.get()) {
-        do_export_results(app);
-        app.tlb.config_status = app.cache.config_status.clone();
-        app.tlb.config_error = app.cache.config_error.clone();
-        return;
-    }
-    if point_in_btn(me, app.tlb.ctrl_import_btn.get()) {
-        do_import_config(app);
-        app.tlb.config_status = app.cache.config_status.clone();
-        app.tlb.config_error = app.cache.config_error.clone();
-        return;
-    }
-    if point_in_btn(me, app.tlb.ctrl_export_btn.get()) {
-        do_export_config(app);
-        app.tlb.config_status = app.cache.config_status.clone();
-        app.tlb.config_error = app.cache.config_error.clone();
-        return;
-    }
-    if point_in_btn(me, app.tlb.ctrl_flush_btn.get()) {
-        app.flush_tlb();
-        return;
-    }
-
-    // Overview quick controls.
-    if matches!(app.tlb.vm_subtab, VmSubtab::Overview) {
-        if point_in_btn(me, app.tlb.quick_mode_btn.get()) {
-            app.set_vm_mode(app.vm_mode().cycle());
-            return;
-        }
-        if point_in_btn(me, app.tlb.quick_tlb_btn.get()) {
-            app.set_tlb_enabled(!app.session.tlb_enabled);
-            return;
-        }
-    }
-
-    // VM Settings panel.
-    if matches!(app.tlb.vm_subtab, VmSubtab::Settings) {
-        handle_vm_settings_click(app, me);
-    }
-}
-
-/// Click handling for the comprehensive VM Settings panel. Numeric fields enter
-/// keyboard-edit mode; the rest toggle / cycle in place.
-fn handle_vm_settings_click(app: &mut App, me: MouseEvent) {
-    use crate::ui::app::VmSettingsField;
-
-    // Resolve which field (if any) was clicked.
-    let clicked: Option<VmSettingsField> = app
-        .tlb
-        .vm_field_hitboxes
-        .borrow()
-        .iter()
-        .find(|&&(_, y, x0, x1)| point_in_btn(me, (y, x0, x1)))
-        .map(|&(field, _, _, _)| field);
-
-    if let Some(field) = clicked {
-        // Leaving an in-progress numeric edit commits it first.
-        if app.tlb.vm_edit_field.is_some() && app.tlb.vm_edit_field != Some(field) {
-            app.commit_vm_edit();
-            app.tlb.vm_edit_field = None;
-            app.tlb.vm_edit_buf.clear();
-        }
-        if field.is_numeric() {
-            // Offset is only meaningful when the map kind is Offset.
-            app.tlb.vm_edit_field = Some(field);
-            app.tlb.vm_edit_buf = app.vm_field_value_str(field);
-        } else {
-            app.toggle_vm_field(field);
-        }
-        return;
-    }
-
-    // TLB geometry presets: set the pending values; `apply` commits them.
-    let presets = app.tlb.preset_btns.get();
-    if let Some(i) = point_in_any_btn(me, &presets) {
-        app.apply_tlb_preset(i);
-        app.tlb.map_status = Some("preset set — apply to commit".into());
-        return;
-    }
-
-    if point_in_btn(me, app.tlb.vm_apply_btn.get()) {
-        if app.tlb.vm_edit_field.is_some() {
-            app.commit_vm_edit();
-            app.tlb.vm_edit_field = None;
-            app.tlb.vm_edit_buf.clear();
-        }
-        app.apply_vm_settings();
-        return;
-    }
-    if point_in_btn(me, app.tlb.vm_flush_btn.get()) {
-        app.flush_tlb();
-        app.tlb.map_status = Some("TLB flushed".into());
     }
 }
 

@@ -156,6 +156,11 @@ pub(super) fn handle_pre_find_intercepts(app: &mut App, key: KeyEvent) -> Option
         return Some(false);
     }
 
+    if app.guide.open {
+        handle_guide_key(app, key.code);
+        return Some(false);
+    }
+
     if app.help_open {
         let pages_count: usize = match app.tab {
             Tab::Run => 2,
@@ -374,12 +379,7 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
     if app.mode == EditorMode::Command
         && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('h'))
     {
-        if !matches!(app.tab, Tab::Docs) && !crate::ui::tutorial::get_steps(app.tab).is_empty() {
-            crate::ui::tutorial::start_tutorial(app);
-        } else {
-            app.help_open = !app.help_open;
-            app.help_page = 0;
-        }
+        app.open_help();
         return true;
     }
 
@@ -426,4 +426,41 @@ pub(super) fn handle_global_shortcuts(app: &mut App, key: KeyEvent, ctrl: bool) 
     }
 
     false
+}
+
+/// The guide overlay owns the keyboard while it is open.
+fn handle_guide_key(app: &mut App, code: KeyCode) {
+    let guide = &mut app.guide;
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => guide.open = false,
+        KeyCode::Up | KeyCode::Char('k') => guide.scroll_by(-1),
+        KeyCode::Down | KeyCode::Char('j') => guide.scroll_by(1),
+        KeyCode::PageUp => guide.scroll_by(-guide.page()),
+        KeyCode::PageDown | KeyCode::Char(' ') => guide.scroll_by(guide.page()),
+        KeyCode::Home => guide.scroll = 0,
+        KeyCode::End => guide.scroll = guide.max_scroll(),
+        KeyCode::Left | KeyCode::BackTab => guide.step_section(false),
+        KeyCode::Right | KeyCode::Tab => guide.step_section(true),
+        // Sections 1–9, and 0 for the tenth.
+        KeyCode::Char(c @ '1'..='9') => guide.jump(c as usize - '1' as usize),
+        KeyCode::Char('0') => guide.jump(9),
+        KeyCode::Char('t') => {
+            guide.open = false;
+            crate::ui::tutorial::start_tutorial(app);
+        }
+        KeyCode::Char('l') => {
+            // Same section in the other language: lay it out now, at the
+            // width the last frame used, so the jump lands on the new text.
+            let section = guide.section();
+            app.tutorial.lang = app.tutorial.lang.toggle();
+            if let Some(sections) = crate::ui::guide::guide(app.tab, app.tutorial.lang) {
+                let (lines, anchors) =
+                    crate::ui::view::guide::layout(sections, app.guide.text_width.get());
+                app.guide.lines.set(lines.len());
+                *app.guide.anchors.borrow_mut() = anchors;
+                app.guide.jump(section);
+            }
+        }
+        _ => {}
+    }
 }

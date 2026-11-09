@@ -2529,14 +2529,19 @@ fn every_control_is_safe_on_a_backend_without_the_rv32_runtime() {
 
         app.set_cache_enabled(true);
         app.set_pipeline_enabled(true);
-        app.set_vm_enabled(true);
+        app.set_vm_mode(crate::falcon::mmu::VmMode::Auto);
         app.set_tlb_enabled(false);
         app.set_jit_mode(crate::falcon::jit::BackendKind::Hot);
         app.add_cache_level();
         app.remove_last_cache_level();
         app.flush_tlb();
-        app.apply_vm_settings();
-        app.apply_page_map();
+        app.install_auto_map();
+        app.set_tlb_geometry(crate::falcon::mmu::TlbConfig::default());
+        app.set_page_map(crate::falcon::mmu::PageMapSpec::default());
+        app.start_vm_edit(crate::ui::app::VmField::WalkCycles);
+        app.commit_vm_edit();
+        let _ = app.vm_map_columns();
+        let _ = app.vm_tlb_cursor();
         app.pipeline_reset_to_current_pc();
         app.reconfigure_pipeline_model();
         app.rebuild_harts_for_debug();

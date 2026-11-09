@@ -1,11 +1,12 @@
-// falcon/mmu/tlb.rs â€” unified TLB shared by I- and D-side translations.
+// falcon/mmu/tlb.rs — unified TLB shared by I- and D-side translations.
 //
-// N-way set-associative. Index by `(vpn % num_sets)`; linear search the `A`
-// entries in the set. Megapages match only the high 10 bits of the VPN; the
-// `global` bit lets entries match across ASIDs.
+// N-way set-associative. A 4 KiB page sits in set `vpn % sets`; a 4 MiB
+// megapage covers 1024 such VPNs, so it is filed under `(vpn >> 10) % sets`
+// instead — every address it maps then hashes to the same set. A lookup probes
+// both sets, the way hardware probes its page-size arrays in parallel. The
+// `global` bit lets an entry match across ASIDs.
 
-#![allow(dead_code)]
-
+use super::MEGAPAGE_BITS;
 use crate::falcon::cache::ReplacementPolicy;
 use std::collections::VecDeque;
 
@@ -17,35 +18,52 @@ pub struct PtePerms {
     pub u: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TlbEntry {
     pub valid: bool,
+    /// Virtual page number. A megapage keeps only its top VPN bits; the low
+    /// [`MEGAPAGE_BITS`] are zero.
     pub vpn: u32,
+    /// Physical page number, as the leaf PTE stores it.
     pub ppn: u32,
     pub asid: u16,
     pub perms: PtePerms,
     pub global: bool,
-    pub accessed: bool,
     pub dirty: bool,
-    /// Page-size class: number of low VPN bits ignored during lookup. 0 = a
-    /// base page (e.g. 4 KiB); >0 = a superpage covering 2^mask_bits base pages
-    /// (Sv32 4 MiB megapage = 10). Generalizes the old `megapage` flag for the
-    /// parametric paging scheme.
-    pub mask_bits: u8,
-    /// LRU/FIFO age counter â€” bumped on access (LRU) or install (FIFO).
+    /// A 4 MiB megapage rather than a 4 KiB page.
+    pub megapage: bool,
+    /// LRU/FIFO age counter — bumped on access (LRU) or install (FIFO).
     pub age: u32,
     /// Reference bit for the Clock replacement policy. Set on every probe
     /// hit; cleared by the clock hand as it scans for a victim.
     pub ref_bit: bool,
 }
 
-#[derive(Clone, Debug)]
+impl TlbEntry {
+    /// Low VPN bits this entry ignores on lookup.
+    pub fn ignored_bits(&self) -> u32 {
+        if self.megapage {
+            u32::from(MEGAPAGE_BITS)
+        } else {
+            0
+        }
+    }
+
+    fn covers(&self, vpn: u32, asid: u16) -> bool {
+        self.valid
+            && (self.global || self.asid == asid)
+            && (self.vpn >> self.ignored_bits()) == (vpn >> self.ignored_bits())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TlbConfig {
-    /// Total entries (power of two, â‰¥ associativity).
+    /// Total entries (power of two, ≥ associativity).
     pub entry_count: u16,
     pub associativity: u8,
     pub replacement: ReplacementPolicy,
     pub hit_latency: u8,
+    /// Cycles a page-table walk costs.
     pub miss_penalty: u8,
 }
 
@@ -67,8 +85,20 @@ pub struct TlbStats {
     pub misses: u64,
     pub evictions: u64,
     pub page_faults: u64,
+    /// Cycles every translation cost: hits plus walks.
     pub total_cycles: u64,
-    /// (step, hit_rate_pct) â€” 300-cycle rolling window for the Stats UI.
+    /// The part of `total_cycles` spent walking page tables.
+    pub walk_cycles: u64,
+    /// Walks that found a leaf with A still clear — the first time the program
+    /// touched that page since its mapping was written.
+    pub first_touches: u64,
+    /// Bytes of the pages counted in `first_touches`.
+    pub first_touch_bytes: u64,
+    /// Walks run only to set D: a store through a clean TLB entry.
+    pub dirty_rewalks: u64,
+    /// Walks that ended in a page fault.
+    pub walk_faults: u64,
+    /// (step, hit_rate_pct) — 300-cycle rolling window for the Stats UI.
     pub history: VecDeque<(f64, f64)>,
 }
 
@@ -83,32 +113,31 @@ impl TlbStats {
     }
 }
 
+/// Where [`Tlb::install`] put an entry, and what it pushed out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Installed {
+    pub slot: usize,
+    pub evicted: Option<TlbEntry>,
+}
+
 #[derive(Clone)]
 pub struct Tlb {
     pub config: TlbConfig,
     pub entries: Vec<TlbEntry>,
     pub stats: TlbStats,
     age_counter: u32,
-    /// Per-set position of the Clock policy's "hand". Indexed by set index.
-    /// Each entry is `0..associativity` (offset within the set). Resized on
-    /// `reconfigure` so it always matches `num_sets()`.
+    /// Per-set position of the Clock policy's "hand", as an offset within the
+    /// set. Sized to `num_sets()`.
     clock_hands: Vec<usize>,
-    /// Page-offset width of the active paging scheme (VPN = vaddr >> offset_bits).
-    /// 12 for Sv32. Kept here so `flush_vaddr` derives the VPN consistently.
-    pub offset_bits: u8,
-    /// Distinct page-size classes (mask_bits) the active scheme can install,
-    /// always including 0. Used to probe one set per page size (real hardware
-    /// probes all page-size arrays in parallel). Sv32 = [0, 10].
-    pub superpage_masks: Vec<u8>,
 }
 
 impl Tlb {
     pub fn new(config: TlbConfig) -> Self {
         let assoc = config.associativity.max(1) as usize;
         let raw = (config.entry_count.max(1) as usize).next_power_of_two();
-        // Pad up so total entries is a multiple of associativity (â‰¥ assoc).
+        // Pad up so total entries is a multiple of associativity (≥ assoc).
         let n = raw.max(assoc);
-        let n = ((n + assoc - 1) / assoc) * assoc;
+        let n = n.div_ceil(assoc) * assoc;
         let num_sets = (n / assoc).max(1);
         Self {
             entries: vec![TlbEntry::default(); n],
@@ -116,8 +145,6 @@ impl Tlb {
             age_counter: 0,
             config,
             clock_hands: vec![0; num_sets],
-            offset_bits: 12,
-            superpage_masks: vec![0, 10],
         }
     }
 
@@ -127,137 +154,96 @@ impl Tlb {
         }
     }
 
-    /// Reconfigure the TLB. Resets entries; also resets stats. The active paging
-    /// scheme (`offset_bits` / `superpage_masks`) is preserved.
+    /// Reconfigure the TLB. Resets entries and stats.
     pub fn reconfigure(&mut self, cfg: TlbConfig) {
-        let offset_bits = self.offset_bits;
-        let superpage_masks = std::mem::take(&mut self.superpage_masks);
         *self = Self::new(cfg);
-        self.offset_bits = offset_bits;
-        self.superpage_masks = superpage_masks;
     }
 
-    /// Adopt a new paging scheme's page-offset width and page-size classes.
-    pub fn set_scheme(&mut self, offset_bits: u8, superpage_masks: Vec<u8>) {
-        self.offset_bits = offset_bits;
-        self.superpage_masks = superpage_masks;
+    pub fn associativity(&self) -> usize {
+        self.config.associativity.max(1) as usize
     }
 
     pub fn num_sets(&self) -> usize {
-        let assoc = self.config.associativity.max(1) as usize;
-        (self.entries.len() / assoc).max(1)
+        (self.entries.len() / self.associativity()).max(1)
     }
 
     fn set_range(&self, set_idx: usize) -> std::ops::Range<usize> {
-        let assoc = self.config.associativity.max(1) as usize;
-        let start = set_idx * assoc;
-        let end = (start + assoc).min(self.entries.len());
+        let start = set_idx * self.associativity();
+        let end = (start + self.associativity()).min(self.entries.len());
         start..end
     }
 
-    /// Set index for a VPN at a given page-size class. An entry with `mask_bits`
-    /// is indexed by its super-VPN (`vpn >> mask_bits`), so every base VPN that
-    /// the (super)page covers hashes to the same set. `mask_bits = 0` is the
-    /// plain base-page index; `= 10` reproduces the old Sv32 megapage set.
-    fn set_for(&self, vpn: u32, mask_bits: u8) -> usize {
-        let n = self.num_sets();
-        ((vpn >> mask_bits) as usize) % n
+    /// The set a page of this size is filed under.
+    pub fn set_for(&self, vpn: u32, megapage: bool) -> usize {
+        let shift = if megapage { MEGAPAGE_BITS } else { 0 };
+        ((vpn >> shift) as usize) % self.num_sets()
     }
 
-    fn matches(entry: &TlbEntry, vpn: u32, asid: u16) -> bool {
-        if !entry.valid {
-            return false;
-        }
-        if !entry.global && entry.asid != asid {
-            return false;
-        }
-        (entry.vpn >> entry.mask_bits) == (vpn >> entry.mask_bits)
+    /// The two sets a lookup of `vpn` probes: the 4 KiB set, then the 4 MiB one.
+    pub fn probe_sets(&self, vpn: u32) -> [usize; 2] {
+        [self.set_for(vpn, false), self.set_for(vpn, true)]
     }
 
-    /// Look up an entry for `vpn`/`asid`. Bumps age on LRU/MRU; returns a copy
-    /// on hit so callers don't fight the borrow checker against `self.stats`.
-    ///
-    /// Two sets are probed: the 4 KiB-indexed set (`vpn_set`) and the megapage
-    /// set (`megapage_vpn_set`). Real hardware splits these into two arrays;
-    /// we share storage but probe both indices so a 4 KiB hit isn't aliased
-    /// against megapages and vice-versa.
-    pub fn probe(&mut self, vpn: u32, asid: u16) -> Option<TlbEntry> {
-        // Probe one set per distinct page-size class (real hardware probes all
-        // page-size arrays in parallel). Skip sets already visited.
-        let masks = self.superpage_masks.clone();
-        let mut visited: Vec<usize> = Vec::with_capacity(masks.len());
-        for m in masks {
-            let set = self.set_for(vpn, m);
-            if visited.contains(&set) {
-                continue;
+    /// The slot mapping `vpn`/`asid`, if any — a lookup with no side effects.
+    pub fn find(&self, vpn: u32, asid: u16) -> Option<usize> {
+        let [small, mega] = self.probe_sets(vpn);
+        self.set_range(small)
+            .chain(if mega == small {
+                0..0
+            } else {
+                self.set_range(mega)
+            })
+            .find(|&i| self.entries[i].covers(vpn, asid))
+    }
+
+    /// Look up `vpn`/`asid`, returning the slot and a copy of the entry. A hit
+    /// bumps the entry's age (LRU/MRU/LFU) or sets its reference bit (Clock).
+    pub fn probe(&mut self, vpn: u32, asid: u16) -> Option<(usize, TlbEntry)> {
+        let slot = self.find(vpn, asid)?;
+        self.age_counter = self.age_counter.wrapping_add(1);
+        match self.config.replacement {
+            ReplacementPolicy::Lru | ReplacementPolicy::Mru | ReplacementPolicy::Lfu => {
+                self.entries[slot].age = self.age_counter;
             }
-            visited.push(set);
-            if let Some(hit) = self.probe_in_set(set, vpn, asid) {
-                return Some(hit);
-            }
+            ReplacementPolicy::Clock => self.entries[slot].ref_bit = true,
+            _ => {}
         }
-        None
+        Some((slot, self.entries[slot]))
     }
 
-    fn probe_in_set(&mut self, set_idx: usize, vpn: u32, asid: u16) -> Option<TlbEntry> {
+    /// Install `entry`. An entry already mapping the same page is overwritten in
+    /// place, so a re-walk that sets D does not leave a stale twin behind;
+    /// otherwise the replacement policy picks a victim.
+    pub fn install(&mut self, mut entry: TlbEntry) -> Installed {
+        let set_idx = self.set_for(entry.vpn, entry.megapage);
         let range = self.set_range(set_idx);
-        for i in range {
-            if Self::matches(&self.entries[i], vpn, asid) {
-                self.age_counter = self.age_counter.wrapping_add(1);
-                match self.config.replacement {
-                    ReplacementPolicy::Lru | ReplacementPolicy::Mru | ReplacementPolicy::Lfu => {
-                        self.entries[i].age = self.age_counter;
-                    }
-                    ReplacementPolicy::Clock => {
-                        // Clock: a hit just sets the reference bit. Eviction
-                        // scan will clear it later.
-                        self.entries[i].ref_bit = true;
-                    }
-                    _ => {}
-                }
-                return Some(self.entries[i]);
-            }
-        }
-        None
-    }
-
-    /// Install `entry`. If an existing entry already maps this VPN+ASID, that
-    /// slot is reused (so a re-walk that updates A/D doesn't leave a stale
-    /// duplicate behind). Otherwise picks a victim per replacement policy and
-    /// counts the eviction.
-    pub fn install(&mut self, mut entry: TlbEntry) {
-        let set_idx = self.set_for(entry.vpn, entry.mask_bits);
-        let range = self.set_range(set_idx);
-        let existing = range
-            .clone()
-            .find(|&i| Self::matches(&self.entries[i], entry.vpn, entry.asid));
-        let target = match existing {
-            Some(i) => i,
+        let existing = range.clone().find(|&i| {
+            let e = &self.entries[i];
+            e.covers(entry.vpn, entry.asid) && e.megapage == entry.megapage
+        });
+        let (slot, evicted) = match existing {
+            Some(i) => (i, None),
             None => {
                 let v = self.find_victim(set_idx, range);
-                if self.entries[v].valid {
+                let old = self.entries[v];
+                if old.valid {
                     self.stats.evictions += 1;
                 }
-                v
+                (v, old.valid.then_some(old))
             }
         };
         self.age_counter = self.age_counter.wrapping_add(1);
         entry.valid = true;
         entry.age = self.age_counter;
-        // Newly installed entries start with the ref bit set (one free pass
-        // before Clock can evict them).
-        if matches!(self.config.replacement, ReplacementPolicy::Clock) {
-            entry.ref_bit = true;
-        }
-        self.entries[target] = entry;
+        // A new entry gets one free pass before Clock can evict it.
+        entry.ref_bit = matches!(self.config.replacement, ReplacementPolicy::Clock);
+        self.entries[slot] = entry;
+        Installed { slot, evicted }
     }
 
     fn find_victim(&mut self, set_idx: usize, range: std::ops::Range<usize>) -> usize {
-        // Prefer invalid slots.
-        for i in range.clone() {
-            if !self.entries[i].valid {
-                return i;
-            }
+        if let Some(i) = range.clone().find(|&i| !self.entries[i].valid) {
+            return i;
         }
         match self.config.replacement {
             ReplacementPolicy::Lru | ReplacementPolicy::Fifo | ReplacementPolicy::Lfu => range
@@ -273,29 +259,23 @@ impl Tlb {
                 range.start + (self.age_counter as usize % n.max(1))
             }
             ReplacementPolicy::Clock => {
-                // Second-chance algorithm: walk from the clock hand, skipping
-                // entries with ref_bit=true (clearing it as we go). The first
-                // entry with ref_bit=false is the victim; the hand resumes
-                // just past it next time.
+                // Second chance: walk from the hand, clearing reference bits,
+                // and take the first entry whose bit is already clear. Two laps
+                // always find one.
                 let n = (range.end - range.start).max(1);
                 if set_idx >= self.clock_hands.len() {
                     self.clock_hands.resize(set_idx + 1, 0);
                 }
                 let mut hand = self.clock_hands[set_idx] % n;
-                // At most 2*n steps: one to clear all ref_bits, one to find
-                // a victim. Guaranteed to terminate.
                 for _ in 0..(2 * n) {
                     let idx = range.start + hand;
                     if !self.entries[idx].ref_bit {
-                        // Advance hand past the victim for the next call.
                         self.clock_hands[set_idx] = (hand + 1) % n;
                         return idx;
                     }
                     self.entries[idx].ref_bit = false;
                     hand = (hand + 1) % n;
                 }
-                // Fallback (should be unreachable): take the slot under the
-                // hand and bump.
                 let idx = range.start + hand;
                 self.clock_hands[set_idx] = (hand + 1) % n;
                 idx
@@ -303,25 +283,30 @@ impl Tlb {
         }
     }
 
-    /// Invalidate every entry whose VPN matches `vaddr` (for `sfence.vma`
-    /// with a non-zero rs1). Probes one set per page-size class, since a
-    /// hardware sfence.vma must invalidate any representation.
+    /// Invalidate every entry mapping `vaddr`, whatever its page size (for
+    /// `sfence.vma` with a non-zero rs1).
     pub fn flush_vaddr(&mut self, vaddr: u32) {
-        let vpn = vaddr >> self.offset_bits;
-        let masks = self.superpage_masks.clone();
-        let mut visited: Vec<usize> = Vec::with_capacity(masks.len());
-        for m in masks {
-            let set = self.set_for(vpn, m);
-            if visited.contains(&set) {
-                continue;
-            }
-            visited.push(set);
+        let vpn = vaddr >> super::PAGE_BITS;
+        for set in self.probe_sets(vpn) {
             for i in self.set_range(set) {
-                if Self::matches(&self.entries[i], vpn, self.entries[i].asid) {
-                    self.entries[i].valid = false;
+                let e = &mut self.entries[i];
+                if e.valid && (e.vpn >> e.ignored_bits()) == (vpn >> e.ignored_bits()) {
+                    e.valid = false;
                 }
             }
         }
+    }
+
+    /// 1 for the most recently used valid entry of its set, 2 for the next, …
+    /// — by install order under FIFO, by last use under the other policies.
+    pub fn recency(&self, slot: usize) -> Option<usize> {
+        let entry = self.entries.get(slot).filter(|e| e.valid)?;
+        let set = slot / self.associativity();
+        let newer = self
+            .set_range(set)
+            .filter(|&i| i != slot && self.entries[i].valid && self.entries[i].age > entry.age)
+            .count();
+        Some(newer + 1)
     }
 }
 

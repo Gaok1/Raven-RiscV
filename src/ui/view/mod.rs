@@ -15,6 +15,7 @@ pub(crate) mod cache;
 pub(crate) mod components;
 pub mod docs;
 mod editor;
+pub(crate) mod guide;
 mod path_input_overlay;
 pub(crate) mod pipeline;
 pub(crate) mod run;
@@ -193,18 +194,48 @@ pub fn ui(f: &mut Frame, app: &App) {
             ("?", "help"),
         ]),
         Tab::Tlb => {
+            use crate::ui::app::VmSubtab;
             if let Some(ref err) = app.tlb.config_error {
                 Line::from(Span::styled(format!("✗  {err}"), style::danger()))
             } else if let Some(ref ok) = app.tlb.config_status {
                 Line::from(Span::styled(format!("✓  {ok}"), style::success()))
-            } else {
+            } else if app.tlb.map_query.is_some() {
                 style::hint_bar(&[
-                    ("tab", "subtabs"),
-                    ("ctrl+e", "export config"),
-                    ("ctrl+l", "import config"),
-                    ("ctrl+r", "results"),
-                    ("?", "help"),
+                    ("0-9 a-f", "address"),
+                    ("enter", "trace it"),
+                    ("esc", "cancel"),
                 ])
+            } else if app.tlb.edit.is_some() {
+                style::hint_bar(&[
+                    ("0-9", "value"),
+                    ("enter", "keep"),
+                    ("esc", "drop"),
+                    ("tab", "next field"),
+                ])
+            } else {
+                let specific: &[(&str, &str)] = match app.tlb.vm_subtab {
+                    VmSubtab::Walk => &[
+                        ("←/→", "older/newer"),
+                        ("v", "follow kind"),
+                        ("1/2/3", "all/misses/faults"),
+                    ],
+                    VmSubtab::Tlb => &[("arrows", "move")],
+                    VmSubtab::Map => &[
+                        ("↑/↓", "entry"),
+                        ("→/enter", "open"),
+                        ("←", "back"),
+                        ("/", "go to address"),
+                    ],
+                    VmSubtab::Stats => &[("s", "snapshot"), ("enter", "open"), ("d", "delete")],
+                    VmSubtab::Config => &[("m", "mode"), ("e", "edit number")],
+                };
+                let mut hints: Vec<(&str, &str)> = vec![("tab", "subtab")];
+                if app.tlb.vm_subtab != VmSubtab::Stats {
+                    hints.push(("s", "next translation"));
+                }
+                hints.extend_from_slice(specific);
+                hints.extend_from_slice(&[("g", "current access"), ("p", "run/pause"), ("?", "guide")]);
+                style::hint_bar(&hints)
             }
         }
     };
@@ -224,6 +255,10 @@ pub fn ui(f: &mut Frame, app: &App) {
     }
 
     render_path_input(f, size, app);
+
+    if app.guide.open {
+        guide::render_guide(f, size, app);
+    }
 
     if app.tutorial.active {
         crate::ui::tutorial::render::render_tutorial_overlay(f, size, app);
@@ -673,46 +708,27 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+l]", "import full Settings tab state (.rcfg)"),
         ]],
         Tab::Tlb => vec![vec![
+            ("[Tab]", "cycle subtabs: walk → tlb → map → stats → config"),
             (
-                "[Tab]",
-                "cycle subtabs: overview → map → tlb → stats → settings",
+                "walk",
+                "the current translation step by step: TLB probe, every PTE read, PA, what the TLB kept",
             ),
-            (
-                "overview",
-                "quick Mode/TLB controls + live satp / privilege / VM-active banner",
-            ),
-            ("map", "live N-level page-table tree (read-only)"),
-            ("tlb", "installed translations (VPN→PPN, perms, A/D, asid)"),
-            (
-                "stats",
-                "hits, misses, evictions, page faults, hit-rate chart + snapshots",
-            ),
-            (
-                "settings",
-                "VM mode, paging scheme, page map, TLB geometry + presets — then apply",
-            ),
-            (
-                "scheme",
-                "Custom mode: edit levels + index/offset bits (Σ must = 32)",
-            ),
-            ("[r/p/f]", "reset / run-pause / speed (like the Cache tab)"),
-            (
-                "[s]",
-                "capture session snapshot (stats subtab; ↑↓=select, Enter=view, D=delete)",
-            ),
+            ("tlb", "the TLB as sets × ways; ● installed now, ✓ hit now, number = recency"),
+            ("map", "the page table, one column per level, with the selected PTE decoded"),
+            ("stats", "hit rate, cycles spent translating, reach, why each miss happened"),
+            ("config", "mode, the auto page map and the TLB shape — every change applies at once"),
+            ("[g]", "go back to following the current access"),
+            ("[←/→]", "walk: step to an older/newer translation (pins it in every view)"),
+            ("[v] [1/2/3]", "walk: follow data/fetch/any · show all/misses/faults"),
+            ("[/]", "map: type an address and see the path it takes"),
+            ("[m] [e]", "config: cycle the mode · edit a number"),
+            ("[r/p/f]", "reset / run-pause / speed"),
+            ("[s]", "stats: capture a snapshot (↑↓ select, Enter view, d delete)"),
             ("[Ctrl+e/l]", "export / import cache+TLB config (.fcache)"),
+            ("[Ctrl+r]", "export results (.fstats/.csv, includes tlb.* section)"),
             (
-                "[Ctrl+r]",
-                "export results (.fstats/.csv, includes tlb.* section)",
-            ),
-            ("[Esc]", "cancel field edit / close popup"),
-            (
-                "TLB toggle",
-                "overview or settings; when off every access walks (miss + penalty, no hits)",
-            ),
-            (
-                "Translation active?",
-                "needs VM on AND satp=Sv32 AND priv∈{S,U}; otherwise identity",
+                "modes",
+                "auto: the simulator builds the table and translates even in M-mode · program: real RISC-V",
             ),
         ]],
     }

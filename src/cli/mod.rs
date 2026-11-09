@@ -295,14 +295,17 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     mem.invalidate_all();
     mem.reset_stats();
 
-    // Standard VM mode: auto-install identity megapage map so programs see
-    // TLB activity without needing manual page-table setup code.
+    // Auto VM mode: the simulator writes an identity map so programs see the
+    // TLB at work without page-table setup code of their own. Its tables sit
+    // below every hart's stack, out of reach of a push.
     if vm_enabled {
-        let root_pa = (mem_size as u32).saturating_sub(4096);
-        crate::falcon::mmu::Mmu::install_identity_megapages(&mut mem.ram, root_pa);
-        let satp_val = (1u32 << 31) | (root_pa >> 12);
-        cpu.satp = satp_val;
-        mem.mmu.satp = crate::falcon::mmu::Satp::new(satp_val);
+        let mem_size = mem_size as u32;
+        let stack = (mem_size / (max_cores as u32 + 1)).clamp(4096, 64 * 1024);
+        cpu.satp = mem.install_auto_map(
+            mem_size.saturating_sub(stack * max_cores as u32),
+            crate::falcon::mmu::PageMapSpec::default(),
+            (0, 0),
+        )?;
     }
 
     // The JIT does not yet invalidate translations on `satp` writes or
@@ -646,7 +649,7 @@ fn rebuild_rcfg_text(
     max_cores: usize,
     run_scope: &str,
 ) -> String {
-    let vm_mode = if vm_enabled { "sv32" } else { "off" };
+    let vm_mode = if vm_enabled { "auto" } else { "off" };
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!(
         "cache_enabled={cache_enabled}\npipeline_enabled={pipeline_enabled}\nvm_mode={vm_mode}\ntrace_syscalls={trace_syscalls}\nmem_kb={mem_kb}\nmax_cores={max_cores}\nrun_scope={run_scope}\n\n# CPI (cycles per instruction)\n"
@@ -726,7 +729,7 @@ fn parse_rcfg_cli_full(
         .unwrap_or(true);
     // Prefer the current `vm_mode` key; fall back to the legacy `vm_enabled`.
     let vm_enabled = match map.get("vm_mode").map(String::as_str) {
-        Some(m) => matches!(m, "sv32" | "custom"),
+        Some(m) => crate::falcon::mmu::VmMode::parse(m).is_some_and(|mode| mode.is_auto()),
         None => map
             .get("vm_enabled")
             .map(|v| matches!(v.as_str(), "true" | "1" | "yes" | "on"))
