@@ -9,7 +9,7 @@ mod run_loop;
 mod run_state;
 mod runtime;
 mod settings_state;
-mod threads;
+pub(crate) mod threads;
 mod tlb_state;
 mod vm;
 
@@ -460,6 +460,7 @@ pub struct App {
     pub(crate) sched_config: crate::falcon::sched::SchedConfig,
     /// The scheduler of the program loaded, when `sched_config` asks for one.
     sched: Option<crate::falcon::sched::Scheduler<HartCoreRuntime>>,
+    pub(crate) threads_view: threads::ThreadsViewState,
 
     pub(super) show_exit_popup: bool,
     pub(super) should_quit: bool,
@@ -800,6 +801,7 @@ impl App {
             harts: Vec::new(),
             sched_config: crate::falcon::sched::SchedConfig::default(),
             sched: None,
+            threads_view: threads::ThreadsViewState::default(),
         };
         app.console.trace_syscalls = app.session.trace_syscalls;
         app.sync_docs_to_architecture();

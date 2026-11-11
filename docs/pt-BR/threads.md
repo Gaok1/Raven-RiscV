@@ -77,13 +77,26 @@ Para experimentar:
 
 **Settings → THREAD SCHEDULING** tem três linhas: `scheduler` (off / FIFO / round robin / priority; mudar reinicia a simulação), `quantum` e `switch cost` (valem na hora). Com escalonador, um passo avança todos os cores em um tick, seja qual for o run scope.
 
-A aba **Threads** mostra:
+A aba **Threads** mostra o escalonador trabalhando:
 
-- a política, a contagem de ticks, as trocas de contexto, as preempções, a utilização dos cores e as médias de espera, resposta e turnaround;
-- uma linha por thread: estado (`READY`, `RUN`, `SWITCH`, `JOIN Tn`, `EXIT`), core, prioridade, PC, chegada, primeira execução, fim, ticks executando / esperando / bloqueada, resposta, turnaround, despachos, preempções e yields;
-- uma linha do tempo por core: todos os ticks até agora comprimidos na largura, cada coluna com a thread que executou (`0`-`9`, `a`-`z`), `·` durante a troca e `─` ocioso;
-- a fila de prontos, da frente para trás, o que cada core está fazendo e quanto do quantum já usou;
-- os eventos de escalonamento mais recentes: inícios, despachos, preempções, yields, joins e términos.
+- **as médias**: política, tick, trocas de contexto, preempções, quanto os cores ficaram ocupados e as médias de espera, resposta e turnaround;
+- **CPU**: um cartão por core com a thread que ele executa, uma barra de quanto do quantum já foi usado, o PC e qual thread estava no core antes (e por que saiu). Um core em troca mostra o custo da troca sendo pago;
+- **READY QUEUE**: um cartão por thread esperando, a próxima primeiro, com o PC e o stack pointer que ela salvou, há quanto tempo espera e por que saiu do core (`quantum`, `yield`, `forced`, `new`…). As threads bloqueadas e as que terminaram aparecem embaixo;
+- **timeline**: uma linha por core, todos os ticks até agora comprimidos na largura, cada coluna com a thread que executou (`0`-`9`, `a`-`z`), `·` durante a troca e `─` ocioso. A thread selecionada fica destacada;
+- **CONTEXT**: o bloco de controle (TCB) da thread selecionada: o PC com a instrução que está lá e os 32 registradores — ao vivo enquanto ela executa num core, congelados como foram salvos enquanto ela espera —, com os tempos e contadores dela e os quatro passos de uma troca de contexto;
+- **threads** e **events**: todas as threads com estado, espera, resposta e turnaround, e os últimos contextos salvos e carregados.
+
+Dá para conduzir na mão:
+
+| Tecla | Mouse | Ação |
+|---|---|---|
+| `↑` `↓` `←` `→` | clicar num cartão ou numa linha | seleciona uma thread; o contexto dela aparece em CONTEXT |
+| `x` | `force context switch` | tira o core selecionado da thread agora, como uma interrupção de timer faria: o contexto dela é salvo e ela vai para o fim da fila, e a próxima é carregada |
+| `Enter` | `put Tn on core` | coloca a thread selecionada (pronta) no core selecionado agora, seja quem for a primeira da fila |
+| `[` `]` | clicar num cartão de core | seleciona um core |
+| `s` / `p` | `step` / `run` | um tick / executar e pausar |
+
+Uma troca forçada não consulta a política: em `priority`, uma thread menos urgente colocada no core assim perde o core de novo ao fim do tick seguinte.
 
 O seletor de core das abas Run e Pipeline continua escolhendo um **core**. Os registradores e o pipeline que ele mostra são da thread que esse core executa no momento.
 

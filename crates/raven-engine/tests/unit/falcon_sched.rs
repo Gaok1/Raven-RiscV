@@ -365,3 +365,33 @@ fn a_quantum_never_ends_before_the_thread_retired_anything() {
     assert_eq!(switches[0].out, Some((0, LeaveReason::Quantum)));
     assert_eq!(switches[0].inn, Some(a));
 }
+
+#[test]
+fn a_forced_switch_moves_the_running_thread_to_the_back_of_the_queue() {
+    let mut h = Host::new(SchedPolicy::Fifo, 10, 0, 1);
+    let a = h.spawn(0);
+    let b = h.spawn(0);
+    h.tick();
+    // Choose `b`, though `a` is first in line.
+    let switches = h.sched.force_switch(0, Some(b)).unwrap();
+    assert_eq!(switches[0].out, Some((0, LeaveReason::Forced)));
+    assert_eq!(switches[0].inn, Some(b));
+    assert_eq!(h.sched.ready_queue().collect::<Vec<_>>(), vec![a, 0]);
+    let t0 = h.sched.thread(0).unwrap();
+    assert_eq!(t0.last_leave, Some((1, 0, LeaveReason::Forced)));
+    assert_eq!(t0.stats.preemptions, 1);
+    assert_eq!(h.sched.thread(b).unwrap().last_dispatch, Some(1));
+
+    // Without a choice, the policy picks: the front of the queue.
+    let switches = h.sched.force_switch(0, None).unwrap();
+    assert_eq!(switches[0].inn, Some(a));
+
+    assert!(h.sched.force_switch(0, Some(a)).is_err(), "a is running, not ready");
+    assert!(h.sched.force_switch(7, None).is_err());
+}
+
+#[test]
+fn a_forced_switch_needs_someone_waiting() {
+    let mut h = Host::new(SchedPolicy::RoundRobin, 10, 0, 1);
+    assert!(h.sched.force_switch(0, None).is_err());
+}

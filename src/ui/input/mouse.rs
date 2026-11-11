@@ -312,6 +312,29 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
         }
     }
 
+    if let Tab::Threads = app.tab {
+        use crate::ui::app::threads::ThreadsHit;
+        app.threads_view.hover = app.threads_view.hit_at(me.column, me.row);
+        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+            match app.threads_view.hover {
+                Some(ThreadsHit::Thread(tid)) => app.select_thread(tid),
+                Some(ThreadsHit::Core(core)) => {
+                    app.switch_selected_core(core);
+                    app.threads_view.selected = None;
+                }
+                Some(ThreadsHit::ForceSwitch) => app.force_context_switch(),
+                Some(ThreadsHit::Dispatch) => app.dispatch_selected_thread(),
+                Some(ThreadsHit::Step) => {
+                    if !app.session.faulted {
+                        app.single_step();
+                    }
+                }
+                Some(ThreadsHit::RunPause) => app.toggle_run(),
+                None => {}
+            }
+        }
+    }
+
     // Settings tab interactions
     if let Tab::Settings = app.tab {
         update_settings_hover(app, me);

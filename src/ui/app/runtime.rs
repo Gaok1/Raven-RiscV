@@ -429,6 +429,8 @@ impl App {
             self.harts.push(runtime);
         }
         self.sched = self.new_scheduler();
+        self.threads_view.selected = None;
+        self.threads_view.status = None;
     }
 
     pub(crate) fn rebuild_harts_for_debug(&mut self) {

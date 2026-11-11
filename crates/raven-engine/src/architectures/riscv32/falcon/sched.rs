@@ -243,6 +243,10 @@ pub struct ThreadInfo {
     pub state: ThreadState,
     /// The core it ran on last, if any.
     pub last_core: Option<usize>,
+    /// When it last got a core.
+    pub last_dispatch: Option<u64>,
+    /// When it last left a core, which core, and why.
+    pub last_leave: Option<(u64, usize, LeaveReason)>,
     pub stats: ThreadStats,
 }
 
@@ -294,6 +298,8 @@ pub enum LeaveReason {
     Quantum,
     /// A more urgent thread took the core.
     Preempt,
+    /// The user took the core away by hand, as a timer interrupt would.
+    Forced,
 }
 
 impl LeaveReason {
@@ -304,6 +310,7 @@ impl LeaveReason {
             Self::Yield => "yield",
             Self::Quantum => "quantum",
             Self::Preempt => "preempt",
+            Self::Forced => "forced",
         }
     }
 }
@@ -426,6 +433,8 @@ impl<C> Scheduler<C> {
             priority: DEFAULT_PRIORITY,
             state: ThreadState::Running(0),
             last_core: Some(0),
+            last_dispatch: Some(0),
+            last_leave: None,
             stats: ThreadStats {
                 first_run: Some(0),
                 dispatches: 1,
@@ -578,6 +587,8 @@ impl<C> Scheduler<C> {
             priority,
             state: ThreadState::Ready,
             last_core: None,
+            last_dispatch: None,
+            last_leave: None,
             stats: ThreadStats {
                 arrival: self.now,
                 ..ThreadStats::default()
@@ -788,6 +799,43 @@ impl<C> Scheduler<C> {
         switches
     }
 
+    /// Switch `core` to another thread right now, between two ticks, the way
+    /// a timer interrupt would: the thread on it goes to the back of the ready
+    /// queue, and `next` — or, without one, the thread the policy picks —
+    /// takes the core. An idle core just takes a thread.
+    ///
+    /// The policy is not asked whether it agrees: under priority, a less
+    /// urgent thread put on the core this way loses it again at the end of
+    /// the next tick.
+    pub fn force_switch(&mut self, core: usize, next: Option<Tid>) -> Result<Vec<Switch>, String> {
+        let current = match self.cores.get(core) {
+            None => return Err(format!("there is no core {core}")),
+            Some(CoreState::Switching { tid, .. }) => {
+                return Err(format!("core {core} is still switching to T{tid}"));
+            }
+            Some(CoreState::Idle) => None,
+            Some(CoreState::Running { tid, .. }) => Some(*tid),
+        };
+        let next = match next {
+            Some(tid) => {
+                if !self.ready.contains(&tid) {
+                    return Err(format!("T{tid} is not in the ready queue"));
+                }
+                tid
+            }
+            None => self
+                .pick_next(None)
+                .ok_or_else(|| "no thread is waiting for a core".to_string())?,
+        };
+        let mut switches = Vec::new();
+        if let Some(tid) = current {
+            self.flags[core] = CoreFlags::default();
+            self.vacate(core, tid, LeaveReason::Forced, &mut switches);
+        }
+        self.dispatch(core, next, &mut switches);
+        Ok(switches)
+    }
+
     /// Where the next thread comes from: the front of the queue, or under
     /// priority the most urgent thread, first come first among equals.
     /// `ceiling` limits the choice to priorities at least that urgent.
@@ -817,12 +865,13 @@ impl<C> Scheduler<C> {
                 thread.state = ThreadState::Ready;
                 self.ready.push_back(tid);
             }
-            LeaveReason::Quantum | LeaveReason::Preempt => {
+            LeaveReason::Quantum | LeaveReason::Preempt | LeaveReason::Forced => {
                 thread.state = ThreadState::Ready;
                 thread.stats.preemptions += 1;
                 self.ready.push_back(tid);
             }
         }
+        thread.last_leave = Some((self.now, core, reason));
         self.log(tid, SchedEventKind::Leave { core, reason });
         Self::switch_slot(switches, core).out = Some((tid, reason));
     }
@@ -834,6 +883,7 @@ impl<C> Scheduler<C> {
         let thread = &mut self.threads[tid as usize];
         thread.state = ThreadState::Running(core);
         thread.last_core = Some(core);
+        thread.last_dispatch = Some(self.now);
         thread.stats.dispatches += 1;
         self.progressed[core] = false;
         if cost == 0 {

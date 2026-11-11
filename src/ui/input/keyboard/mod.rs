@@ -160,6 +160,22 @@ fn handle_threads_keys(app: &mut App, key: KeyEvent) -> bool {
             app.cycle_selected_core(1);
             true
         }
+        KeyCode::Char('x') => {
+            app.force_context_switch();
+            true
+        }
+        KeyCode::Enter => {
+            app.dispatch_selected_thread();
+            true
+        }
+        KeyCode::Up | KeyCode::Left => {
+            app.select_thread_offset(-1);
+            true
+        }
+        KeyCode::Down | KeyCode::Right => {
+            app.select_thread_offset(1);
+            true
+        }
         _ => false,
     }
 }

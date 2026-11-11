@@ -77,13 +77,26 @@ Things to try:
 
 **Settings → THREAD SCHEDULING** has three rows: `scheduler` (off / FIFO / round robin / priority; changing it restarts the simulation), `quantum` and `switch cost` (these take effect at once). With a scheduler, a step advances every core by one tick, whatever the run scope says.
 
-The **Threads** tab shows:
+The **Threads** tab shows the scheduler at work:
 
-- the policy, the tick count, context switches, preemptions, core utilization and the average waiting, response and turnaround times;
-- one row per thread: state (`READY`, `RUN`, `SWITCH`, `JOIN Tn`, `EXIT`), core, priority, PC, arrival, first run, finish, ticks running / waiting / blocked, response, turnaround, dispatches, preemptions and yields;
-- a timeline per core: every tick so far squeezed into the width, each column showing the thread that ran (`0`-`9`, `a`-`z`), `·` while switching and `─` while idle;
-- the ready queue, front first, what each core is doing and how much of its quantum it used;
-- the latest scheduling events: starts, dispatches, preemptions, yields, joins and exits.
+- **the averages**: policy, tick, context switches, preemptions, how busy the cores were, and the average waiting, response and turnaround times;
+- **CPU**: one card per core with the thread it runs, a bar for how much of its quantum is gone, its PC, and which thread had the core before (and why it left). A core switching shows the switch cost being paid;
+- **READY QUEUE**: one card per waiting thread, next first, with the PC and stack pointer it saved, how long it has waited and why it left its core (`quantum`, `yield`, `forced`, `new`…). Blocked and finished threads are listed under it;
+- **timeline**: one row per core, every tick so far squeezed into the width, each column showing the thread that ran (`0`-`9`, `a`-`z`), `·` while switching and `─` while idle. The selected thread is highlighted;
+- **CONTEXT**: the selected thread's control block (TCB): PC with the instruction there, and all 32 registers — live while it runs on a core, frozen as saved while it waits — with its times and counters, and the four steps of a context switch;
+- **threads** and **events**: every thread with its state, wait, response and turnaround, and the latest saves and loads of contexts.
+
+You can drive it by hand:
+
+| Key | Mouse | Action |
+|---|---|---|
+| `↑` `↓` `←` `→` | click a card or a row | select a thread; its context shows in CONTEXT |
+| `x` | `force context switch` | take the selected core from its thread now, as a timer interrupt would: its context is saved and it goes to the back of the queue, and the next thread is loaded |
+| `Enter` | `put Tn on core` | put the selected (ready) thread on the selected core now, whoever is first in line |
+| `[` `]` | click a core card | select a core |
+| `s` / `p` | `step` / `run` | one tick / run and pause |
+
+A forced switch does not ask the policy: under `priority`, a less urgent thread put on a core this way loses it again at the end of the next tick.
 
 The core selector in the Run and Pipeline tabs still picks a **core**. The registers and pipeline it shows belong to whichever thread that core runs now.
 
