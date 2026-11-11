@@ -8,6 +8,16 @@ pub struct HartStartRequest {
     pub arg: u32,
 }
 
+/// A scheduling request a thread made through a syscall, for the host to
+/// carry out after the step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SchedRequest {
+    /// `thread_yield` (1103): give the core to the next thread waiting.
+    Yield,
+    /// `thread_set_priority` (1105).
+    SetPriority { tid: u32, priority: u32 },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExecRegion {
     pub start: u32,
@@ -55,6 +65,12 @@ pub struct Cpu {
     pub pending_exec_map: Option<ExecRegion>,
     /// Set by FALCON_HART_EXIT (1101): exit only this hart, not the whole program.
     pub local_exit: bool,
+    /// Set by `thread_join` (1104): this hart is blocked until the hart with
+    /// this id exits. The host clears it, and does not step the hart until it
+    /// has. The syscall itself has already returned, with `a0 = 0`.
+    pub join_wait: Option<u32>,
+    /// Deferred scheduling request (`thread_yield`, `thread_set_priority`).
+    pub pending_sched: Option<SchedRequest>,
     /// GFX_SLEEP_MS (2007) parking deadline. While `Some`, this hart stays
     /// parked on its `ecall` (the syscall re-executes and clears it once the
     /// wall-clock deadline passes). Per-hart on purpose: other harts keep going.

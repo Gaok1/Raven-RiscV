@@ -1,6 +1,9 @@
 // output.rs — JSON, fstats, and CSV output formatters; expectation validators
 
-use super::{PipelineReport, PipelineTraceHazard, PipelineTraceStage, PipelineTraceStep};
+use super::{
+    PipelineReport, PipelineTraceHazard, PipelineTraceStage, PipelineTraceStep, SchedReport,
+};
+use crate::falcon::sched::ThreadInfo;
 use crate::falcon::asm::utils::parse_reg;
 use crate::falcon::cache::Cache;
 use raven_engine::capability::{CacheHierarchy, CoherenceCoreStats};
@@ -16,6 +19,7 @@ pub(super) fn format_json(
     file: &str,
     exit_code: Option<u32>,
     pipeline: Option<PipelineReport>,
+    sched: Option<&SchedReport>,
 ) -> String {
     let (instr, total_cyc, base_cyc, cpi, ipc, clock_model) = if let Some(p) = pipeline {
         let ipc = if p.cycles > 0 {
@@ -86,8 +90,78 @@ pub(super) fn format_json(
     }
 
     append_coherence_json(&mut s, mem, instr);
+    if let Some(report) = sched {
+        append_sched_json(&mut s, report);
+    }
     s.push_str("\n}\n");
     s
+}
+
+/// One thread's numbers, as `(key, value)` pairs, in the order every output
+/// format lists them. A time the thread has not reached yet is `None`.
+fn thread_counters(t: &ThreadInfo) -> [(&'static str, Option<u64>); 13] {
+    let st = &t.stats;
+    [
+        ("priority", Some(u64::from(t.priority))),
+        ("arrival", Some(st.arrival)),
+        ("first_run", st.first_run),
+        ("finish", st.finish),
+        ("response", st.response()),
+        ("turnaround", st.turnaround()),
+        ("run_ticks", Some(st.run_ticks)),
+        ("waiting_ticks", Some(st.ready_ticks)),
+        ("blocked_ticks", Some(st.blocked_ticks)),
+        ("dispatches", Some(st.dispatches)),
+        ("preemptions", Some(st.preemptions)),
+        ("yields", Some(st.yields)),
+        ("entry_pc", Some(u64::from(t.entry_pc))),
+    ]
+}
+
+fn append_sched_json(s: &mut String, report: &SchedReport) {
+    let cfg = &report.config;
+    let sum = &report.summary;
+    s.push_str(",\n  \"scheduler\": {\n");
+    s.push_str(&format!("    \"policy\": \"{}\",\n", cfg.policy.as_str()));
+    s.push_str(&format!("    \"quantum\": {},\n", cfg.quantum));
+    s.push_str(&format!("    \"switch_cost\": {},\n", cfg.switch_cost));
+    s.push_str(&format!("    \"ticks\": {},\n", sum.ticks));
+    s.push_str(&format!("    \"context_switches\": {},\n", sum.context_switches));
+    s.push_str(&format!("    \"preemptions\": {},\n", sum.preemptions));
+    s.push_str(&format!("    \"avg_waiting\": {:.4},\n", sum.avg_waiting));
+    s.push_str(&format!("    \"avg_response\": {:.4},\n", sum.avg_response));
+    s.push_str(&format!("    \"avg_turnaround\": {:.4},\n", sum.avg_turnaround));
+    s.push_str(&format!("    \"utilization\": {:.4},\n", sum.utilization));
+    s.push_str("    \"cores\": [");
+    for (core, ticks) in report.cores.iter().enumerate() {
+        if core > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "\n      {{ \"core\": {core}, \"busy\": {}, \"switching\": {}, \"idle\": {} }}",
+            ticks.busy, ticks.switching, ticks.idle
+        ));
+    }
+    s.push_str("\n    ],\n    \"threads\": [");
+    for (n, t) in report.threads.iter().enumerate() {
+        if n > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!("\n      {{ \"tid\": {}", t.tid));
+        match t.parent {
+            Some(p) => s.push_str(&format!(", \"parent\": {p}")),
+            None => s.push_str(", \"parent\": null"),
+        }
+        s.push_str(&format!(", \"state\": \"{}\"", t.state.label().to_ascii_lowercase()));
+        for (key, value) in thread_counters(t) {
+            match value {
+                Some(v) => s.push_str(&format!(", \"{key}\": {v}")),
+                None => s.push_str(&format!(", \"{key}\": null")),
+            }
+        }
+        s.push_str(" }");
+    }
+    s.push_str("\n    ]\n  }");
 }
 
 /// What one core did on the coherence bus, as `(key, value)` pairs, in the
@@ -583,6 +657,7 @@ pub(super) fn format_rstats(
     file: &str,
     exit_code: Option<u32>,
     pipeline: Option<PipelineReport>,
+    sched: Option<&SchedReport>,
 ) -> String {
     let (instr, total_cyc, base_cyc, cpi, ipc, clock_model) = if let Some(p) = pipeline {
         let ipc = if p.cycles > 0 {
@@ -711,6 +786,44 @@ pub(super) fn format_rstats(
     // CPI config (defaults)
     s.push_str("cpi.alu=1\ncpi.mul=3\ncpi.div=20\ncpi.load=0\ncpi.store=0\n");
     s.push_str("cpi.branch_taken=3\ncpi.branch_not_taken=1\ncpi.jump=2\ncpi.system=10\n");
+
+    if let Some(report) = sched {
+        let cfg = &report.config;
+        let sum = &report.summary;
+        s.push_str("\n[sched]\n");
+        s.push_str(&format!("sched.policy={}\n", cfg.policy.as_str()));
+        s.push_str(&format!("sched.quantum={}\n", cfg.quantum));
+        s.push_str(&format!("sched.switch_cost={}\n", cfg.switch_cost));
+        s.push_str(&format!("sched.ticks={}\n", sum.ticks));
+        s.push_str(&format!("sched.context_switches={}\n", sum.context_switches));
+        s.push_str(&format!("sched.preemptions={}\n", sum.preemptions));
+        s.push_str(&format!("sched.avg_waiting={:.4}\n", sum.avg_waiting));
+        s.push_str(&format!("sched.avg_response={:.4}\n", sum.avg_response));
+        s.push_str(&format!("sched.avg_turnaround={:.4}\n", sum.avg_turnaround));
+        s.push_str(&format!("sched.utilization={:.4}\n", sum.utilization));
+        s.push_str(&format!("sched.cores={}\n", report.cores.len()));
+        for (core, ticks) in report.cores.iter().enumerate() {
+            s.push_str(&format!("core{core}.busy_ticks={}\n", ticks.busy));
+            s.push_str(&format!("core{core}.switch_ticks={}\n", ticks.switching));
+            s.push_str(&format!("core{core}.idle_ticks={}\n", ticks.idle));
+        }
+        s.push_str(&format!("sched.threads={}\n", report.threads.len()));
+        for t in &report.threads {
+            let tid = t.tid;
+            if let Some(p) = t.parent {
+                s.push_str(&format!("thread{tid}.parent={p}\n"));
+            }
+            s.push_str(&format!(
+                "thread{tid}.state={}\n",
+                t.state.label().to_ascii_lowercase()
+            ));
+            for (key, value) in thread_counters(t) {
+                if let Some(v) = value {
+                    s.push_str(&format!("thread{tid}.{key}={v}\n"));
+                }
+            }
+        }
+    }
     s
 }
 
@@ -749,6 +862,7 @@ pub(super) fn format_csv(
     mem: &CacheController,
     file: &str,
     pipeline: Option<PipelineReport>,
+    sched: Option<&SchedReport>,
 ) -> String {
     let (instr, total_cyc, base_cyc, cpi, ipc, clock_model) = if let Some(p) = pipeline {
         let ipc = if p.cycles > 0 {
@@ -878,6 +992,51 @@ pub(super) fn format_csv(
                 *count as f64 / total_misses as f64 * 100.0
             };
             s.push_str(&format!("0x{pc:08x},{count},{pct:.1}\n"));
+        }
+    }
+
+    if let Some(report) = sched {
+        let cfg = &report.config;
+        let sum = &report.summary;
+        s.push('\n');
+        s.push_str("SCHEDULER\n");
+        s.push_str("Policy,Quantum,Switch Cost,Ticks,Context Switches,Preemptions,Avg Waiting,Avg Response,Avg Turnaround,Utilization (%)\n");
+        s.push_str(&format!(
+            "{},{},{},{},{},{},{:.2},{:.2},{:.2},{:.1}\n",
+            cfg.policy.as_str(),
+            cfg.quantum,
+            cfg.switch_cost,
+            sum.ticks,
+            sum.context_switches,
+            sum.preemptions,
+            sum.avg_waiting,
+            sum.avg_response,
+            sum.avg_turnaround,
+            sum.utilization * 100.0
+        ));
+        s.push('\n');
+        s.push_str("CORES\nCore,Busy Ticks,Switch Ticks,Idle Ticks\n");
+        for (core, ticks) in report.cores.iter().enumerate() {
+            s.push_str(&format!(
+                "{core},{},{},{}\n",
+                ticks.busy, ticks.switching, ticks.idle
+            ));
+        }
+        s.push('\n');
+        s.push_str("THREADS\n");
+        s.push_str("TID,Parent,State,Priority,Arrival,First Run,Finish,Response,Turnaround,Run Ticks,Waiting Ticks,Blocked Ticks,Dispatches,Preemptions,Yields,Entry PC\n");
+        for t in &report.threads {
+            let cell = |v: Option<u64>| v.map_or_else(|| "-".to_string(), |v| v.to_string());
+            let counters = thread_counters(t);
+            let values: Vec<String> = counters[..12].iter().map(|(_, v)| cell(*v)).collect();
+            s.push_str(&format!(
+                "{},{},{},{},0x{:08x}\n",
+                t.tid,
+                cell(t.parent.map(u64::from)),
+                t.state.label(),
+                values.join(","),
+                t.entry_pc
+            ));
         }
     }
 

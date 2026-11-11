@@ -11,7 +11,11 @@ use crate::falcon::cache::{
 };
 use crate::falcon::jit::{self, BackendKind, ExecCtx, ExecOutcome, ExecutionBackend};
 use crate::falcon::program::{load_bytes, load_elf};
-use crate::falcon::registers::HartStartRequest;
+use crate::falcon::registers::{HartStartRequest, SchedRequest};
+use crate::falcon::sched::{
+    CoreTicks, JoinOutcome, SchedConfig, SchedPolicy, SchedSummary, Scheduler, ThreadInfo,
+    ThreadState,
+};
 use crate::falcon::{CacheController, Cpu};
 use crate::ui::pipeline::{PipelineConfig, parse_pipeline_config, serialize_pipeline_config};
 use crate::ui::{Console, CpiConfig};
@@ -45,6 +49,12 @@ pub struct RunArgs {
     pub jit_mode: BackendKind,
     /// `--coherence`: overrides the config's `coherence=` key.
     pub coherence: Option<crate::falcon::cache::CoherenceProtocol>,
+    /// `--sched`: overrides the config's `sched=` key.
+    pub sched: Option<SchedPolicy>,
+    /// `--quantum`: overrides the config's `sched_quantum=` key.
+    pub quantum: Option<u32>,
+    /// `--switch-cost`: overrides the config's `sched_switch_cost=` key.
+    pub switch_cost: Option<u32>,
     /// `--screen`: show programs that use the graphics syscalls (2000+) in an
     /// OS window. Without it the screen stays in-memory only (CI-safe).
     pub screen_window: bool,
@@ -104,6 +114,25 @@ struct HeadlessHart {
     cpu: Cpu,
     active: bool,
     paused: bool,
+}
+
+/// The scheduler's books at the end of a run, for the results file.
+struct SchedReport {
+    config: SchedConfig,
+    summary: SchedSummary,
+    threads: Vec<ThreadInfo>,
+    cores: Vec<CoreTicks>,
+}
+
+impl SchedReport {
+    fn from_scheduler<C>(sched: &Scheduler<C>) -> Self {
+        Self {
+            config: sched.config(),
+            summary: sched.summary(),
+            threads: sched.threads().to_vec(),
+            cores: sched.core_ticks().to_vec(),
+        }
+    }
 }
 
 // ── raven build ───────────────────────────────────────────────────────────────
@@ -208,6 +237,19 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     };
     if let Some(protocol) = args.coherence {
         coherence.protocol = protocol;
+    }
+    let mut sched_cfg = match sim_text.as_deref() {
+        Some(t) => parse_sched_rcfg(t)?,
+        None => SchedConfig::default(),
+    };
+    if let Some(policy) = args.sched {
+        sched_cfg.policy = policy;
+    }
+    if let Some(quantum) = args.quantum {
+        sched_cfg.quantum = quantum;
+    }
+    if let Some(cost) = args.switch_cost {
+        sched_cfg.switch_cost = cost;
     }
 
     // ── 2. Apply sim settings (.rcfg) ────────────────────────────────────────
@@ -344,6 +386,13 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
                 .to_string(),
         );
     }
+    if args.pipeline && sched_cfg.policy.is_enabled() {
+        return Err(
+            "headless thread scheduling is not implemented for --pipeline yet; use sequential mode or --sched off"
+                .to_string(),
+        );
+    }
+    let mut sched_report = None;
 
     let pipeline_report = if args.pipeline {
         let pcfg = if let Some(t) = pipe_text.as_deref().filter(|t| !t.trim().is_empty()) {
@@ -376,15 +425,29 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
         if args.pipeline_trace_out.is_some() {
             return Err("--pipeline-trace-out requires --pipeline".to_string());
         }
-        let outcome = run_headless_sequential(
-            &mut cpu,
-            &mut mem,
-            &mut console,
-            args.max_cycles,
-            &mut captured_stdout,
-            max_cores,
-            backend.as_mut(),
-        );
+        let outcome = if sched_cfg.policy.is_enabled() {
+            run_headless_scheduled(
+                &mut cpu,
+                &mut mem,
+                &mut console,
+                args.max_cycles,
+                &mut captured_stdout,
+                max_cores,
+                sched_cfg,
+                backend.as_mut(),
+            )
+            .map(|sched| sched_report = Some(SchedReport::from_scheduler(&sched)))
+        } else {
+            run_headless_sequential(
+                &mut cpu,
+                &mut mem,
+                &mut console,
+                args.max_cycles,
+                &mut captured_stdout,
+                max_cores,
+                backend.as_mut(),
+            )
+        };
         if outcome.is_err() {
             // As in the pipeline: a trap with no handler, or an instruction
             // that does not decode, left its reason on the console.
@@ -426,10 +489,15 @@ pub fn run_headless(args: RunArgs) -> Result<(), String> {
     // ── 5. Serialize and output ──────────────────────────────────────────────
     if !args.nout {
         let exit_code = cpu.exit_code;
+        let sched = sched_report.as_ref();
         let text = match args.format {
-            OutputFormat::Json => format_json(&mem, &file_name, exit_code, pipeline_report),
-            OutputFormat::Rstats => format_rstats(&mem, &file_name, exit_code, pipeline_report),
-            OutputFormat::Csv => format_csv(&mem, &file_name, pipeline_report),
+            OutputFormat::Json => {
+                format_json(&mem, &file_name, exit_code, pipeline_report, sched)
+            }
+            OutputFormat::Rstats => {
+                format_rstats(&mem, &file_name, exit_code, pipeline_report, sched)
+            }
+            OutputFormat::Csv => format_csv(&mem, &file_name, pipeline_report, sched),
         };
         match &args.output {
             Some(path) => {
@@ -571,6 +639,7 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
             .map_err(|e| format!("L{} config error: {e}", i + 2))?;
     }
     let coherence = crate::falcon::cache::CoherenceConfig::from_rcfg(&cache_t)?;
+    let sched = parse_sched_rcfg(&sim_t)?;
     // [pipeline]
     let pcfg = parse_pipeline_config(&pipe_t)?;
 
@@ -583,6 +652,12 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
     eprintln!("  run_scope        = {run_scope}");
     eprintln!("  mem_kb           = {}", mem_size / 1024);
     eprintln!("  max_cores        = {max_cores}");
+    eprintln!(
+        "  sched            = {} (quantum {} ticks, switch cost {} ticks)",
+        sched.policy.as_str(),
+        sched.quantum,
+        sched.switch_cost
+    );
     eprintln!(
         "[cache] — {} level{}",
         1 + extra.len(),
@@ -615,6 +690,7 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
             mem_size / 1024,
             max_cores,
             &run_scope,
+            &sched,
         );
         let cache = serialize_cache_configs_with(&icfg, &dcfg, &extra, &coherence);
         let pipeline = serialize_pipeline_config(&pcfg);
@@ -630,8 +706,10 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
 /// Default `[sim]` section content (same defaults as the TUI).
 fn default_rcfg_text() -> String {
     let mut s = String::from(
-        "# Raven Sim Config v2\ncache_enabled=true\npipeline_enabled=true\nvm_mode=off\ntrace_syscalls=false\nmem_kb=16384\nmax_cores=1\nrun_scope=focus\n\n# CPI (cycles per instruction)\n",
+        "# Raven Sim Config v2\ncache_enabled=true\npipeline_enabled=true\nvm_mode=off\ntrace_syscalls=false\nmem_kb=16384\nmax_cores=1\nrun_scope=focus\n",
     );
+    s.push_str(&SchedConfig::default().to_rcfg());
+    s.push_str("\n# CPI (cycles per instruction)\n");
     s.push_str("cpi.alu=1\ncpi.mul=3\ncpi.div=20\ncpi.load=0\ncpi.store=0\n");
     s.push_str("cpi.branch_taken=3\ncpi.branch_not_taken=1\ncpi.jump=2\ncpi.system=10\ncpi.fp=5\n");
     s
@@ -648,12 +726,15 @@ fn rebuild_rcfg_text(
     mem_kb: usize,
     max_cores: usize,
     run_scope: &str,
+    sched: &SchedConfig,
 ) -> String {
     let vm_mode = if vm_enabled { "auto" } else { "off" };
     let mut s = String::from("# Raven Sim Config v2\n");
     s.push_str(&format!(
-        "cache_enabled={cache_enabled}\npipeline_enabled={pipeline_enabled}\nvm_mode={vm_mode}\ntrace_syscalls={trace_syscalls}\nmem_kb={mem_kb}\nmax_cores={max_cores}\nrun_scope={run_scope}\n\n# CPI (cycles per instruction)\n"
+        "cache_enabled={cache_enabled}\npipeline_enabled={pipeline_enabled}\nvm_mode={vm_mode}\ntrace_syscalls={trace_syscalls}\nmem_kb={mem_kb}\nmax_cores={max_cores}\nrun_scope={run_scope}\n"
     ));
+    s.push_str(&sched.to_rcfg());
+    s.push_str("\n# CPI (cycles per instruction)\n");
     s.push_str(&format!(
         "cpi.alu={}\ncpi.mul={}\ncpi.div={}\ncpi.load={}\ncpi.store={}\n",
         cpi.alu, cpi.mul, cpi.div, cpi.load, cpi.store
@@ -680,6 +761,21 @@ fn default_cpi_config() -> CpiConfig {
         fp: 5,
         stage_overhead: 3,
     }
+}
+
+/// The scheduler keys of a `[sim]` section.
+fn parse_sched_rcfg(text: &str) -> Result<SchedConfig, String> {
+    let mut map: HashMap<String, String> = HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            map.insert(k.trim().to_ascii_lowercase(), v.trim().to_ascii_lowercase());
+        }
+    }
+    SchedConfig::from_rcfg_lookup(|key| map.get(key).cloned())
 }
 
 fn parse_rcfg_cli_full(
@@ -817,6 +913,8 @@ fn run_headless_sequential(
             let mut ctx = ExecCtx::new(cpu, mem, console);
             backend.run_until_yield(&mut ctx)
         };
+        // Hart 0 is the only one: it can join no one, and only steer itself.
+        settle_unscheduled(cpu, |id| id == 0, |_| false);
         match outcome {
             Ok(ExecOutcome::Stepped { .. }) => {
                 // screen_sleep_ms: single hart, nothing else to do — sleep the
@@ -894,17 +992,25 @@ fn run_headless_multihart_sequential(
             break;
         }
         let mut any_running = false;
+        let mut stepped = false;
         for idx in 0..max_cores {
             if !harts[idx].active || harts[idx].paused {
                 continue;
             }
             any_running = true;
+            settle_headless_hart(&mut harts, idx);
+            if harts[idx].cpu.join_wait.is_some() {
+                // thread_join: this hart waits on its core for another.
+                continue;
+            }
+            stepped = true;
             // The core's private L1, when it has one, serves this turn.
             mem.set_active_core(idx);
             let outcome = {
                 let mut ctx = ExecCtx::new(&mut harts[idx].cpu, mem, console);
                 backend.run_until_yield(&mut ctx)
             };
+            settle_headless_hart(&mut harts, idx);
             match outcome {
                 Ok(ExecOutcome::Stepped { .. }) => {
                     flush_cpu_stdout(&mut harts[idx].cpu, captured_stdout);
@@ -964,6 +1070,11 @@ fn run_headless_multihart_sequential(
         if global_exit_hart.is_some() {
             break;
         }
+        if !stepped {
+            return Err(
+                "raven: deadlock: every hart left is blocked in thread_join".to_string(),
+            );
+        }
         // screen_sleep_ms: when every runnable hart is parked, sleep until the
         // earliest deadline instead of busy re-executing parked ecalls.
         let runnable = harts.iter().filter(|h| h.active && !h.paused);
@@ -995,6 +1106,22 @@ fn run_headless_multihart_sequential(
         *cpu = harts.remove(0).cpu;
     }
     Ok(())
+}
+
+/// `settle_unscheduled` for one of the harts of a multi-hart run.
+fn settle_headless_hart(harts: &mut [HeadlessHart], idx: usize) {
+    let ids: Vec<(u32, bool)> = harts
+        .iter()
+        .map(|h| (h.hart_id, h.active && !h.paused))
+        .collect();
+    // Slots reused for a later hart forget the earlier one, so any id up to
+    // the highest handed out counts as known.
+    let highest = ids.iter().map(|&(id, _)| id).max().unwrap_or(0);
+    settle_unscheduled(
+        &mut harts[idx].cpu,
+        |id| id <= highest,
+        |id| ids.iter().any(|&(hid, alive)| hid == id && alive),
+    );
 }
 
 fn service_pending_hart_start(
@@ -1047,6 +1174,241 @@ fn service_pending_hart_start(
     };
     harts[parent_idx].cpu.write(10, next_hart_id);
     Ok(())
+}
+
+/// What the thread syscalls do with no scheduler (`sched=off`). A yield has
+/// no one to hand the core to and a priority nothing to steer, so both only
+/// check their argument. A join keeps the hart off its core, which it does
+/// not give up, until the hart it waits for is no longer running.
+///
+/// `known(id)` says whether a hart with that id ever ran, `alive(id)` whether
+/// it still does.
+fn settle_unscheduled(cpu: &mut Cpu, known: impl Fn(u32) -> bool, alive: impl Fn(u32) -> bool) {
+    if let Some(SchedRequest::SetPriority { tid, .. }) = cpu.pending_sched.take() {
+        if !known(tid) {
+            cpu.write(10, (-1i32) as u32);
+        }
+    }
+    if let Some(target) = cpu.join_wait {
+        if target == cpu.hart_id || !known(target) {
+            cpu.join_wait = None;
+            cpu.write(10, (-1i32) as u32);
+        } else if !alive(target) {
+            cpu.join_wait = None;
+        }
+    }
+}
+
+/// `raven run` with a scheduler: the harts a program starts are threads, and
+/// the scheduler decides which one each of the `max_cores` cores runs. One
+/// round is one tick: every core with a thread executes one step, then the
+/// scheduler switches threads where its policy says so.
+#[allow(clippy::too_many_arguments)]
+fn run_headless_scheduled(
+    cpu: &mut Cpu,
+    mem: &mut CacheController,
+    console: &mut Console,
+    max_ticks: u64,
+    captured_stdout: &mut Vec<u8>,
+    max_cores: usize,
+    cfg: SchedConfig,
+    backend: &mut dyn ExecutionBackend<CacheController>,
+) -> Result<Scheduler<Cpu>, String> {
+    let mem_size = mem.ram.data_len();
+    let mut sched: Scheduler<Cpu> = Scheduler::new(cfg, max_cores, cpu.pc);
+    let mut cores: Vec<Option<Cpu>> = (0..max_cores).map(|_| None).collect();
+    let mut root = cpu.clone();
+    root.hart_id = 0;
+    cores[0] = Some(root);
+    // The thread whose `exit` ended the program, which ends every thread.
+    let mut ended_by: Option<Cpu> = None;
+
+    let mut ticks = 0u64;
+    'run: loop {
+        if ticks >= max_ticks {
+            eprintln!("raven: warning: --max-cycles limit ({max_ticks}) reached — stopping");
+            break;
+        }
+        for core in 0..max_cores {
+            let Some(tid) = sched.running_on(core) else {
+                continue;
+            };
+            let Some(hart) = cores[core].as_mut() else {
+                continue;
+            };
+            // The core's private L1, when it has one, serves this turn.
+            mem.set_active_core(core);
+            let outcome = {
+                let mut ctx = ExecCtx::new(hart, mem, console);
+                backend.run_until_yield(&mut ctx)
+            };
+            flush_cpu_stdout(hart, captured_stdout);
+            match outcome {
+                Ok(ExecOutcome::Stepped { .. }) => {}
+                Ok(ExecOutcome::AwaitingInput) => {
+                    let mut line = String::new();
+                    match std::io::stdin().read_line(&mut line) {
+                        Ok(0) | Err(_) => break 'run,
+                        Ok(_) => console.push_input(line.trim_end_matches(['\n', '\r']).to_string()),
+                    }
+                }
+                Ok(ExecOutcome::Halted) => {
+                    if hart.exit_code.is_some() {
+                        ended_by = Some(hart.clone());
+                        sched.close(core);
+                        break 'run;
+                    }
+                    if hart.local_exit || hart.ebreak_hit {
+                        sched.exit(core);
+                    } else {
+                        return Err(format!(
+                            "raven: fault at core {core} thread {tid} PC=0x{:08X}",
+                            hart.pc
+                        ));
+                    }
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "raven: fault at core {core} thread {tid} PC=0x{:08X}: {e}",
+                        hart.pc
+                    ));
+                }
+            }
+            service_scheduled_requests(&mut sched, &mut cores, core, mem, mem_size);
+        }
+
+        // Every thread that leaves a core is parked before any enters one: a
+        // thread may leave one core and enter another in the same tick.
+        let switches = sched.end_tick();
+        for switch in &switches {
+            if let Some((tid, _)) = switch.out {
+                if let Some(ctx) = cores[switch.core].take() {
+                    sched.park(tid, ctx);
+                }
+            }
+        }
+        for switch in &switches {
+            if let Some(tid) = switch.inn {
+                let mut ctx = sched
+                    .unpark(tid)
+                    .ok_or_else(|| format!("raven: thread {tid} has no saved context"))?;
+                // A thread is only dispatched once nothing blocks it.
+                ctx.join_wait = None;
+                cores[switch.core] = Some(ctx);
+            }
+        }
+        ticks = ticks.saturating_add(1);
+
+        if !sched.has_live_threads() {
+            break;
+        }
+        if sched.is_deadlocked() {
+            let waits: Vec<String> = sched
+                .threads()
+                .iter()
+                .filter_map(|t| match t.state {
+                    ThreadState::Blocked(on) => Some(format!("thread {} joins {on}", t.tid)),
+                    _ => None,
+                })
+                .collect();
+            return Err(format!(
+                "raven: deadlock at tick {}: every thread left is blocked in thread_join ({})",
+                sched.now(),
+                waits.join(", ")
+            ));
+        }
+
+        // screen_sleep_ms: when every running thread is parked on its ecall,
+        // sleep until the earliest deadline instead of spinning.
+        if let Some(deadline) = (0..max_cores)
+            .filter(|&core| sched.running_on(core).is_some())
+            .map(|core| cores[core].as_ref().and_then(|c| c.sleep_until))
+            .collect::<Option<Vec<_>>>()
+            .and_then(|d| d.into_iter().min())
+        {
+            let now = std::time::Instant::now();
+            if deadline > now {
+                std::thread::sleep(deadline - now);
+            }
+        }
+    }
+
+    // The program's state is the one its `exit` left, or else its first
+    // thread's, wherever that thread is.
+    *cpu = match ended_by {
+        Some(ctx) => ctx,
+        None => {
+            let mut root = match sched.core_of(0) {
+                Some(core) => cores[core].take(),
+                None => sched.unpark(0),
+            }
+            .unwrap_or_default();
+            if !console.reading && !sched.has_live_threads() {
+                root.exit_code = Some(0);
+            }
+            root
+        }
+    };
+    Ok(sched)
+}
+
+/// Carry out what the thread on `core` asked for during its step: start a
+/// thread, yield, change a priority, join.
+fn service_scheduled_requests(
+    sched: &mut Scheduler<Cpu>,
+    cores: &mut [Option<Cpu>],
+    core: usize,
+    mem: &CacheController,
+    mem_size: usize,
+) {
+    let Some(tid) = sched.thread_on(core) else {
+        return;
+    };
+    let Some(hart) = cores[core].as_mut() else {
+        return;
+    };
+    if let Some(HartStartRequest {
+        entry_pc,
+        stack_ptr,
+        arg,
+    }) = hart.pending_hart_start.take()
+    {
+        // The same checks as without a scheduler, but no core needs to be
+        // free: the new thread waits in the ready queue.
+        let result = if mem.peek32(entry_pc).is_err() {
+            (-2i32) as u32
+        } else if stack_ptr == 0 || stack_ptr > mem_size as u32 || stack_ptr & 0xF != 0 {
+            (-3i32) as u32
+        } else {
+            let mut child = Cpu::default();
+            child.pc = entry_pc;
+            child.write(2, stack_ptr);
+            child.write(10, arg);
+            child.heap_break = hart.heap_break;
+            child.hart_id = sched.next_tid();
+            sched.spawn(Some(tid), entry_pc, child)
+        };
+        hart.write(10, result);
+    }
+    match hart.pending_sched.take() {
+        Some(SchedRequest::Yield) => sched.yield_now(core),
+        Some(SchedRequest::SetPriority { tid, priority }) => {
+            if !sched.set_priority(tid, priority) {
+                hart.write(10, (-1i32) as u32);
+            }
+        }
+        None => {}
+    }
+    if let Some(target) = hart.join_wait {
+        match sched.join(core, target) {
+            JoinOutcome::Wait => {}
+            JoinOutcome::Done => hart.join_wait = None,
+            JoinOutcome::Invalid => {
+                hart.join_wait = None;
+                hart.write(10, (-1i32) as u32);
+            }
+        }
+    }
 }
 
 /// Print the errors the simulation left on the console.

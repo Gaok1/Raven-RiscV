@@ -275,6 +275,9 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
             "--format",
             "--cores",
             "--coherence",
+            "--sched",
+            "--quantum",
+            "--switch-cost",
             "--expect-exit",
             "--expect-stdout",
             "--jit",
@@ -332,6 +335,19 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
             })
         })
         .transpose()?;
+    let sched = flag_value(args, "--sched")
+        .map(|value| {
+            raven::falcon::sched::SchedPolicy::from_str(&value).ok_or_else(|| {
+                format!("unknown --sched '{value}' (use off, fifo, rr or priority)")
+            })
+        })
+        .transpose()?;
+    let quantum = flag_value(args, "--quantum")
+        .map(|value| parse_sched_ticks(&value, "--quantum", 1, MAX_QUANTUM))
+        .transpose()?;
+    let switch_cost = flag_value(args, "--switch-cost")
+        .map(|value| parse_sched_ticks(&value, "--switch-cost", 0, MAX_SWITCH_COST))
+        .transpose()?;
 
     cli::run_headless(cli::RunArgs {
         architecture: arch_flag(args),
@@ -351,8 +367,23 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         expect_mems,
         jit_mode,
         coherence,
+        sched,
+        quantum,
+        switch_cost,
         screen_window: has_flag(args, "--screen"),
     })
+}
+
+const MAX_QUANTUM: u32 = raven::falcon::sched::SchedConfig::MAX_QUANTUM;
+const MAX_SWITCH_COST: u32 = raven::falcon::sched::SchedConfig::MAX_SWITCH_COST;
+
+fn parse_sched_ticks(value: &str, flag: &str, min: u32, max: u32) -> Result<u32, String> {
+    value
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|n| (min..=max).contains(n))
+        .ok_or_else(|| format!("invalid {flag} value '{value}' (use {min}..={max})"))
 }
 
 // ── raven export-config [--out <file>] ───────────────────────────────────────
@@ -526,6 +557,12 @@ OPTIONS  run:
     --coherence <protocol>      L1 caches between cores: shared (one L1 for all, default),
                                 none (private, not coherent), msi, mesi or moesi (private,
                                 snooping); overrides the config's coherence= key
+    --sched off|fifo|rr|priority
+                                Share the cores among more threads than cores: off (one
+                                hart per core, default), fifo, rr (round robin) or priority
+                                (preemptive); overrides the config's sched= key
+    --quantum <ticks>           Round-robin time slice, in rounds          (default: 50)
+    --switch-cost <ticks>       Rounds a core spends on each context switch (default: 0)
     --mem <size>                RAM size, e.g. 16mb, 256kb, 1gb   (default: sim-settings or 16mb)
     --max-cycles <n>            Execution budget: steps (sequential), rounds (multi-hart), or pipeline cycles (default: 1000000000)
     --jit none|hot|full         Execution backend (default: none); full needs --features jit,
@@ -577,6 +614,7 @@ EXAMPLES:
     raven run program.s --config my.rcfg --format csv --out stats.csv
     raven run program.s --cores 4 --nout
     raven run program.s --cores 2 --coherence mesi --format rstats
+    raven run threads.s --cores 1 --sched rr --quantum 20 --format csv
     raven run program.s --pipeline --config my.rcfg --format json
     raven run program.s --expect-exit 0 --expect-reg a0=42
     raven run program.s --pipeline --pipeline-trace-out trace.json

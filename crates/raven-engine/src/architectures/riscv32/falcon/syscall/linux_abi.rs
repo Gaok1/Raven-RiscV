@@ -313,6 +313,9 @@ impl<B: Bus> SyscallAbi<B> for LinuxAbi {
                 Ok(true)
             }
             SYS_SCHED_YIELD => {
+                // The same request as `thread_yield`: with a scheduler on, the
+                // core goes to the next thread waiting.
+                cpu.pending_sched = Some(crate::falcon::registers::SchedRequest::Yield);
                 cpu.write(10, 0);
                 Ok(true)
             }

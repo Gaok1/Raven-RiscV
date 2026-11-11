@@ -1,6 +1,7 @@
 //! Falcon teaching extensions (`a7` in `1000..`), used by the assembler's
 //! pseudo-instructions (`print_int`, `read_int`, ...) and by multi-hart
-//! control (`hart_start`, `hart_exit`, `map_exec`).
+//! control (`hart_start`, `hart_exit`, `map_exec`) and thread scheduling
+//! (`thread_yield`, `thread_join`, `thread_set_priority`).
 
 use super::abi::{SyscallAbi, SyscallCtx};
 use super::errno::LINUX_EINVAL;
@@ -8,7 +9,7 @@ use super::helpers::{console_write_bytes, format_float, parse_u64, read_zstr};
 use crate::falcon::{
     errors::FalconError,
     memory::Bus,
-    registers::{ExecRegion, HartStartRequest},
+    registers::{ExecRegion, HartStartRequest, SchedRequest},
 };
 
 const FALCON_PRINT_INT: u32 = 1000;
@@ -34,6 +35,9 @@ const FALCON_STRCMP: u32 = 1053;
 pub const FALCON_HART_START: u32 = 1100;
 pub const FALCON_HART_EXIT: u32 = 1101;
 pub const FALCON_MAP_EXEC: u32 = 1102;
+pub const FALCON_THREAD_YIELD: u32 = 1103;
+pub const FALCON_THREAD_JOIN: u32 = 1104;
+pub const FALCON_THREAD_SET_PRIORITY: u32 = 1105;
 
 pub struct FalconAbi;
 
@@ -63,6 +67,9 @@ impl<B: Bus> SyscallAbi<B> for FalconAbi {
             FALCON_HART_START => "hart_start",
             FALCON_HART_EXIT => "hart_exit",
             FALCON_MAP_EXEC => "map_exec",
+            FALCON_THREAD_YIELD => "thread_yield",
+            FALCON_THREAD_JOIN => "thread_join",
+            FALCON_THREAD_SET_PRIORITY => "thread_set_priority",
             _ => return None,
         })
     }
@@ -224,6 +231,27 @@ impl<B: Bus> SyscallAbi<B> for FalconAbi {
                 FALCON_HART_EXIT => {
                     cpu.local_exit = true;
                     Ok(false)
+                }
+                // The host owns the threads, so these three only leave a note
+                // on the hart and return 0; the host acts on the note after
+                // the step, and writes a0 again if the call was invalid.
+                FALCON_THREAD_YIELD => {
+                    cpu.pending_sched = Some(SchedRequest::Yield);
+                    cpu.write(10, 0);
+                    Ok(true)
+                }
+                FALCON_THREAD_JOIN => {
+                    cpu.join_wait = Some(cpu.read(10));
+                    cpu.write(10, 0);
+                    Ok(true)
+                }
+                FALCON_THREAD_SET_PRIORITY => {
+                    cpu.pending_sched = Some(SchedRequest::SetPriority {
+                        tid: cpu.read(10),
+                        priority: cpu.read(11),
+                    });
+                    cpu.write(10, 0);
+                    Ok(true)
                 }
                 FALCON_MAP_EXEC => {
                     let start = cpu.read(10);

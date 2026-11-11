@@ -1,9 +1,10 @@
 use super::{
-    HeadlessHart, PipelineReport, format_csv, format_json, format_rstats, load_falc,
+    HeadlessHart, PipelineReport, SchedReport, format_csv, format_json, format_rstats, load_falc,
     parse_expect_mem_spec, parse_expect_reg_spec, run_headless_multihart_sequential,
-    run_headless_pipeline, run_headless_sequential, service_pending_hart_start,
-    validate_expectations,
+    run_headless_pipeline, run_headless_scheduled, run_headless_sequential,
+    service_pending_hart_start, validate_expectations,
 };
+use crate::falcon::sched::{SchedConfig, SchedPolicy, ThreadState};
 use crate::falcon::asm::assemble;
 use crate::falcon::cache::{CacheConfig, CacheController};
 use crate::falcon::memory::Bus;
@@ -377,20 +378,20 @@ fn pipeline_output_formats_do_not_emit_serial_cycle_breakdown() {
         cpi: 11.0 / 3.0,
     };
 
-    let json = format_json(&mem, "demo.s", Some(0), Some(pipeline));
+    let json = format_json(&mem, "demo.s", Some(0), Some(pipeline), None);
     assert!(json.contains("\"clock_model\": \"pipeline\""));
     assert!(json.contains("\"total_cycles\": 11"));
     assert!(!json.contains("\"base_cycles\""));
     assert!(!json.contains("\"cache_cycles\""));
 
-    let rstats = format_rstats(&mem, "demo.s", Some(0), Some(pipeline));
+    let rstats = format_rstats(&mem, "demo.s", Some(0), Some(pipeline), None);
     assert!(rstats.starts_with("# Raven Results v1\n"));
     assert!(rstats.contains("prog.clock_model=pipeline\n"));
     assert!(rstats.contains("prog.total_cycles=11\n"));
     assert!(!rstats.contains("prog.base_cycles="));
     assert!(!rstats.contains("prog.cache_cycles="));
 
-    let csv = format_csv(&mem, "demo.s", Some(pipeline));
+    let csv = format_csv(&mem, "demo.s", Some(pipeline), None);
     assert!(csv.contains("Clock Model,Instructions,Total Cycles,CPI,IPC\n"));
     assert!(csv.contains("pipeline,3,11,"));
     assert!(!csv.contains("Base Cycles"));
@@ -483,4 +484,249 @@ fn without_coherence_the_waiting_core_never_sees_the_flag() {
     // core 0 waits on core 1 in turn, so the run reaches its cycle limit.
     let cpu = run_flag_handoff(crate::falcon::cache::CoherenceProtocol::None);
     assert_eq!(cpu.exit_code, None);
+}
+
+/// Main starts two workers, A and B, and joins both; each worker prints its
+/// letter after each of three rounds of busy work. Main exits with 7.
+const TWO_WORKERS: &str = r#"
+.text
+_start:
+    li   t5, -8192
+    add  a1, sp, t5
+    la   a0, worker
+    li   a2, 65
+    li   a7, 1100
+    ecall
+    mv   s0, a0
+    li   t5, -16384
+    add  a1, sp, t5
+    la   a0, worker
+    li   a2, 66
+    li   a7, 1100
+    ecall
+    mv   s1, a0
+    mv   a0, s0
+    li   a7, 1104
+    ecall
+    mv   a0, s1
+    li   a7, 1104
+    ecall
+    li   a0, 7
+    li   a7, 93
+    ecall
+worker:
+    mv   s1, a0
+    li   s2, 3
+round:
+    li   t0, 10
+busy:
+    addi t0, t0, -1
+    bnez t0, busy
+    mv   a0, s1
+    li   a7, 1006
+    ecall
+    addi s2, s2, -1
+    bnez s2, round
+    li   a7, 1101
+    ecall
+"#;
+
+/// Run `asm` under `policy` on `cores` cores. Returns the final CPU, what the
+/// program printed, and the scheduler's report or the error.
+fn run_scheduled(
+    asm: &str,
+    policy: SchedPolicy,
+    quantum: u32,
+    cores: usize,
+) -> (Cpu, String, Result<SchedReport, String>) {
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        16 * 1024 * 1024,
+    );
+    mem.set_core_count(cores);
+    let mut console = Console::default();
+    let mut stdout = Vec::new();
+    let prog = assemble(asm, 0).expect("assemble");
+    load_words(&mut mem.ram, 0, &prog.text).expect("load text");
+    cpu.pc = 0;
+    cpu.write(2, (16 * 1024 * 1024) as u32);
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    let cfg = SchedConfig {
+        policy,
+        quantum,
+        switch_cost: 0,
+    };
+    let result = run_headless_scheduled(
+        &mut cpu,
+        &mut mem,
+        &mut console,
+        100_000,
+        &mut stdout,
+        cores,
+        cfg,
+        backend.as_mut(),
+    )
+    .map(|sched| SchedReport::from_scheduler(&sched));
+    (cpu, String::from_utf8_lossy(&stdout).into_owned(), result)
+}
+
+#[test]
+fn fifo_runs_each_worker_to_completion_on_one_core() {
+    let (cpu, out, report) = run_scheduled(TWO_WORKERS, SchedPolicy::Fifo, 5, 1);
+    let report = report.expect("scheduled run");
+    assert_eq!(out, "AAABBB");
+    assert_eq!(cpu.exit_code, Some(7));
+    assert_eq!(report.summary.preemptions, 0);
+    assert_eq!(report.threads.len(), 3);
+    assert!(report.threads.iter().all(|t| t.state == ThreadState::Exited));
+}
+
+#[test]
+fn round_robin_interleaves_the_workers() {
+    let (cpu, out, report) = run_scheduled(TWO_WORKERS, SchedPolicy::RoundRobin, 5, 1);
+    let report = report.expect("scheduled run");
+    assert_eq!(out, "ABABAB");
+    assert_eq!(cpu.exit_code, Some(7));
+    assert!(report.summary.preemptions > 0);
+}
+
+#[test]
+fn a_more_urgent_worker_runs_first() {
+    // Main gives B priority 1 right after starting it: B takes the core from
+    // main at once, then A and main share by round robin.
+    let asm = TWO_WORKERS.replace(
+        "    mv   s1, a0\n    mv   a0, s0",
+        "    mv   s1, a0\n    li   a1, 1\n    li   a7, 1105\n    ecall\n    mv   a0, s0",
+    );
+    let (cpu, out, report) = run_scheduled(&asm, SchedPolicy::Priority, 1000, 1);
+    report.expect("scheduled run");
+    assert_eq!(out, "BBBAAA");
+    assert_eq!(cpu.exit_code, Some(7));
+}
+
+#[test]
+fn every_thread_gets_a_core_when_there_are_enough() {
+    let (cpu, out, report) = run_scheduled(TWO_WORKERS, SchedPolicy::RoundRobin, 5, 3);
+    let report = report.expect("scheduled run");
+    assert_eq!(out, "ABABAB");
+    assert_eq!(cpu.exit_code, Some(7));
+    assert_eq!(report.summary.preemptions, 0, "no one ever waits for a core");
+}
+
+#[test]
+fn threads_joined_on_each_other_are_reported_as_deadlocked() {
+    let asm = r#"
+.text
+_start:
+    li   t5, -8192
+    add  a1, sp, t5
+    la   a0, worker
+    li   a2, 0
+    li   a7, 1100
+    ecall
+    li   a7, 1104          # join the worker
+    ecall
+    li   a7, 93
+    ecall
+worker:
+    li   a0, 0
+    li   a7, 1104          # join main
+    ecall
+    li   a7, 1101
+    ecall
+"#;
+    let (_, _, report) = run_scheduled(asm, SchedPolicy::RoundRobin, 5, 1);
+    let err = report.err().expect("a deadlock");
+    assert!(err.contains("deadlock"), "{err}");
+    assert!(err.contains("thread 0 joins 1"), "{err}");
+}
+
+#[test]
+fn joining_itself_or_no_one_returns_minus_one() {
+    let asm = ".text\n_start:\n    li a0, 0\n    li a7, 1104\n    ecall\n    li a7, 93\n    ecall\n";
+    let (cpu, _, report) = run_scheduled(asm, SchedPolicy::Fifo, 5, 1);
+    report.expect("scheduled run");
+    assert_eq!(cpu.exit_code, Some(u32::MAX));
+
+    // The same without a scheduler.
+    let mut cpu = Cpu::default();
+    let mut mem =
+        CacheController::new(CacheConfig::default(), CacheConfig::default(), vec![], 4096);
+    let prog = assemble(asm, 0).expect("assemble");
+    load_words(&mut mem.ram, 0, &prog.text).expect("load text");
+    cpu.write(2, 4096);
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    run_headless_sequential(
+        &mut cpu,
+        &mut mem,
+        &mut Console::default(),
+        64,
+        &mut Vec::new(),
+        1,
+        backend.as_mut(),
+    )
+    .expect("headless run");
+    assert_eq!(cpu.exit_code, Some(u32::MAX));
+}
+
+#[test]
+fn without_a_scheduler_join_waits_on_its_own_core() {
+    // Each hart has a core; main's join keeps it off its core until both
+    // workers are done, then main exits with 7.
+    let mut cpu = Cpu::default();
+    let mut mem = CacheController::new(
+        CacheConfig::default(),
+        CacheConfig::default(),
+        vec![],
+        16 * 1024 * 1024,
+    );
+    mem.set_core_count(3);
+    let mut stdout = Vec::new();
+    let prog = assemble(TWO_WORKERS, 0).expect("assemble");
+    load_words(&mut mem.ram, 0, &prog.text).expect("load text");
+    cpu.write(2, (16 * 1024 * 1024) as u32);
+    let mut backend =
+        crate::falcon::jit::make_backend(crate::falcon::jit::BackendKind::None).expect("backend");
+    run_headless_multihart_sequential(
+        &mut cpu,
+        &mut mem,
+        &mut Console::default(),
+        100_000,
+        &mut stdout,
+        3,
+        backend.as_mut(),
+    )
+    .expect("headless multi-hart run");
+    assert_eq!(cpu.exit_code, Some(7));
+    assert_eq!(String::from_utf8_lossy(&stdout), "ABABAB");
+}
+
+#[test]
+fn the_scheduler_report_reaches_every_output_format() {
+    let (_, _, report) = run_scheduled(TWO_WORKERS, SchedPolicy::RoundRobin, 5, 1);
+    let report = report.expect("scheduled run");
+    let mem =
+        CacheController::new(CacheConfig::default(), CacheConfig::default(), vec![], 4096);
+
+    let json = format_json(&mem, "t.s", Some(7), None, Some(&report));
+    assert!(json.contains("\"scheduler\": {"));
+    assert!(json.contains("\"policy\": \"rr\""));
+    assert!(json.contains("\"tid\": 2, \"parent\": 0"));
+
+    let rstats = format_rstats(&mem, "t.s", Some(7), None, Some(&report));
+    assert!(rstats.contains("\n[sched]\nsched.policy=rr\n"));
+    assert!(rstats.contains("thread1.turnaround="));
+
+    let csv = format_csv(&mem, "t.s", None, Some(&report));
+    assert!(csv.contains("SCHEDULER\n"));
+    assert!(csv.contains("\nTHREADS\nTID,Parent,State,"));
+    assert!(csv.contains("\n2,0,EXIT,10,"));
+
+    let plain = format_json(&mem, "t.s", Some(7), None, None);
+    assert!(!plain.contains("scheduler"));
 }

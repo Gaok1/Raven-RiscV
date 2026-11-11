@@ -10,6 +10,7 @@ pub mod memory;
 pub mod mmu;
 pub mod pipeline;
 pub mod registers;
+pub mod sched;
 pub mod syscall;
 
 pub mod decoder;
