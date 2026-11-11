@@ -10,6 +10,8 @@ A **hart** — *hardware thread* — is an independent execution context within 
 
 When a program spawns a hart, the simulator allocates a free core slot and schedules both harts in round-robin lockstep: each global tick advances every running hart by one step. By default every hart's memory accesses go through the same cache hierarchy, so cache pressure from one hart is visible to all others. The `coherence` setting can instead give each core its own L1 caches, kept coherent by MSI, MESI or MOESI — or by nothing at all, to show what goes wrong — see [Cache coherence](coherence.md).
 
+That is the model with no scheduler (`sched=off`, the default). With a scheduler (`fifo`, `rr` or `priority`), the harts become threads that share the cores: `hart_start` no longer needs a free core, the new thread waits in a ready queue, and the scheduler decides which thread each core runs. See [Thread scheduling](threads.md).
+
 Key properties:
 
 - All harts share a single flat memory (no per-hart address spaces, no protection).
@@ -52,7 +54,7 @@ Use syscall `1100` (`hart_start`) to spawn a new hart.
 | `a0` | Meaning                              |
 |------|--------------------------------------|
 | ≥ 0  | Hart ID assigned by the simulator    |
-| −1   | No free core slot available          |
+| −1   | No free core slot available (only without a scheduler) |
 | −2   | Entry PC is outside every executable region |
 | −3   | Stack pointer is invalid (zero, not 16-byte aligned, or outside memory) |
 
@@ -93,6 +95,8 @@ child_entry:
 | `exit_group`  | `94`   | Terminate **all harts**. Identical to `exit` in Raven.  |
 
 Use `hart_exit` from worker harts so the main hart continues. Use `exit` or `exit_group` only when the entire program should stop.
+
+To wait for a worker instead of spinning on a flag, call `thread_join` (syscall `1104`, `a0` = the worker's id): it returns `0` once that hart has exited, or `-1` for an unknown id or the caller's own. Without a scheduler the waiting hart stays on its core without being stepped; with one, it gives its core to another thread. `thread_yield` (`1103`) and `thread_set_priority` (`1105`) only matter with a scheduler; see [Thread scheduling](threads.md).
 
 ---
 
@@ -211,6 +215,7 @@ The same Settings section sets how the cores' L1 caches relate (`coherence`: sha
 
 ## See also
 
+- [Thread scheduling](threads.md) — more threads than cores: FIFO, round robin, priority, `thread_join`
 - [Syscall reference](syscalls.md) — full syscall table including `1100` and `1101`
 - [Pipeline simulation](pipeline.md) — per-hart pipeline state and visualization
 - [Cache coherence](coherence.md) — private L1s per core and the MSI / MESI / MOESI protocols

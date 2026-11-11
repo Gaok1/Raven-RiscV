@@ -9,7 +9,10 @@ pub mod coroutine;
 
 pub static mut ENABLED_DEBUG_MESSAGES : bool = false;
 
-pub use syscall::{exit, exit_group, getrandom, map_exec, pause_sim, RavenFD};
+pub use syscall::{
+    exit, exit_group, getrandom, map_exec, pause_sim, thread_join, thread_set_priority,
+    thread_yield, RavenFD,
+};
 pub use graphics::*;
 pub use hardware_thread::hart::{HartHandle, HartTask, alloc_hart_stack, spawn_hart, spawn_hart_fn};
 pub use coroutine::{Coroutine, Yielder};

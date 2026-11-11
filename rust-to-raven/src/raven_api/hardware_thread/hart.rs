@@ -144,6 +144,8 @@ impl HartHandle {
     pub fn join(self) {
         while !self.is_finished() {
             spin_loop();
+            // With a scheduler the worker may need this very core.
+            crate::raven_api::syscall::thread_yield();
         }
         // SAFETY: `self` is consumed, so this is the only place that frees `done`.
         unsafe { drop(Box::from_raw(self.done)) };

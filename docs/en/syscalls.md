@@ -398,9 +398,35 @@ Current v1 semantics:
 - `sp = child stack pointer`
 - `a0 = child initial argument`
 - the new hart becomes runnable on the next global cycle, never mid-cycle
-- if no free core exists, the syscall fails immediately
+- without a scheduler (`sched=off`), if no free core exists, the syscall fails immediately with `-1`
+- with a scheduler, the new thread waits in the ready queue for a core, so it works with a single core; see [Thread scheduling](threads.md)
 
-This syscall is only meaningful when the machine is configured with more than one core.
+Without a scheduler this syscall is only meaningful when the machine is configured with more than one core.
+
+### `1103` — thread yield
+
+Give the core to the next thread in the ready queue. With nobody waiting, or with no scheduler, the caller keeps running. Returns `0`. The Linux `sched_yield` (124) does the same.
+
+### `1104` — thread join
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1104` |
+| `a0`     | id of the thread (hart) to wait for |
+| **`a0` (ret)** | `0` once it has exited; `-1` for an unknown id or the caller's own |
+
+The caller is blocked until the target exits. With a scheduler its core goes to another thread meanwhile; without one, the hart stays on its core without being stepped. If every thread left is blocked joining another, the run stops with a deadlock error.
+
+### `1105` — thread set priority
+
+| Register | Value |
+|----------|-------|
+| `a7`     | `1105` |
+| `a0`     | thread id |
+| `a1`     | priority (lower is more urgent; threads start at `10` or their parent's) |
+| **`a0` (ret)** | `0`, or `-1` for an unknown id |
+
+Only the `priority` scheduler reads it; it takes effect at the end of the current tick.
 
 ### `1102` — map executable memory
 
@@ -1003,6 +1029,9 @@ Num   Name             a0          a1          a2          ret
 1100  hart_start       entry pc    stack ptr   arg         hart id / -err
 1101  hart_exit        —           —           —           (no return)
 1102  map_exec         addr        len         —           0 / -err
+1103  thread_yield     —           —           —           0
+1104  thread_join      thread id   —           —           0 / -1
+1105  thread_set_prio  thread id   priority    —           0 / -1
 
 2000  screen_init      width       height      —           0 / -err
 2001  screen_clear     rgb         —           —           0

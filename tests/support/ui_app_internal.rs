@@ -2923,3 +2923,126 @@ fn coherence_survives_an_rcfg_round_trip() {
     crate::ui::input::keyboard::import_config_text(&mut other, &text).unwrap();
     assert_eq!(other.cache.pending_coherence, app.cache.pending_coherence);
 }
+
+/// Main starts two workers, A and B, and joins both; each worker prints its
+/// letter after each of three rounds of busy work. Main exits with 7.
+const TWO_WORKERS: &[&str] = &[
+    ".text",
+    ".globl _start",
+    "_start:",
+    "li   t5, -8192",
+    "add  a1, sp, t5",
+    "la   a0, worker",
+    "li   a2, 65",
+    "li   a7, 1100",
+    "ecall",
+    "mv   s0, a0",
+    "li   t5, -16384",
+    "add  a1, sp, t5",
+    "la   a0, worker",
+    "li   a2, 66",
+    "li   a7, 1100",
+    "ecall",
+    "mv   s1, a0",
+    "mv   a0, s0",
+    "li   a7, 1104",
+    "ecall",
+    "mv   a0, s1",
+    "li   a7, 1104",
+    "ecall",
+    "li   a0, 7",
+    "li   a7, 93",
+    "ecall",
+    "worker:",
+    "mv   s1, a0",
+    "li   s2, 3",
+    "round:",
+    "li   t0, 10",
+    "busy:",
+    "addi t0, t0, -1",
+    "bnez t0, busy",
+    "mv   a0, s1",
+    "li   a7, 1006",
+    "ecall",
+    "addi s2, s2, -1",
+    "bnez s2, round",
+    "li   a7, 1101",
+    "ecall",
+];
+
+fn console_text(app: &App) -> String {
+    app.console
+        .lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Load the two-worker program under `policy` and step until it exits.
+fn run_threads(policy: crate::falcon::sched::SchedPolicy, quantum: u32, cores: usize, pipeline: bool) -> App {
+    let mut app = App::new(None);
+    app.max_cores = cores;
+    app.sched_config.policy = policy;
+    app.sched_config.quantum = quantum;
+    app.set_pipeline_enabled(pipeline);
+    load_program(&mut app, TWO_WORKERS);
+    for _ in 0..3_000 {
+        if app.native().cpu().exit_code.is_some() || app.session.faulted {
+            break;
+        }
+        app.single_step();
+    }
+    assert!(!app.session.faulted, "{}", console_tail(&app));
+    app
+}
+
+#[test]
+fn round_robin_shares_one_core_between_three_threads() {
+    use crate::falcon::sched::{SchedPolicy, ThreadState};
+    let app = run_threads(SchedPolicy::RoundRobin, 5, 1, false);
+    assert_eq!(app.native().cpu().exit_code, Some(7), "{}", console_tail(&app));
+    assert!(console_text(&app).contains("ABABAB"), "{}", console_tail(&app));
+    let sched = app.scheduler().expect("a scheduler");
+    assert_eq!(sched.threads().len(), 3);
+    assert!(sched.threads()[1..].iter().all(|t| t.state == ThreadState::Exited));
+    assert!(sched.summary().preemptions > 0);
+}
+
+#[test]
+fn fifo_runs_each_worker_to_completion_in_the_tui() {
+    let app = run_threads(crate::falcon::sched::SchedPolicy::Fifo, 5, 1, false);
+    assert_eq!(app.native().cpu().exit_code, Some(7), "{}", console_tail(&app));
+    assert!(console_text(&app).contains("AAABBB"), "{}", console_tail(&app));
+    assert_eq!(app.scheduler().unwrap().summary().preemptions, 0);
+}
+
+#[test]
+fn round_robin_switches_threads_under_the_pipeline() {
+    let app = run_threads(crate::falcon::sched::SchedPolicy::RoundRobin, 7, 1, true);
+    assert_eq!(app.native().cpu().exit_code, Some(7), "{}", console_tail(&app));
+    let text = console_text(&app);
+    assert_eq!(text.matches('A').count() >= 3, true, "{text}");
+    assert!(app.scheduler().unwrap().summary().context_switches > 2);
+}
+
+#[test]
+fn two_cores_run_three_threads_under_priority() {
+    let app = run_threads(crate::falcon::sched::SchedPolicy::Priority, 5, 2, false);
+    assert_eq!(app.native().cpu().exit_code, Some(7), "{}", console_tail(&app));
+}
+
+#[test]
+fn without_a_scheduler_join_waits_on_its_own_core_in_the_tui() {
+    let app = run_threads(crate::falcon::sched::SchedPolicy::Off, 5, 3, false);
+    assert!(app.scheduler().is_none());
+    assert_eq!(app.native().cpu().exit_code, Some(7), "{}", console_tail(&app));
+    assert!(console_text(&app).contains("ABABAB"), "{}", console_tail(&app));
+}
+
+#[test]
+fn the_threads_tab_shows_only_for_rv32() {
+    let app = App::new(None);
+    assert!(app.visible_tabs().contains(&Tab::Threads));
+}
+

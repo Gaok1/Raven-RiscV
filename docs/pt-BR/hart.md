@@ -10,6 +10,8 @@ Um **hart** — *hardware thread* — é um contexto de execução independente 
 
 Quando um programa cria um hart, o simulador aloca um slot de núcleo livre e escalona ambos os harts em round-robin sincronizado: cada tick global avança cada hart em execução por um passo. Por padrão os acessos à memória de todos os harts passam pela mesma hierarquia de cache, então a pressão de cache de um hart é visível para todos os outros. A opção `coherence` pode, em vez disso, dar a cada core as suas próprias caches L1, mantidas coerentes por MSI, MESI ou MOESI — ou por nada, para mostrar o que dá errado — veja [Coerência de cache](coherence.md).
 
+Esse é o modelo sem escalonador (`sched=off`, o padrão). Com um escalonador (`fifo`, `rr` ou `priority`), os harts viram threads que dividem os cores: `hart_start` não precisa mais de core livre, a nova thread espera numa fila de prontos, e o escalonador decide qual thread cada core executa. Veja [Escalonamento de threads](threads.md).
+
 Propriedades principais:
 
 - Todos os harts compartilham uma única memória plana (sem espaços de endereçamento por hart, sem proteção).
@@ -52,7 +54,7 @@ Use a syscall `1100` (`hart_start`) para criar um novo hart.
 | `a0` | Significado                                     |
 |------|-------------------------------------------------|
 | ≥ 0  | ID de hart atribuído pelo simulador             |
-| −1   | Nenhum slot de núcleo livre disponível          |
+| −1   | Nenhum slot de núcleo livre disponível (só sem escalonador) |
 | −2   | PC de entrada está fora de toda região executável |
 | −3   | Stack pointer inválido (zero, não alinhado a 16 bytes, ou fora da memória) |
 
@@ -90,6 +92,8 @@ child_entry:
 | `exit_group`  | `94`   | Termina **todos os harts**. Idêntico ao `exit` no Raven. |
 
 Use `hart_exit` em harts trabalhadores para que o hart principal continue. Use `exit` ou `exit_group` apenas quando o programa inteiro deve parar.
+
+Para esperar um trabalhador sem ficar girando numa flag, chame `thread_join` (syscall `1104`, `a0` = id do trabalhador): ela retorna `0` quando esse hart terminar, ou `-1` para id desconhecido ou o do próprio chamador. Sem escalonador o hart que espera fica no seu core sem avançar; com escalonador, cede o core para outra thread. `thread_yield` (`1103`) e `thread_set_priority` (`1105`) só fazem diferença com escalonador; veja [Escalonamento de threads](threads.md).
 
 ---
 
@@ -204,6 +208,7 @@ A mesma seção do Settings define como as L1 dos cores se relacionam (`coherenc
 
 ## Veja também
 
+- [Escalonamento de threads](threads.md) — mais threads do que cores: FIFO, round robin, prioridade, `thread_join`
 - [Referência de syscalls](syscalls.md) — tabela completa incluindo `1100` e `1101`
 - [Simulação de pipeline](../en/pipeline.md) — estado e visualização do pipeline por hart
 - [Coerência de cache](coherence.md) — L1 privadas por core e os protocolos MSI / MESI / MOESI

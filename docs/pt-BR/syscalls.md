@@ -391,9 +391,35 @@ Semântica atual de `v1`:
 - `sp = stack do filho`
 - `a0 = argumento inicial do filho`
 - o novo hart só fica executável no próximo ciclo global, nunca no meio do ciclo atual
-- se não houver core livre, a syscall falha imediatamente
+- sem escalonador (`sched=off`), se não houver core livre, a syscall falha imediatamente com `-1`
+- com escalonador, a nova thread espera um core na fila de prontos, então funciona até com um core só; veja [Escalonamento de threads](threads.md)
 
-Essa syscall só faz sentido quando a máquina está configurada com mais de um core.
+Sem escalonador essa syscall só faz sentido quando a máquina está configurada com mais de um core.
+
+### `1103` — thread yield
+
+Passa o core para a próxima thread da fila de prontos. Se ninguém espera, ou sem escalonador, quem chamou continua executando. Retorna `0`. O `sched_yield` do Linux (124) faz o mesmo.
+
+### `1104` — thread join
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1104` |
+| `a0`       | id da thread (hart) a esperar |
+| **`a0` (ret)** | `0` quando ela terminar; `-1` para id desconhecido ou o do próprio chamador |
+
+Quem chama fica bloqueado até o alvo terminar. Com escalonador, o core vai para outra thread enquanto isso; sem escalonador, o hart fica no seu core sem avançar. Se todas as threads restantes estiverem bloqueadas esperando umas pelas outras, a execução para com erro de deadlock.
+
+### `1105` — thread set priority
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1105` |
+| `a0`       | id da thread |
+| `a1`       | prioridade (menor é mais urgente; threads começam com `10` ou a do pai) |
+| **`a0` (ret)** | `0`, ou `-1` para id desconhecido |
+
+Só o escalonador `priority` usa; vale a partir do fim do tick atual.
 
 ### `1102` — mapear memória executável
 
@@ -781,6 +807,9 @@ Num   Nome             a0        a1        a2        retorno
 1100  hart_start       entry pc  stack ptr arg       hart id / -err
 1101  hart_exit        —         —         —         (não retorna)
 1102  map_exec         endereço  tamanho   —         0 / -err
+1103  thread_yield     —         —         —         0
+1104  thread_join      id thread —         —         0 / -1
+1105  thread_set_prio  id thread prioridade —        0 / -1
 
 2000  screen_init      largura   altura    —         0 / -err
 2001  screen_clear     rgb       —         —         0

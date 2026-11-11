@@ -30,6 +30,13 @@ impl Host {
     /// End the tick and move the contexts the way a host must: every `out`
     /// before any `inn`.
     fn tick(&mut self) -> Vec<Switch> {
+        // Every running thread retires an instruction per tick, as in
+        // sequential mode.
+        for core in 0..self.cores.len() {
+            if self.sched.running_on(core).is_some() {
+                self.sched.retired(core);
+            }
+        }
         let switches = self.sched.end_tick();
         for s in &switches {
             if let Some((tid, _)) = s.out {
@@ -342,4 +349,19 @@ fn config_round_trips_through_rcfg() {
     for policy in SchedPolicy::ALL {
         assert_eq!(SchedPolicy::from_str(policy.as_str()), Some(policy));
     }
+}
+
+#[test]
+fn a_quantum_never_ends_before_the_thread_retired_anything() {
+    // A pipeline needs several ticks before its first commit. A quantum that
+    // ran out first would flush every thread forever.
+    let mut h = Host::new(SchedPolicy::RoundRobin, 2, 0, 1);
+    let a = h.spawn(0);
+    for _ in 0..10 {
+        assert!(h.sched.end_tick().is_empty(), "nothing retired yet");
+    }
+    h.sched.retired(0);
+    let switches = h.sched.end_tick();
+    assert_eq!(switches[0].out, Some((0, LeaveReason::Quantum)));
+    assert_eq!(switches[0].inn, Some(a));
 }

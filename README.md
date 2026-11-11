@@ -56,6 +56,7 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
 - Multicore cache coherence: one shared L1, or a private L1 per core kept coherent by **MSI**, **MESI** or **MOESI** (or by nothing, to see stale data) — with line states, bus requests and per-core bus traffic in the **Coherence** subtab ([guide](docs/en/coherence.md))
+- Thread scheduling: run more threads than cores under **FIFO**, **round robin** (configurable quantum) or **preemptive priority**, with a context-switch cost, `thread_yield` / `thread_join` / `thread_set_priority`, and a **Threads** tab showing the ready queue, a per-core timeline and each thread's waiting, response and turnaround time ([guide](docs/en/threads.md))
 - Export results (`Ctrl+r`) to `.rstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
@@ -220,6 +221,7 @@ See the **[CLI Reference](docs/en/cli.md)** for all subcommands and flags.
 - [Formatos (PT-BR)](docs/pt-BR/format.md)
 - [Cache config file reference](docs/en/cache-config.md) — `[cache]` section of `.rcfg`, all fields, LN hierarchy, LLM prompt template
 - [Cache coherence](docs/en/coherence.md) — private L1 per core, MSI / MESI / MOESI, bus requests, experiments ([PT-BR](docs/pt-BR/coherence.md))
+- [Thread scheduling](docs/en/threads.md) — more threads than cores: FIFO, round robin, priority, the Threads tab ([PT-BR](docs/pt-BR/threads.md))
 
 ---
 

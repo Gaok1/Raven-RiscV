@@ -74,12 +74,26 @@ static inline RavenHartTask raven_hart_task(RavenHartEntry entry,
 /* 1 if the hart has exited, 0 if still running. */
 int  raven_hart_is_done(RavenHart h);
 
-/* Spin-wait until the hart exits, then free its internal resources and
- * invalidate the handle. */
+/* Wait until the hart exits, yielding the core meanwhile, then free its
+ * internal resources and invalidate the handle. */
 void raven_hart_join(RavenHart *h);
 
 /* Abandon the hart: it will free its own resources when it exits. The
  * handle is invalidated immediately; do not call is_done or join afterward. */
 void raven_hart_detach(RavenHart *h);
+
+/* ── Scheduling (see docs/en/threads.md) ─────────────────────────────────── */
+
+/* Give the core to the next thread waiting. A no-op without a scheduler, or
+ * when nobody waits. Always returns 0. */
+int raven_thread_yield(void);
+
+/* Block until the thread (hart) `tid` exits. 0 on success, -1 for an unknown
+ * id or the caller's own. */
+int raven_thread_join(int tid);
+
+/* Set thread `tid`'s priority: lower is more urgent, threads start at 10.
+ * Only the priority scheduler reads it. 0 on success, -1 for an unknown id. */
+int raven_thread_set_priority(int tid, unsigned int priority);
 
 #endif

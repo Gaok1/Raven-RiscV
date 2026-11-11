@@ -21,7 +21,8 @@ use crate::ui::{
         RunEditTarget, SETTINGS_ROW_CACHE_ENABLED, SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
         SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
         SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SbDrag, Tab, SETTINGS_ROW_C2C_LATENCY,
-        SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY,
+        SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY, SETTINGS_ROW_SCHED_POLICY,
+        SETTINGS_ROW_SCHED_QUANTUM, SETTINGS_ROW_SCHED_SWITCH_COST,
     },
     editor::Editor,
 };
@@ -141,7 +142,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 let hit = app.tlb.hit_at(me.column, me.row);
                 tlb_scroll(app, hit, false);
             }
-            Tab::Settings => {}
+            Tab::Settings | Tab::Threads => {}
         },
         MouseEventKind::ScrollDown => match app.tab {
             Tab::Editor => app.editor.buf.move_down(),
@@ -194,7 +195,7 @@ pub fn handle_mouse(app: &mut App, me: MouseEvent, area: Rect) {
                 let hit = app.tlb.hit_at(me.column, me.row);
                 tlb_scroll(app, hit, true);
             }
-            Tab::Settings => {}
+            Tab::Settings | Tab::Threads => {}
         },
         MouseEventKind::ScrollLeft => {
             if matches!(app.tab, Tab::Cache) && matches!(app.cache.subtab, CacheSubtab::View) {
@@ -2609,6 +2610,23 @@ fn handle_settings_click(app: &mut App, me: MouseEvent) {
         app.settings.num_editing = true;
         app.settings.num_edit_buf =
             app.cache.pending_coherence.cache_to_cache_latency.to_string();
+        return;
+    }
+    if me.row == row_ys[SETTINGS_ROW_SCHED_POLICY] {
+        app.settings.selected = SETTINGS_ROW_SCHED_POLICY;
+        app.cycle_sched_policy(true);
+        return;
+    }
+    if me.row == row_ys[SETTINGS_ROW_SCHED_QUANTUM] {
+        app.settings.selected = SETTINGS_ROW_SCHED_QUANTUM;
+        app.settings.num_editing = true;
+        app.settings.num_edit_buf = app.sched_config.quantum.to_string();
+        return;
+    }
+    if me.row == row_ys[SETTINGS_ROW_SCHED_SWITCH_COST] {
+        app.settings.selected = SETTINGS_ROW_SCHED_SWITCH_COST;
+        app.settings.num_editing = true;
+        app.settings.num_edit_buf = app.sched_config.switch_cost.to_string();
         return;
     }
 

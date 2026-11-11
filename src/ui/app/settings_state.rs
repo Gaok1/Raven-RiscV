@@ -45,12 +45,19 @@ pub(crate) const SETTINGS_ROW_COHERENCE: usize = 10;
 pub(crate) const SETTINGS_ROW_SNOOP_LATENCY: usize = 11;
 /// Row index of the cache-to-cache transfer latency (MOESI).
 pub(crate) const SETTINGS_ROW_C2C_LATENCY: usize = 12;
+/// Row index of the thread scheduler policy (off / FIFO / round robin /
+/// priority).
+pub(crate) const SETTINGS_ROW_SCHED_POLICY: usize = 13;
+/// Row index of the round-robin quantum, in ticks.
+pub(crate) const SETTINGS_ROW_SCHED_QUANTUM: usize = 14;
+/// Row index of the context-switch cost, in ticks.
+pub(crate) const SETTINGS_ROW_SCHED_SWITCH_COST: usize = 15;
 /// Total number of settings rows.
 ///
 /// The list used to run to 22: ten toggles, a blank, and the eleven CPI fields.
 /// Those moved to the Pipeline tab's settings page, next to the datapath they
 /// parameterise.
-pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_C2C_LATENCY + 1;
+pub(crate) const SETTINGS_ROWS: usize = SETTINGS_ROW_SCHED_SWITCH_COST + 1;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub(crate) enum RunScope {

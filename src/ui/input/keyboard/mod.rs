@@ -125,8 +125,42 @@ fn handle_command_mode(app: &mut App, key: KeyEvent, ctrl: bool, shift: bool) ->
         Tab::Cache => cache_keys::handle(app, key),
         Tab::Tlb => tlb_keys::handle(app, key),
         Tab::Pipeline => pipeline_keys::handle(app, key),
+        Tab::Threads => handle_threads_keys(app, key),
         Tab::Docs => docs_keys::handle(app, key),
         Tab::Settings => config_keys::handle(app, key),
+    }
+}
+
+/// The Threads tab only watches the run: the run controls work here too.
+fn handle_threads_keys(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('s') => {
+            if !app.session.faulted {
+                app.single_step();
+            }
+            true
+        }
+        KeyCode::Char('r') => {
+            app.restart_simulation();
+            true
+        }
+        KeyCode::Char('p') | KeyCode::Char(' ') => {
+            app.toggle_run();
+            true
+        }
+        KeyCode::Char('f') => {
+            app.session.speed = app.session.speed.cycle();
+            true
+        }
+        KeyCode::Char('[') => {
+            app.cycle_selected_core(-1);
+            true
+        }
+        KeyCode::Char(']') => {
+            app.cycle_selected_core(1);
+            true
+        }
+        _ => false,
     }
 }
 

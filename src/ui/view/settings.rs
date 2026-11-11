@@ -10,7 +10,8 @@ use crate::ui::app::{
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
     SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
     SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SETTINGS_ROW_C2C_LATENCY,
-    SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY,
+    SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY, SETTINGS_ROW_SCHED_POLICY,
+    SETTINGS_ROW_SCHED_QUANTUM, SETTINGS_ROW_SCHED_SWITCH_COST,
 };
 use crate::ui::theme;
 use crate::ui::view::components::panel::{self, PanelKind, render_panel};
@@ -400,6 +401,59 @@ fn render_settings_list(f: &mut Frame, area: Rect, app: &App) {
             ));
         }
         items.push(ListItem::new(Line::from(spans)));
+    }
+
+    // ── Section: Thread scheduling ───────────────────────────────────────
+    items.push(ListItem::new(Line::raw("")));
+    items.push(ListItem::new(section_rule("THREAD SCHEDULING", area.width)));
+    let sched = app.sched_config;
+
+    at!(SETTINGS_ROW_SCHED_POLICY);
+    let pol_hover = app.settings.hover_row == Some(SETTINGS_ROW_SCHED_POLICY);
+    let pol_state = ControlState::from(sel == SETTINGS_ROW_SCHED_POLICY, pol_hover);
+    let mut pol_spans = vec![
+        label_span(format!("{:<20}", "  scheduler"), pol_state, theme::LABEL),
+        Span::raw("  "),
+        dense_value(sched.policy.label(), pol_hover, true, theme::LABEL_Y),
+    ];
+    if !sched.policy.is_enabled() {
+        pol_spans.push(Span::raw("  "));
+        pol_spans.push(Span::styled(
+            "(one hart per core)",
+            Style::default().fg(theme::BORDER),
+        ));
+    }
+    items.push(ListItem::new(Line::from(pol_spans)));
+
+    for (row, label, value, used) in [
+        (
+            SETTINGS_ROW_SCHED_QUANTUM,
+            "  quantum",
+            sched.quantum,
+            sched.policy.is_preemptive(),
+        ),
+        (
+            SETTINGS_ROW_SCHED_SWITCH_COST,
+            "  switch cost",
+            sched.switch_cost,
+            sched.policy.is_enabled(),
+        ),
+    ] {
+        at!(row);
+        let is_sel = sel == row;
+        let hover = app.settings.hover_row == Some(row);
+        let state = ControlState::from(is_sel, hover).disabled_if(!used);
+        let text = format!("{value} ticks");
+        items.push(ListItem::new(Line::from(vec![
+            label_span(format!("{label:<20}"), state, theme::LABEL),
+            Span::raw("  "),
+            edit_value(
+                &text,
+                (app.settings.num_editing && is_sel).then_some(app.settings.num_edit_buf.as_str()),
+                hover,
+                theme::LABEL_Y,
+            ),
+        ])));
     }
 
     // The `CYCLES PER INSTRUCTION` section used to sit here. It moved to the
@@ -815,6 +869,94 @@ fn render_hint_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(" = commit value", style::label()),
             ]),
         ]
+    } else if sel == SETTINGS_ROW_SCHED_POLICY {
+        let policy = app.sched_config.policy;
+        let mut lines = vec![
+            Line::from(Span::styled(
+                "scheduler",
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+        ];
+        for (p, text) in [
+            (crate::falcon::sched::SchedPolicy::Off, "one hart per core"),
+            (crate::falcon::sched::SchedPolicy::Fifo, "run to completion"),
+            (crate::falcon::sched::SchedPolicy::RoundRobin, "take turns, one quantum each"),
+            (crate::falcon::sched::SchedPolicy::Priority, "most urgent first, preempts"),
+        ] {
+            let current = p == policy;
+            let marker = if current { "▸ " } else { "  " };
+            let name_style = if current {
+                Style::default().fg(theme::LABEL_Y).bold()
+            } else {
+                style::label()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{marker}{:<12}", p.label()), name_style),
+                Span::styled(text, style::value()),
+            ]));
+        }
+        lines.push(Line::raw(""));
+        for text in [
+            "With a scheduler, hart_start needs no",
+            "free core: the new thread waits in the",
+            "ready queue. thread_yield, thread_join",
+            "and thread_set_priority talk to it.",
+            "",
+            "The Threads tab shows the queue, each",
+            "core's timeline and every thread's",
+            "waiting, response and turnaround time.",
+            "Changing it restarts the simulation.",
+        ] {
+            lines.push(Line::from(Span::styled(text, style::value())));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::styled("←/→ Enter", Style::default().fg(theme::LABEL_Y)),
+            Span::styled(" = cycle policy", style::label()),
+        ]));
+        lines
+    } else if sel == SETTINGS_ROW_SCHED_QUANTUM || sel == SETTINGS_ROW_SCHED_SWITCH_COST {
+        let quantum = sel == SETTINGS_ROW_SCHED_QUANTUM;
+        let body: &[&str] = if quantum {
+            &[
+                "Ticks a thread runs before round",
+                "robin hands its core to the next one",
+                "waiting (priority: the next of equal",
+                "priority). A tick is one instruction",
+                "per core, or one pipeline cycle.",
+                "",
+                "Small: fair and responsive, many",
+                "switches. Large: close to FIFO.",
+            ]
+        } else {
+            &[
+                "Ticks a core spends on each context",
+                "switch, running no thread: saving",
+                "one thread's registers and loading",
+                "the next one's. Shows on the Threads",
+                "tab's timeline as `·`.",
+            ]
+        };
+        let mut lines = vec![
+            Line::from(Span::styled(
+                if quantum { "quantum" } else { "switch cost" },
+                Style::default().fg(theme::ACCENT).bold(),
+            )),
+            Line::raw(""),
+        ];
+        lines.extend(body.iter().map(|t| Line::from(Span::styled(*t, style::value()))));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "Takes effect at once, no restart.",
+            style::label(),
+        )));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::styled("Enter", Style::default().fg(theme::LABEL_Y)),
+            Span::styled(" = edit", style::label()),
+        ]));
+        lines
     } else {
         vec![]
     };

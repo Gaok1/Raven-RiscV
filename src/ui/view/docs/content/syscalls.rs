@@ -429,7 +429,7 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         "hart_start",
         "a0=entry_pc, a1=stack_ptr, a2=arg",
         "a0=hart_id / <0 err",
-        "starts a new hart (hardware thread) on a free core; 1:1 hart/core",
+        "starts a new hart on a free core; with a scheduler it waits in the ready queue instead",
     );
     add_row(
         &mut lines,
@@ -446,6 +446,30 @@ fn syscall_lines_en() -> Vec<Line<'static>> {
         "a0=addr, a1=len",
         "a0=0 / -err",
         "marks [addr,addr+len) executable; addr and len must be 4-byte aligned",
+    );
+    add_row(
+        &mut lines,
+        "1103",
+        "thread_yield",
+        "—",
+        "a0=0",
+        "gives the core to the next thread waiting (scheduler on); else keeps running",
+    );
+    add_row(
+        &mut lines,
+        "1104",
+        "thread_join",
+        "a0=thread_id",
+        "a0=0 / -1",
+        "blocks until that thread exits; -1 for an unknown id or the caller's own",
+    );
+    add_row(
+        &mut lines,
+        "1105",
+        "thread_set_priority",
+        "a0=thread_id, a1=priority",
+        "a0=0 / -1",
+        "lower is more urgent (default 10); used by the priority scheduler",
     );
     lines.extend([
         blank(),
@@ -816,7 +840,7 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         "hart_start",
         "a0=entry_pc, a1=stack_ptr, a2=arg",
         "a0=hart_id / <0 erro",
-        "inicia novo hart (hardware thread) em um core livre; modelo 1:1",
+        "inicia novo hart em um core livre; com escalonador, espera na fila de prontos",
     );
     add_row(
         &mut lines,
@@ -833,6 +857,30 @@ fn syscall_lines_ptbr() -> Vec<Line<'static>> {
         "a0=endereço, a1=tamanho",
         "a0=0 / -erro",
         "marca [endereço,endereço+tamanho) como executável; endereço e tamanho devem ser alinhados a 4 bytes",
+    );
+    add_row(
+        &mut lines,
+        "1103",
+        "thread_yield",
+        "—",
+        "a0=0",
+        "passa o core para a próxima thread da fila (com escalonador); senão continua",
+    );
+    add_row(
+        &mut lines,
+        "1104",
+        "thread_join",
+        "a0=thread_id",
+        "a0=0 / -1",
+        "bloqueia até a thread terminar; -1 para id desconhecido ou o próprio",
+    );
+    add_row(
+        &mut lines,
+        "1105",
+        "thread_set_priority",
+        "a0=thread_id, a1=prioridade",
+        "a0=0 / -1",
+        "menor é mais urgente (padrão 10); usada pelo escalonador priority",
     );
     lines.extend([
         blank(),

@@ -265,6 +265,7 @@ pub(crate) fn serialize_config_v3_from_app(app: &App) -> String {
         app.max_cores,
         app.session.jit_kind,
     );
+    sim.push_str(&app.sched_config.to_rcfg());
     sim.push_str(&format!("architecture={}\n", app.architecture_id()));
     let cache = serialize_cache_configs(
         &app.cache.pending_icache,
@@ -328,6 +329,8 @@ pub(super) struct RcfgSettings {
     pub(super) mem_bytes: Option<usize>,
     pub(super) max_cores: Option<usize>,
     pub(super) jit_kind: Option<BackendKind>,
+    /// The scheduler keys, when the file has any.
+    pub(super) sched: Option<crate::falcon::sched::SchedConfig>,
 }
 
 pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
@@ -443,6 +446,16 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         }
         None => None,
     };
+    let sched = if ["sched", "sched_quantum", "sched_switch_cost"]
+        .iter()
+        .any(|k| map.contains_key(*k))
+    {
+        Some(crate::falcon::sched::SchedConfig::from_rcfg_lookup(|k| {
+            map.get(k).cloned()
+        })?)
+    } else {
+        None
+    };
     Ok(RcfgSettings {
         cpi,
         cache_enabled,
@@ -453,6 +466,7 @@ pub(super) fn parse_rcfg(text: &str) -> Result<RcfgSettings, String> {
         mem_bytes,
         max_cores,
         jit_kind,
+        sched,
     })
 }
 
@@ -479,6 +493,13 @@ fn apply_rcfg(app: &mut App, cfg: RcfgSettings) {
     if let Some(bytes) = cfg.mem_bytes {
         if bytes != app.session.mem_size {
             app.ram_override = Some(bytes);
+            needs_restart = true;
+        }
+    }
+    if let Some(sched) = cfg.sched {
+        app.set_sched_timing(sched.quantum, sched.switch_cost);
+        if sched.policy != app.sched_config.policy {
+            app.sched_config.policy = sched.policy;
             needs_restart = true;
         }
     }
@@ -1725,5 +1746,19 @@ mod tests {
         assert_eq!(cfg.pipeline_enabled, None);
         assert_eq!(cfg.max_cores, None);
         assert_eq!(cfg.jit_kind, None);
+        assert_eq!(cfg.sched, None);
+    }
+
+    #[test]
+    fn rcfg_reads_the_scheduler_keys() {
+        use crate::falcon::sched::{SchedConfig, SchedPolicy};
+        let cfg = SchedConfig {
+            policy: SchedPolicy::RoundRobin,
+            quantum: 12,
+            switch_cost: 3,
+        };
+        let text = format!("# Raven Sim Config v2\nrun_scope=all\n{}", cfg.to_rcfg());
+        assert_eq!(parse_rcfg(&text).expect("parse rcfg").sched, Some(cfg));
+        assert!(parse_rcfg("sched=lottery\n").is_err());
     }
 }

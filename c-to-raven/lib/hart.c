@@ -64,9 +64,32 @@ int raven_hart_is_done(RavenHart h) {
     return ((_RavenHartPayload *)h._payload)->done;
 }
 
+int raven_thread_yield(void) {
+    register int _a7 __asm__("a7") = RAVEN_ECALL_THREAD_YIELD;
+    register int _a0 __asm__("a0");
+    __asm__ volatile("ecall" : "=r"(_a0) : "r"(_a7) : "memory");
+    return _a0;
+}
+
+int raven_thread_join(int tid) {
+    register int _a7 __asm__("a7") = RAVEN_ECALL_THREAD_JOIN;
+    register int _a0 __asm__("a0") = tid;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7) : "memory");
+    return _a0;
+}
+
+int raven_thread_set_priority(int tid, unsigned int priority) {
+    register int          _a7 __asm__("a7") = RAVEN_ECALL_THREAD_SET_PRIO;
+    register int          _a0 __asm__("a0") = tid;
+    register unsigned int _a1 __asm__("a1") = priority;
+    __asm__ volatile("ecall" : "+r"(_a0) : "r"(_a7), "r"(_a1) : "memory");
+    return _a0;
+}
+
 void raven_hart_join(RavenHart *h) {
     _RavenHartPayload *p = (_RavenHartPayload *)h->_payload;
-    while (!p->done) { /* spin */ }
+    /* Yield while waiting: with a scheduler the worker may need this core. */
+    while (!p->done) { raven_thread_yield(); }
     raven_free(p);
     h->_payload = (void *)0;
 }

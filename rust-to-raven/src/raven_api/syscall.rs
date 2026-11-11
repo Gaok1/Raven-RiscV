@@ -597,6 +597,41 @@ pub unsafe fn hart_exit() -> ! {
     }
 }
 
+/// Give the core to the next thread waiting (syscall 1103). With no
+/// scheduler, or nobody waiting, the caller just keeps running.
+pub fn thread_yield() {
+    unsafe {
+        core::arch::asm!("ecall", in("a7") 1103_u32, lateout("a0") _, options(nostack));
+    }
+}
+
+/// Block until thread (hart) `tid` exits (syscall 1104). Returns `0`, or `-1`
+/// for an unknown id or the caller's own.
+pub fn thread_join(tid: u32) -> i32 {
+    let code: i32;
+    unsafe {
+        core::arch::asm!("ecall", in("a7") 1104_u32, inlateout("a0") tid => code, options(nostack));
+    }
+    code
+}
+
+/// Set thread `tid`'s priority (syscall 1105): lower is more urgent, threads
+/// start at 10. Only the priority scheduler reads it. Returns `0`, or `-1` for
+/// an unknown id.
+pub fn thread_set_priority(tid: u32, priority: u32) -> i32 {
+    let code: i32;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 1105_u32,
+            inlateout("a0") tid => code,
+            in("a1") priority,
+            options(nostack),
+        );
+    }
+    code
+}
+
 // ── Panic handler ─────────────────────────────────────────────────────────────
 
 #[panic_handler]

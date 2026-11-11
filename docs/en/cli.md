@@ -76,6 +76,9 @@ raven run <file> [options]
 | `--screen` | off | Show programs that use the graphics syscalls (2000+) in an OS window |
 | `--cores <n>` | settings or `1` | Maximum physical cores available to `hart_start` during the run |
 | `--coherence <shared\|none\|msi\|mesi\|moesi>` | config or `shared` | How the cores' L1 caches relate: one shared L1 (`shared`), a private L1 per core with no protocol (`none`), or private L1s kept coherent by snooping (`msi`, `mesi`, `moesi`). Overrides the config's `coherence=` key. See [Cache coherence](coherence.md) |
+| `--sched <off\|fifo\|rr\|priority>` | config or `off` | Share the cores among more threads than cores: `off` (one hart per core), `fifo`, `rr` (round robin) or `priority` (preemptive). Overrides the config's `sched=` key. Sequential mode only. See [Thread scheduling](threads.md) |
+| `--quantum <ticks>` | config or `50` | Round-robin time slice, in rounds |
+| `--switch-cost <ticks>` | config or `0` | Rounds a core spends on each context switch |
 | `--mem <size>` | sim-settings or `16mb` | RAM size — accepts `kb`, `mb`, `gb` suffix (e.g. `256kb`, `1gb`) |
 | `--max-cycles <n>` | `1000000000` | Instruction limit; a warning is printed if reached |
 | `--jit <none\|hot\|full>` | `none` | Execution backend. `full` requires rebuilding with `--features jit`; either mode is forced back to `none` (with a warning) whenever virtual memory is enabled, since the JIT is not yet TLB-aware |
@@ -118,6 +121,7 @@ raven run program.s --cores 4 --nout
 
 # Give each of 2 cores a private L1 kept coherent by MESI, and print the bus counters
 raven run program.s --cores 2 --coherence mesi --format csv
+raven run threads.s --cores 1 --sched rr --quantum 20 --format csv
 
 # Run with 64 MB RAM (overrides sim-settings)
 raven run program.s --mem 64mb
@@ -155,6 +159,8 @@ When `--pipeline` is enabled, Raven still writes the normal cache statistics, bu
 - stall-tag breakdown (`RAW`, `load-use`, `branch`, `FU`, `mem`)
 
 When each core has a private L1 (`coherence` other than `shared`), every format also reports each core's L1 I-cache and D-cache and its coherence-bus counters: a `"coherence"` object in JSON, `coherence.*` and `coreN.*` keys in rstats, and `Core N … L1` rows plus a `COHERENCE (<protocol>)` table in CSV. The top-level `icache`/`dcache` entries are core 0's. [Cache coherence](coherence.md#9-counters-in-the-cli-output) lists the counters.
+
+With a scheduler (`--sched` other than `off`), every format also reports the scheduler's books: a `"scheduler"` object in JSON, a `[sched]` section in rstats and `SCHEDULER`, `CORES` and `THREADS` tables in CSV — policy, context switches, preemptions, utilization, the average waiting, response and turnaround times, and each thread's arrival, first run, finish and ticks running, waiting and blocked. See [Thread scheduling](threads.md#6-in-the-cli-and-in-rcfg).
 
 ### Assertions
 

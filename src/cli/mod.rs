@@ -1243,6 +1243,9 @@ fn run_headless_scheduled(
                 backend.run_until_yield(&mut ctx)
             };
             flush_cpu_stdout(hart, captured_stdout);
+            if matches!(outcome, Ok(ExecOutcome::Stepped { .. })) {
+                sched.retired(core);
+            }
             match outcome {
                 Ok(ExecOutcome::Stepped { .. }) => {}
                 Ok(ExecOutcome::AwaitingInput) => {

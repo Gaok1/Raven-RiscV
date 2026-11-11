@@ -291,7 +291,21 @@ handle.join();
 
 `HartTask` allocates and owns its own stack internally.
 Closure-backed tasks automatically mark themselves finished when the closure returns;
-`join()` spins until that internal completion flag is observed.
+`join()` waits, yielding the core, until that internal completion flag is observed.
+
+---
+
+### Scheduling
+
+With a scheduler (`sched=fifo|rr|priority` in the simulator, see `docs/en/threads.md`) a program can start more harts than there are cores. These talk to it:
+
+| Function | Syscall | |
+|---|---|---|
+| `thread_yield()` | 1103 | give the core to the next thread waiting; a no-op otherwise |
+| `thread_join(tid: u32) -> i32` | 1104 | block until thread `tid` exits; `-1` for an unknown id or the caller's own |
+| `thread_set_priority(tid: u32, priority: u32) -> i32` | 1105 | lower is more urgent, threads start at 10; read by the priority scheduler |
+
+`HartHandle::join()` yields the core on every turn of its wait, so a worker that needs the joining thread's core gets it.
 
 ---
 

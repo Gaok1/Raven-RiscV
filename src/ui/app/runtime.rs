@@ -185,6 +185,8 @@ impl App {
             Tab::Cache => capabilities.cache && self.session.cache_enabled,
             Tab::Tlb => capabilities.virtual_memory,
             Tab::Pipeline => capabilities.pipeline,
+            // Threads are RV32's harts.
+            Tab::Threads => self.rv32().is_some(),
             _ => true,
         }
     }
@@ -426,6 +428,7 @@ impl App {
             }
             self.harts.push(runtime);
         }
+        self.sched = self.new_scheduler();
     }
 
     pub(crate) fn rebuild_harts_for_debug(&mut self) {
@@ -435,6 +438,21 @@ impl App {
     pub(super) fn sync_selected_core_to_runtime(&mut self) {
         let selected = self.selected_core;
         let replacement = raven_engine::falcon::pipeline::PipelineSimState::new();
+        self.save_selected_hart_state();
+        if let Some(runtime) = self.harts.get_mut(selected) {
+            runtime.pipeline = Some(std::mem::replace(
+                rv32_runtime_mut(&mut *self.machine)
+                    .expect(NOT_RV32)
+                    .pipeline_mut(),
+                replacement,
+            ));
+        }
+    }
+
+    /// Copy the selected hart's own state — registers and the Run tab's
+    /// bookkeeping, not the core's pipeline — from the machine to its slot.
+    pub(super) fn save_selected_hart_state(&mut self) {
+        let selected = self.selected_core;
         if let Some(runtime) = self.harts.get_mut(selected) {
             runtime.cpu = rv32_runtime(&*self.machine).expect(NOT_RV32).cpu().clone();
             runtime.prev_x = self.session.prev_x;
@@ -449,12 +467,6 @@ impl App {
             runtime.exec_trace = self.session.exec_trace.clone();
             runtime.dyn_mem_access = self.session.dyn_mem_access;
             runtime.mem_access_log = self.session.mem_access_log.clone();
-            runtime.pipeline = Some(std::mem::replace(
-                rv32_runtime_mut(&mut *self.machine)
-                    .expect(NOT_RV32)
-                    .pipeline_mut(),
-                replacement,
-            ));
         }
     }
 
@@ -463,6 +475,30 @@ impl App {
     }
 
     pub(super) fn sync_runtime_to_selected_core(&mut self) {
+        let selected = self.selected_core;
+        self.load_selected_hart_state();
+        if let Some(runtime) = self.harts.get_mut(selected) {
+            let mut pipeline = runtime
+                .pipeline
+                .take()
+                .unwrap_or_else(raven_engine::falcon::pipeline::PipelineSimState::new);
+            if let Some(model) = self.rv32() {
+                Self::copy_pipeline_config_to_hart(
+                    model.pipeline(),
+                    &mut pipeline,
+                    &self.session.cpi_config,
+                );
+            }
+            if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
+                pipeline.reset_stages(self.program_counter() as u32);
+            }
+            *self.native_mut().pipeline_mut() = pipeline;
+        }
+    }
+
+    /// Load the selected hart's own state from its slot into the machine,
+    /// leaving the core's pipeline where it is.
+    pub(super) fn load_selected_hart_state(&mut self) {
         let selected = self.selected_core;
         if let Some(runtime) = self.harts.get_mut(selected) {
             *rv32_runtime_mut(&mut *self.machine)
@@ -480,21 +516,6 @@ impl App {
             self.session.exec_trace = runtime.exec_trace.clone();
             self.session.dyn_mem_access = runtime.dyn_mem_access;
             self.session.mem_access_log = runtime.mem_access_log.clone();
-            let mut pipeline = runtime
-                .pipeline
-                .take()
-                .unwrap_or_else(raven_engine::falcon::pipeline::PipelineSimState::new);
-            if let Some(model) = self.rv32() {
-                Self::copy_pipeline_config_to_hart(
-                    model.pipeline(),
-                    &mut pipeline,
-                    &self.session.cpi_config,
-                );
-            }
-            if pipeline.fetch_pc == 0 && pipeline.cycle_count == 0 {
-                pipeline.reset_stages(self.program_counter() as u32);
-            }
-            *self.native_mut().pipeline_mut() = pipeline;
         }
     }
 
@@ -567,6 +588,8 @@ impl App {
                     HartLifecycle::Free | HartLifecycle::Exited | HartLifecycle::Faulted
                 )
         });
+        // With a scheduler the new thread waits for a core instead.
+        let free_core = free_core.or(self.scheduler().map(|_| usize::MAX));
         let Some(free_core) = free_core else {
             self.native_mut()
                 .cpu_mut_unjournaled()
@@ -639,6 +662,23 @@ impl App {
             p.reset_stages(child.cpu.pc);
         }
 
+        if self.scheduler().is_some() {
+            let parent = self.selected_core;
+            let tid = self.spawn_scheduled_thread(parent, child, request.entry_pc);
+            let tid = tid.unwrap_or(u32::MAX);
+            self.native_mut().cpu_mut_unjournaled().write(10, tid);
+            self.console.push_colored(
+                format!(
+                    "[C{}:H{}] thread start -> T{} pc=0x{:08X} (ready queue)",
+                    self.selected_core,
+                    self.core_hart_id(self.selected_core).unwrap_or(0),
+                    tid,
+                    request.entry_pc
+                ),
+                crate::ui::console::ConsoleColor::Info,
+            );
+            return;
+        }
         self.harts[free_core] = child;
         self.native_mut().cpu_mut_unjournaled().write(10, hart_id);
         self.console.push_colored(
@@ -668,6 +708,8 @@ impl App {
                     HartLifecycle::Free | HartLifecycle::Exited | HartLifecycle::Faulted
                 )
         });
+        // With a scheduler the new thread waits for a core instead.
+        let free_core = free_core.or(self.scheduler().map(|_| usize::MAX));
         let Some(free_core) = free_core else {
             self.harts[core_idx].cpu.write(10, (-1i32) as u32);
             self.console.push_colored(
@@ -734,6 +776,22 @@ impl App {
             p.reset_stages(child.cpu.pc);
         }
 
+        if self.scheduler().is_some() {
+            let tid = self.spawn_scheduled_thread(core_idx, child, request.entry_pc);
+            let tid = tid.unwrap_or(u32::MAX);
+            self.harts[core_idx].cpu.write(10, tid);
+            self.console.push_colored(
+                format!(
+                    "[C{}:H{}] thread start -> T{} pc=0x{:08X} (ready queue)",
+                    core_idx,
+                    self.harts[core_idx].hart_id.unwrap_or(0),
+                    tid,
+                    request.entry_pc
+                ),
+                crate::ui::console::ConsoleColor::Info,
+            );
+            return;
+        }
         self.harts[free_core] = child;
         self.harts[core_idx].cpu.write(10, hart_id);
         self.console.push_colored(
@@ -749,6 +807,7 @@ impl App {
     }
 
     pub(super) fn propagate_heap_break(&mut self, heap_break: u32) {
+        self.propagate_heap_break_to_parked(heap_break);
         self.native_mut().cpu_mut_unjournaled().heap_break = heap_break;
         for (idx, hart) in self.harts.iter_mut().enumerate() {
             if idx != self.selected_core {

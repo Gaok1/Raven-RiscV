@@ -47,6 +47,9 @@
 #define RAVEN_ECALL_HART_START       1100
 #define RAVEN_ECALL_HART_EXIT        1101
 #define RAVEN_ECALL_MAP_EXEC         1102
+#define RAVEN_ECALL_THREAD_YIELD     1103
+#define RAVEN_ECALL_THREAD_JOIN      1104
+#define RAVEN_ECALL_THREAD_SET_PRIO  1105
 
 /* Raven graphics extensions (host-side framebuffer) */
 #define RAVEN_ECALL_SCREEN_INIT      2000

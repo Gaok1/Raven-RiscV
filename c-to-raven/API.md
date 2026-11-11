@@ -293,8 +293,18 @@ RavenHart h = raven_hart_start(&t);
 
 ```c
 int  raven_hart_is_done(RavenHart h);     // 0 = running, 1 = exited
-void raven_hart_join   (RavenHart *h);    // spin-wait; frees payload; invalidates h
+void raven_hart_join   (RavenHart *h);    // wait (yielding the core); frees payload; invalidates h
 void raven_hart_detach (RavenHart *h);    // trampoline frees on exit; invalidates h
+```
+
+### Scheduling
+
+With a scheduler (`sched=fifo|rr|priority`, see `docs/en/threads.md`) a program can start more harts than there are cores; these talk to it:
+
+```c
+int raven_thread_yield(void);                                   // 1103: give the core to the next thread waiting
+int raven_thread_join(int tid);                                 // 1104: block until thread `tid` exits; -1 if unknown
+int raven_thread_set_priority(int tid, unsigned int priority);  // 1105: lower is more urgent; default 10
 ```
 
 If a hart's entry function returns, the trampoline:

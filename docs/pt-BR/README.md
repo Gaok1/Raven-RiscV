@@ -68,6 +68,7 @@ Os três backends menores têm seus próprios conjuntos de instruções, bem mai
 - Exportar resultados (`Ctrl+r`) para `.rstats` / `.csv`
 - Matriz visual de cache com scroll horizontal e drag por scrollbar
 - Coerência de cache multicore: uma L1 compartilhada, ou uma L1 privada por core mantida coerente por **MSI**, **MESI** ou **MOESI** (ou por nada, para ver dado obsoleto) — com estados de linha, pedidos no barramento e tráfego por core na subaba **Coherence** ([guia](coherence.md))
+- Escalonamento de threads: rode mais threads do que cores com **FIFO**, **round robin** (quantum configurável) ou **prioridade preemptiva**, com custo de troca de contexto, `thread_yield` / `thread_join` / `thread_set_priority`, e uma aba **Threads** com a fila de prontos, a linha do tempo de cada core e os tempos de espera, resposta e turnaround de cada thread ([guia](threads.md))
 
 ### Aba Virtual Memory / TLB (Aba 4)
 - Três modos de VM: **off**, **auto** (o simulador escreve um mapa identidade Sv32 e traduz até em M-mode), **program** (o seu programa dirige o `satp` e as próprias tabelas de páginas)
@@ -210,6 +211,7 @@ Veja a **[Referência da CLI](cli.md)** para todos os subcomandos e flags.
 - [Coerência de cache (PT-BR)](coherence.md) — L1 privada por core, MSI / MESI / MOESI, pedidos no barramento, experimentos
 - [Formats (EN)](../en/format.md) | [Cache (EN)](../en/cache.md) | [Virtual memory (EN)](../en/virtual-memory.md)
 - [Hardware threads (harts)](hart.md) — criação de harts, escalonamento entre cores, `max_cores`
+- [Escalonamento de threads](threads.md) — mais threads do que cores: FIFO, round robin, prioridade, quantum, `thread_join`, a aba Threads
 - `Program Examples/harts/hart_spawn_visual_demo.s` — exemplo multi-hart para forçar atividade simultânea nas abas Run e Pipeline
 
 ---

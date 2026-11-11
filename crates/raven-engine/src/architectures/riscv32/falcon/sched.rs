@@ -19,7 +19,10 @@
 //
 // A tick is one round of the simulator: every core executes one instruction
 // in sequential mode, or one clock cycle with the pipeline. The quantum and
-// the cost of a context switch are counted in ticks.
+// the cost of a context switch are counted in ticks. A quantum only runs out
+// at an instruction boundary: a thread is never taken off its core by the
+// quantum before it has retired an instruction there, or a quantum shorter
+// than the pipeline would flush every thread before any of them got anywhere.
 //
 // The scheduler only keeps the books. The host owns the threads' contexts
 // while they run — registers, PC, whatever else it shows per thread — and
@@ -386,6 +389,9 @@ pub struct Scheduler<C> {
     ready: VecDeque<Tid>,
     cores: Vec<CoreState>,
     flags: Vec<CoreFlags>,
+    /// Whether the thread on each core retired an instruction since it got
+    /// the core.
+    progressed: Vec<bool>,
     core_ticks: Vec<CoreTicks>,
     timeline: Vec<VecDeque<Segment>>,
     events: VecDeque<SchedEvent>,
@@ -406,6 +412,7 @@ impl<C> Scheduler<C> {
             ready: VecDeque::new(),
             cores: vec![CoreState::Idle; cores],
             flags: vec![CoreFlags::default(); cores],
+            progressed: vec![false; cores],
             core_ticks: vec![CoreTicks::default(); cores],
             timeline: vec![VecDeque::new(); cores],
             events: VecDeque::new(),
@@ -625,6 +632,14 @@ impl<C> Scheduler<C> {
         }
     }
 
+    /// The thread on `core` retired an instruction. Until it has, its
+    /// quantum cannot take its core away.
+    pub fn retired(&mut self, core: usize) {
+        if let Some(flag) = self.progressed.get_mut(core) {
+            *flag = true;
+        }
+    }
+
     /// The thread on `core` called `thread_yield`.
     pub fn yield_now(&mut self, core: usize) {
         if let Some(tid) = self.running_on(core) {
@@ -648,6 +663,13 @@ impl<C> Scheduler<C> {
     /// count the tick and decide nothing more. The thread on `core` is the
     /// one that ended it.
     pub fn close(&mut self, core: usize) {
+        let already = self
+            .thread_on(core)
+            .and_then(|tid| self.thread(tid))
+            .is_none_or(|t| t.state == ThreadState::Exited);
+        if already {
+            return;
+        }
         self.exit(core);
         self.account_tick();
         self.now += 1;
@@ -715,7 +737,9 @@ impl<C> Scheduler<C> {
                 continue;
             };
             let priority = self.threads[tid as usize].priority;
-            let quantum_over = self.cfg.policy.is_preemptive() && slice >= self.cfg.quantum;
+            let quantum_over = self.cfg.policy.is_preemptive()
+                && slice >= self.cfg.quantum
+                && self.progressed[core];
             if !yielded && !quantum_over {
                 continue;
             }
@@ -811,6 +835,7 @@ impl<C> Scheduler<C> {
         thread.state = ThreadState::Running(core);
         thread.last_core = Some(core);
         thread.stats.dispatches += 1;
+        self.progressed[core] = false;
         if cost == 0 {
             thread.stats.first_run.get_or_insert(self.now);
             self.cores[core] = CoreState::Running { tid, slice: 0 };

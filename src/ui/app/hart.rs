@@ -111,6 +111,10 @@ pub(crate) fn step_hart_bg_inner(
     // translation. Otherwise round-robin scheduling lets the previous hart's
     // page table leak into this hart's loads/stores.
     sync_mmu_to_cpu(mem, &hart.cpu);
+    // thread_join: the hart waits until its target is done.
+    if hart.cpu.join_wait.is_some() {
+        return false;
+    }
     for _ in 0..16 {
         // screen_sleep_ms parking: this hart waits on its ecall; others run.
         if hart

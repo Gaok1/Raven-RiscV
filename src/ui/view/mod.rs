@@ -22,6 +22,7 @@ pub(crate) mod run;
 mod settings;
 mod splash;
 pub(crate) mod style;
+mod threads;
 pub(crate) mod tlb;
 
 use cache::render_cache;
@@ -107,6 +108,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         Tab::Cache => render_cache(f, chunks[1], app),
         Tab::Tlb => render_tlb_tab(f, chunks[1], app),
         Tab::Pipeline => render_pipeline(f, chunks[1], app),
+        Tab::Threads => threads::render_threads(f, chunks[1], app),
         Tab::Docs => render_docs(f, chunks[1], app),
         Tab::Settings => render_settings(f, chunks[1], app),
     }
@@ -177,6 +179,14 @@ pub fn ui(f: &mut Frame, app: &App) {
                 ])
             }
         }
+        Tab::Threads => style::hint_bar(&[
+            ("s", "step"),
+            ("p/space", "run/pause"),
+            ("r", "restart"),
+            ("f", "speed"),
+            ("[/]", "core"),
+            ("?", "help"),
+        ]),
         Tab::Docs => style::hint_bar(&[
             ("ctrl+f", "search"),
             ("←/→", "filter"),
@@ -651,6 +661,20 @@ fn help_pages(tab: Tab) -> Vec<Vec<HelpEntry>> {
             ("[Ctrl+e]", "export cache config (.fcache)"),
             ("[Ctrl+l]", "import cache config (.fcache)"),
             ("[Ctrl+r]", "export simulation results (.fstats / .csv)"),
+        ]],
+        Tab::Threads => vec![vec![
+            ("[s]", "step one tick: every core runs one instruction (or cycle)"),
+            ("[p] / [Space]", "run / pause"),
+            ("[r]", "restart the program"),
+            ("[f]", "cycle execution speed"),
+            ("[[] / []]", "select the core the Run and Pipeline tabs observe"),
+            ("", ""),
+            ("threads", "TID, state, core, priority, PC and the scheduling times"),
+            ("RESP / TURN / WAIT", "first run − arrival / finish − arrival / ticks in the ready queue"),
+            ("timeline", "one row per core; each column a span of ticks, the glyph is the thread"),
+            ("ready queue", "who waits for a core, front first, and what each core is doing"),
+            ("events", "spawns, dispatches, preemptions, yields, joins, exits"),
+            ("Settings", "THREAD SCHEDULING: policy, quantum, switch cost"),
         ]],
         Tab::Docs => vec![vec![
             ("[↑/↓]", "scroll documentation"),

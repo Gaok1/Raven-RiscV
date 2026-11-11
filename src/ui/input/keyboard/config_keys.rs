@@ -4,7 +4,8 @@ use crate::ui::app::{
     SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED, SETTINGS_ROW_RUN_SCOPE,
     SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED, SETTINGS_ROW_TRACE_SYSCALLS,
     SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SETTINGS_ROW_C2C_LATENCY, SETTINGS_ROW_COHERENCE,
-    SETTINGS_ROW_SNOOP_LATENCY,
+    SETTINGS_ROW_SNOOP_LATENCY, SETTINGS_ROW_SCHED_POLICY, SETTINGS_ROW_SCHED_QUANTUM,
+    SETTINGS_ROW_SCHED_SWITCH_COST,
 };
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -32,6 +33,8 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Left | KeyCode::Right => {
             if app.settings.selected == SETTINGS_ROW_COHERENCE {
                 app.cycle_coherence_protocol(key.code == KeyCode::Right);
+            } else if app.settings.selected == SETTINGS_ROW_SCHED_POLICY {
+                app.cycle_sched_policy(key.code == KeyCode::Right);
             }
             true
         }
@@ -75,6 +78,14 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
                 app.settings.num_edit_buf =
                     app.cache.pending_coherence.cache_to_cache_latency.to_string();
                 app.settings.num_editing = true;
+            } else if app.settings.selected == SETTINGS_ROW_SCHED_POLICY {
+                app.cycle_sched_policy(true);
+            } else if app.settings.selected == SETTINGS_ROW_SCHED_QUANTUM {
+                app.settings.num_edit_buf = app.sched_config.quantum.to_string();
+                app.settings.num_editing = true;
+            } else if app.settings.selected == SETTINGS_ROW_SCHED_SWITCH_COST {
+                app.settings.num_edit_buf = app.sched_config.switch_cost.to_string();
+                app.settings.num_editing = true;
             }
             true
         }
@@ -82,7 +93,9 @@ pub(super) fn handle(app: &mut App, key: KeyEvent) -> bool {
             if (app.settings.selected == SETTINGS_ROW_MAX_CORES
                 || app.settings.selected == SETTINGS_ROW_MEM_SIZE
                 || app.settings.selected == SETTINGS_ROW_SNOOP_LATENCY
-                || app.settings.selected == SETTINGS_ROW_C2C_LATENCY)
+                || app.settings.selected == SETTINGS_ROW_C2C_LATENCY
+                || app.settings.selected == SETTINGS_ROW_SCHED_QUANTUM
+                || app.settings.selected == SETTINGS_ROW_SCHED_SWITCH_COST)
                 && c.is_ascii_digit() =>
         {
             app.settings.num_edit_buf.clear();
@@ -170,6 +183,18 @@ fn commit_numeric_edit(app: &mut App) {
                 (current.snoop_latency, v)
             };
             app.set_coherence_latencies(snoop, c2c);
+        }
+    } else if app.settings.selected == SETTINGS_ROW_SCHED_QUANTUM
+        || app.settings.selected == SETTINGS_ROW_SCHED_SWITCH_COST
+    {
+        use crate::falcon::sched::SchedConfig;
+        if let Ok(v) = app.settings.num_edit_buf.trim().parse::<u32>() {
+            let cfg = app.sched_config;
+            if app.settings.selected == SETTINGS_ROW_SCHED_QUANTUM {
+                app.set_sched_timing(v.clamp(1, SchedConfig::MAX_QUANTUM), cfg.switch_cost);
+            } else {
+                app.set_sched_timing(cfg.quantum, v.min(SchedConfig::MAX_SWITCH_COST));
+            }
         }
     }
     // Max cores, memory size and the two bus latencies are typed here; the CPI

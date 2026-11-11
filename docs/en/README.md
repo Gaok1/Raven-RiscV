@@ -54,6 +54,7 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
 - Multicore cache coherence: one shared L1, or a private L1 per core kept coherent by **MSI**, **MESI** or **MOESI** (or by nothing, to see stale data) — with line states, bus requests and per-core bus traffic in the **Coherence** subtab ([guide](coherence.md))
+- Thread scheduling: run more threads than cores under **FIFO**, **round robin** (configurable quantum) or **preemptive priority**, with a context-switch cost, `thread_yield` / `thread_join` / `thread_set_priority`, and a **Threads** tab showing the ready queue, a per-core timeline and each thread's waiting, response and turnaround time ([guide](threads.md))
 - Export results (`Ctrl+r`) to `.rstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
@@ -225,6 +226,7 @@ See the **[CLI Reference](cli.md)** for all subcommands and flags.
 - [Virtual memory & TLB guide](virtual-memory.md) — Sv32, the three VM modes, the TLB, page faults, demand paging
 - [Cache coherence](coherence.md) — private L1 per core, MSI / MESI / MOESI, bus requests, experiments
 - [Hardware threads (harts)](hart.md) — spawning harts, scheduling across cores, `max_cores`
+- [Thread scheduling](threads.md) — more threads than cores: FIFO, round robin, priority, quantum, `thread_join`, the Threads tab
 - `Program Examples/harts/hart_spawn_visual_demo.s` — multi-hart example to stress Run/Pipeline views across cores
 
 ---

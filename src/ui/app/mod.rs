@@ -9,6 +9,7 @@ mod run_loop;
 mod run_state;
 mod runtime;
 mod settings_state;
+mod threads;
 mod tlb_state;
 mod vm;
 
@@ -40,6 +41,7 @@ pub(crate) use self::settings_state::{
     SETTINGS_ROW_MAX_CORES, SETTINGS_ROW_MEM_SIZE, SETTINGS_ROW_PIPELINE_ENABLED,
     SETTINGS_ROW_RUN_SCOPE, SETTINGS_ROW_SCREEN_TARGET, SETTINGS_ROW_TLB_ENABLED,
     SETTINGS_ROW_C2C_LATENCY, SETTINGS_ROW_COHERENCE, SETTINGS_ROW_SNOOP_LATENCY,
+    SETTINGS_ROW_SCHED_POLICY, SETTINGS_ROW_SCHED_QUANTUM, SETTINGS_ROW_SCHED_SWITCH_COST,
     SETTINGS_ROW_TRACE_SYSCALLS, SETTINGS_ROW_VM_ENABLED, SETTINGS_ROWS, SettingsState,
     nearest_pow2_clamp,
 };
@@ -99,6 +101,7 @@ pub(crate) enum Tab {
     Cache,
     Tlb,
     Pipeline,
+    Threads,
     Docs,
     Settings,
 }
@@ -111,6 +114,7 @@ impl Tab {
             Tab::Cache,
             Tab::Tlb,
             Tab::Pipeline,
+            Tab::Threads,
             Tab::Docs,
             Tab::Settings,
         ]
@@ -123,6 +127,7 @@ impl Tab {
             Tab::Cache => "Cache",
             Tab::Tlb => "Virtual Memory",
             Tab::Pipeline => "Pipeline",
+            Tab::Threads => "Threads",
             Tab::Docs => "Docs",
             Tab::Settings => "Settings",
         }
@@ -451,6 +456,10 @@ pub struct App {
     pub(crate) run_scope: RunScope,
     pub(crate) next_hart_id: u32,
     harts: Vec<HartCoreRuntime>,
+    /// How threads share the cores; `off` keeps one hart per core.
+    pub(crate) sched_config: crate::falcon::sched::SchedConfig,
+    /// The scheduler of the program loaded, when `sched_config` asks for one.
+    sched: Option<crate::falcon::sched::Scheduler<HartCoreRuntime>>,
 
     pub(super) show_exit_popup: bool,
     pub(super) should_quit: bool,
@@ -789,6 +798,8 @@ impl App {
             run_scope: RunScope::AllHarts,
             next_hart_id: 1,
             harts: Vec::new(),
+            sched_config: crate::falcon::sched::SchedConfig::default(),
+            sched: None,
         };
         app.console.trace_syscalls = app.session.trace_syscalls;
         app.sync_docs_to_architecture();
@@ -2482,6 +2493,8 @@ impl App {
             runtime.hart_id.get_or_insert(0);
             runtime.faulted = matches!(lifecycle, HartLifecycle::Faulted);
         }
+        self.service_thread_requests(self.selected_core);
+        self.note_thread_lifecycle(self.selected_core, lifecycle, program_exit.is_some());
 
         if let Some(code) = program_exit {
             // Global exit — kill all harts immediately.
@@ -2501,8 +2514,8 @@ impl App {
             // In AllHarts scope: only stop the run when no other harts are still running.
             // The paused hart is skipped by step_all_cores_once; others keep going.
             // In FocusedHart scope or single-core: stop everything so the user can inspect.
-            let stop_all = self.max_cores <= 1
-                || matches!(self.run_scope, RunScope::FocusedHart)
+            let stop_all = !self.multi_context()
+                || !self.steps_all_harts()
                 || !self.any_running_harts();
             if stop_all {
                 self.session.is_running = false;
@@ -2896,6 +2909,10 @@ impl App {
     }
 
     fn any_running_harts(&self) -> bool {
+        // Threads waiting for a core still have work to do.
+        if let Some(sched) = self.scheduler() {
+            return sched.has_runnable_threads();
+        }
         self.harts
             .iter()
             .any(|hart| matches!(hart.lifecycle, HartLifecycle::Running))
@@ -2944,6 +2961,9 @@ impl App {
             HartLifecycle::Running
         };
 
+        self.service_thread_requests(core_idx);
+        self.note_thread_lifecycle(core_idx, lifecycle, program_exit.is_some());
+
         if let Some(code) = program_exit {
             // Global exit — mark every hart (including the one currently in
             // self.run) as exited and stop the run loop.
@@ -2984,13 +3004,13 @@ impl App {
     }
 
     pub(crate) fn can_start_run(&self) -> bool {
-        if self.max_cores <= 1 {
+        if !self.multi_context() {
             let status = self.core_status(self.selected_core);
             return status == HartLifecycle::Paused
                 || (!self.session.faulted && status == HartLifecycle::Running);
         }
 
-        if matches!(self.run_scope, RunScope::FocusedHart) && !matches!(self.tab, Tab::Pipeline) {
+        if !self.steps_all_harts() && !matches!(self.tab, Tab::Pipeline) {
             matches!(
                 self.core_status(self.selected_core),
                 HartLifecycle::Running | HartLifecycle::Paused
@@ -3028,6 +3048,10 @@ impl App {
             .sleep_until
             .is_some_and(|t| Instant::now() < t)
         {
+            return false;
+        }
+        // thread_join: the hart waits off the clock until its target is done.
+        if self.native().cpu().join_wait.is_some() {
             return false;
         }
         // Sequential mode: if the CPU advanced outside the pipeline (e.g. the
@@ -3190,6 +3214,17 @@ impl App {
         let was_running = self.session.is_running;
 
         for core_idx in 0..self.max_cores {
+            // A scheduler's core may be idle or switching: nothing to run.
+            if self.scheduler().is_some_and(|s| s.running_on(core_idx).is_none()) {
+                continue;
+            }
+            // Without one, a hart in thread_join waits on its own core.
+            if self.scheduler().is_none() {
+                self.service_thread_requests(core_idx);
+                if self.core_join_waiting(core_idx) {
+                    continue;
+                }
+            }
             if core_idx == original {
                 // ── Selected core: already live in self.run — no sync needed ─
                 if self.core_status(core_idx) != HartLifecycle::Running {
@@ -3202,6 +3237,9 @@ impl App {
                     self.single_step_selected_sequential();
                     selected_committed = true;
                 }
+                if selected_committed {
+                    self.note_thread_retired(core_idx);
+                }
             } else {
                 // ── Non-selected core: step directly, zero HashMap/VecDeque clones ─
                 if self.harts[core_idx].lifecycle != HartLifecycle::Running {
@@ -3210,6 +3248,10 @@ impl App {
                 // Four disjoint places at once — the hart, the runtime's cache,
                 // the console and the JIT backend — which is why the runtime is
                 // borrowed from the field rather than through `native_mut`.
+                let committed_before = self.harts[core_idx]
+                    .pipeline
+                    .as_ref()
+                    .map_or(0, |p| p.instr_committed);
                 let faulted = {
                     let hart = &mut self.harts[core_idx];
                     let mem = rv32_runtime_mut(&mut *self.machine)
@@ -3235,6 +3277,13 @@ impl App {
                     .breakpoints
                     .contains(&self.harts[core_idx].cpu.pc);
                 let _ = faulted; // lifecycle determined inside finalize_bg_hart via hart.faulted
+                let committed_after = self.harts[core_idx]
+                    .pipeline
+                    .as_ref()
+                    .map_or(0, |p| p.instr_committed);
+                if !pipeline_enabled || committed_after > committed_before {
+                    self.note_thread_retired(core_idx);
+                }
                 self.finalize_bg_hart(core_idx, bp_hit);
             }
             // Only abort early if a hart *caused* a stop during this round.
@@ -3277,6 +3326,10 @@ impl App {
             runtime.faulted = self.session.faulted;
         }
 
+        // The tick is over: the scheduler switches threads where its policy
+        // says so.
+        self.end_sched_tick();
+
         selected_committed
     }
 
@@ -3302,8 +3355,8 @@ impl App {
         if self.native().pipeline().sequential_mode {
             return self.pipeline_step();
         }
-        if self.max_cores > 1 {
-            if matches!(self.run_scope, RunScope::AllHarts) {
+        if self.multi_context() {
+            if self.steps_all_harts() {
                 self.step_all_cores_once()
             } else {
                 self.step_selected_core_once()
@@ -3352,8 +3405,8 @@ impl App {
             return;
         }
 
-        if self.max_cores > 1 {
-            let all_scope = matches!(self.run_scope, RunScope::AllHarts);
+        if self.multi_context() {
+            let all_scope = self.steps_all_harts();
 
             if (self.native().pipeline().enabled || self.native().pipeline().sequential_mode)
                 && !matches!(self.tab, Tab::Pipeline)
@@ -3433,6 +3486,10 @@ impl App {
         for _ in 0..16 {
             if self.native().cpu().exit_code.is_some() || self.native().cpu().local_exit {
                 self.session.is_running = false;
+                return;
+            }
+            // thread_join: the hart waits until its target is done.
+            if self.native().cpu().join_wait.is_some() {
                 return;
             }
             // screen_sleep_ms parking: leave the hart on its ecall until the

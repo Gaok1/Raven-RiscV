@@ -76,6 +76,9 @@ raven run <arquivo> [opções]
 | `--screen` | desligado | Mostra programas que usam as syscalls gráficas (2000+) em uma janela do SO |
 | `--cores <n>` | settings ou `1` | Máximo de cores físicos disponíveis para `hart_start` durante a execução |
 | `--coherence <shared\|none\|msi\|mesi\|moesi>` | config ou `shared` | Como as L1 dos cores se relacionam: uma L1 compartilhada (`shared`), uma L1 privada por core sem protocolo (`none`), ou L1 privadas mantidas coerentes por snooping (`msi`, `mesi`, `moesi`). Sobrescreve a chave `coherence=` da config. Veja [Coerência de cache](coherence.md) |
+| `--sched <off\|fifo\|rr\|priority>` | config ou `off` | Divide os cores entre mais threads do que cores: `off` (uma hart por core), `fifo`, `rr` (round robin) ou `priority` (preemptivo). Sobrescreve a chave `sched=` da config. Só no modo sequencial. Veja [Escalonamento de threads](threads.md) |
+| `--quantum <ticks>` | config ou `50` | Fatia de tempo do round robin, em rodadas |
+| `--switch-cost <ticks>` | config ou `0` | Rodadas que um core gasta em cada troca de contexto |
 | `--mem <tamanho>` | sim-settings ou `16mb` | Tamanho da RAM — sufixos `kb`, `mb`, `gb` (ex.: `256kb`, `1gb`) |
 | `--max-cycles <n>` | `1000000000` | Limite de instruções; um aviso é exibido se atingido |
 | `--jit <none\|hot\|full>` | `none` | Backend de execução. `full` exige recompilar com `--features jit`; qualquer modo volta a `none` (com aviso) quando a memória virtual está ativa, pois o JIT ainda não é ciente da TLB |
@@ -118,6 +121,7 @@ raven run program.s --cores 4 --nout
 
 # Dar a cada um de 2 cores uma L1 privada mantida coerente por MESI, e imprimir os contadores do barramento
 raven run program.s --cores 2 --coherence mesi --format csv
+raven run threads.s --cores 1 --sched rr --quantum 20 --format csv
 
 # Executar com 64 MB de RAM (substitui o sim-settings)
 raven run program.s --mem 64mb
@@ -155,6 +159,8 @@ Quando `--pipeline` está ativo, o Raven ainda exporta as estatísticas normais 
 - breakdown por tags de stall (`RAW`, `load-use`, `branch`, `FU`, `mem`)
 
 Quando cada core tem uma L1 privada (`coherence` diferente de `shared`), todo formato também traz a L1 I-cache e D-cache de cada core e os seus contadores do barramento de coerência: um objeto `"coherence"` no JSON, chaves `coherence.*` e `coreN.*` no rstats, e linhas `Core N … L1` mais uma tabela `COHERENCE (<protocolo>)` no CSV. As entradas `icache`/`dcache` do topo são as do core 0. [Coerência de cache](coherence.md#9-contadores-na-saída-da-cli) lista os contadores.
+
+Com escalonador (`--sched` diferente de `off`), todo formato também traz a contabilidade do escalonador: um objeto `"scheduler"` no JSON, uma seção `[sched]` no rstats e as tabelas `SCHEDULER`, `CORES` e `THREADS` no CSV — política, trocas de contexto, preempções, utilização, as médias de espera, resposta e turnaround, e a chegada, primeira execução, fim e ticks executando, esperando e bloqueada de cada thread. Veja [Escalonamento de threads](threads.md#6-na-cli-e-no-rcfg).
 
 ### Asserções
 
