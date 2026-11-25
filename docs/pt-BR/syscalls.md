@@ -133,6 +133,7 @@ Escreve bytes de um buffer para um descritor de arquivo.
 | **`a0` (ret)** | bytes escritos, ou `-errno` |
 
 **Restrições:** somente `fd=1` e `fd=2` são suportados (ambos vão para o console do RAVEN).
+A saída para `fd=2` (stderr) é exibida em **vermelho** no console.
 
 ```asm
 .data
@@ -267,6 +268,17 @@ Aloca um bloco de memória anônima a partir do heap.
 **Restrições:** somente mapeamentos anônimos (`MAP_ANONYMOUS=0x20`, `fd=-1`) são suportados.
 A memória vem do mesmo heap gerenciado pelo simulador usado por `brk`; internamente
 o heap break avança pelo tamanho pedido arredondado para 4 bytes. `munmap` é no-op.
+
+```asm
+    li   a0, 0          ; hint = 0
+    li   a1, 256        ; aloca 256 bytes
+    li   a2, 3          ; PROT_READ|PROT_WRITE (ignorado)
+    li   a3, 0x22       ; MAP_ANONYMOUS|MAP_PRIVATE
+    li   a4, -1         ; fd = -1
+    li   a5, 0          ; offset = 0
+    li   a7, 222
+    ecall               ; a0 = ponteiro para o bloco alocado
+```
 
 ---
 
@@ -517,6 +529,72 @@ o suficiente para a entrada esperada.
 
 ---
 
+### `1004` — imprimir inteiro sem sinal
+
+Imprime o inteiro sem sinal de 32 bits em `a0` (sem newline).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1004` |
+| `a0`       | u32 a imprimir |
+
+```asm
+    li   a0, 4294967295
+    li   a7, 1004
+    ecall               ; imprime "4294967295"
+```
+
+---
+
+### `1005` — imprimir hexadecimal
+
+Imprime o valor em `a0` como uma string hexadecimal de 8 dígitos com prefixo `0x` (sem newline).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1005` |
+| `a0`       | valor a imprimir |
+
+```asm
+    li   a0, 0xDEADBEEF
+    li   a7, 1005
+    ecall               ; imprime "0xDEADBEEF"
+```
+
+---
+
+### `1006` — imprimir caractere
+
+Imprime o caractere ASCII cujo código está em `a0` (sem newline).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1006` |
+| `a0`       | código ASCII (0..127) |
+
+```asm
+    li   a0, 65         ; 'A'
+    li   a7, 1006
+    ecall               ; imprime "A"
+```
+
+---
+
+### `1008` — imprimir nova linha
+
+Imprime um caractere `'\n'` (sem argumentos).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1008` |
+
+```asm
+    li   a7, 1008
+    ecall
+```
+
+---
+
 ### `1010` — ler byte
 
 Lê um inteiro da entrada (faixa 0..255) e armazena como `u8` no endereço em `a0`.
@@ -559,6 +637,57 @@ Lê um inteiro da entrada (faixa 0..4294967295) e armazena como `u32` (little-en
 
 ---
 
+### `1013` — ler inteiro com sinal
+
+Lê um inteiro com sinal da entrada (faixa -2147483648..2147483647) e armazena como `i32` em `a0`.
+Aceita decimal (opcionalmente negativo) ou hexadecimal com prefixo `0x`.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1013` |
+| `a0`       | endereço de destino |
+
+```asm
+.bss
+n: .space 4
+
+.text
+    la   a0, n
+    li   a7, 1013
+    ecall               ; lê ex. "-100", armazena como i32
+    lw   t0, n
+```
+
+---
+
+### `1014` — ler float
+
+Lê um número de ponto flutuante da entrada e armazena como `f32` IEEE 754 em `a0`.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1014` |
+| `a0`       | endereço de destino |
+
+---
+
+### `1015` — imprimir float
+
+Imprime o valor `f32` em `fa0` no console (sem newline). Até 6 dígitos significativos.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1015` |
+| `fa0`      | valor f32 a imprimir |
+
+```asm
+    fli.s  fa0, 3.14    ; ou flw fa0, endereco
+    li     a7, 1015
+    ecall               ; imprime "3.14"
+```
+
+---
+
 ### `1030` — contar instruções
 
 Retorna a quantidade de instruções já executadas desde o início da execução.
@@ -566,7 +695,8 @@ Retorna a quantidade de instruções já executadas desde o início da execuçã
 | Registrador | Valor |
 |------------|-------|
 | `a7`       | `1030` |
-| **`a0` (ret)** | contagem de instruções |
+| **`a0` (ret)** | contagem de instruções (32 bits baixos) |
+| **`a1` (ret)** | contagem de instruções (32 bits altos) |
 
 ---
 
@@ -580,7 +710,81 @@ Retorna o total de ciclos decorridos no modo de execução atual.
 | Registrador | Valor |
 |------------|-------|
 | `a7`       | `1031` |
-| **`a0` (ret)** | contagem de ciclos |
+| **`a0` (ret)** | contagem de ciclos (32 bits baixos) |
+| **`a1` (ret)** | contagem de ciclos (32 bits altos) |
+
+---
+
+### `1050` — memset
+
+Preenche `a2` bytes a partir de `a0` com o valor de byte em `a1`.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1050` |
+| `a0`       | endereço de destino |
+| `a1`       | valor do byte (0..255) |
+| `a2`       | tamanho em bytes |
+
+```asm
+.bss
+buf: .space 64
+
+.text
+    la   a0, buf
+    li   a1, 0          ; preenche com 0
+    li   a2, 64
+    li   a7, 1050
+    ecall
+```
+
+---
+
+### `1051` — memcpy
+
+Copia `a2` bytes de `a1` para `a0`. As regiões não devem se sobrepor.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1051` |
+| `a0`       | endereço de destino |
+| `a1`       | endereço de origem |
+| `a2`       | tamanho em bytes |
+
+---
+
+### `1052` — strlen
+
+Retorna o tamanho da string NUL-terminada em `a0` (sem contar o NUL).
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1052` |
+| `a0`       | endereço da string |
+| **`a0` (ret)** | tamanho |
+
+```asm
+.data
+s: .asciz "ola"
+
+.text
+    la   a0, s
+    li   a7, 1052
+    ecall               ; a0 = 3
+```
+
+---
+
+### `1053` — strcmp
+
+Compara as strings NUL-terminadas em `a0` e `a1`.
+
+| Registrador | Valor |
+|------------|-------|
+| `a7`       | `1053` |
+| `a0`       | endereço da string 1 |
+| `a1`       | endereço da string 2 |
+| **`a0` (ret)** | negativo se s1 < s2, 0 se iguais, positivo se s1 > s2 |
 
 ---
 
@@ -762,6 +966,7 @@ loop:
 | `-2`   | `ENOENT`  | caminho não existe dentro da raiz do fs-sim |
 | `-5`   | `EIO`     | falha do SO em getrandom, ou erro real de I/O de arquivo |
 | `-9`   | `EBADF`   | fd não suportado |
+| `-12`  | `ENOMEM`  | heap esgotado (mmap) |
 | `-13`  | `EACCES`  | resolução de caminho tentou subir acima da raiz do fs-sim |
 | `-14`  | `EFAULT`  | endereço fora dos limites |
 | `-17`  | `EEXIST`  | `openat` com `O_CREAT\|O_EXCL`, ou `mkdirat`, em caminho já existente |
@@ -799,11 +1004,22 @@ Num   Nome             a0        a1        a2        retorno
 1001  print_str        end. str  —         —         —
 1002  print_str_ln     end. str  —         —         —
 1003  read_line_z      end. buf  —         —         —
+1004  print_uint       u32       —         —         —
+1005  print_hex        u32       —         —         —
+1006  print_char       código ascii —      —         —
+1008  print_newline    —         —         —         —
 1010  read_u8          end. dst  —         —         —
 1011  read_u16         end. dst  —         —         —
 1012  read_u32         end. dst  —         —         —
+1013  read_int         end. dst  —         —         —
+1014  read_float       end. dst  —         —         —
+1015  print_float      (fa0=f32) —         —         —
 1030  get_instr_count  —         —         —         contagem (u32)
 1031  get_cycle_count  —         —         —         contagem (u32)
+1050  memset           end. dst  valor byte tam       —
+1051  memcpy           end. dst  end. src  tam       —
+1052  strlen           end. str  —         —         tam
+1053  strcmp           end. s1   end. s2   —         <0 / 0 / >0
 1100  hart_start       entry pc  stack ptr arg       hart id / -err
 1101  hart_exit        —         —         —         (não retorna)
 1102  map_exec         endereço  tamanho   —         0 / -err

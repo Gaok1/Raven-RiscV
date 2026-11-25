@@ -200,6 +200,8 @@ A tabela abaixo documenta os formatos aceitos no RAVEN e a forma exata (conceitu
 | `readByte` | `readByte label` | `addi a7, x0, 1010` + `la a0, label` + `ecall` | Grava 1 byte em `label`. |
 | `readHalf` | `readHalf label` | `addi a7, x0, 1011` + `la a0, label` + `ecall` | Grava 2 bytes (little-endian) em `label`. |
 | `readWord` | `readWord label` | `addi a7, x0, 1012` + `la a0, label` + `ecall` | Grava 4 bytes (little-endian) em `label`. |
+| `random` | `random rd` | `addi sp, sp, -4` + `addi a7, x0, 278` + `addi a0, sp, 0` + `addi a1, x0, 4` + `addi a2, x0, 0` + `ecall` + `lw rd, 0(sp)` + `addi sp, sp, 4` | Carrega uma palavra de 32 bits aleatória em `rd` via `getrandom` (syscall 278) usando um slot temporário na pilha. Modifica `a0`, `a1`, `a2`, `a7`. |
+| `random_bytes` / `randomBytes` | `random_bytes label, n` | `addi a7, x0, 278` + `la a0, label` + `addi a1, x0, n` + `addi a2, x0, 0` + `ecall` | Preenche `n` bytes aleatórios em `label` via `getrandom` (syscall 278, `flags=0`). O primeiro operando precisa ser um label, não um registrador. Modifica `a0`, `a1`, `a2`, `a7`. |
 
 > `jal` e `jalr` são instruções reais da ISA (não pseudo) e também são suportadas diretamente.
 > Em `jal`, você pode usar `jal label` (com `rd=ra` implícito) ou `jal rd, label`.
@@ -275,6 +277,7 @@ console (isso ajuda no ensino, porque o erro fica explícito).
 | --- | --- | --- |
 | `63` | `read` | `a0=fd`, `a1=buf`, `a2=count` (somente fd=0). Lê bytes (por linha, adiciona `\n`). |
 | `64` | `write` | `a0=fd`, `a1=buf`, `a2=count` (fd=1/2). Escreve `count` bytes da memória. |
+| `278` | `getrandom` | `a0=buf`, `a1=buflen`, `a2=flags` (bits `0x1/0x2` aceitos). Preenche a memória com bytes aleatórios. |
 | `93` | `exit` | `a0=status`. Encerra execução. |
 | `94` | `exit_group` | Igual a `exit` por enquanto. |
 

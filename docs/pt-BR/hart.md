@@ -210,5 +210,6 @@ A mesma seção do Settings define como as L1 dos cores se relacionam (`coherenc
 
 - [Escalonamento de threads](threads.md) — mais threads do que cores: FIFO, round robin, prioridade, `thread_join`
 - [Referência de syscalls](syscalls.md) — tabela completa incluindo `1100` e `1101`
-- [Simulação de pipeline](../en/pipeline.md) — estado e visualização do pipeline por hart
+- [Simulação de pipeline](pipeline.md) — estado e visualização do pipeline por hart
 - [Coerência de cache](coherence.md) — L1 privadas por core e os protocolos MSI / MESI / MOESI
+- [Mapa de memória](syscalls.md#memory-layout) — layout de endereços usado por todos os harts

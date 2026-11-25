@@ -601,8 +601,9 @@ OPTIONS  debug-pipeline-stage:
 OPTIONS  debug-help-layout:
     --width <n>                 Virtual UI width for the dump          (default: 160)
     --height <n>                Virtual UI height for the dump         (default: 40)
-    --tab editor|run|cache|tlb|pipeline|docs|config
-                                Tab to inspect                         (default: editor)
+    --tab editor|run|cache|tlb|pipeline|docs|config|settings
+                                Tab to inspect (settings is an alias
+                                for config)                            (default: editor)
     --out <file>                Write dump to file instead of stdout
 
 EXAMPLES:

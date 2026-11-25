@@ -54,7 +54,7 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
 - Multicore cache coherence: one shared L1, or a private L1 per core kept coherent by **MSI**, **MESI** or **MOESI** (or by nothing, to see stale data) — with line states, bus requests and per-core bus traffic in the **Coherence** subtab ([guide](coherence.md))
-- Thread scheduling: run more threads than cores under **FIFO**, **round robin** (configurable quantum) or **preemptive priority**, with a context-switch cost, `thread_yield` / `thread_join` / `thread_set_priority`, and a **Threads** tab showing the ready queue, a per-core timeline and each thread's waiting, response and turnaround time ([guide](threads.md))
+- Thread scheduling: run more threads than cores under **FIFO**, **round robin** (configurable quantum) or **preemptive priority**, with a context-switch cost and `thread_yield` / `thread_join` / `thread_set_priority` — see the **Threads Tab** below ([guide](threads.md))
 - Export results (`Ctrl+r`) to `.rstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
@@ -71,7 +71,16 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - Branch resolve and predictor controls, bypass toggles, and hazard map visualization
 - Export the unified config / results with `Ctrl+e`, `Ctrl+l`, and `Ctrl+r`
 
-### Docs Tab (Tab 6)
+### Threads Tab (Tab 6)
+- Drawn when a scheduler (FIFO, round robin or priority) is on, showing it at work tick by tick
+- **CPU**: one card per core with the thread it runs and how much of its quantum is gone
+- **Ready queue**: one card per waiting thread, next first, with the saved PC/stack pointer, wait time and why it left its core
+- Per-core timeline, one column per tick, coloured by the thread that ran
+- **Context**: the selected thread's TCB — PC and all 32 registers, live on a core or frozen while it waits — plus its waiting, response and turnaround times
+- Drive it by hand: step/run, force a context switch (`x`), or put a thread on a core (`Enter`)
+- See the **[Thread scheduling guide](threads.md)** for policies, syscalls and examples
+
+### Docs Tab (Tab 7)
 - Instruction reference for all supported instructions
 - Run tab key guide
 

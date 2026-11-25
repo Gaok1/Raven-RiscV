@@ -150,10 +150,12 @@ Default: `NonInclusive`
 | Value | Meaning |
 |-------|---------|
 | `NonInclusive` | No constraint — a line may or may not exist in both levels simultaneously. Default for most configs. |
-| `Inclusive` | Every line in this level is **guaranteed** to also exist in the level below. Simplifies coherence; wastes capacity. |
-| `Exclusive` | A line lives in **exactly one** level. When fetched into L1 it is evicted from L2 (victim cache model). |
+| `Inclusive` | Every line in this level is **guaranteed** to also exist in the level below. Simplifies coherence; wastes capacity. ⚠️ Not yet implemented. |
+| `Exclusive` | A line lives in **exactly one** level. When fetched into L1 it is evicted from L2 (victim cache model). ⚠️ Not yet implemented. |
 
 > `inclusion` is only meaningful for L2 and higher. On `icache`/`dcache` it is parsed but has no effect.
+
+> ⚠️ **Not yet implemented:** the validator currently accepts only `NonInclusive`. Setting `inclusion` to `Inclusive` or `Exclusive` on any cache level makes `raven run`/`raven check-config` (and the TUI) reject the config with: `"Inclusive and Exclusive policies are not yet implemented; use NonInclusive"`. The two values are reserved in the enum for a future implementation.
 
 ---
 
@@ -387,7 +389,7 @@ l3.associativity=16
 l3.replacement=Lru
 l3.write_policy=WriteBack
 l3.write_alloc=WriteAllocate
-l3.inclusion=Inclusive
+l3.inclusion=NonInclusive
 l3.hit_latency=30
 l3.miss_penalty=300
 l3.assoc_penalty=3
@@ -407,7 +409,7 @@ associativity    integer     1–16
 replacement      enum        Lru | Mru | Fifo | Lfu | Clock | Random
 write_policy     enum        WriteBack | WriteThrough
 write_alloc      enum        WriteAllocate | NoWriteAllocate
-inclusion        enum        NonInclusive | Inclusive | Exclusive
+inclusion        enum        NonInclusive (Inclusive | Exclusive: not yet implemented)
 hit_latency      integer     1–999
 miss_penalty     integer     0–9999
 assoc_penalty    integer     0–99  (default 1)

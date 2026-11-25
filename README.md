@@ -34,11 +34,12 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 - `Ctrl+Enter` to assemble instantly; errors show line number and reason
 - Undo/redo (50 levels), word navigation, toggle comment (`Ctrl+/`), select next occurrence (`Ctrl+d`)
 - Go-to-definition (`F12`), label highlight, address gutter (`F2`)
+- Programs in several files: `Ctrl+P` opens a program (replacing every tab), `Ctrl+O` adds a file as one more tab. All tabs build into one program, labels resolve across them, the first tab's code runs first, and the Run tab marks where each tab's code begins
 
 ### Debugger — Run Tab (Tab 2)
 - Run free (`r`), pause (`p`), restart (`R`), or single-step (`s`)
 - Breakpoints (`F9`), jump to label (`Ctrl+g`), jump to RAM address (`Ctrl+f`), execution trace (`t`)
-- All 32 integer registers with ABI names, change highlighting
+- All 32 integer registers with ABI names, hex + decimal, change highlighting
 - Float registers (`f0–f31` / ABI names), toggled with `Tab` in REGS mode
 - Sidebar cycles with `v`: **RAM → Registers → Dyn**
   - **RAM**: scrollable memory view; `k` cycles region: Data / Stack / R/W / **Heap** (sbrk pointer, `▶HB` marker)
@@ -50,23 +51,39 @@ The tabs below show the full experience with the flagship RISC-V (RV32IMAF) back
 
 ### Cache Simulator (Tab 3)
 - Separate I-cache and D-cache, plus unlimited extra levels (L2, L3…)
-- Configurable: sets, ways, block size, write policy (write-through/write-back + allocate/no-allocate), inclusion policy (non-inclusive/inclusive/exclusive)
+- Configurable: sets, ways, block size, write policy (write-through/write-back + allocate/no-allocate), inclusion policy (non-inclusive — inclusive/exclusive reserved, not yet implemented)
 - Six replacement policies: LRU, FIFO, LFU, Clock, MRU, Random
 - Live stats: hit rate, MPKI, RAM traffic, top miss PCs
 - Academic metrics: AMAT (hierarchical), IPC, CPI per instruction class
 - Visual matrix view: every set and way, valid/tag/dirty state, scrollable
 - Multicore cache coherence: one shared L1, or a private L1 per core kept coherent by **MSI**, **MESI** or **MOESI** (or by nothing, to see stale data) — with line states, bus requests and per-core bus traffic in the **Coherence** subtab ([guide](docs/en/coherence.md))
-- Thread scheduling: run more threads than cores under **FIFO**, **round robin** (configurable quantum) or **preemptive priority**, with a context-switch cost, `thread_yield` / `thread_join` / `thread_set_priority`, and a **Threads** tab showing the ready queue, a per-core timeline and each thread's waiting, response and turnaround time ([guide](docs/en/threads.md))
+- Thread scheduling: run more threads than cores under **FIFO**, **round robin** (configurable quantum) or **preemptive priority**, with a context-switch cost and `thread_yield` / `thread_join` / `thread_set_priority` — see the **Threads Tab** below ([guide](docs/en/threads.md))
 - Export results (`Ctrl+r`) to `.rstats`/`.csv`
 - CPI configuration: per-class cycle costs (ALU, MUL, DIV, LOAD, STORE, branch, JUMP, FP…)
 
-### Pipeline Simulator (Tab 4)
+### Virtual Memory & TLB (Tab 4)
+- Three VM modes: **off**, **auto** (the simulator writes an Sv32 identity map and translates even in M-mode), **program** (your program drives `satp` and its own page tables)
+- Configurable TLB, one per core: entries, associativity, six replacement policies, hit latency, miss penalty — page-table walks read their PTEs through the caches and pay what they cost — with live hit/miss/eviction stats, a rolling hit-rate chart and an in-app guide (`?`)
+- Every translation step by step (TLB probe, each PTE read, the physical address), the TLB as a sets × ways matrix, the live page table level by level, and a no-code VM control panel (mode + page map + TLB shape)
+- Sv32 page faults, trap delegation (`medeleg`/`stvec`), `sret`, and demand paging
+- See the **[Virtual memory & TLB guide](docs/en/virtual-memory.md)** for the full walkthrough
+
+### Pipeline Simulator (Tab 5)
 - Five-stage in-order pipeline visualization with per-cycle stepping and run/pause controls
 - Main and Config subtabs for hazard/history inspection and pipeline configuration
 - Branch resolve and predictor controls, bypass toggles, and hazard map visualization
 - Export the unified config / results with `Ctrl+e`, `Ctrl+l`, and `Ctrl+r`
 
-### Docs Tab (Tab 5)
+### Threads Tab (Tab 6)
+- Drawn when a scheduler (FIFO, round robin or priority) is on, showing it at work tick by tick
+- **CPU**: one card per core with the thread it runs and how much of its quantum is gone
+- **Ready queue**: one card per waiting thread, next first, with the saved PC/stack pointer, wait time and why it left its core
+- Per-core timeline, one column per tick, coloured by the thread that ran
+- **Context**: the selected thread's TCB — PC and all 32 registers, live on a core or frozen while it waits — plus its waiting, response and turnaround times
+- Drive it by hand: step/run, force a context switch (`x`), or put a thread on a core (`Enter`)
+- See the **[Thread scheduling guide](docs/en/threads.md)** for policies, syscalls and examples
+
+### Docs Tab (Tab 7)
 - Instruction reference for all supported instructions
 - Run tab key guide
 

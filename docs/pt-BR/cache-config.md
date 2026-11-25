@@ -150,10 +150,12 @@ Padrão: `NonInclusive`
 | Valor | Significado |
 |-------|-------------|
 | `NonInclusive` | Sem restrição — uma linha pode ou não existir em ambos os níveis simultaneamente. Padrão para a maioria das configs. |
-| `Inclusive` | Toda linha neste nível está **garantidamente** também no nível abaixo. Simplifica a coerência; desperdiça capacidade. |
-| `Exclusive` | Uma linha vive em **exatamente um** nível. Quando buscada para o L1, é despejada do L2 (modelo de cache vítima). |
+| `Inclusive` | Toda linha neste nível está **garantidamente** também no nível abaixo. Simplifica a coerência; desperdiça capacidade. ⚠️ Ainda não implementado. |
+| `Exclusive` | Uma linha vive em **exatamente um** nível. Quando buscada para o L1, é despejada do L2 (modelo de cache vítima). ⚠️ Ainda não implementado. |
 
 > `inclusion` só é significativo para L2 e acima. Em `icache`/`dcache` é parseado mas não tem efeito.
+
+> ⚠️ **Ainda não implementado:** o validador hoje aceita apenas `NonInclusive`. Definir `inclusion` como `Inclusive` ou `Exclusive` em qualquer nível de cache faz o `raven run`/`raven check-config` (e a TUI) rejeitarem a config com: `"Inclusive and Exclusive policies are not yet implemented; use NonInclusive"`. Os dois valores estão reservados no enum para uma implementação futura.
 
 ---
 
@@ -387,7 +389,7 @@ l3.associativity=16
 l3.replacement=Lru
 l3.write_policy=WriteBack
 l3.write_alloc=WriteAllocate
-l3.inclusion=Inclusive
+l3.inclusion=NonInclusive
 l3.hit_latency=30
 l3.miss_penalty=300
 l3.assoc_penalty=3
@@ -407,7 +409,7 @@ associativity    inteiro     1–16
 replacement      enum        Lru | Mru | Fifo | Lfu | Clock | Random
 write_policy     enum        WriteBack | WriteThrough
 write_alloc      enum        WriteAllocate | NoWriteAllocate
-inclusion        enum        NonInclusive | Inclusive | Exclusive
+inclusion        enum        NonInclusive (Inclusive | Exclusive: ainda não implementado)
 hit_latency      inteiro     1–999
 miss_penalty     inteiro     0–9999
 assoc_penalty    inteiro     0–99  (padrão 1)

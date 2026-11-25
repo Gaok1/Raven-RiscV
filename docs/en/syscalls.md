@@ -688,7 +688,8 @@ Return the number of instructions executed since program start (low 32 bits).
 | Register | Value |
 |----------|-------|
 | `a7`     | `1030` |
-| **`a0` (ret)** | instruction count |
+| **`a0` (ret)** | instruction count (low 32 bits) |
+| **`a1` (ret)** | instruction count (high 32 bits) |
 
 Useful for measuring performance of algorithms directly inside a program.
 
@@ -718,7 +719,8 @@ Returns the total elapsed cycle count for the current execution mode.
 | Register | Value |
 |----------|-------|
 | `a7`     | `1031` |
-| **`a0` (ret)** | cycle count |
+| **`a0` (ret)** | cycle count (low 32 bits) |
+| **`a1` (ret)** | cycle count (high 32 bits) |
 
 ---
 

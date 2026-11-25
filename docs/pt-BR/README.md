@@ -68,7 +68,7 @@ Os três backends menores têm seus próprios conjuntos de instruções, bem mai
 - Exportar resultados (`Ctrl+r`) para `.rstats` / `.csv`
 - Matriz visual de cache com scroll horizontal e drag por scrollbar
 - Coerência de cache multicore: uma L1 compartilhada, ou uma L1 privada por core mantida coerente por **MSI**, **MESI** ou **MOESI** (ou por nada, para ver dado obsoleto) — com estados de linha, pedidos no barramento e tráfego por core na subaba **Coherence** ([guia](coherence.md))
-- Escalonamento de threads: rode mais threads do que cores com **FIFO**, **round robin** (quantum configurável) ou **prioridade preemptiva**, com custo de troca de contexto, `thread_yield` / `thread_join` / `thread_set_priority`, e uma aba **Threads** com a fila de prontos, a linha do tempo de cada core e os tempos de espera, resposta e turnaround de cada thread ([guia](threads.md))
+- Escalonamento de threads: rode mais threads do que cores com **FIFO**, **round robin** (quantum configurável) ou **prioridade preemptiva**, com custo de troca de contexto e `thread_yield` / `thread_join` / `thread_set_priority` — veja a **Aba Threads** abaixo ([guia](threads.md))
 
 ### Aba Virtual Memory / TLB (Aba 4)
 - Três modos de VM: **off**, **auto** (o simulador escreve um mapa identidade Sv32 e traduz até em M-mode), **program** (o seu programa dirige o `satp` e as próprias tabelas de páginas)
@@ -86,7 +86,16 @@ Os três backends menores têm seus próprios conjuntos de instruções, bem mai
 - Custos de ciclo por classe: ALU, MUL, DIV, LOAD, STORE, branch taken/not-taken, JUMP, SYSTEM, FP
 - Configurável diretamente na aba Cache → Config
 
-### Aba Docs (Aba 6)
+### Aba Threads (Aba 6)
+- Aparece quando um escalonador (FIFO, round robin ou prioridade) está ativo, mostrando o escalonamento tick a tick
+- **CPU**: um card por core com a thread que ele executa e quanto do quantum já foi consumido
+- **Fila de prontos (ready queue)**: um card por thread esperando, a próxima primeiro, com o PC/stack pointer salvos, o tempo de espera e o motivo pelo qual saiu do core
+- Linha do tempo por core, uma coluna por tick, colorida pela thread que rodou
+- **Contexto**: o TCB da thread selecionada — PC e os 32 registradores, vivos num core ou congelados enquanto espera — além dos tempos de espera, resposta e turnaround
+- Controle manual: passo/rodar, forçar troca de contexto (`x`), ou colocar uma thread num core (`Enter`)
+- Veja o **[guia de escalonamento de threads](threads.md)** para políticas, syscalls e exemplos
+
+### Aba Docs (Aba 7)
 - Referência de instruções e guia da aba Run embutidos no app
 
 ---

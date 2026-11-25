@@ -199,6 +199,8 @@ The table below documents the pseudo forms implemented by RAVEN and the exact ex
 | `readByte` | `readByte label` | `addi a7, x0, 1010` + `la a0, label` + `ecall` | Stores 1 byte at `label`. |
 | `readHalf` | `readHalf label` | `addi a7, x0, 1011` + `la a0, label` + `ecall` | Stores 2 bytes (little-endian) at `label`. |
 | `readWord` | `readWord label` | `addi a7, x0, 1012` + `la a0, label` + `ecall` | Stores 4 bytes (little-endian) at `label`. |
+| `random` | `random rd` | `addi sp, sp, -4` + `addi a7, x0, 278` + `addi a0, sp, 0` + `addi a1, x0, 4` + `addi a2, x0, 0` + `ecall` + `lw rd, 0(sp)` + `addi sp, sp, 4` | Loads a random 32-bit word into `rd` via `getrandom` (syscall 278) on a temp stack slot. Clobbers `a0`, `a1`, `a2`, `a7`. |
+| `random_bytes` / `randomBytes` | `random_bytes label, n` | `addi a7, x0, 278` + `la a0, label` + `addi a1, x0, n` + `addi a2, x0, 0` + `ecall` | Fills `n` random bytes at `label` via `getrandom` (syscall 278, `flags=0`). First operand must be a label, not a register. Clobbers `a0`, `a1`, `a2`, `a7`. |
 
 > `jal` and `jalr` are real ISA instructions (not pseudos) and are also supported directly.
 > `jal` accepts both `jal label` (implicit `rd=ra`) and `jal rd, label`.

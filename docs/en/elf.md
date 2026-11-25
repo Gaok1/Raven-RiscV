@@ -147,16 +147,16 @@ Offset  Size  Field     Meaning
 0       4     st_name   offset of the name in the associated .strtab
 4       4     st_value  virtual address of the symbol
 8       4     st_size   size in bytes (0 if unknown)
-12      1     st_info   type in the low 4 bits: 1=OBJECT, 2=FUNC
+12      1     st_info   type in the low 4 bits: 0=NOTYPE, 1=OBJECT, 2=FUNC
 13      1     st_other  visibility (ignored)
 14      2     st_shndx  which section the symbol lives in
 ```
 
 Not every symbol is useful for the disassembly, so the loader keeps only the ones that name real code or data. A symbol is kept when:
 
-- its type is a **function** (`STT_FUNC`) or a **variable/object** (`STT_OBJECT`), and
+- its type is a **function** (`STT_FUNC`), a **variable/object** (`STT_OBJECT`), or a **plain assembly label with no type annotation** (`STT_NOTYPE`), and
 - it has a real address (`st_value ≠ 0`), and
-- its name is non-empty and is not a linker-internal name (those start with `$`).
+- its name is non-empty, is not a linker-internal name (those start with `$`), and is not a compiler-generated local label (those start with `.L`).
 
 The kept symbols become a table mapping each address to a name — the same kind of table the assembler builds when you write a label in ASM. That's why the disassembly shows `<main>:`, `<factorial>:`, etc. when you load a compiled ELF.
 

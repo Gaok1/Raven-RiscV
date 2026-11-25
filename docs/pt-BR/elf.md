@@ -147,16 +147,16 @@ Offset  Tamanho  Campo     Significado
 0       4        st_name   offset do nome na .strtab associada
 4       4        st_value  endereço virtual do símbolo
 8       4        st_size   tamanho em bytes (0 se desconhecido)
-12      1        st_info   tipo nos 4 bits baixos: 1=OBJECT, 2=FUNC
+12      1        st_info   tipo nos 4 bits baixos: 0=NOTYPE, 1=OBJECT, 2=FUNC
 13      1        st_other  visibilidade (ignoramos)
 14      2        st_shndx  em qual seção o símbolo vive
 ```
 
 Nem todo símbolo é útil para o disassembly, então o loader guarda só os que nomeiam código ou dados reais. Um símbolo é mantido quando:
 
-- seu tipo é uma **função** (`STT_FUNC`) ou uma **variável/objeto** (`STT_OBJECT`), e
+- seu tipo é uma **função** (`STT_FUNC`), uma **variável/objeto** (`STT_OBJECT`), ou um **label puro de assembly sem anotação de tipo** (`STT_NOTYPE`), e
 - ele tem um endereço real (`st_value ≠ 0`), e
-- seu nome não é vazio e não é um nome interno do linker (esses começam com `$`).
+- seu nome não é vazio, não é um nome interno do linker (esses começam com `$`), e não é um label local gerado pelo compilador (esses começam com `.L`).
 
 Os símbolos mantidos viram uma tabela que mapeia cada endereço para um nome — o mesmo tipo de tabela que o assembler constrói quando você escreve um label em ASM. Por isso o disassembly mostra `<main>:`, `<factorial>:` etc. ao carregar um ELF compilado.
 
@@ -177,7 +177,7 @@ Endereço        Conteúdo
                 heap (cresce para cima via brk)
 ...             (espaço livre)
 ...
-RAM_SIZE-4      stack (grows downward; sp = RAM_SIZE at init)
+RAM_SIZE-4      pilha (cresce para baixo; sp = RAM_SIZE na inicialização)
 RAM_SIZE        (fim da RAM configurada)
 ```
 

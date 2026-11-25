@@ -261,7 +261,7 @@ raven debug-help-layout [opções]
 |---|---|---|
 | `--width <n>` | `160` | Largura virtual da UI para o dump |
 | `--height <n>` | `40` | Altura virtual da UI para o dump |
-| `--tab editor\|run\|cache\|tlb\|pipeline\|docs\|config` | `editor` | Aba a inspecionar |
+| `--tab editor\|run\|cache\|tlb\|pipeline\|docs\|config\|settings` | `editor` | Aba a inspecionar (`settings` é um alias de `config`) |
 | `--out <arquivo>` | stdout | Gravar dump em arquivo |
 
 ```bash
