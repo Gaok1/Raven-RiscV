@@ -676,7 +676,7 @@ pub fn check_config(file: &str, output: Option<&str>) -> Result<(), String> {
     );
     eprintln!("[pipeline]");
     eprintln!("  enabled        = {}", pcfg.enabled);
-    eprintln!("  mode           = {:?}", pcfg.mode);
+    eprintln!("  mode           = {}", pcfg.mode.label());
     eprintln!("  branch_resolve = {:?}", pcfg.branch_resolve);
     eprintln!("  predict        = {:?}", pcfg.predict);
 
